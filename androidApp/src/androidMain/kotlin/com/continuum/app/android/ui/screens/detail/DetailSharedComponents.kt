@@ -764,9 +764,10 @@ fun computePlayLabel(
             return if (s == 0) "Play E$e" else "Play S$s·E$e"
         }
     }
+    // Watched items store position 0 server-side, so any nonzero position is
+    // a live resume point — including a rewatch of a played item.
     val pos = detail.userData?.positionSeconds
-    val played = detail.userData?.played == true
-    if (pos != null && pos > 30 && !played) {
+    if (pos != null && pos > 30) {
         val totalSec = pos.toInt()
         val h = totalSec / 3600
         val m = (totalSec % 3600) / 60
