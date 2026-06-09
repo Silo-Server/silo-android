@@ -75,7 +75,9 @@ private fun EpisodeRow(
     val dur = userData?.durationSeconds
     // Watched episodes store position 0 server-side, so a nonzero position is
     // a live resume point and shows its bar even on a played episode (rewatch).
-    val progress = if (pos != null && dur != null && dur > 0 && pos > 0) {
+    // The pos < dur bound keeps stale pre-migration data (position pinned to
+    // the duration) from drawing full bars on watched rows.
+    val progress = if (pos != null && dur != null && dur > 0 && pos > 0 && pos < dur) {
         (pos / dur).toFloat().coerceIn(0f, 1f)
     } else {
         null

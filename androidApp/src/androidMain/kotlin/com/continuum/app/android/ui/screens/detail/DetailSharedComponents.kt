@@ -757,17 +757,14 @@ fun computePlayLabel(
     if (detail.type == "series" && nextEpisodeLabel != null) {
         return "Play $nextEpisodeLabel"
     }
-    if (detail.type == "episode") {
-        val s = detail.seasonNumber
-        val e = detail.episodeNumber
-        if (s != null && e != null) {
-            return if (s == 0) "Play E$e" else "Play S$s·E$e"
-        }
-    }
     // Watched items store position 0 server-side, so any nonzero position is
-    // a live resume point — including a rewatch of a played item.
+    // a live resume point — including a rewatch of a played item. Checked
+    // before the episode label so an in-progress episode reads "Resume" (the
+    // player resumes either way), and bounded below the duration so stale
+    // pre-migration data (position pinned to the duration) still reads "Play".
     val pos = detail.userData?.positionSeconds
-    if (pos != null && pos > 30) {
+    val dur = detail.userData?.durationSeconds
+    if (pos != null && pos > 30 && (dur == null || dur <= 0 || pos < dur - 5)) {
         val totalSec = pos.toInt()
         val h = totalSec / 3600
         val m = (totalSec % 3600) / 60
@@ -776,6 +773,13 @@ fun computePlayLabel(
             "Resume %d:%02d:%02d".format(h, m, s)
         } else {
             "Resume %d:%02d".format(m, s)
+        }
+    }
+    if (detail.type == "episode") {
+        val s = detail.seasonNumber
+        val e = detail.episodeNumber
+        if (s != null && e != null) {
+            return if (s == 0) "Play E$e" else "Play S$s·E$e"
         }
     }
     return "Play"
