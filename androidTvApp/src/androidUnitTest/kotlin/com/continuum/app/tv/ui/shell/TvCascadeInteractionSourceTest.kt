@@ -27,7 +27,11 @@ class TvCascadeInteractionSourceTest {
                 "onEnterPanel(TvTopMenuPanel.Root(TvRootDestination.LibraryType(focus.type)))",
             ),
         )
-        assertTrue(topMenuSource.contains("onClick = { onSelectRoot(destination) }"))
+        // A library-type tab's center/click commits to that type's content via
+        // onSelectTab (→ Recommended), NOT enter-panel; Home/Calendar use
+        // onSelectRoot. Either way the tab click never opens the cascade — only
+        // d-pad-down does (asserted above).
+        assertTrue(topMenuSource.contains("onClick = { onSelectTab(type) }"))
         assertFalse(topMenuSource.contains("onClick = { onEnterPanel("))
     }
 

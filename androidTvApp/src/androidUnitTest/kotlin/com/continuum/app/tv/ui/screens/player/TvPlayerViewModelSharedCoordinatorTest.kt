@@ -68,7 +68,7 @@ class TvPlayerViewModelSharedCoordinatorTest {
             "TV starter must expose TvVideoPlaybackStarter",
         )
         assertTrue(
-            starterSource.contains("startSession("),
+            starterSource.contains("startSessionV2("),
             "TV starter must start playback sessions",
         )
         assertTrue(

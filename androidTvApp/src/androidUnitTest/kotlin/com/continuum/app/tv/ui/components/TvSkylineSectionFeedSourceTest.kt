@@ -18,7 +18,11 @@ class TvSkylineSectionFeedSourceTest {
         assertTrue(source.contains("state = rowBandState"))
         assertTrue(source.contains("itemsIndexed("))
         assertTrue(source.contains("val onItemFocused: (SectionItem, String, Int) -> Unit"))
-        assertTrue(!source.contains("animateScrollToItem"))
+        // Vertical scroll is owned by the focus system's bringIntoView (the
+        // provided TvSmoothBringIntoViewSpec), never a manual animated scroll.
+        // Match the call form so the explanatory comment that names the removed
+        // API doesn't trip this guard.
+        assertTrue(!source.contains(".animateScrollToItem("))
         assertTrue(source.contains("TvRootHeroBackdrop("))
         assertTrue(source.contains("TvFocusMarquee("))
         assertTrue(source.contains("fun ResolvedSection.isTvProgressRow()"))
