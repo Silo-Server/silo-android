@@ -119,6 +119,7 @@ private fun SimilarRailContent(
                 progress = null,
                 onClick = { onSelect(item.contentId) },
                 overlay = com.continuum.app.overlays.OverlayDataExtractor.fromItemDetail(item),
+                sharedContentId = item.contentId,
             )
         }
     }

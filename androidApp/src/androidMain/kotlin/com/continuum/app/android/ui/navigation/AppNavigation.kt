@@ -1,7 +1,10 @@
 package com.continuum.app.android.ui.navigation
 
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +63,7 @@ import com.continuum.app.network.TokenManager
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun AppNavigation(
     navController: NavHostController = rememberNavController(),
@@ -104,6 +108,12 @@ fun AppNavigation(
     }
 
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
+    // Shared-element host: lets a tapped poster morph into the item-detail
+    // backdrop. The scope is published via CompositionLocal so deep descendants
+    // (a poster card, the detail hero) can opt in without threading it through
+    // every composable signature in between.
+    SharedTransitionLayout(modifier = Modifier.fillMaxSize()) {
+    CompositionLocalProvider(LocalSharedTransitionScope provides this) {
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -271,7 +281,11 @@ fun AppNavigation(
 
         // ---- Main tabs ----
         composable(Route.Home.route) {
-            MainScreen(navController, Tab.Home)
+            // Publish this destination's visibility scope so poster cards in the
+            // home rails can morph into the detail hero on tap.
+            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                MainScreen(navController, Tab.Home)
+            }
         }
         composable(Route.Libraries.route) {
             MainScreen(navController, Tab.Libraries)
@@ -436,6 +450,9 @@ fun AppNavigation(
                 },
             ),
         ) {
+            // Publish this destination's visibility scope so the detail backdrop
+            // (and the "More Like This" rail) take part in the hero morph.
+            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
             val detailViewModel = koinViewModel<ItemDetailViewModel>()
             var wtTarget by remember { mutableStateOf<Pair<String, Int?>?>(null) }
             ItemDetailScreen(
@@ -481,6 +498,7 @@ fun AppNavigation(
                     onNavigate = { route -> navController.navigate(route) },
                     onDismiss = { wtTarget = null },
                 )
+            }
             }
         }
 
@@ -668,6 +686,8 @@ fun AppNavigation(
             }
         }
 
+    }
+    }
     }
     }
 }

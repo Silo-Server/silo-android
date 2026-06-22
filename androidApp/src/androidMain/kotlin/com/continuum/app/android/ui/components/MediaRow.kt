@@ -179,6 +179,7 @@ fun MediaRow(
                             overlay = rowItem.overlay,
                             actions = cardActions(item),
                             modifier = Modifier.animateItem(),
+                            sharedContentId = item.contentId,
                         )
                     }
                 }

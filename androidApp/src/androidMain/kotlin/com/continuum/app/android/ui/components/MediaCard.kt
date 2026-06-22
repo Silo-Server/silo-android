@@ -28,6 +28,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.continuum.app.android.ui.navigation.heroSharedBounds
 import com.continuum.app.common.overlays.CardOverlayVariant
 import com.continuum.app.common.overlays.CardOverlays
 import com.continuum.app.common.overlays.LocalCardOverlayUiState
@@ -63,6 +64,12 @@ fun MediaCard(
     artworkAspectRatio: Float = 2f / 3.3f,
     overlay: OverlayData? = null,
     actions: MediaCardActions = MediaCardActions(),
+    /**
+     * Content id to enroll this poster as the source of a shared-element hero
+     * morph into the item-detail backdrop. Null (the default) leaves the card
+     * a plain tap target — used where there is no matching hero to morph into.
+     */
+    sharedContentId: String? = null,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
@@ -81,6 +88,9 @@ fun MediaCard(
                 .fillMaxWidth()
                 // iOS posterAspectRatio = 2 : 3.3 (posterCardWidth 120 / height 198).
                 .aspectRatio(artworkAspectRatio)
+                // Hero morph source. Must precede .clip() — sharedBounds renders
+                // into the transition overlay and clipping is applied to its child.
+                .heroSharedBounds(sharedContentId)
                 .clip(MaterialTheme.shapes.small),
         ) {
             ThumbhashImage(

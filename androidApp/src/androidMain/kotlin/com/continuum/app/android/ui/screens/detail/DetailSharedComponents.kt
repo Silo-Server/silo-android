@@ -63,6 +63,7 @@ import com.continuum.app.android.ui.theme.ContinuumBackground
 import com.continuum.app.android.ui.theme.ContinuumOnSurface
 import com.continuum.app.android.ui.theme.ContinuumSecondaryText
 import com.continuum.app.android.ui.theme.ContinuumSurfaceElevated
+import com.continuum.app.android.ui.navigation.heroSharedBounds
 import com.continuum.app.android.ui.theme.PillShape
 import com.continuum.app.android.ui.util.playbackResumePosition
 import com.continuum.app.common.ui.components.ThumbhashImage
@@ -112,6 +113,7 @@ fun DetailHero(
             backdropUrl = detail.backdropUrl,
             backdropThumbhash = detail.backdropThumbhash,
             contentDescription = detail.title,
+            contentId = detail.contentId,
         )
 
         Column(
@@ -149,6 +151,7 @@ private fun Backdrop(
     backdropUrl: String?,
     backdropThumbhash: String?,
     contentDescription: String,
+    contentId: String?,
 ) {
     BoxWithConstraints(
         modifier = Modifier.fillMaxWidth(),
@@ -159,7 +162,10 @@ private fun Backdrop(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(heroHeight),
+                .height(heroHeight)
+                // Hero morph target — matches the tapped poster's shared key so
+                // the artwork bounds carry from the list card into this backdrop.
+                .heroSharedBounds(contentId),
         ) {
             ThumbhashImage(
                 url = backdropUrl,
