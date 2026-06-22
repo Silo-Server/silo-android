@@ -596,7 +596,13 @@ fun TvPlayerScreen(
                     viewModel.onBufferingChanged(playbackState == Player.STATE_BUFFERING)
                     // F2 fallback: if the stream ends without a credits marker
                     // having fired the trigger, auto-advance / prompt now.
-                    if (playbackState == Player.STATE_ENDED) viewModel.onApproachingEnd(videoEnded = true)
+                    // A deliberate exit also stops the controller, which can
+                    // report STATE_ENDED before navigation completes; ignore
+                    // that teardown signal so the Up-Next surface does not
+                    // briefly flash over the leaving player.
+                    if (playbackState == Player.STATE_ENDED && !exitRequested) {
+                        viewModel.onApproachingEnd(videoEnded = true)
+                    }
                 }
                 override fun onTracksChanged(tracks: Tracks) {
                     val audio = extractTrackEntries(tracks, C.TRACK_TYPE_AUDIO)
