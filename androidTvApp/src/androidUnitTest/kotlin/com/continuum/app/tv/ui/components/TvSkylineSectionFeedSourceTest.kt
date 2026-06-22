@@ -18,7 +18,7 @@ class TvSkylineSectionFeedSourceTest {
         assertTrue(source.contains("state = rowBandState"))
         assertTrue(source.contains("itemsIndexed("))
         assertTrue(source.contains("val onItemFocused: (SectionItem, String, Int) -> Unit"))
-        assertTrue(source.contains("rowBandState.animateScrollToItem(rowIndex)"))
+        assertTrue(!source.contains("animateScrollToItem"))
         assertTrue(source.contains("TvRootHeroBackdrop("))
         assertTrue(source.contains("TvFocusMarquee("))
         assertTrue(source.contains("fun ResolvedSection.isTvProgressRow()"))

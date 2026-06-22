@@ -1,5 +1,6 @@
 package com.continuum.app.tv.ui.components
 
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,6 +15,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,6 +33,7 @@ import androidx.tv.material3.Text
 import com.continuum.app.model.catalog.BrowseItem
 import com.continuum.app.overlays.OverlayDataExtractor
 import com.continuum.app.tv.ui.theme.Spacing
+import com.continuum.app.tv.ui.theme.TvSmoothBringIntoViewSpec
 import com.continuum.app.tv.ui.util.tvArtworkAspectRatioForMediaType
 
 /**
@@ -87,6 +90,7 @@ fun TvCatalogGrid(
         if (shouldLoadMore) onLoadMore()
     }
 
+    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
     LazyVerticalGrid(
         state = gridState,
         columns = fixedColumnCount?.let { GridCells.Fixed(it) }
@@ -158,6 +162,7 @@ fun TvCatalogGrid(
                 }
             }
         }
+    }
     }
 }
 
