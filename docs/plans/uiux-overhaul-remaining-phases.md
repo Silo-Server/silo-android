@@ -4,7 +4,7 @@ Handoff doc for picking up the UI/UX + performance overhaul in a new session.
 Self-contained: read this top-to-bottom and you have everything needed to start.
 
 - **Branch:** `uiux-fluidity-overhaul` (off `main`, base commit `17fb749`).
-- **Status:** Phases 1–5 done, committed, both apps compile clean. Phases 6–8 remain.
+- **Status:** Phases 1–6 done, committed, both apps compile clean. Phases 7–8 remain.
 - **Owner priority (overriding all):** the app must FEEL fluid and fast. Weight
   perceived-speed/smoothness over feature breadth. A recurring pattern in this
   codebase is polish that was built but never wired up — favor connecting that.
@@ -112,7 +112,38 @@ Per-phase commit style; end commit messages with
 
 ---
 
-## 3. Phase 6 — shared-element hero transitions (phone)
+## 3. Phase 6 — shared-element hero transitions (phone) ✅ DONE (`816d54c`)
+
+**Shipped:** `SharedTransitionLayout` wraps the phone `NavHost`; the
+`SharedTransitionScope` + each destination's `AnimatedVisibilityScope` are
+published via CompositionLocals in new
+`androidApp/.../ui/navigation/SharedElementTransition.kt`
+(`LocalSharedTransitionScope` / `LocalNavAnimatedVisibilityScope`). A
+`Modifier.heroSharedBounds(contentId)` helper tags both ends with key
+`hero-$contentId`. **Used `sharedBounds` + `RemeasureToBounds`, not
+`sharedElement`** — the two ends are different images (2:3 poster vs wide
+backdrop), and `sharedBounds` is Android's prescribed API for visually-different
+source/target: it crossfades the artwork while morphing the bounds. This is the
+realization of the chosen "shared-element hero," not the slide/fade downgrade.
+Sources wired: home poster rails (`MediaRow`) + detail "More Like This"
+(`SimilarRail`); target: the `DetailHero` backdrop. Home→detail and
+detail→detail both morph. Guarded by `MobileSharedElementSourceTest`.
+
+⚠️ **Not visually verified** — the emulator runs the TV image, so the phone
+morph needs a real phone to confirm/tune (e.g. boundsTransform spring). Safe by
+construction otherwise: the helper no-ops when no scope is present, and duplicate
+same-key posters degrade gracefully (verified against the 1.7.6 impl — no
+at-rest glitch, no crash).
+
+**Follow-up (one-liner per surface):** wrap the Libraries / For You / Browse
+destinations + grids (`CatalogGrid`, `PersonalMediaGridContent`) and enroll the
+continue-watching `BackdropCard` — each just needs its destination wrapped in
+`CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this)` and the
+content id passed to the card.
+
+---
+
+### Original phase 6 plan (for reference)
 
 **Goal:** tapping a poster in a list morphs that poster into the hero/backdrop
 image on the item-detail screen (and reverses on back). The premium "the thing I
