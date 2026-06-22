@@ -20,8 +20,12 @@ class TvPlayerUsabilityTest {
     }
 
     @Test
-    fun playerUsesTextureViewSoComposeControlsRenderAboveVideo() {
+    fun playerUsesSurfaceViewSoHdrAndDolbyVisionCanEngage() {
+        // HDR10/HDR10+/HLG metadata and Dolby Vision tunneling can only be
+        // carried by a SurfaceView; a TextureView silently forces SDR. Compose
+        // controls/HUD still render above the video because they are Compose
+        // overlays in a sibling layer, independent of the surface type.
         assertTrue(source.contains("R.layout.tv_player_view"))
-        assertTrue(playerLayout.contains("app:surface_type=\"texture_view\""))
+        assertTrue(playerLayout.contains("app:surface_type=\"surface_view\""))
     }
 }

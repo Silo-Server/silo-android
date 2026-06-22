@@ -207,6 +207,8 @@ internal fun reducePlayerStats(
         current.copy(videoDecoderName = event.decoderName)
     is PlaybackAnalyticsListener.Event.AudioDecoderInitialized ->
         current.copy(audioDecoderName = event.decoderName)
+    is PlaybackAnalyticsListener.Event.AudioTrackInitialized ->
+        current // observability-only (logged by the listener for passthrough/HDR QA)
     is PlaybackAnalyticsListener.Event.VideoFormatChanged -> current.copy(
         videoCodec = event.format.codecs ?: event.format.sampleMimeType,
         resolution = if (event.format.width > 0 && event.format.height > 0) {

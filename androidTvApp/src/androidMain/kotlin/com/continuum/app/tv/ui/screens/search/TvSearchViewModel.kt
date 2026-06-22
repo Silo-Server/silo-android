@@ -176,6 +176,10 @@ class TvSearchViewModel(
 
         val current = _uiState.value
         if (current.query != requestedQuery || current.mediaType != requestedMediaType) {
+            // The query/filter moved on while this request was in flight. A
+            // fresher run owns the spinner, but clear our own loading flags so a
+            // cancelled-then-superseded request can't leave a stuck indicator.
+            _uiState.update { it.copy(isLoading = false, isLoadingMore = false) }
             return
         }
 

@@ -24,11 +24,18 @@ object DisplayHdrProbe {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return HdrCapabilities()
 
         // Display.HdrCapabilities.supportedHdrTypes is deprecated in API 34 in
-        // favor of Display.Mode.getSupportedHdrTypes(); the per-display getter
-        // is still the right source pre-34 and is still functional, so we
-        // suppress the warning rather than branching on API level.
-        @Suppress("DEPRECATION")
-        val types = runCatching { display.hdrCapabilities?.supportedHdrTypes }
+        // favor of Display.Mode.getSupportedHdrTypes() (added in API 34), which
+        // reports HDR support for the current display mode. Below 34 the
+        // per-display getter is still the right source and remains functional,
+        // so we keep the deprecated path there and suppress the warning.
+        val types = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                display.mode?.supportedHdrTypes
+            } else {
+                @Suppress("DEPRECATION")
+                display.hdrCapabilities?.supportedHdrTypes
+            }
+        }
             .getOrNull()
             ?.toSet()
             .orEmpty()

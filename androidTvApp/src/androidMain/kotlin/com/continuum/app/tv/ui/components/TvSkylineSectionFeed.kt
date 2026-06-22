@@ -1,6 +1,8 @@
 package com.continuum.app.tv.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -18,7 +20,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,8 +35,8 @@ import com.continuum.app.network.ApiResult
 import com.continuum.app.repository.CatalogRepository
 import com.continuum.app.tv.ui.theme.RowDimens
 import com.continuum.app.tv.ui.theme.Spacing
+import com.continuum.app.tv.ui.theme.TvSmoothBringIntoViewSpec
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 /**
@@ -43,6 +44,7 @@ import org.koin.compose.koinInject
  * Recommended so their lower row band, focus marquee, and ambient backdrop
  * stay pixel-aligned.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TvSkylineSectionFeed(
     sections: List<ResolvedSection>,
@@ -84,15 +86,7 @@ fun TvSkylineSectionFeed(
     }
 
     val rowBandState = rememberLazyListState()
-    val rowBandScope = rememberCoroutineScope()
-    var focusedRowIndex by remember { mutableIntStateOf(-1) }
-    val onItemFocused: (SectionItem, String, Int) -> Unit = { item, rowTitle, rowIndex ->
-        if (focusedRowIndex != rowIndex) {
-            focusedRowIndex = rowIndex
-            rowBandScope.launch {
-                rowBandState.animateScrollToItem(rowIndex)
-            }
-        }
+    val onItemFocused: (SectionItem, String, Int) -> Unit = { item, rowTitle, _ ->
         marquee.preview(item, rowTitle)
     }
 
@@ -144,42 +138,50 @@ fun TvSkylineSectionFeed(
                     .align(Alignment.BottomStart)
                     .clipToBounds(),
             ) {
-                LazyColumn(
-                    state = rowBandState,
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(TvSkylineRowPreviewSpacing),
-                    contentPadding = PaddingValues(
-                        top = 0.dp,
-                        bottom = trailingPreviewPadding,
-                    ),
+                // Scope the cinematic bring-into-view spec to the row band only.
+                // Focused cards drive the single LazyListState scroll mutex via
+                // their intrinsic bringIntoView; the spec keeps the travel smooth
+                // without leaking onto the sibling hero backdrop/marquee.
+                CompositionLocalProvider(
+                    LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec,
                 ) {
-                    itemsIndexed(
-                        items = rows,
-                        key = { _, row -> row.id },
-                        contentType = { _, _ -> "skyline-section-row" },
-                    ) { rowIndex, section ->
-                        val isFirstRow = section.id == firstRowId
-                        val showProgress = showProgressForSection(section)
-                        TvMediaRow(
-                            title = section.title,
-                            items = section.items,
-                            onItemClick = onItemClick,
-                            icon = iconForSection(section),
-                            onSeeAllClick = onSeeAllClickForSection(section),
-                            showProgress = showProgress,
-                            style = styleForSection(section),
-                            startPadding = Spacing.safeArea,
-                            endPadding = Spacing.safeArea,
-                            itemSpacing = TvSkylineItemSpacing,
-                            rowTopPadding = TvSkylineRowCardVerticalPadding,
-                            rowBottomPadding = TvSkylineRowCardVerticalPadding,
-                            posterWidth = RowDimens.DensePosterWidth,
-                            firstItemFocusRequester = firstRowFocusRequester
-                                .takeIf { isFirstRow },
-                            firstItemFocusRequest = if (isFirstRow) firstRowFocusRequest else 0,
-                            onItemFocused = { item -> onItemFocused(item, section.title, rowIndex) },
-                            cardActions = { item -> cardActions(section, item) },
-                        )
+                    LazyColumn(
+                        state = rowBandState,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(TvSkylineRowPreviewSpacing),
+                        contentPadding = PaddingValues(
+                            top = 0.dp,
+                            bottom = trailingPreviewPadding,
+                        ),
+                    ) {
+                        itemsIndexed(
+                            items = rows,
+                            key = { _, row -> row.id },
+                            contentType = { _, _ -> "skyline-section-row" },
+                        ) { rowIndex, section ->
+                            val isFirstRow = section.id == firstRowId
+                            val showProgress = showProgressForSection(section)
+                            TvMediaRow(
+                                title = section.title,
+                                items = section.items,
+                                onItemClick = onItemClick,
+                                icon = iconForSection(section),
+                                onSeeAllClick = onSeeAllClickForSection(section),
+                                showProgress = showProgress,
+                                style = styleForSection(section),
+                                startPadding = Spacing.safeArea,
+                                endPadding = Spacing.safeArea,
+                                itemSpacing = TvSkylineItemSpacing,
+                                rowTopPadding = TvSkylineRowCardVerticalPadding,
+                                rowBottomPadding = TvSkylineRowCardVerticalPadding,
+                                posterWidth = RowDimens.DensePosterWidth,
+                                firstItemFocusRequester = firstRowFocusRequester
+                                    .takeIf { isFirstRow },
+                                firstItemFocusRequest = if (isFirstRow) firstRowFocusRequest else 0,
+                                onItemFocused = { item -> onItemFocused(item, section.title, rowIndex) },
+                                cardActions = { item -> cardActions(section, item) },
+                            )
+                        }
                     }
                 }
             }

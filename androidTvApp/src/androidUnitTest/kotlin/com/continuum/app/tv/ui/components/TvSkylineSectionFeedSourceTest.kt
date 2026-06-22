@@ -18,7 +18,12 @@ class TvSkylineSectionFeedSourceTest {
         assertTrue(source.contains("state = rowBandState"))
         assertTrue(source.contains("itemsIndexed("))
         assertTrue(source.contains("val onItemFocused: (SectionItem, String, Int) -> Unit"))
-        assertTrue(source.contains("rowBandState.animateScrollToItem(rowIndex)"))
+        // Scroll must have a SINGLE authority: the focused card's bringIntoView,
+        // governed by the cinematic spec. The old manual animateScrollToItem
+        // fought it and caused the awkward double-target re-scroll — assert it's
+        // gone and the spec is provided to the row band.
+        assertTrue(source.contains("LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec"))
+        assertTrue(!source.contains("animateScrollToItem"))
         assertTrue(source.contains("TvRootHeroBackdrop("))
         assertTrue(source.contains("TvFocusMarquee("))
         assertTrue(source.contains("fun ResolvedSection.isTvProgressRow()"))

@@ -56,6 +56,28 @@ import com.continuum.app.tv.ui.theme.Spacing
 import com.continuum.app.tv.ui.theme.sectionEyebrow
 import com.continuum.app.tv.ui.theme.tvPageContentPadding
 import com.continuum.app.tv.ui.theme.tvPageStartPadding
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.focus.onFocusEvent
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.Icon
+import androidx.tv.material3.Surface
+import com.continuum.app.common.voice.VoiceSearchController
+import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -86,7 +108,11 @@ fun TvSearchScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(MaterialTheme.colorScheme.background)
+            // Lift content above the leanback IME so the focused field is never
+            // hidden behind the soft keyboard — parity with the working login
+            // surface (TvLoginScreen uses the same imePadding + bringIntoView).
+            .imePadding(),
     ) {
         TvCatalogGrid(
             items = state.items,
@@ -176,6 +202,46 @@ private fun SearchStage(
     val keyboardController = LocalSoftwareKeyboardController.current
     val mediaTypes = availableMediaTypes
 
+    // --- Voice search (native SpeechRecognizer via VoiceSearchController) ---
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val fieldBringIntoView = remember { BringIntoViewRequester() }
+    val micFocusRequester = remember { FocusRequester() }
+    // Keep the recognizer callbacks pointed at the latest lambdas so the
+    // remembered controller never captures a stale onQueryChanged/submit.
+    val latestOnQueryChanged by rememberUpdatedState(onQueryChanged)
+    val latestOnSubmit by rememberUpdatedState(onSearchSubmitted)
+    val voice = remember {
+        VoiceSearchController(
+            context = context,
+            onPartial = { latestOnQueryChanged(it) },
+            onFinal = {
+                latestOnQueryChanged(it)
+                latestOnSubmit()
+            },
+        )
+    }
+    DisposableEffect(voice) { onDispose { voice.destroy() } }
+    val voiceAvailable = remember { voice.isAvailable }
+    val voiceState by voice.state
+    val isListening = voiceState is VoiceSearchController.VoiceState.Listening
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) voice.start() }
+
+    val onMicToggle: () -> Unit = {
+        if (isListening) {
+            voice.cancel()
+        } else {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (granted) voice.start() else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -204,66 +270,95 @@ private fun SearchStage(
             }
         }
 
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChanged,
-            leadingIcon = {
-                M3Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.72f),
-                )
-            },
-            placeholder = {
-                androidx.compose.material3.Text(
-                    text = "Search titles, movies, series, and audiobooks",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 16.sp,
-                        lineHeight = 16.sp,
-                        letterSpacing = 0.sp,
-                    ),
-                    color = Color.White.copy(alpha = 0.56f),
-                )
-            },
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 16.sp,
-                lineHeight = 16.sp,
-                letterSpacing = 0.sp,
-                color = Color.White,
-            ),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Text,
-                imeAction = ImeAction.Search,
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    onSearchSubmitted()
-                    focusManager.clearFocus(force = true)
-                    keyboardController?.hide()
-                    if (hasResults) {
-                        runCatching { onResultsFocusRequested() }
-                    } else {
-                        runCatching { firstFilterChipFocusRequester.requestFocus() }
-                    }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChanged,
+                leadingIcon = {
+                    M3Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.72f),
+                    )
                 },
-            ),
-            colors = tvOutlinedTextFieldColors(
-                focusedContainerColor = ElevatedSurface,
-                unfocusedContainerColor = ElevatedSurface,
-                focusedBorderColor = Color.White.copy(alpha = 0.34f),
-                unfocusedBorderColor = ContinuumBlueBorderIdle,
-            ),
-            shape = RoundedCornerShape(9.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(31.dp)
-                .focusRequester(searchFieldFocusRequester)
-                // Pin DOWN to the chip rail so the user can always step from
-                // the search field onto the All/Movies/Series filters,
-                // regardless of whether result cards are also rendered below.
-                .focusProperties { down = firstFilterChipFocusRequester },
-        )
+                placeholder = {
+                    androidx.compose.material3.Text(
+                        text = "Search titles, movies, series, and audiobooks",
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = 16.sp,
+                            lineHeight = 16.sp,
+                            letterSpacing = 0.sp,
+                        ),
+                        color = Color.White.copy(alpha = 0.56f),
+                    )
+                },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 16.sp,
+                    lineHeight = 16.sp,
+                    letterSpacing = 0.sp,
+                    color = Color.White,
+                ),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Search,
+                ),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        onSearchSubmitted()
+                        focusManager.clearFocus(force = true)
+                        keyboardController?.hide()
+                        if (hasResults) {
+                            runCatching { onResultsFocusRequested() }
+                        } else {
+                            runCatching { firstFilterChipFocusRequester.requestFocus() }
+                        }
+                    },
+                ),
+                colors = tvOutlinedTextFieldColors(
+                    focusedContainerColor = ElevatedSurface,
+                    unfocusedContainerColor = ElevatedSurface,
+                    focusedBorderColor = Color.White.copy(alpha = 0.34f),
+                    unfocusedBorderColor = ContinuumBlueBorderIdle,
+                ),
+                shape = RoundedCornerShape(9.dp),
+                // No fixed height: a forced 31.dp clipped the M3 field and made
+                // it a fragile focus/edit target on TV. Let it use its natural
+                // min content height, matching the working login field.
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(searchFieldFocusRequester)
+                    // Keep the focused field scrolled above the leanback IME.
+                    .bringIntoViewRequester(fieldBringIntoView)
+                    .onFocusEvent { fs ->
+                        if (fs.isFocused) scope.launch { fieldBringIntoView.bringIntoView() }
+                    }
+                    // Pin DOWN to the chip rail so the user can always step from
+                    // the search field onto the All/Movies/Series filters,
+                    // regardless of whether result cards are also rendered below;
+                    // RIGHT reaches the mic when voice search is available.
+                    .focusProperties {
+                        down = firstFilterChipFocusRequester
+                        if (voiceAvailable) right = micFocusRequester
+                    },
+            )
+
+            if (voiceAvailable) {
+                SearchMicButton(
+                    listening = isListening,
+                    focusRequester = micFocusRequester,
+                    onClick = onMicToggle,
+                    modifier = Modifier.focusProperties {
+                        left = searchFieldFocusRequester
+                        down = firstFilterChipFocusRequester
+                    },
+                )
+            }
+        }
 
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -299,6 +394,56 @@ private fun SearchStage(
                     modifier = chipModifier,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Mic affordance for voice search. Mirrors the top-menu icon button's clickable
+ * Surface chrome (inverted fill on focus). Only shown when on-device speech
+ * recognition is available, so the remote never lands on a dead control.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SearchMicButton(
+    listening: Boolean,
+    focusRequester: FocusRequester,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = CircleShape
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(shape = shape),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (listening) ContinuumBlue else ElevatedSurface,
+            contentColor = Color.White,
+            focusedContainerColor = Color.White,
+            focusedContentColor = ElevatedSurface,
+            pressedContainerColor = Color.White,
+            pressedContentColor = ElevatedSurface,
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(
+                border = BorderStroke(1.dp, ContinuumBlueBorderIdle),
+                shape = shape,
+            ),
+            focusedBorder = Border(
+                border = BorderStroke(0.dp, Color.Transparent),
+                shape = shape,
+            ),
+        ),
+        modifier = modifier
+            .focusRequester(focusRequester)
+            .size(44.dp),
+    ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = if (listening) Icons.Filled.MicOff else Icons.Filled.Mic,
+                contentDescription = if (listening) "Stop voice search" else "Voice search",
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
 }

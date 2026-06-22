@@ -64,6 +64,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.media3.common.C
+import androidx.media3.common.ColorInfo
 import androidx.media3.common.Format
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -94,6 +95,7 @@ import com.continuum.app.common.player.video.PlaybackStartupStallDetector
 import com.continuum.app.common.player.video.VideoPlayerTrackEntry
 import com.continuum.app.model.watchtogether.RoomPlaybackState
 import com.continuum.app.player.formatSubtitleTrackDisplayLabel
+import com.continuum.app.tv.BuildConfig
 import com.continuum.app.tv.R
 import com.continuum.app.tv.ui.components.TvErrorScreen
 import com.continuum.app.tv.ui.components.TvLoadingScreen
@@ -575,6 +577,7 @@ fun TvPlayerScreen(
                     val subtitle = extractTrackEntries(tracks, C.TRACK_TYPE_TEXT)
                     val video = extractTrackEntries(tracks, C.TRACK_TYPE_VIDEO)
                     val videoQualities = extractVideoQualityOptions(tracks)
+                    logSelectedFormats(tracks)
                     viewModel.onTracksChanged(audio, subtitle, video, videoQualities)
                 }
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -1829,6 +1832,92 @@ private fun PlayerTrackEntry.toVideoTrackEntry(): VideoPlayerTrackEntry =
     )
 
 private const val TAG = "TvPlayerScreen"
+
+/**
+ * Observability for HDR/DV + spatial-audio engagement. Logs the SELECTED video
+ * Format's color characteristics (transfer ST2084/HLG/SDR, primaries, range) and
+ * codecs string — flagging Dolby Vision when the codec is dvhe/dvh1 — plus the
+ * selected audio Format's mime + channel count. Purely diagnostic: a companion to
+ * the AudioTrack passthrough logging in `PlaybackAnalyticsListener`. Verbose so
+ * it's gated behind a debug build or `setprop log.tag.TvPlayerScreen DEBUG`; the
+ * one-line summaries share [TAG] so a single grep surfaces them.
+ */
+private fun logSelectedFormats(tracks: Tracks) {
+    if (!(BuildConfig.DEBUG || Log.isLoggable(TAG, Log.DEBUG))) return
+    val videoFormat = tracks.selectedFormat(C.TRACK_TYPE_VIDEO)
+    if (videoFormat != null) {
+        val codecs = videoFormat.codecs ?: "?"
+        val dv = if (isDolbyVisionCodec(codecs)) " DolbyVision" else ""
+        Log.i(
+            TAG,
+            "Selected video: ${videoFormat.sampleMimeType} " +
+                "${videoFormat.width}x${videoFormat.height}@${videoFormat.frameRate} " +
+                "codecs=$codecs$dv color=${videoFormat.colorInfo.describeColor()}",
+        )
+    } else {
+        Log.i(TAG, "Selected video: <none>")
+    }
+    val audioFormat = tracks.selectedFormat(C.TRACK_TYPE_AUDIO)
+    if (audioFormat != null) {
+        Log.i(
+            TAG,
+            "Selected audio: ${audioFormat.sampleMimeType} ch=${audioFormat.channelCount} " +
+                "sr=${audioFormat.sampleRate} codecs=${audioFormat.codecs ?: "?"}",
+        )
+    } else {
+        Log.i(TAG, "Selected audio: <none>")
+    }
+}
+
+/** First selected [Format] for [trackType] across all current track groups. */
+private fun Tracks.selectedFormat(trackType: Int): Format? {
+    for (group in groups) {
+        if (group.type != trackType || !group.isSelected) continue
+        for (trackIndex in 0 until group.length) {
+            if (group.isTrackSelected(trackIndex)) {
+                return group.getTrackFormat(trackIndex)
+            }
+        }
+    }
+    return null
+}
+
+/**
+ * Compact, grep-friendly description of a video [ColorInfo]: transfer function
+ * (the HDR signal — ST2084/HLG vs SDR), color primaries, and range. Null means
+ * the container/decoder didn't surface color info (typically SDR).
+ */
+private fun ColorInfo?.describeColor(): String {
+    if (this == null) return "none(likely-SDR)"
+    val transfer = when (colorTransfer) {
+        C.COLOR_TRANSFER_ST2084 -> "ST2084(HDR10/PQ)"
+        C.COLOR_TRANSFER_HLG -> "HLG"
+        C.COLOR_TRANSFER_SDR -> "SDR"
+        Format.NO_VALUE -> "unset"
+        else -> "transfer-$colorTransfer"
+    }
+    val primaries = when (colorSpace) {
+        C.COLOR_SPACE_BT2020 -> "BT2020"
+        C.COLOR_SPACE_BT709 -> "BT709"
+        Format.NO_VALUE -> "unset"
+        else -> "space-$colorSpace"
+    }
+    val range = when (colorRange) {
+        C.COLOR_RANGE_FULL -> "full"
+        C.COLOR_RANGE_LIMITED -> "limited"
+        Format.NO_VALUE -> "unset"
+        else -> "range-$colorRange"
+    }
+    return "transfer=$transfer primaries=$primaries range=$range hdr=${ColorInfo.isTransferHdr(this)}"
+}
+
+/** Dolby Vision is signalled by a dvhe.* / dvh1.* (and dav1.* for AV1) codec. */
+private fun isDolbyVisionCodec(codecs: String): Boolean {
+    val lower = codecs.lowercase()
+    return lower.startsWith("dvhe") || lower.startsWith("dvh1") ||
+        lower.startsWith("dvav") || lower.startsWith("dva1") ||
+        lower.startsWith("dav1")
+}
 
 /**
  * Flatten an ExoPlayer [Tracks] object into TV-facing entries. Audio/video

@@ -20,9 +20,12 @@ import androidx.annotation.MainThread
  * Android TV devices this triggers an HDMI handshake (1–2 s black screen) —
  * hence the coalescing that suppresses redundant applies.
  *
- * HDR mode selection on API 34+ is done via [Display.Mode.getSupportedHdrTypes];
- * older APIs rely on the platform's implicit HDR negotiation driven by the
- * decoder's `Format.colorInfo`.
+ * This controller only negotiates resolution and refresh rate; it does not
+ * pick an HDR color mode. HDR is signalled out-of-band by the decoder's
+ * `Format.colorInfo` on the playback `SurfaceView`, which drives the platform's
+ * implicit HDR negotiation regardless of API level. (Per-mode HDR support can
+ * be inspected via [Display.Mode.getSupportedHdrTypes] on API 34+, but that is
+ * a capability probe done in [DisplayHdrProbe], not a selection made here.)
  *
  * Lifecycle:
  *   - [attach] once per player mount (records original mode for restore).
