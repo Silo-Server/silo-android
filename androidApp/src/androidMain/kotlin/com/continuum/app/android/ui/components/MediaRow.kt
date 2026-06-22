@@ -163,6 +163,7 @@ fun MediaRow(
                             actions = cardActions(item),
                             overlayIcon = if (rowItem.isBook) Icons.AutoMirrored.Filled.MenuBook else Icons.Default.PlayArrow,
                             overlayContentDescription = if (rowItem.isBook) "Read" else "Play",
+                            modifier = Modifier.animateItem(),
                         )
                     }
                     CardStyle.Poster -> {
@@ -177,6 +178,7 @@ fun MediaRow(
                             onClick = { onItemClick(item.contentId) },
                             overlay = rowItem.overlay,
                             actions = cardActions(item),
+                            modifier = Modifier.animateItem(),
                         )
                     }
                 }

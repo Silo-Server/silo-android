@@ -213,7 +213,9 @@ private fun PersonalMediaGridContent(
                         key = { it.contentId },
                         contentType = { item -> item.type },
                     ) { item ->
-                        itemContent(item)
+                        Box(modifier = Modifier.animateItem()) {
+                            itemContent(item)
+                        }
                     }
 
                     if (state.isLoadingMore) {

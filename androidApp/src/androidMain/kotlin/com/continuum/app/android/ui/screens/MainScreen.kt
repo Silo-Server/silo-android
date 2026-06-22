@@ -3,9 +3,11 @@ package com.continuum.app.android.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -21,7 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.navigation.NavHostController
-import com.continuum.app.android.ui.components.MainAppHeaderContentPadding
+import com.continuum.app.android.ui.components.MainAppHeaderBodyHeight
 import com.continuum.app.android.ui.components.MainAppTopBar
 import com.continuum.app.android.ui.navigation.ContinuumBottomNavBar
 import com.continuum.app.android.ui.navigation.Route
@@ -119,6 +121,12 @@ fun MainScreen(
             showDownloads = hasAnyDownload,
         )
     }
+
+    // The shared top bar floats over content; its real height is the status-bar
+    // inset plus the fixed bar body. Offset tab content by that so the bar can't
+    // overlap content on tall-cutout / large-display devices.
+    val headerContentTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
+        MainAppHeaderBodyHeight
 
     // If the user is on a tab no longer supported by their libraries (or
     // Downloads disappears), move them to the nearest visible media tab.
@@ -229,7 +237,7 @@ fun MainScreen(
                             },
                             onWatchlistClick = { navController.navigate(Route.Watchlist.route) },
                             onFavoritesClick = { navController.navigate(Route.Favorites.route) },
-                            contentTopPadding = MainAppHeaderContentPadding,
+                            contentTopPadding = headerContentTop,
                         )
                     }
                     Tab.Calendar -> {
@@ -239,7 +247,7 @@ fun MainScreen(
                                 navController.navigate(Route.ItemDetail(contentId).route)
                             },
                             showTopBar = false,
-                            contentTopPadding = MainAppHeaderContentPadding,
+                            contentTopPadding = headerContentTop,
                         )
                     }
                     Tab.Downloads -> {
@@ -262,7 +270,7 @@ fun MainScreen(
                             onReadEbook = { contentId, fileId ->
                                 navController.navigate(Route.BookReader(contentId, fileId).route)
                             },
-                            contentTopPadding = MainAppHeaderContentPadding,
+                            contentTopPadding = headerContentTop,
                         )
                     }
                 }

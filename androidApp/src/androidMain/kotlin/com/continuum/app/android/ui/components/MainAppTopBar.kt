@@ -43,7 +43,10 @@ import com.continuum.app.android.R
 import com.continuum.app.android.ui.screens.profiles.ProfileAvatar
 import com.continuum.app.model.profile.Profile
 
-val MainAppHeaderContentPadding = 104.dp
+// Height of the floating top bar's body, excluding the status-bar inset
+// (6dp top + 42dp action row + 28dp bottom). Callers add WindowInsets.statusBars
+// so tab content clears the bar regardless of status-bar height.
+val MainAppHeaderBodyHeight = 76.dp
 
 @Composable
 fun MainAppTopBar(
