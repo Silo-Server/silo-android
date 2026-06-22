@@ -7,6 +7,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import com.continuum.app.model.playback.PlayerSubtitleInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -90,6 +91,68 @@ class PlayerTrackEntriesTest {
         )
 
         assertEquals(null, preferredAutoTextSubtitleIndex(tracks, preferredLanguage = "en"))
+    }
+
+    @Test
+    fun initialSubtitleOrdinalResolvesThroughMountedSubtitleMetadata() {
+        val tracks = listOf(
+            PlayerTrackEntry(
+                index = 0,
+                label = "",
+                language = null,
+                isSelected = false,
+                codecOrMime = MimeTypes.APPLICATION_CEA608,
+            ),
+            PlayerTrackEntry(
+                index = 1,
+                label = "English SRT",
+                language = "en",
+                isSelected = false,
+                codecOrMime = MimeTypes.TEXT_VTT,
+            ),
+            PlayerTrackEntry(
+                index = 5,
+                label = "ASS",
+                language = "en",
+                isSelected = false,
+                codecOrMime = "text/x-ssa",
+            ),
+        )
+        val mounted = listOf(
+            PlayerSubtitleInfo(index = 0, language = "en", codec = "srt", label = "English SRT", url = "/sub/0.srt"),
+            PlayerSubtitleInfo(index = 2, language = "en", codec = "ass", label = "ASS", url = "/sub/2.ass"),
+        )
+
+        assertEquals(
+            5,
+            resolveInitialSubtitleTrackIndex(
+                requestedOrdinal = 1,
+                subtitleTracks = tracks,
+                mountedSubtitles = mounted,
+            ),
+        )
+    }
+
+    @Test
+    fun initialSubtitleOrdinalDoesNotFallThroughToCeaTrack() {
+        val tracks = listOf(
+            PlayerTrackEntry(
+                index = 0,
+                label = "",
+                language = null,
+                isSelected = false,
+                codecOrMime = MimeTypes.APPLICATION_CEA608,
+            ),
+        )
+
+        assertEquals(
+            null,
+            resolveInitialSubtitleTrackIndex(
+                requestedOrdinal = 0,
+                subtitleTracks = tracks,
+                mountedSubtitles = emptyList(),
+            ),
+        )
     }
 
     @Test

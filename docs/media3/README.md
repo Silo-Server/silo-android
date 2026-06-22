@@ -47,16 +47,20 @@ cases; this document suite remains the Media3 reference.
   `SiloPlayerFactory`, phone / TV track-selection presets, `MediaSessionService`
   consolidation, per-track preflight, fallback matrix, diagnostics, test matrix, and
   an ordered migration plan.
+- **[09 - Direct-play route planning spec](09-direct-play-route-planning-spec.md)** -
+  Playback Core v2 spec for Android TV: Media3/MPV first-class route planning,
+  direct-play-first fallbacks, server/client contract changes, and validation
+  gates for 4K, HDR, Dolby Vision, Atmos, passthrough, and subtitles.
 
 ## Quick answers
 
 - **"I just want to play an MKV."** Read **01 §3** (core APIs) and **02** end-to-end.
   Minimum wiring: `media3-exoplayer` + `media3-datasource-okhttp` + MKV-aware
   `DefaultMediaSourceFactory`. For HLS fallback also add `media3-exoplayer-hls`.
-- **"Why doesn't Dolby Vision work on my TV?"** Check the profile: **03 §1** for the
-  DV profile matrix (Profile 7 is not decodable anywhere on Android), then **06 §1.2**
-  for display-side `HdrCapabilities` probes. DV Profile 5 needs a decoder **and** a
-  DV-capable HDMI link; the panel is the usual culprit.
+- **"Why doesn't Dolby Vision work on my TV?"** Check the profile and selected
+  route. DV Profile 5 needs a decoder **and** a DV-capable HDMI link; Profile 7
+  is not a launch-safe Android TV DV direct-play claim and needs the fallback
+  policy in **09**.
 - **"Why is Atmos silent on my AVR?"** Passthrough gate failed. Read **04 §4** on
   `AudioCapabilities.supportsEncoding(...)` and **05 §1** on what has to match for
   TrueHD / E-AC-3 JOC to leave the device as a bitstream. Common causes: eARC not
@@ -69,9 +73,10 @@ cases; this document suite remains the Media3 reference.
   3:2 pulldown judder. Turn on refresh-rate matching — **06 §1.3** — and enable
   tunneling — **05 §2**. If the AVR adds fixed latency, tunneling is also what gives
   you frame-accurate sync without estimating the latency in app code.
-- **"How do I handle DV Profile 7 sources?"** You can't on Android. Remux server-side
-  to Profile 8.1. **03 §1** and **02 §4.1** both flag this; **08 §7** has the
-  user-facing message and the fallback hook.
+- **"How do I handle DV Profile 7 sources?"** Do not advertise P7 as Android TV
+  Dolby Vision direct play for launch. Use HDR10 base-layer playback, Profile 8.1
+  normalization/remux, or transcode with metadata-loss warnings. **09** is the
+  current route-planning source of truth.
 - **"Where does the `AnalyticsListener` go?"** **08 §8**. Minimum set: decoder init
   name, dropped-frames count, audio underruns. Pair with Media3's built-in
   `EventLogger` under `BuildConfig.DEBUG` for bring-up.

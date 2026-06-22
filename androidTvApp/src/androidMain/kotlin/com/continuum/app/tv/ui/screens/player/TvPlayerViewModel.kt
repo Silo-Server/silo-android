@@ -100,6 +100,41 @@ internal fun preferredAutoTextSubtitleIndex(
     }?.index
 }
 
+internal fun resolveInitialSubtitleTrackIndex(
+    requestedOrdinal: Int,
+    subtitleTracks: List<PlayerTrackEntry>,
+    mountedSubtitles: List<PlayerSubtitleInfo>,
+): Int? {
+    val requested = mountedSubtitles.getOrNull(requestedOrdinal)
+        ?: mountedSubtitles.firstOrNull { it.index == requestedOrdinal }
+        ?: return null
+
+    return subtitleTracks.firstOrNull { it.matchesMountedSubtitle(requested) }?.index
+}
+
+private fun PlayerTrackEntry.matchesMountedSubtitle(subtitle: PlayerSubtitleInfo): Boolean {
+    val targetLabel = subtitle.label?.trim()?.takeIf { it.isNotBlank() }
+    if (targetLabel != null) {
+        val rawLabel = label.trim()
+        val friendlyLabel = displayLabel.trim()
+        if (rawLabel == targetLabel || friendlyLabel == targetLabel) return true
+        if (
+            rawLabel.equals(targetLabel, ignoreCase = true) ||
+            friendlyLabel.equals(targetLabel, ignoreCase = true)
+        ) {
+            return true
+        }
+    }
+
+    val targetLanguage = normalizedSubtitleLanguage(subtitle.language)
+    val trackLanguage = normalizedSubtitleLanguage(language)
+    if (targetLanguage == null || trackLanguage != targetLanguage) return false
+
+    val targetCodec = normalizedSubtitleCodec(subtitle.codec ?: subtitleCodecFromUrl(subtitle.url))
+    val trackCodec = normalizedSubtitleCodec(codecOrMime)
+    return targetCodec == null || trackCodec == null || targetCodec == trackCodec
+}
+
 private fun normalizedSubtitleLanguage(language: String?): String? {
     val primary = language
         ?.trim()
@@ -119,6 +154,27 @@ private fun normalizedSubtitleLanguage(language: String?): String? {
         else -> primary
     }
 }
+
+private fun normalizedSubtitleCodec(codecOrMime: String?): String? {
+    val normalized = codecOrMime
+        ?.trim()
+        ?.lowercase()
+        ?.replace('_', '-')
+        ?: return null
+    return when {
+        normalized == "ass" || normalized == "ssa" || normalized.contains("x-ssa") -> "ssa"
+        normalized == "srt" || normalized.contains("subrip") -> "srt"
+        normalized == "vtt" || normalized.contains("webvtt") -> "vtt"
+        normalized.contains("pgs") || normalized.contains("hdmv") -> "pgs"
+        normalized.contains("dvd") || normalized.contains("dvb") -> "dvd"
+        else -> normalized
+    }
+}
+
+private fun subtitleCodecFromUrl(url: String): String =
+    url.substringBefore('?')
+        .substringBefore('#')
+        .substringAfterLast('.', "")
 
 /**
  * How the video surface scales to fill the player area. Session-scoped
@@ -1187,14 +1243,10 @@ class TvPlayerViewModel(
      * -1 = Off: emitted immediately; the screen's collector finds no match and
      * calls selectSubtitle(null), turning subtitles off.
      *
-     * A positive value is the catalog subtitle track index. NOTE: that index
-     * space is not guaranteed identical to the player's flattened text-track
-     * ordinal (PlayerTrackEntry.index), so this is best-effort and must be
-     * verified on-device (embedded vs sidecar ordering). We consume the pending
-     * value on the FIRST tracks-changed that actually carries subtitle tracks —
-     * never lingering — so a later subtitle download/refresh can't make a stale
-     * pre-selection fire and fight the label-based auto-select path. If no track
-     * with that index is present we leave the preferred-language auto path alone.
+     * A positive value is the detail selector's ordinal into
+     * FileVersion.subtitleTracks, not Media3's flattened text-track ordinal.
+     * Resolve it through the mounted server subtitle metadata first so embedded
+     * CEA-608 or other player-discovered tracks do not shift the target.
      */
     private fun resolvePendingInitialSubtitle(subtitle: List<PlayerTrackEntry>) {
         val index = pendingInitialSubtitleIndex ?: return
@@ -1207,7 +1259,11 @@ class TvPlayerViewModel(
         // only act during initial load.
         if (subtitle.isEmpty()) return
         pendingInitialSubtitleIndex = null
-        if (subtitle.any { it.index == index }) _subtitleSelectRequests.tryEmit(index)
+        resolveInitialSubtitleTrackIndex(
+            requestedOrdinal = index,
+            subtitleTracks = subtitle,
+            mountedSubtitles = _uiState.value.subtitleUrls,
+        )?.let { _subtitleSelectRequests.tryEmit(it) }
     }
 
     fun onSubtitleSelectionApplied(index: Int) {

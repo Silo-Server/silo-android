@@ -152,7 +152,11 @@ open class PlaybackSessionManager(
                 ApiResult.Success(
                     session.copy(
                         sessionId = tc.sessionId,
-                        playMethod = com.continuum.app.model.playback.PlayMethod.TRANSCODE,
+                        playMethod = if (isRemux) {
+                            com.continuum.app.model.playback.PlayMethod.REMUX
+                        } else {
+                            com.continuum.app.model.playback.PlayMethod.TRANSCODE
+                        },
                         streamUrl = tc.manifestUrl,
                         durationSeconds = tc.durationSeconds ?: session.durationSeconds,
                         position = tc.playerStartSeconds,

@@ -1,5 +1,6 @@
 package com.continuum.app.common.player
 
+import androidx.media3.common.MimeTypes
 import com.continuum.app.model.playback.PlayMethod
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -49,6 +50,13 @@ class VideoPlayerMediaSpecTest {
         assertEquals("video/mp4", videoContainerMimeType("m4v"))
         assertEquals("video/webm", videoContainerMimeType("webm"))
         assertEquals(null, videoContainerMimeType(null))
+    }
+
+    @Test
+    fun mediaItemMimeTypeKeepsRemuxAsHlsManifest() {
+        assertEquals(MimeTypes.APPLICATION_M3U8, mediaItemMimeType(PlayMethod.REMUX, "mkv"))
+        assertEquals(MimeTypes.APPLICATION_M3U8, mediaItemMimeType(PlayMethod.TRANSCODE, "mp4"))
+        assertEquals("video/x-matroska", mediaItemMimeType(PlayMethod.DIRECT, "mkv"))
     }
 
     private fun baseSpec(

@@ -282,11 +282,7 @@ class ContinuumPlayerFactory(
             builder.setMediaMetadata(metadataBuilder.build())
         }
 
-        when (playMethod) {
-            PlayMethod.TRANSCODE -> builder.setMimeType(MimeTypes.APPLICATION_M3U8)
-            PlayMethod.REMUX -> builder.setMimeType("video/mp4")
-            PlayMethod.DIRECT -> videoContainerMimeType(container)?.let { builder.setMimeType(it) }
-        }
+        mediaItemMimeType(playMethod, container)?.let { builder.setMimeType(it) }
 
         return builder.build()
     }
@@ -336,3 +332,14 @@ internal fun videoContainerMimeType(container: String?): String? {
         else -> null
     }
 }
+
+internal fun mediaItemMimeType(playMethod: PlayMethod, container: String?): String? =
+    when (playMethod) {
+        // Both full transcode and remux are served through the transcode-start
+        // endpoint as an HLS manifest. Keep the semantic playMethod distinct so
+        // engine routing can still choose MPV for remuxed ASS/SSA subtitles.
+        PlayMethod.TRANSCODE,
+        PlayMethod.REMUX,
+        -> MimeTypes.APPLICATION_M3U8
+        PlayMethod.DIRECT -> videoContainerMimeType(container)
+    }

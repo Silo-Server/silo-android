@@ -676,8 +676,9 @@ fun TvPlayerScreen(
                 fileId = preferredFileId,
                 playMethod = method,
                 formFactor = VideoPlaybackFormFactor.Tv,
-                hasStyledSubtitles = state.subtitleUrls
-                    .any { it.codec?.lowercase() in setOf("ass", "ssa") },
+                hasHardContainer = method == com.continuum.app.model.playback.PlayMethod.DIRECT &&
+                    isHardPlaybackContainer(state.container),
+                hasStyledSubtitles = state.subtitleUrls.any { it.isStyledSubtitle() },
             )
             controller.sendCustomCommand(
                 SessionCommand(PlaybackEngineCommand.SET_ENGINE, Bundle.EMPTY),
@@ -1827,6 +1828,23 @@ private fun PlayerTrackEntry.toVideoTrackEntry(): VideoPlayerTrackEntry =
         language = language,
         isSelected = isSelected,
     )
+
+internal fun com.continuum.app.model.playback.PlayerSubtitleInfo.isStyledSubtitle(): Boolean {
+    val normalizedCodec = codec
+        ?.trim()
+        ?.lowercase()
+        ?.replace('_', '-')
+    val normalizedUrl = url.substringBefore('?').substringBefore('#').lowercase()
+    return normalizedCodec in setOf("ass", "ssa", "text/x-ssa") ||
+        normalizedUrl.endsWith(".ass") ||
+        normalizedUrl.endsWith(".ssa")
+}
+
+internal fun isHardPlaybackContainer(container: String?): Boolean =
+    when (container?.trim()?.trimStart('.')?.lowercase()) {
+        "mkv", "matroska" -> true
+        else -> false
+    }
 
 private const val TAG = "TvPlayerScreen"
 
