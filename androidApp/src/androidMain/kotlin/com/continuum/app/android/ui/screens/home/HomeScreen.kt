@@ -3,6 +3,7 @@ package com.continuum.app.android.ui.screens.home
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -47,7 +48,8 @@ import androidx.compose.ui.unit.dp
 import com.continuum.app.android.ui.components.ContinuumWordmark
 import com.continuum.app.android.ui.components.EmptyStateView
 import com.continuum.app.android.ui.components.ErrorView
-import com.continuum.app.android.ui.components.LoadingIndicator
+import com.continuum.app.android.ui.components.MediaRowSkeleton
+import com.continuum.app.android.ui.components.rememberShimmerProgress
 import com.continuum.app.android.ui.screens.profiles.ProfileAvatar
 import com.continuum.app.model.profile.Profile
 import com.continuum.app.model.section.splitFeatured
@@ -111,7 +113,7 @@ fun HomeScreen(
             .background(MaterialTheme.colorScheme.background),
     ) {
         when {
-            state.isLoading && regularSections.isEmpty() -> LoadingIndicator()
+            state.isLoading && regularSections.isEmpty() -> HomeLoadingSkeleton()
             state.error != null && regularSections.isEmpty() -> ErrorView(
                 message = state.error ?: "Something went wrong",
                 onRetry = { viewModel.loadSections() },
@@ -182,6 +184,24 @@ fun HomeScreen(
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,
         )
+    }
+}
+
+@Composable
+private fun HomeLoadingSkeleton() {
+    val shimmer = rememberShimmerProgress()
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        Spacer(
+            modifier = Modifier
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .height(64.dp),
+        )
+        repeat(4) {
+            MediaRowSkeleton(progress = shimmer)
+        }
     }
 }
 

@@ -82,6 +82,9 @@ import com.continuum.app.android.ui.components.ErrorView
 import com.continuum.app.android.ui.components.HeroBackdropImage
 import com.continuum.app.android.ui.components.HeroTintBackground
 import com.continuum.app.android.ui.components.MediaGridDefaults
+import com.continuum.app.android.ui.components.MediaRowsSkeleton
+import com.continuum.app.android.ui.components.PosterGridSkeleton
+import com.continuum.app.android.ui.components.rememberShimmerProgress
 import com.continuum.app.android.ui.screens.browse.CatalogGrid
 import com.continuum.app.android.ui.screens.home.FeaturedCarousel
 import com.continuum.app.android.ui.screens.home.HomeSectionRow
@@ -657,12 +660,12 @@ private fun RecommendedTabContent(
 ) {
     when {
         state.isLoadingSections && state.sections.isEmpty() -> {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
+            MediaRowsSkeleton(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = LibrariesChromeContentHeight)
+                    .windowInsetsPadding(WindowInsets.statusBars),
+            )
         }
         state.sectionsError != null && state.sections.isEmpty() -> {
             ErrorView(
@@ -800,12 +803,10 @@ private fun BrowseTabContent(
 
         when {
             state.isLoadingCatalog && state.catalogItems.isEmpty() -> {
-                Box(
+                PosterGridSkeleton(
+                    progress = rememberShimmerProgress(),
                     modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator()
-                }
+                )
             }
             state.catalogError != null && state.catalogItems.isEmpty() -> {
                 ErrorView(
@@ -852,12 +853,12 @@ private fun CollectionsTabContent(
         LibrariesChromeContentHeight
     when {
         state.isLoadingCollections && state.collections.isEmpty() -> {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
+            PosterGridSkeleton(
+                progress = rememberShimmerProgress(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = contentTopPadding),
+            )
         }
         state.collectionsError != null && state.collections.isEmpty() -> {
             ErrorView(

@@ -29,8 +29,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.continuum.app.android.downloads.LEGACY_PUBLIC_DOWNLOAD_PERMISSION
 import com.continuum.app.android.downloads.hasLegacyPublicDownloadPermission
+import com.continuum.app.android.ui.components.DetailLoadingSkeleton
 import com.continuum.app.android.ui.components.ErrorView
-import com.continuum.app.android.ui.components.LoadingIndicator
 import com.continuum.app.android.ui.screens.downloads.openDownloadTargetInExternalApp
 import com.continuum.app.android.ui.util.playbackResumePosition
 import com.continuum.app.common.downloads.DownloadEnqueuer
@@ -126,7 +126,7 @@ fun ItemDetailScreen(
     ) {
         when {
             state.isLoading && state.detail == null -> {
-                LoadingIndicator()
+                DetailLoadingSkeleton()
             }
 
             state.error != null && state.detail == null -> {

@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,6 +40,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.continuum.app.android.ui.components.PosterGridSkeleton
+import com.continuum.app.android.ui.components.rememberShimmerProgress
 import com.continuum.app.android.ui.theme.ContinuumSurfaceElevated
 
 /**
@@ -143,12 +144,7 @@ fun BrowseScreen(
             // Content area
             when {
                 state.isLoading && state.items.isEmpty() -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator()
-                    }
+                    PosterGridSkeleton(progress = rememberShimmerProgress())
                 }
 
                 state.error != null && state.items.isEmpty() -> {
