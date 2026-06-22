@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.continuum.app.common.player.PlaybackAnalyticsListener
 import com.continuum.app.common.player.PlaybackCapabilityDetector
+import com.continuum.app.common.player.PlaybackRecoveryAction
+import com.continuum.app.common.player.PlaybackRecoveryPlanner
 import com.continuum.app.common.player.PlaybackSessionLifecycle
 import com.continuum.app.common.player.PlaybackSessionManager
 import com.continuum.app.common.player.PlayerNotice
@@ -19,13 +21,19 @@ import com.continuum.app.common.player.backend.VideoBackendCapabilities
 import com.continuum.app.common.player.video.VideoPlaybackSessionCoordinator
 import com.continuum.app.common.player.video.VideoPlaybackStartRequest
 import com.continuum.app.common.player.video.VideoPlayerUiState
+import com.continuum.app.common.player.video.resolvedPlaybackDelivery
 import com.continuum.app.common.settings.PlayerSettingsStore
 import com.continuum.app.domain.player.IntroAutoSkipController
 import com.continuum.app.domain.player.IntroAutoSkipState
 import com.continuum.app.model.catalog.TimeRange
 import com.continuum.app.model.catalog.VersionChapter
 import com.continuum.app.model.settings.SubtitleAppearance
+import com.continuum.app.model.playback.PlaybackDelivery
 import com.continuum.app.model.playback.PlayMethod
+import com.continuum.app.model.playback.PlaybackEngineKind
+import com.continuum.app.model.playback.PlaybackExecutionPlan
+import com.continuum.app.model.playback.PlaybackRouteFamily
+import com.continuum.app.model.playback.PlaybackRouteEventRequest
 import com.continuum.app.model.playback.PlaybackSessionResponse
 import com.continuum.app.model.playback.PlayerSubtitleInfo
 import com.continuum.app.model.playback.mergeDownloadedSubtitles
@@ -442,6 +450,7 @@ class TvPlayerViewModel(
     private val initialAudioTrackIndex: Int? = launchArgs.initialAudioTrackIndex
     private var pendingInitialSubtitleIndex: Int? = launchArgs.initialSubtitleTrackIndex
     private var autoTextSubtitleSelectionAttempted = false
+    private val recoveryPlanner = PlaybackRecoveryPlanner()
 
     data class UiState(
         val isLoading: Boolean = true,
@@ -456,6 +465,8 @@ class TvPlayerViewModel(
         val artworkUrl: String? = null,
         val sessionId: String? = null,
         val playMethod: PlayMethod? = null,
+        val playbackPlan: PlaybackExecutionPlan? = null,
+        val delivery: PlaybackDelivery? = null,
         val streamUrl: String? = null,
         val container: String? = null,
         val serverUrl: String = "",
@@ -748,6 +759,7 @@ class TvPlayerViewModel(
                         roomId = roomId,
                         resumePositionOverride = startPositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,
+                        subtitleTrackIndex = pendingInitialSubtitleIndex,
                         suppressResumeRewind = suppressResumeRewind,
                     ),
                 )) {
@@ -760,6 +772,8 @@ class TvPlayerViewModel(
                                 artworkUrl = result.artworkUrl,
                                 sessionId = result.sessionId,
                                 playMethod = result.playMethod,
+                                playbackPlan = result.playbackPlan,
+                                delivery = result.delivery,
                                 streamUrl = result.streamUrl,
                                 container = result.container,
                                 serverUrl = result.serverUrl,
@@ -835,7 +849,7 @@ class TvPlayerViewModel(
      */
     fun onUnsupportedPlayback(reason: com.continuum.app.common.player.Playability) {
         val state = _uiState.value
-        val sessionId = state.sessionId ?: return
+        if (state.sessionId == null) return
 
         val notice = when (reason) {
             is com.continuum.app.common.player.Playability.UnsupportedDvProfile ->
@@ -850,10 +864,22 @@ class TvPlayerViewModel(
         }
         Log.i(TAG, "Preflight fallback: $notice")
 
+        val recoveryAction = recoveryPlanner.planForPlayability(state.playbackPlan, reason)
+        if (applyAlternateDirectFallback(state, recoveryAction)) return
+        startServerRecoveryFallback(notice, recoveryAction, state)
+    }
+
+    private fun startServerRecoveryFallback(
+        notice: String,
+        recoveryAction: PlaybackRecoveryAction,
+        state: UiState,
+    ) {
         viewModelScope.launch {
+            val sessionId = state.sessionId ?: return@launch
             val activeFileId = state.selectedFileId ?: state.mediaFileId ?: return@launch
             val capabilities = capabilityDetector.detect()
             val selectedAudioIndex = state.audioTracks.firstOrNull { it.isSelected }?.index ?: 0
+            val selectedSubtitleIndex = selectedSubtitleTrackIndex(state)
             val sessionResponse = PlaybackSessionResponse(
                 sessionId = sessionId,
                 userId = 0,
@@ -867,12 +893,45 @@ class TvPlayerViewModel(
                 durationSeconds = state.duration,
                 subtitleUrls = state.subtitleUrls,
                 playbackInfo = null,
+                playbackPlan = state.playbackPlan,
+            )
+            val fallbackMode = when (recoveryAction) {
+                is PlaybackRecoveryAction.ServerRemux -> PlaybackSessionManager.TranscodeMode.REMUX
+                is PlaybackRecoveryAction.AlternateDirectEngine -> PlaybackSessionManager.TranscodeMode.REMUX
+                is PlaybackRecoveryAction.ServerTranscode,
+                PlaybackRecoveryAction.None,
+                -> PlaybackSessionManager.TranscodeMode.FULL
+            }
+            playbackSessionManager.reportRouteEvent(
+                sessionId = sessionId,
+                request = PlaybackRouteEventRequest(
+                    planId = state.playbackPlan?.planId,
+                    fromEngine = state.playbackPlan?.engine,
+                    toEngine = PlaybackEngineKind.MEDIA3_HLS,
+                    delivery = state.playbackPlan?.delivery ?: state.delivery,
+                    routeFamily = state.playbackPlan?.routeFamily,
+                    fallbackReason = fallbackMode.name.lowercase(),
+                    errorClass = when (recoveryAction) {
+                        is PlaybackRecoveryAction.ServerRemux -> recoveryAction.errorClass
+                        is PlaybackRecoveryAction.ServerTranscode -> recoveryAction.errorClass
+                        is PlaybackRecoveryAction.AlternateDirectEngine -> recoveryAction.errorClass
+                        PlaybackRecoveryAction.None -> null
+                    },
+                    decoderName = state.stats.videoDecoderName ?: state.stats.audioDecoderName,
+                    droppedFrames = state.stats.droppedFrames,
+                    audioUnderruns = state.stats.audioUnderruns,
+                    subtitleRenderer = state.stats.subtitleRendering,
+                    claims = state.playbackPlan?.claims,
+                    blockers = state.playbackPlan?.capabilities?.blockers.orEmpty(),
+                ),
             )
             when (val r = playbackSessionManager.startTranscodeFallback(
                 session = sessionResponse,
                 seekSeconds = state.position,
                 resolution = "",
-                mode = PlaybackSessionManager.TranscodeMode.FULL,
+                mode = fallbackMode,
+                audioTrackIndex = selectedAudioIndex,
+                subtitleTrackIndex = selectedSubtitleIndex,
             )) {
                 is ApiResult.Success -> {
                     val fallback = r.data
@@ -882,8 +941,10 @@ class TvPlayerViewModel(
                             fileId = activeFileId,
                             capabilities = capabilities,
                             audioTrackIndex = fallback.audioTrackIndex,
+                            subtitleTrackIndex = selectedSubtitleIndex,
                             qualityPreference = null,
                             startPosition = fallback.position,
+                            preserveDirectAudioSelection = true,
                         ),
                         session = fallback,
                     )
@@ -895,6 +956,8 @@ class TvPlayerViewModel(
                             error = null,
                             sessionId = fallback.sessionId,
                             playMethod = fallback.playMethod,
+                            playbackPlan = fallback.playbackPlan,
+                            delivery = fallback.resolvedPlaybackDelivery(),
                             streamUrl = fallback.streamUrl,
                             startPosition = fallback.position,
                         )
@@ -908,6 +971,63 @@ class TvPlayerViewModel(
                 }
             }
         }
+    }
+
+    private fun applyAlternateDirectFallback(
+        state: UiState,
+        recoveryAction: PlaybackRecoveryAction,
+    ): Boolean {
+        val action = recoveryAction as? PlaybackRecoveryAction.AlternateDirectEngine ?: return false
+        val plan = state.playbackPlan ?: return false
+        val sessionId = state.sessionId ?: return false
+        val nextRouteFamily = when (action.engine) {
+            PlaybackEngineKind.MPV_DIRECT -> PlaybackRouteFamily.COMPATIBILITY_DIRECT
+            PlaybackEngineKind.MEDIA3_DIRECT -> PlaybackRouteFamily.PLATFORM_NATIVE
+            else -> plan.routeFamily
+        }
+        viewModelScope.launch {
+            playbackSessionManager.reportRouteEvent(
+                sessionId = sessionId,
+                request = PlaybackRouteEventRequest(
+                    planId = plan.planId,
+                    fromEngine = plan.engine,
+                    toEngine = action.engine,
+                    delivery = plan.delivery,
+                    routeFamily = nextRouteFamily,
+                    fallbackReason = "alternate_direct_engine",
+                    errorClass = action.errorClass,
+                    decoderName = state.stats.videoDecoderName ?: state.stats.audioDecoderName,
+                    droppedFrames = state.stats.droppedFrames,
+                    audioUnderruns = state.stats.audioUnderruns,
+                    subtitleRenderer = state.stats.subtitleRendering,
+                    claims = plan.claims,
+                    blockers = plan.capabilities.blockers,
+                ),
+            )
+        }
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                error = null,
+                playbackPlan = plan.copy(
+                    engine = action.engine,
+                    routeFamily = nextRouteFamily,
+                    timeline = plan.timeline.copy(playerStartSeconds = state.position),
+                    decisionTrace = plan.decisionTrace +
+                        "client_fallback=alternate_direct_engine:${plan.engine}->${action.engine}",
+                ),
+                startPosition = state.position,
+            )
+        }
+        return true
+    }
+
+    private fun selectedSubtitleTrackIndex(state: UiState): Int {
+        val selected = state.subtitleTracks.firstOrNull { it.isSelected } ?: return -1
+        return state.subtitleUrls
+            .firstOrNull { selected.matchesMountedSubtitle(it) }
+            ?.index
+            ?: selected.index
     }
 
     fun onPositionChanged(positionMs: Long, durationMs: Long) {
@@ -1723,6 +1843,8 @@ class TvPlayerViewModel(
                 isLoading = false,
                 sessionId = null,
                 playMethod = null,
+                playbackPlan = null,
+                delivery = null,
                 streamUrl = null,
                 container = null,
                 subtitleUrls = emptyList(),
@@ -1742,11 +1864,37 @@ class TvPlayerViewModel(
      * an actionable error. The error UI offers [retry].
      */
     fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+        val state = _uiState.value
+        val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
+            ?: "Playback failed. Please try again."
+        val recoveryAction = recoveryPlanner.planForPlayerError(state.playbackPlan, error)
+        if (applyAlternateDirectFallback(state, recoveryAction)) return
+        if (state.sessionId != null && recoveryAction != PlaybackRecoveryAction.None) {
+            startServerRecoveryFallback(message, recoveryAction, state)
+            return
+        }
         _uiState.update {
             it.copy(
                 isLoading = false,
-                error = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
-                    ?: "Playback failed. Please try again.",
+                error = message,
+            )
+        }
+    }
+
+    fun onEngineSwitchFailed(message: String) {
+        val state = _uiState.value
+        if (state.sessionId != null) {
+            startServerRecoveryFallback(
+                notice = message,
+                recoveryAction = PlaybackRecoveryAction.ServerRemux("engine_switch_failed"),
+                state = state,
+            )
+            return
+        }
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                error = message,
             )
         }
     }

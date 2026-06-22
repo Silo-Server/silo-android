@@ -58,7 +58,7 @@ object DisplayHdrProbe {
      */
     fun intersect(codec: HdrCapabilities, display: HdrCapabilities): HdrCapabilities {
         val dvIntersection = codec.dolbyVisionProfiles
-            .filter { display.dolbyVisionProfiles.isNotEmpty() }
+            .filter { it in display.dolbyVisionProfiles }
         return HdrCapabilities(
             hdr10 = codec.hdr10 && display.hdr10,
             hdr10Plus = codec.hdr10Plus && display.hdr10Plus,

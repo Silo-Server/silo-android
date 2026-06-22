@@ -107,4 +107,21 @@ class TvPlayerScreenStartPositionTest {
             "TV player must not refresh media after exit has been requested",
         )
     }
+
+    @Test
+    fun tvPlayerAwaitsEngineSwitchBeforeMounting() {
+        val mountEffect = source
+            .substringAfter("// Prepare the player when a stream URL becomes available.")
+            .substringBefore("// Subtitle refresh")
+
+        assertTrue(mountEffect.contains("awaitEngineSwitch(engineRequest)"))
+        assertTrue(
+            mountEffect.indexOf("awaitEngineSwitch(engineRequest)") <
+                mountEffect.indexOf("backend.mount(mediaSpec)"),
+            "TV player must await SET_ENGINE before mounting media",
+        )
+        assertTrue(mountEffect.contains("plannedEngine = plan?.engine"))
+        assertTrue(mountEffect.contains("val delivery = plan?.delivery ?: state.delivery"))
+        assertTrue(mountEffect.contains("delivery = delivery"))
+    }
 }

@@ -39,6 +39,10 @@ class PlayerViewModelSharedCoordinatorTest {
             "Mobile player ViewModel must preserve explicit resume override semantics",
         )
         assertTrue(
+            viewModelSource.contains("subtitleTrackIndex = initialSubtitleTrackIndex"),
+            "Mobile player ViewModel must pass initial subtitle selection into the shared start request",
+        )
+        assertTrue(
             viewModelSource.contains("videoPlaybackCoordinator.start("),
             "Mobile player ViewModel must delegate remote startup to the shared coordinator",
         )
@@ -76,10 +80,10 @@ class PlayerViewModelSharedCoordinatorTest {
             .substringBefore("fun onPlaybackSpeedChanged")
         val lifecycleStopIndex = onSelectVersionBody.indexOf("sessionLifecycle.stop()")
         val directStopIndex = onSelectVersionBody.indexOf("playbackSessionManager.stopSession(")
-        val startIndex = onSelectVersionBody.indexOf("playbackSessionManager.startSession(")
+        val startIndex = onSelectVersionBody.indexOf("playbackSessionManager.startSessionV2(")
 
         assertTrue(lifecycleStopIndex >= 0, "version switch must stop lifecycle ownership first")
-        assertTrue(startIndex >= 0, "version switch must still start the selected version")
+        assertTrue(startIndex >= 0, "version switch must still start the selected version through v2 planning")
         assertTrue(
             lifecycleStopIndex < startIndex,
             "version switch must cancel the old lifecycle session before starting the new one",
@@ -87,6 +91,21 @@ class PlayerViewModelSharedCoordinatorTest {
         assertTrue(
             directStopIndex < 0 || lifecycleStopIndex < directStopIndex,
             "direct session stop must not race the lifecycle owner",
+        )
+        assertTrue(
+            onSelectVersionBody.contains("val resolvedStartPosition = if (") &&
+                onSelectVersionBody.contains("resolved.sessionId != session.sessionId") &&
+                onSelectVersionBody.contains("startPosition = resolvedStartPosition"),
+            "version switch fallback sessions must use the returned player start position",
+        )
+        assertTrue(
+            onSelectVersionBody.contains("requestedOriginalPlaybackMethod(") &&
+                onSelectVersionBody.contains("audioTrackIndex = currentState.selectedAudioIndex"),
+            "version switch direct-play requests must consider the currently selected audio track",
+        )
+        assertTrue(
+            onSelectVersionBody.contains("playMethod = requestedPlayMethod"),
+            "version switch must pass the resolved direct-play preference to session planning",
         )
     }
 
@@ -126,12 +145,37 @@ class PlayerViewModelSharedCoordinatorTest {
             "Mobile starter must expose MobileVideoPlaybackStarter",
         )
         assertTrue(
-            starterSource.contains("startSession("),
-            "Mobile starter must start playback sessions",
+            starterSource.contains("startSessionV2("),
+            "Mobile starter must start plan-aware playback sessions",
+        )
+        assertTrue(
+            starterSource.contains("detectPlaybackContext(") &&
+                starterSource.contains("formFactor = \"mobile\""),
+            "Mobile starter must send a mobile client playback context for route planning",
+        )
+        assertTrue(
+            starterSource.contains("subtitleTrackIndex = request.subtitleTrackIndex"),
+            "Mobile starter must pass subtitle selection into playback planning",
         )
         assertTrue(
             starterSource.contains("startTranscodeFallback("),
             "Mobile starter must preserve remux/transcode fallback",
+        )
+        assertTrue(
+            starterSource.contains("playbackPlan = resolved.playbackPlan"),
+            "Mobile starter must return the server playback plan to the player UI",
+        )
+        assertTrue(
+            starterSource.contains("session.canPlayResolvedStreamDirectly()") &&
+                starterSource.contains("delivery = resolvedDelivery"),
+            "Mobile starter must direct-play legacy progressive remux sessions without HLS fallback",
+        )
+        assertTrue(
+            starterSource.contains("preserveDirectSelection") &&
+                starterSource.contains("requestedPlayMethod == PlayMethod.DIRECT") &&
+                starterSource.contains("audioTrackIndex = request.audioTrackIndex") &&
+                starterSource.contains("preserveDirectAudioSelection = preserveDirectSelection"),
+            "Mobile starter must preserve client-side audio selection when requesting original direct playback",
         )
         assertTrue(
             starterSource.contains("resolvePlaybackStartPosition("),

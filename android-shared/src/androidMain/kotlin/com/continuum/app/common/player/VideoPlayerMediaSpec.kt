@@ -1,11 +1,13 @@
 package com.continuum.app.common.player
 
 import com.continuum.app.model.playback.PlayMethod
+import com.continuum.app.model.playback.PlaybackDelivery
 import com.continuum.app.model.playback.PlayerSubtitleInfo
 
 data class VideoPlayerMediaSpec(
     val streamUrl: String,
     val playMethod: PlayMethod,
+    val delivery: PlaybackDelivery? = null,
     val serverUrl: String,
     val container: String? = null,
     val subtitles: List<PlayerSubtitleInfo> = emptyList(),
@@ -14,6 +16,7 @@ data class VideoPlayerMediaSpec(
     val artworkUrl: String? = null,
     val startPositionSeconds: Double = 0.0,
     val durationSeconds: Double = 0.0,
+    val audioPassthroughCodecs: List<String> = emptyList(),
 ) {
     val startPositionMs: Long
         get() {

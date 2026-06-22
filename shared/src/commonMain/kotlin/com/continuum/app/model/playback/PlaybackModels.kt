@@ -23,7 +23,8 @@ data class PlaybackSessionResponse(
     @SerialName("audio_track_index") val audioTrackIndex: Int = 0,
     @SerialName("duration_seconds") val durationSeconds: Double? = null,
     @SerialName("subtitle_urls") val subtitleUrls: List<PlayerSubtitleInfo>? = null,
-    @SerialName("playback_info") val playbackInfo: PlaybackInfo? = null
+    @SerialName("playback_info") val playbackInfo: PlaybackInfo? = null,
+    @SerialName("playback_plan") val playbackPlan: PlaybackExecutionPlan? = null,
 )
 
 @Serializable
@@ -88,6 +89,222 @@ data class ClientCodecCapabilities(
     @SerialName("audio_passthrough") val audioPassthrough: AudioPassthroughCapabilities? = null,
 )
 
+@Serializable
+enum class PlaybackDelivery {
+    @SerialName("original_http") ORIGINAL_HTTP,
+    @SerialName("server_remux_hls") SERVER_REMUX_HLS,
+    @SerialName("server_remux_progressive") SERVER_REMUX_PROGRESSIVE,
+    @SerialName("server_transcode_hls") SERVER_TRANSCODE_HLS,
+    @SerialName("client_local_normalization") CLIENT_LOCAL_NORMALIZATION,
+}
+
+@Serializable
+enum class PlaybackEngineKind {
+    @SerialName("media3_direct") MEDIA3_DIRECT,
+    @SerialName("mpv_direct") MPV_DIRECT,
+    @SerialName("media3_progressive_remux") MEDIA3_PROGRESSIVE_REMUX,
+    @SerialName("media3_hls") MEDIA3_HLS,
+    @SerialName("client_local_loopback") CLIENT_LOCAL_LOOPBACK,
+    @SerialName("external_player") EXTERNAL_PLAYER,
+}
+
+@Serializable
+enum class PlaybackRouteFamily {
+    @SerialName("platform_native") PLATFORM_NATIVE,
+    @SerialName("compatibility_direct") COMPATIBILITY_DIRECT,
+    @SerialName("server_adaptive") SERVER_ADAPTIVE,
+    @SerialName("client_normalized") CLIENT_NORMALIZED,
+}
+
+@Serializable
+data class PlaybackExecutionPlan(
+    @SerialName("plan_id") val planId: String,
+    @SerialName("protocol_version") val protocolVersion: Int = 2,
+    val delivery: PlaybackDelivery,
+    val engine: PlaybackEngineKind,
+    @SerialName("route_family") val routeFamily: PlaybackRouteFamily,
+    val stream: PlaybackStreamRequest = PlaybackStreamRequest(),
+    val timeline: PlaybackTimeline = PlaybackTimeline(),
+    @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracks = SelectedPlaybackTracks(),
+    val source: PlaybackSourceMetadata = PlaybackSourceMetadata(),
+    val capabilities: RouteCapabilitySnapshot = RouteCapabilitySnapshot(),
+    val requirements: RouteRequirements = RouteRequirements(),
+    val claims: PlaybackValidationClaims = PlaybackValidationClaims(),
+    val fallbacks: List<PlaybackFallbackCandidate> = emptyList(),
+    @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
+    @SerialName("decision_trace") val decisionTrace: List<String> = emptyList(),
+)
+
+@Serializable
+data class PlaybackStreamRequest(
+    val url: String? = null,
+    @SerialName("stream_type") val streamType: String? = null,
+    @SerialName("play_method") val playMethod: PlayMethod? = null,
+)
+
+@Serializable
+data class PlaybackTimeline(
+    @SerialName("player_start_seconds") val playerStartSeconds: Double = 0.0,
+    @SerialName("stream_origin_seconds") val streamOriginSeconds: Double = 0.0,
+    @SerialName("timeline_offset_seconds") val timelineOffsetSeconds: Double = 0.0,
+    @SerialName("can_seek_anywhere") val canSeekAnywhere: Boolean = true,
+)
+
+@Serializable
+data class SelectedPlaybackTracks(
+    @SerialName("audio_index") val audioIndex: Int? = null,
+    @SerialName("subtitle_index") val subtitleIndex: Int? = null,
+)
+
+@Serializable
+data class PlaybackSourceMetadata(
+    @SerialName("media_file_id") val mediaFileId: Int? = null,
+    val container: String? = null,
+    @SerialName("video_codec") val videoCodec: String? = null,
+    @SerialName("audio_codec") val audioCodec: String? = null,
+    val resolution: String? = null,
+    @SerialName("hdr_format") val hdrFormat: String? = null,
+    @SerialName("dolby_vision_profile") val dolbyVisionProfile: Int? = null,
+    @SerialName("subtitle_codec") val subtitleCodec: String? = null,
+)
+
+@Serializable
+data class RouteCapabilitySnapshot(
+    @SerialName("engine_available") val engineAvailable: Boolean = true,
+    @SerialName("validated_claims") val validatedClaims: List<String> = emptyList(),
+    val blockers: List<String> = emptyList(),
+)
+
+@Serializable
+data class RouteRequirements(
+    @SerialName("requires_hdr_preservation") val requiresHdrPreservation: Boolean = false,
+    @SerialName("requires_dolby_vision_preservation") val requiresDolbyVisionPreservation: Boolean = false,
+    @SerialName("requires_audio_passthrough") val requiresAudioPassthrough: Boolean = false,
+    @SerialName("requires_ass_fidelity") val requiresAssFidelity: Boolean = false,
+    @SerialName("requires_bitmap_subtitles") val requiresBitmapSubtitles: Boolean = false,
+)
+
+@Serializable
+data class PlaybackValidationClaims(
+    val video: VideoValidationClaims = VideoValidationClaims(),
+    val audio: AudioValidationClaims = AudioValidationClaims(),
+    val subtitles: SubtitleValidationClaims = SubtitleValidationClaims(),
+)
+
+@Serializable
+data class VideoValidationClaims(
+    @SerialName("hdr10") val hdr10: Boolean = false,
+    @SerialName("hdr10_plus") val hdr10Plus: Boolean = false,
+    val hlg: Boolean = false,
+    @SerialName("dolby_vision") val dolbyVision: Boolean = false,
+    @SerialName("dolby_vision_reason") val dolbyVisionReason: String? = null,
+)
+
+@Serializable
+data class AudioValidationClaims(
+    val codec: String? = null,
+    val passthrough: Boolean = false,
+    @SerialName("atmos_preserved") val atmosPreserved: Boolean = false,
+    @SerialName("dts_variant") val dtsVariant: String? = null,
+    val reason: String? = null,
+)
+
+@Serializable
+data class SubtitleValidationClaims(
+    @SerialName("ass_styling_preserved") val assStylingPreserved: Boolean = false,
+    @SerialName("bitmap_overlay") val bitmapOverlay: Boolean = false,
+    @SerialName("bitmap_sidecar") val bitmapSidecar: Boolean = false,
+    val reason: String? = null,
+)
+
+@Serializable
+data class PlaybackFallbackCandidate(
+    val delivery: PlaybackDelivery,
+    val engine: PlaybackEngineKind,
+    val reason: String,
+)
+
+@Serializable
+data class PlaybackDegradationWarning(
+    val code: String,
+    val message: String,
+)
+
+@Serializable
+data class PlaybackPlanResponse(
+    @SerialName("playback_plan") val playbackPlan: PlaybackExecutionPlan,
+)
+
+@Serializable
+data class PlaybackRouteEventRequest(
+    @SerialName("plan_id") val planId: String? = null,
+    @SerialName("from_engine") val fromEngine: PlaybackEngineKind? = null,
+    @SerialName("to_engine") val toEngine: PlaybackEngineKind? = null,
+    @SerialName("delivery") val delivery: PlaybackDelivery? = null,
+    @SerialName("route_family") val routeFamily: PlaybackRouteFamily? = null,
+    @SerialName("fallback_reason") val fallbackReason: String? = null,
+    @SerialName("error_class") val errorClass: String? = null,
+    @SerialName("decoder_name") val decoderName: String? = null,
+    @SerialName("dropped_frames") val droppedFrames: Int? = null,
+    @SerialName("audio_underruns") val audioUnderruns: Int? = null,
+    @SerialName("subtitle_renderer") val subtitleRenderer: String? = null,
+    val claims: PlaybackValidationClaims? = null,
+    val blockers: List<String> = emptyList(),
+)
+
+@Serializable
+data class ClientPlaybackContext(
+    @SerialName("protocol_version") val protocolVersion: Int = 2,
+    val platform: String = "android",
+    @SerialName("form_factor") val formFactor: String,
+    @SerialName("app_version") val appVersion: String,
+    val device: PlaybackDeviceContext = PlaybackDeviceContext(),
+    val output: PlaybackOutputContext = PlaybackOutputContext(),
+    val engines: Map<PlaybackEngineKind, EngineCapabilityEnvelope> = emptyMap(),
+)
+
+@Serializable
+data class PlaybackDeviceContext(
+    val manufacturer: String? = null,
+    val model: String? = null,
+    @SerialName("sdk_int") val sdkInt: Int? = null,
+    val abis: List<String> = emptyList(),
+)
+
+@Serializable
+data class PlaybackOutputContext(
+    @SerialName("hdr_details") val hdrDetails: HdrCapabilities? = null,
+    @SerialName("audio_passthrough") val audioPassthrough: AudioPassthroughCapabilities? = null,
+    @SerialName("current_sink") val currentSink: String? = null,
+)
+
+@Serializable
+data class EngineCapabilityEnvelope(
+    val enabled: Boolean = true,
+    @SerialName("supported_on_device") val supportedOnDevice: Boolean = true,
+    @SerialName("failure_reason") val failureReason: String? = null,
+    val containers: List<String> = emptyList(),
+    @SerialName("video_codecs") val videoCodecs: List<String> = emptyList(),
+    @SerialName("audio_decode_codecs") val audioDecodeCodecs: List<String> = emptyList(),
+    @SerialName("audio_passthrough_codecs") val audioPassthroughCodecs: List<String> = emptyList(),
+    @SerialName("max_channels") val maxChannels: Int? = null,
+    @SerialName("hdr_details") val hdrDetails: HdrCapabilities? = null,
+    val subtitles: EngineSubtitleCapabilities = EngineSubtitleCapabilities(),
+    val features: List<String> = emptyList(),
+    @SerialName("auth_header_refresh") val authHeaderRefresh: Boolean = false,
+    @SerialName("validated_claims") val validatedClaims: List<String> = emptyList(),
+)
+
+@Serializable
+data class EngineSubtitleCapabilities(
+    @SerialName("embedded_text") val embeddedText: Boolean = true,
+    @SerialName("sidecar_text") val sidecarText: Boolean = true,
+    @SerialName("ass_styling") val assStyling: Boolean = false,
+    @SerialName("embedded_bitmap") val embeddedBitmap: Boolean = false,
+    @SerialName("sidecar_bitmap") val sidecarBitmap: Boolean = false,
+    @SerialName("font_attachments") val fontAttachments: Boolean = false,
+)
+
 /**
  * Body for `POST /api/v1/playback/start`.
  *
@@ -104,6 +321,9 @@ data class StartPlaybackRequest(
     @SerialName("play_method") val playMethod: String? = null,
     @SerialName("start_position") val startPosition: Double? = null,
     @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
+    @SerialName("subtitle_track_index") val subtitleTrackIndex: Int? = null,
+    @SerialName("quality_preference") val qualityPreference: String? = null,
+    @SerialName("preserve_direct_audio_selection") val preserveDirectAudioSelection: Boolean = false,
     @SerialName("codecs_video") val codecsVideo: List<String> = emptyList(),
     @SerialName("codecs_audio") val codecsAudio: List<String> = emptyList(),
     val containers: List<String> = emptyList(),
@@ -111,6 +331,7 @@ data class StartPlaybackRequest(
     val hdr: Boolean = false,
     @SerialName("hdr_details") val hdrDetails: HdrCapabilities? = null,
     @SerialName("audio_passthrough") val audioPassthrough: AudioPassthroughCapabilities? = null,
+    @SerialName("client_playback_context") val clientPlaybackContext: ClientPlaybackContext? = null,
 )
 
 @Serializable
@@ -128,6 +349,7 @@ data class TranscodeStartRequest(
     @SerialName("target_codec_audio") val targetCodecAudio: String? = null,
     @SerialName("target_bitrate_kbps") val targetBitrateKbps: Int,
     @SerialName("segment_duration") val segmentDuration: Int,
+    @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
     @SerialName("subtitle_track_index") val subtitleTrackIndex: Int,
     @SerialName("subtitle_burn_in") val subtitleBurnIn: Boolean
 )
@@ -140,6 +362,7 @@ data class TranscodeStartResponse(
     @SerialName("manifest_url") val manifestUrl: String,
     @SerialName("duration_seconds") val durationSeconds: Double? = null,
     @SerialName("player_start_seconds") val playerStartSeconds: Double = 0.0,
+    @SerialName("stream_origin_seconds") val streamOriginSeconds: Double = 0.0,
     @SerialName("timeline_offset_seconds") val timelineOffsetSeconds: Double = 0.0,
     @SerialName("can_seek_anywhere") val canSeekAnywhere: Boolean = false
 )

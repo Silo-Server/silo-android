@@ -62,6 +62,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.continuum.app.common.player.SleepTimerState
 import com.continuum.app.model.catalog.VersionChapter
+import com.continuum.app.model.playback.PlaybackExecutionPlan
 import com.continuum.app.model.settings.SubtitleAppearance
 import com.continuum.app.model.settings.SubtitleBackgroundStylePreset
 import com.continuum.app.model.settings.SubtitleFontSizePreset
@@ -100,6 +101,7 @@ fun TvPlayerHud(
     videoQualities: List<VideoQualityOption>,
     subtitleTracks: List<PlayerTrackEntry>,
     stats: PlayerStatsSnapshot,
+    playbackPlan: PlaybackExecutionPlan? = null,
     videoFillMode: VideoFillMode,
     onSelectAudio: (Int) -> Unit,
     onSelectVideoQuality: (String) -> Unit,
@@ -237,6 +239,7 @@ fun TvPlayerHud(
                         seasonNumber = seasonNumber,
                         episodeNumber = episodeNumber,
                         stats = stats,
+                        playbackPlan = playbackPlan,
                         subtitleTracks = subtitleTracks,
                         chapters = chapters,
                     )
@@ -407,6 +410,7 @@ private fun HudInfoPane(
     seasonNumber: Int?,
     episodeNumber: Int?,
     stats: PlayerStatsSnapshot,
+    playbackPlan: PlaybackExecutionPlan?,
     subtitleTracks: List<PlayerTrackEntry>,
     chapters: List<VersionChapter>,
     modifier: Modifier = Modifier,
@@ -428,7 +432,7 @@ private fun HudInfoPane(
         currentChapterTitle(chapters, positionSec)?.let { add("Chapter" to it) }
     }
     val badges = buildList {
-        stats.hdrMode?.takeIf { it.isNotBlank() && !it.equals("SDR", ignoreCase = true) }?.let { add(it) }
+        playbackPlan.validatedHdrBadge()?.let { add(it) }
         stats.resolution?.let { add(it) }
     }
 
@@ -499,6 +503,17 @@ private fun HudInfoPane(
                 LabelValueRow(label = label, value = value)
             }
         }
+    }
+}
+
+private fun PlaybackExecutionPlan?.validatedHdrBadge(): String? {
+    val claims = this?.claims?.video ?: return null
+    return when {
+        claims.dolbyVision -> "Dolby Vision"
+        claims.hdr10Plus -> "HDR10+"
+        claims.hdr10 -> "HDR10"
+        claims.hlg -> "HLG"
+        else -> null
     }
 }
 

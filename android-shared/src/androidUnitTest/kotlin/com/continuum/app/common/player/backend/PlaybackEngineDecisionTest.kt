@@ -1,5 +1,6 @@
 package com.continuum.app.common.player.backend
 
+import com.continuum.app.model.playback.PlaybackDelivery
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -40,5 +41,33 @@ class PlaybackEngineDecisionTest {
             .toLogLine()
         assertTrue(line.contains("actual=Media3"))
         assertTrue(line.contains("reason=isCasting"))
+    }
+
+    @Test
+    fun decisionExplainsUrlInferredHlsWithoutLoggingTheUrl() {
+        val request = VideoPlaybackBackendRequest(
+            hasStyledSubtitles = true,
+            isAdaptiveHlsStream = true,
+        )
+        val line = PlaybackEngineDecision
+            .from(request, selected = VideoPlaybackBackendKind.Media3, actual = VideoPlaybackBackendKind.Media3)
+            .toLogLine()
+
+        assertTrue(line.contains("reason=isAdaptiveHlsStream"))
+        assertTrue(!line.contains("m3u8"))
+        assertTrue(!line.contains("http"))
+    }
+
+    @Test
+    fun decisionExplainsProgressiveServerRemux() {
+        val request = VideoPlaybackBackendRequest(
+            delivery = PlaybackDelivery.SERVER_REMUX_PROGRESSIVE,
+            hasHardContainer = true,
+        )
+        val line = PlaybackEngineDecision
+            .from(request, selected = VideoPlaybackBackendKind.Mpv, actual = VideoPlaybackBackendKind.Mpv)
+            .toLogLine()
+
+        assertTrue(line.contains("reason=delivery=server_remux_progressive"))
     }
 }

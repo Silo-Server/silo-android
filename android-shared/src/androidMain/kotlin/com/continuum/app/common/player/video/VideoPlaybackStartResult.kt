@@ -3,6 +3,8 @@ package com.continuum.app.common.player.video
 import com.continuum.app.model.catalog.TimeRange
 import com.continuum.app.model.catalog.VersionChapter
 import com.continuum.app.model.playback.PlayMethod
+import com.continuum.app.model.playback.PlaybackDelivery
+import com.continuum.app.model.playback.PlaybackExecutionPlan
 import com.continuum.app.model.playback.PlayerSubtitleInfo
 
 sealed interface VideoPlaybackStartResult {
@@ -11,6 +13,8 @@ sealed interface VideoPlaybackStartResult {
         val fileId: Int?,
         val streamUrl: String,
         val playMethod: PlayMethod,
+        val playbackPlan: PlaybackExecutionPlan? = null,
+        val delivery: PlaybackDelivery? = null,
         val container: String? = null,
         val title: String,
         val subtitle: String?,

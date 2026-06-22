@@ -42,4 +42,17 @@ class ContinuumPlaybackServiceEngineSourceTest {
         // Pending built player tracked + swept on teardown (req #4).
         assertTrue(src.contains("pendingBuiltPlayer"))
     }
+
+    @Test
+    fun serviceStopsOldEngineBeforeDeferringRelease() {
+        val bindBody = src.substringAfter("private fun bindNewPlayer(")
+            .substringBefore("/** Carry full playback state across a swap")
+        val stopIndex = bindBody.indexOf("old.stop()")
+        val holdIndex = bindBody.indexOf("previousPlayer = old")
+
+        assertTrue(stopIndex >= 0, "old engine should be stopped after a successful swap")
+        assertTrue(bindBody.contains("old.clearMediaItems()"))
+        assertTrue(holdIndex > stopIndex, "release deferral must happen after stopping the old engine")
+        assertTrue(!bindBody.substringBefore("previousPlayer = old").contains("old.release()"))
+    }
 }

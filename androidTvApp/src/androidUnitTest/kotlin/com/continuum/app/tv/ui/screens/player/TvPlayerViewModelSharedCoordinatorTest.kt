@@ -103,6 +103,17 @@ class TvPlayerViewModelSharedCoordinatorTest {
             starterSource.contains("adoptActiveSession("),
             "TV starter must adopt the initial session into PlaybackSessionLifecycle",
         )
+        assertTrue(
+            starterSource.contains("requestedOriginalPlaybackMethod(") &&
+                starterSource.contains("audioTrackIndex = request.audioTrackIndex") &&
+                starterSource.contains("playMethod = requestedPlayMethod"),
+            "TV starter must request original direct playback only after checking the selected audio track",
+        )
+        assertTrue(
+            starterSource.contains("preserveDirectSelection") &&
+                starterSource.contains("preserveDirectAudioSelection = preserveDirectSelection"),
+            "TV starter must preserve client-side audio selection when direct-original playback is requested",
+        )
         assertFalse(
             starterSource.contains("manageProgress = false"),
             "TV starter must let PlaybackSessionLifecycle own progress reporting and resume persistence",

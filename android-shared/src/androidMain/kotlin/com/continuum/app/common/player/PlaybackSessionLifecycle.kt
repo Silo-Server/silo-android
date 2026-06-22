@@ -3,6 +3,8 @@ package com.continuum.app.common.player
 import android.util.Log
 import com.continuum.app.model.personal.SyncProgressItem
 import com.continuum.app.model.playback.ClientCodecCapabilities
+import com.continuum.app.model.playback.ClientPlaybackContext
+import com.continuum.app.model.playback.PlayMethod
 import com.continuum.app.model.playback.PlaybackSessionResponse
 import com.continuum.app.network.ApiResult
 import com.continuum.app.network.api.HealthApi
@@ -129,14 +131,34 @@ class PlaybackSessionLifecycle(
             return failed
         }
 
-        val result = sessionManager.startSession(
-            fileId = params.fileId,
-            profileId = profileId,
-            capabilities = params.capabilities,
-            audioTrackIndex = params.audioTrackIndex,
-            qualityPreference = params.qualityPreference,
-            startPosition = params.startPosition,
-        )
+        val result = if (
+            params.clientPlaybackContext != null ||
+            params.subtitleTrackIndex != null ||
+            params.preserveDirectAudioSelection ||
+            params.playMethod != null
+        ) {
+            sessionManager.startSessionV2(
+                fileId = params.fileId,
+                profileId = profileId,
+                capabilities = params.capabilities,
+                audioTrackIndex = params.audioTrackIndex,
+                subtitleTrackIndex = params.subtitleTrackIndex,
+                qualityPreference = params.qualityPreference,
+                startPosition = params.startPosition,
+                clientPlaybackContext = params.clientPlaybackContext,
+                preserveDirectAudioSelection = params.preserveDirectAudioSelection,
+                playMethod = params.playMethod,
+            )
+        } else {
+            sessionManager.startSession(
+                fileId = params.fileId,
+                profileId = profileId,
+                capabilities = params.capabilities,
+                audioTrackIndex = params.audioTrackIndex,
+                qualityPreference = params.qualityPreference,
+                startPosition = params.startPosition,
+            )
+        }
         return when (result) {
             is ApiResult.Success -> {
                 val active = SessionState.Active(result.data)
@@ -425,6 +447,10 @@ data class StartParams(
     val fileId: Int,
     val capabilities: ClientCodecCapabilities,
     val audioTrackIndex: Int? = null,
+    val subtitleTrackIndex: Int? = null,
     val qualityPreference: String? = null,
     val startPosition: Double? = null,
+    val clientPlaybackContext: ClientPlaybackContext? = null,
+    val preserveDirectAudioSelection: Boolean = false,
+    val playMethod: PlayMethod? = null,
 )

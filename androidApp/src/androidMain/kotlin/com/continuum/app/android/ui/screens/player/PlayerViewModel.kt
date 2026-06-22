@@ -3,6 +3,7 @@ package com.continuum.app.android.ui.screens.player
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.continuum.app.android.BuildConfig
 import com.continuum.app.common.downloads.DownloadEnqueuer
 import com.continuum.app.common.downloads.OfflineMediaResolver
 import com.continuum.app.common.player.PlaybackCapabilityDetector
@@ -16,6 +17,9 @@ import com.continuum.app.common.player.StartParams
 import com.continuum.app.common.player.video.VideoPlaybackSessionCoordinator
 import com.continuum.app.common.player.video.VideoPlaybackStartRequest
 import com.continuum.app.common.player.video.VideoPlayerUiState
+import com.continuum.app.common.player.video.canPlayResolvedStreamDirectly
+import com.continuum.app.common.player.video.requestedOriginalPlaybackMethod
+import com.continuum.app.common.player.video.resolvedPlaybackDelivery
 import com.continuum.app.common.settings.PlayerSettingsStore
 import com.continuum.app.domain.player.IntroAutoSkipController
 import com.continuum.app.domain.player.IntroAutoSkipState
@@ -25,6 +29,8 @@ import com.continuum.app.model.catalog.VersionChapter
 import com.continuum.app.model.catalog.TimeRange
 import com.continuum.app.model.settings.SubtitleAppearance
 import com.continuum.app.model.playback.PlayMethod
+import com.continuum.app.model.playback.PlaybackDelivery
+import com.continuum.app.model.playback.PlaybackExecutionPlan
 import com.continuum.app.model.playback.PlaybackSessionResponse
 import com.continuum.app.model.playback.PlayerSubtitleInfo
 import com.continuum.app.model.playback.mergeDownloadedSubtitles
@@ -124,6 +130,8 @@ class PlayerViewModel(
         val artworkUrl: String? = null,
         val sessionId: String? = null,
         val playMethod: PlayMethod? = null,
+        val playbackPlan: PlaybackExecutionPlan? = null,
+        val delivery: PlaybackDelivery? = null,
         val streamUrl: String? = null,
         val container: String? = null,
         val serverUrl: String = "",
@@ -400,6 +408,7 @@ class PlayerViewModel(
                         roomId = null,
                         resumePositionOverride = resumePositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,
+                        subtitleTrackIndex = initialSubtitleTrackIndex,
                         suppressResumeRewind = suppressResumeRewind,
                     ),
                 )) {
@@ -464,6 +473,8 @@ class PlayerViewModel(
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId,
                 playMethod = playbackState.playMethod,
+                playbackPlan = playbackState.playbackPlan,
+                delivery = playbackState.delivery,
                 streamUrl = playbackState.streamUrl,
                 container = playbackState.container,
                 serverUrl = playbackState.serverUrl,
@@ -568,6 +579,7 @@ class PlayerViewModel(
                 durationSeconds = state.duration,
                 subtitleUrls = state.subtitleTracks,
                 playbackInfo = null,
+                playbackPlan = state.playbackPlan,
             )
             when (val r = playbackSessionManager.startTranscodeFallback(
                 session = sessionResponse,
@@ -592,6 +604,8 @@ class PlayerViewModel(
                         it.copy(
                             sessionId = fallback.sessionId,
                             playMethod = fallback.playMethod,
+                            playbackPlan = fallback.playbackPlan,
+                            delivery = fallback.resolvedPlaybackDelivery(),
                             streamUrl = fallback.streamUrl,
                             startPosition = fallback.position,
                         )
@@ -604,6 +618,17 @@ class PlayerViewModel(
                     it.copy(error = "$notice (network error: ${r.exception.message})")
                 }
             }
+        }
+    }
+
+    fun onEngineSwitchFailed(message: String) {
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                error = message,
+                isPlaying = false,
+                isBuffering = false,
+            )
         }
     }
 
@@ -1240,30 +1265,97 @@ class PlayerViewModel(
             val version = versions[index]
             val profileId = profileRepository.getActiveProfileId() ?: return@launch
             val capabilities = capabilityDetector.detect()
+            val playbackContext = capabilityDetector.detectPlaybackContext(
+                formFactor = "mobile",
+                appVersion = BuildConfig.VERSION_NAME,
+            )
+            val requestedPlayMethod = version.requestedOriginalPlaybackMethod(
+                playbackContext = playbackContext,
+                audioTrackIndex = currentState.selectedAudioIndex,
+            )
+            val preserveDirectSelection = requestedPlayMethod == PlayMethod.DIRECT
 
-            val result = playbackSessionManager.startSession(
+            val result = playbackSessionManager.startSessionV2(
                 fileId = version.fileId,
                 profileId = profileId,
                 capabilities = capabilities,
                 startPosition = currentPosition,
+                clientPlaybackContext = playbackContext,
+                preserveDirectAudioSelection = preserveDirectSelection,
+                playMethod = requestedPlayMethod,
             )
 
             when (result) {
                 is ApiResult.Success -> {
                     val session = result.data
+                    val immediateFallbackMode = session.playbackPlan?.immediateServerFallbackMode()
+                    val resolved = when {
+                        session.canPlayResolvedStreamDirectly() && immediateFallbackMode == null -> session
+                        immediateFallbackMode != null ||
+                            session.playMethod == PlayMethod.REMUX ||
+                            session.playMethod == PlayMethod.TRANSCODE -> {
+                            val mode = immediateFallbackMode ?: if (session.playMethod == PlayMethod.REMUX) {
+                                PlaybackSessionManager.TranscodeMode.REMUX
+                            } else {
+                                PlaybackSessionManager.TranscodeMode.FULL
+                            }
+                            when (val fallback = playbackSessionManager.startTranscodeFallback(
+                                session = session,
+                                seekSeconds = currentPosition,
+                                resolution = version.resolution.orEmpty(),
+                                mode = mode,
+                                audioTrackIndex = session.audioTrackIndex,
+                            )) {
+                                is ApiResult.Success -> fallback.data
+                                is ApiResult.Error -> {
+                                    _uiState.update {
+                                        it.copy(
+                                            isLoading = false,
+                                            error = "Failed to switch version: ${fallback.message}",
+                                        )
+                                    }
+                                    return@launch
+                                }
+                                is ApiResult.NetworkError -> {
+                                    _uiState.update {
+                                        it.copy(
+                                            isLoading = false,
+                                            error = "Network error: ${fallback.exception.message}",
+                                        )
+                                    }
+                                    return@launch
+                                }
+                            }
+                        }
+                        else -> session
+                    }
+                    val resolvedDelivery = resolved.resolvedPlaybackDelivery()
+                    val resolvedStreamUrl = resolved.playbackPlan?.stream?.url
+                        ?.takeIf { it.isNotBlank() }
+                        ?: resolved.streamUrl
+                    val resolvedStartPosition = if (
+                        resolved.sessionId != session.sessionId ||
+                        resolved.playMethod != session.playMethod
+                    ) {
+                        resolved.position.takeIf { it.isFinite() && it >= 0.0 } ?: currentPosition
+                    } else {
+                        currentPosition
+                    }
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            sessionId = session.sessionId,
-                            playMethod = session.playMethod,
-                            streamUrl = session.streamUrl,
+                            sessionId = resolved.sessionId,
+                            playMethod = resolved.playMethod,
+                            playbackPlan = resolved.playbackPlan,
+                            delivery = resolvedDelivery,
+                            streamUrl = resolvedStreamUrl,
                             container = version.container,
-                            startPosition = currentPosition,
-                            position = currentPosition,
-                            duration = session.durationSeconds ?: version.duration,
+                            startPosition = resolvedStartPosition,
+                            position = resolvedStartPosition,
+                            duration = resolved.durationSeconds ?: version.duration,
                             audioTracks = version.audioTracks ?: emptyList(),
-                            selectedAudioIndex = session.audioTrackIndex,
-                            subtitleTracks = session.subtitleUrls ?: emptyList(),
+                            selectedAudioIndex = resolved.audioTrackIndex,
+                            subtitleTracks = resolved.subtitleUrls ?: emptyList(),
                             chapters = version.chapters.orEmpty(),
                         )
                     }
@@ -1274,11 +1366,14 @@ class PlayerViewModel(
                             contentId = currentState.contentId,
                             fileId = version.fileId,
                             capabilities = capabilities,
-                            audioTrackIndex = session.audioTrackIndex,
+                            audioTrackIndex = resolved.audioTrackIndex,
                             qualityPreference = null,
-                            startPosition = currentPosition,
+                            startPosition = resolvedStartPosition,
+                            clientPlaybackContext = playbackContext,
+                            preserveDirectAudioSelection = preserveDirectSelection,
+                            playMethod = requestedPlayMethod,
                         ),
-                        session = session,
+                        session = resolved,
                     )
                     // Resume the intro auto-skip observer; the introKey now embeds the new
                     // sessionId/fileId so any prior cancellation does not carry over.
@@ -1343,6 +1438,8 @@ class PlayerViewModel(
                     isLoading = false,
                     sessionId = null,
                     playMethod = null,
+                    playbackPlan = null,
+                    delivery = null,
                     streamUrl = null,
                     container = null,
                     subtitleTracks = emptyList(),
@@ -1417,6 +1514,18 @@ class PlayerViewModel(
         }
     }
 
+    private fun PlaybackExecutionPlan.immediateServerFallbackMode():
+        PlaybackSessionManager.TranscodeMode? {
+        val blockers = capabilities.blockers.toSet()
+        return when {
+            "dolby_vision_profile_7_not_launch_claimed" in blockers ->
+                PlaybackSessionManager.TranscodeMode.FULL
+            "bitmap_subtitle_route_not_validated" in blockers ->
+                PlaybackSessionManager.TranscodeMode.FULL
+            else -> null
+        }
+    }
+
     /**
      * Offline-first playback path. Returns true (and populates UiState with a
      * file:// stream URL) when the requested content has a completed local
@@ -1486,6 +1595,8 @@ class PlayerViewModel(
                 // server session needed.
                 streamUrl = media.uriString,
                 playMethod = com.continuum.app.model.playback.PlayMethod.DIRECT,
+                playbackPlan = null,
+                delivery = null,
                 serverUrl = "",   // unused for local files
                 accessToken = "",
                 startPosition = startPos,

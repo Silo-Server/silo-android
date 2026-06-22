@@ -408,6 +408,15 @@ class ContinuumPlaybackService : MediaSessionService() {
             runCatching { newPlayer.release() }
             return false
         }
+        // The old player may still hold a surface until Compose re-binds the
+        // PlayerView. Stop it now so it cannot keep fetching or rendering after
+        // the session has moved to the new engine; release remains deferred below
+        // so stale UI references do not call into a released player.
+        runCatching {
+            old.playWhenReady = false
+            old.stop()
+            old.clearMediaItems()
+        }
         // Defer releasing the old player: the UI re-binds its PlayerView off it
         // asynchronously. Release the previous-previous now (long detached); hold
         // this one until the next swap or destroy.

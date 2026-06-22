@@ -421,7 +421,7 @@ private fun formatHdrLabel(version: FileVersion): String? {
 
     return when {
         hdrFormat == null -> "HDR"
-        "dolby" in hdrFormat || "dovi" in hdrFormat || "dv" == hdrFormat -> "Dolby Vision"
+        "dolby" in hdrFormat || "dovi" in hdrFormat || "dv" == hdrFormat -> "HDR"
         "hdr10+" in hdrFormat || "hdr10plus" in hdrFormat -> "HDR10+"
         "hdr10" in hdrFormat || "pq" in hdrFormat -> "HDR10"
         "hlg" in hdrFormat -> "HLG"
@@ -429,11 +429,7 @@ private fun formatHdrLabel(version: FileVersion): String? {
     }
 }
 
-private fun formatHdrBadge(version: FileVersion): String? =
-    when (formatHdrLabel(version)) {
-        "Dolby Vision" -> "DV"
-        else -> formatHdrLabel(version)
-    }
+private fun formatHdrBadge(version: FileVersion): String? = formatHdrLabel(version)
 
 private fun formatPrimaryAudioSummary(version: FileVersion): String? {
     val track = version.audioTracks
@@ -447,8 +443,8 @@ private fun formatPrimaryAudioSummary(version: FileVersion): String? {
         ?.contains("atmos") == true
 
     return when {
-        codec == null && hasAtmos -> "Atmos"
-        codec != null && hasAtmos -> "$codec Atmos"
+        codec == null && hasAtmos -> null
+        codec != null && hasAtmos -> codec
         codec != null && layout != null -> "$codec $layout"
         codec != null -> codec
         layout != null -> layout

@@ -3,11 +3,22 @@ package com.continuum.app.common.player
 import android.content.Context
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.os.Build
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import com.continuum.app.common.player.backend.MpvDeviceFloor
+import com.continuum.app.common.player.video.directOriginalPlaybackContainers
+import com.continuum.app.common.player.video.media3OriginalPlaybackContainers
+import com.continuum.app.common.player.video.mpvOriginalPlaybackContainers
+import com.continuum.app.model.playback.ClientPlaybackContext
 import com.continuum.app.model.playback.ClientCodecCapabilities
+import com.continuum.app.model.playback.EngineCapabilityEnvelope
+import com.continuum.app.model.playback.EngineSubtitleCapabilities
+import com.continuum.app.model.playback.PlaybackDeviceContext
+import com.continuum.app.model.playback.PlaybackEngineKind
+import com.continuum.app.model.playback.PlaybackOutputContext
 
 /**
  * Orchestrates the three probes — [MediaCodecCapabilitiesProbe] (video + HDR),
@@ -42,9 +53,7 @@ class PlaybackCapabilityDetector(
         // Video — look for DV profile claims in Format.codecs.
         val selectedVideo = tracks.groups.firstOrNull {
             it.type == C.TRACK_TYPE_VIDEO && it.isSelected
-        }?.let { g ->
-            if (g.mediaTrackGroup.length > 0) g.mediaTrackGroup.getFormat(0) else null
-        }
+        }?.selectedFormat()
         if (selectedVideo != null) {
             val codec = selectedVideo.codecs.orEmpty().lowercase()
             // DV codec strings:
@@ -63,11 +72,14 @@ class PlaybackCapabilityDetector(
             if (dvMatch != null) {
                 val profile = dvMatch.groupValues[2].toIntOrNull()
                 if (profile != null) {
-                    val probe = MediaCodecCapabilitiesProbe.probe()
+                    val codecProbe = MediaCodecCapabilitiesProbe.probe()
+                    val displayHdr = DisplayHdrProbe.probe(context)
+                    val supportedHdr = DisplayHdrProbe.intersect(codecProbe.hdr, displayHdr)
                     val supported = when (profile) {
-                        7 -> probe.hdr.dolbyVisionProfiles.contains(7) && probe.supportsDvProfile7
-                        8 -> probe.hdr.dolbyVisionProfiles.contains(8) || probe.hdr.hdr10
-                        else -> probe.hdr.dolbyVisionProfiles.contains(profile)
+                        // Launch policy: do not claim Profile 7 direct playback.
+                        7 -> false
+                        8 -> supportedHdr.dolbyVisionProfiles.contains(8) || supportedHdr.hdr10
+                        else -> supportedHdr.dolbyVisionProfiles.contains(profile)
                     }
                     if (!supported) return Playability.UnsupportedDvProfile(profile)
                 }
@@ -80,9 +92,7 @@ class PlaybackCapabilityDetector(
         // decoder — if the sink can't passthrough them, we can't play them.
         val selectedAudio = tracks.groups.firstOrNull {
             it.type == C.TRACK_TYPE_AUDIO && it.isSelected
-        }?.let { g ->
-            if (g.mediaTrackGroup.length > 0) g.mediaTrackGroup.getFormat(0) else null
-        }
+        }?.selectedFormat()
         if (selectedAudio != null) {
             val mime = selectedAudio.sampleMimeType.orEmpty()
             val channels = selectedAudio.channelCount
@@ -98,7 +108,7 @@ class PlaybackCapabilityDetector(
                 MimeTypes.AUDIO_DTS_HD -> "dts_hd" in passthroughCodecs
                 MimeTypes.AUDIO_DTS -> "dts" in passthroughCodecs
                 MimeTypes.AUDIO_AC4 -> "ac4" in passthroughCodecs
-                else -> true // AAC / AC3 / E-AC3 are renderer-decodable.
+                else -> false
             }
 
             if (!rendererCanDecode && !sinkCanPassthrough) {
@@ -130,6 +140,16 @@ class PlaybackCapabilityDetector(
         val softwareAudio = detectSoftwareAudioCodecs(ffmpegAvailable)
         val passthrough = audioCapabilityManager.capabilities.value
         val mergedAudio = (softwareAudio + passthrough.passthroughCodecs).distinct()
+        val supportedAbis = Build.SUPPORTED_ABIS?.toList().orEmpty()
+        val mpvSupported = MpvDeviceFloor.isMpvSupported(
+            sdkInt = Build.VERSION.SDK_INT,
+            supportedAbis = supportedAbis,
+        )
+        val directContainers = if (mpvSupported) {
+            directOriginalPlaybackContainers
+        } else {
+            media3OriginalPlaybackContainers
+        }
 
         val hasAnyHdr = intersectedHdr.hdr10 ||
             intersectedHdr.hdr10Plus ||
@@ -139,11 +159,125 @@ class PlaybackCapabilityDetector(
         return ClientCodecCapabilities(
             codecsVideo = codecProbe.videoCodecs.toList(),
             codecsAudio = mergedAudio,
-            containers = listOf("mp4", "mkv", "webm"),
+            containers = directContainers,
             maxResolution = codecProbe.maxResolution,
             hdr = hasAnyHdr,
             hdrDetails = intersectedHdr,
             audioPassthrough = passthrough,
+        )
+    }
+
+    fun detectPlaybackContext(
+        formFactor: String,
+        appVersion: String = "unknown",
+        ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
+    ): ClientPlaybackContext {
+        val caps = detect(ffmpegAvailable)
+        val supportedAbis = Build.SUPPORTED_ABIS?.toList().orEmpty()
+        val mpvSupported = MpvDeviceFloor.isMpvSupported(
+            sdkInt = Build.VERSION.SDK_INT,
+            supportedAbis = supportedAbis,
+        )
+        val passthrough = caps.audioPassthrough
+        val media3Audio = caps.codecsAudio
+        val mpvAudio = if (ffmpegAvailable) {
+            (caps.codecsAudio + FfmpegAudioSupport.codecShortCodes).distinct()
+        } else {
+            caps.codecsAudio
+        }
+        return ClientPlaybackContext(
+            formFactor = formFactor,
+            appVersion = appVersion,
+            device = PlaybackDeviceContext(
+                manufacturer = Build.MANUFACTURER,
+                model = Build.MODEL,
+                sdkInt = Build.VERSION.SDK_INT,
+                abis = supportedAbis,
+            ),
+            output = PlaybackOutputContext(
+                hdrDetails = caps.hdrDetails,
+                audioPassthrough = passthrough,
+                currentSink = if (passthrough?.passthroughCodecs?.isNotEmpty() == true) "passthrough_sink" else "local_output",
+            ),
+            engines = mapOf(
+                PlaybackEngineKind.MEDIA3_DIRECT to EngineCapabilityEnvelope(
+                    enabled = true,
+                    supportedOnDevice = true,
+                    containers = media3OriginalPlaybackContainers,
+                    videoCodecs = caps.codecsVideo,
+                    audioDecodeCodecs = media3Audio,
+                    audioPassthroughCodecs = passthrough?.passthroughCodecs.orEmpty(),
+                    maxChannels = passthrough?.maxChannels,
+                    hdrDetails = caps.hdrDetails,
+                    subtitles = EngineSubtitleCapabilities(
+                        embeddedText = true,
+                        sidecarText = true,
+                        assStyling = false,
+                        embeddedBitmap = false,
+                        sidecarBitmap = false,
+                        fontAttachments = false,
+                    ),
+                    features = listOf("track_switching", "audio_delay", "subtitle_delay", "buffer_reporting"),
+                    authHeaderRefresh = true,
+                    validatedClaims = emptyList(),
+                ),
+                PlaybackEngineKind.MPV_DIRECT to EngineCapabilityEnvelope(
+                    enabled = mpvSupported,
+                    supportedOnDevice = mpvSupported,
+                    failureReason = if (mpvSupported) null else "mpv_device_floor_not_met",
+                    containers = mpvOriginalPlaybackContainers,
+                    videoCodecs = caps.codecsVideo,
+                    audioDecodeCodecs = mpvAudio,
+                    audioPassthroughCodecs = passthrough?.passthroughCodecs.orEmpty(),
+                    maxChannels = passthrough?.maxChannels,
+                    hdrDetails = caps.hdrDetails,
+                    subtitles = EngineSubtitleCapabilities(
+                        embeddedText = true,
+                        sidecarText = true,
+                        assStyling = true,
+                        embeddedBitmap = false,
+                        sidecarBitmap = false,
+                        fontAttachments = true,
+                    ),
+                    features = listOf("libass", "track_switching", "subtitle_delay", "hard_containers"),
+                    authHeaderRefresh = false,
+                    validatedClaims = emptyList(),
+                ),
+                PlaybackEngineKind.MEDIA3_PROGRESSIVE_REMUX to EngineCapabilityEnvelope(
+                    enabled = true,
+                    supportedOnDevice = true,
+                    containers = listOf("mp4", "m4v", "webm", "mkv", "matroska"),
+                    videoCodecs = caps.codecsVideo,
+                    audioDecodeCodecs = media3Audio,
+                    audioPassthroughCodecs = passthrough?.passthroughCodecs.orEmpty(),
+                    maxChannels = passthrough?.maxChannels,
+                    hdrDetails = caps.hdrDetails,
+                    subtitles = EngineSubtitleCapabilities(
+                        embeddedText = true,
+                        sidecarText = true,
+                    ),
+                    features = listOf("progressive", "track_switching", "buffer_reporting"),
+                    authHeaderRefresh = true,
+                    validatedClaims = emptyList(),
+                ),
+                PlaybackEngineKind.MEDIA3_HLS to EngineCapabilityEnvelope(
+                    enabled = true,
+                    supportedOnDevice = true,
+                    containers = listOf("m3u8", "hls"),
+                    videoCodecs = caps.codecsVideo,
+                    audioDecodeCodecs = media3Audio,
+                    audioPassthroughCodecs = passthrough?.passthroughCodecs.orEmpty(),
+                    maxChannels = passthrough?.maxChannels,
+                    hdrDetails = caps.hdrDetails,
+                    subtitles = EngineSubtitleCapabilities(
+                        embeddedText = true,
+                        sidecarText = true,
+                    ),
+                    features = listOf("hls", "track_switching", "buffer_reporting"),
+                    authHeaderRefresh = true,
+                    validatedClaims = emptyList(),
+                ),
+            ),
         )
     }
 
@@ -186,6 +320,12 @@ class PlaybackCapabilityDetector(
         return result.toList()
     }
 }
+
+private fun Tracks.Group.selectedFormat() =
+    (0 until length)
+        .firstOrNull { isTrackSelected(it) }
+        ?.let { getTrackFormat(it) }
+        ?: if (mediaTrackGroup.length > 0) mediaTrackGroup.getFormat(0) else null
 
 internal fun isSoftwareDecodableAudioMime(
     mime: String,

@@ -176,6 +176,6 @@ class AudioCapabilityManager(
                 if (ok && ch > best) best = ch
             }
         }
-        return best.coerceAtLeast(caps.maxChannelCount.coerceAtLeast(2))
+        return best.coerceAtLeast(2)
     }
 }

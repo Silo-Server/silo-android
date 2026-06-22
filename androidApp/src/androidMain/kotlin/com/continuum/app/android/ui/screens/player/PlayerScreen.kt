@@ -42,6 +42,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
 import android.os.Bundle
 import com.continuum.app.common.player.backend.PlaybackEngineCommand
@@ -60,14 +61,20 @@ import com.continuum.app.common.player.VideoPlayerMediaSpec
 import com.continuum.app.common.player.backend.VideoPlaybackBackendFactory
 import com.continuum.app.common.player.backend.VideoPlaybackBackendRequest
 import com.continuum.app.common.player.backend.VideoPlaybackFormFactor
+import com.continuum.app.common.player.backend.isLikelyAdaptiveHlsStreamUrl
 import com.continuum.app.common.player.video.PlaybackStartupStallDetector
 import com.continuum.app.common.player.video.VideoPlayerTrackEntry
+import com.continuum.app.common.player.video.isMpvPreferredOriginalPlaybackContainer
+import com.continuum.app.model.playback.PlayMethod
+import com.continuum.app.model.playback.PlaybackExecutionPlan
 import com.continuum.app.model.playback.PlayerSubtitleInfo
 import com.continuum.app.model.watchtogether.RoomSnapshot
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import org.koin.compose.koinInject
 
 private const val TAG = "PlayerScreen"
@@ -214,14 +221,36 @@ fun PlayerScreen(
     // — fixing MPV black-on-seek. Transport stays on the MediaController (same
     // underlying player). Re-binds automatically when the engine swaps.
     val sessionPlayer by activePlayerHolder.player.collectAsState()
-    val videoBackend = remember(mediaController, backendFactory, contentId, initialFileId) {
-        mediaController?.let { controller ->
+    val videoBackend = remember(
+        sessionPlayer,
+        mediaController,
+        backendFactory,
+        contentId,
+        initialFileId,
+        uiState.playMethod,
+        uiState.playbackPlan,
+        uiState.delivery,
+        uiState.container,
+        uiState.subtitleTracks,
+        uiState.streamUrl,
+    ) {
+        val plan = uiState.playbackPlan
+        val delivery = plan?.delivery ?: uiState.delivery
+        (sessionPlayer ?: mediaController)?.let { player ->
             backendFactory.create(
-                player = controller,
+                player = player,
                 request = VideoPlaybackBackendRequest(
                     contentId = contentId,
                     fileId = initialFileId,
+                    playMethod = uiState.playMethod,
+                    delivery = delivery,
+                    plannedEngine = plan?.engine,
+                    routeFamily = plan?.routeFamily,
                     formFactor = VideoPlaybackFormFactor.Mobile,
+                    hasHardContainer = uiState.playMethod == PlayMethod.DIRECT &&
+                        isHardPlaybackContainer(uiState.container),
+                    hasStyledSubtitles = uiState.subtitleTracks.any { it.isStyledSubtitle() },
+                    isAdaptiveHlsStream = isLikelyAdaptiveHlsStreamUrl(uiState.streamUrl),
                 ),
             )
         }
@@ -350,7 +379,15 @@ fun PlayerScreen(
     }
 
     // Set up the media item when stream URL becomes available
-    LaunchedEffect(videoBackend, uiState.sessionId, uiState.streamUrl, uiState.playMethod, uiState.startPosition) {
+    LaunchedEffect(
+        videoBackend,
+        uiState.sessionId,
+        uiState.streamUrl,
+        uiState.playMethod,
+        uiState.playbackPlan,
+        uiState.delivery,
+        uiState.startPosition,
+    ) {
         if (exitRequested) return@LaunchedEffect
         val backend = videoBackend ?: return@LaunchedEffect
         val streamUrl = uiState.streamUrl ?: return@LaunchedEffect
@@ -378,12 +415,15 @@ fun PlayerScreen(
             downloadStorage.locateLocalMedia(serverId, profileId, fileId)?.uriString
         }
         val effectiveStreamUrl = localUri ?: streamUrl
+        val plan = if (localUri == null) uiState.playbackPlan else null
+        val delivery = if (localUri == null) plan?.delivery ?: uiState.delivery else null
 
         val mediaSpec = VideoPlayerMediaSpec(
             streamUrl = effectiveStreamUrl,
             // Local files play as progressive (DIRECT), regardless of how
             // the server originally provisioned the session.
             playMethod = if (localUri != null) com.continuum.app.model.playback.PlayMethod.DIRECT else playMethod,
+            delivery = delivery,
             serverUrl = serverUrl,
             container = uiState.container,
             subtitles = uiState.subtitleTracks,
@@ -392,6 +432,7 @@ fun PlayerScreen(
             artworkUrl = uiState.artworkUrl,
             startPositionSeconds = uiState.startPosition,
             durationSeconds = uiState.duration,
+            audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
         )
         if (localUri == null && uiState.sessionId != null) {
             startupStallDetector.onMounted(
@@ -410,18 +451,23 @@ fun PlayerScreen(
                 contentId = contentId,
                 fileId = activeFileId ?: initialFileId,
                 playMethod = mediaSpec.playMethod,
+                delivery = delivery,
+                plannedEngine = plan?.engine,
+                routeFamily = plan?.routeFamily,
                 formFactor = VideoPlaybackFormFactor.Mobile,
-                hasStyledSubtitles = uiState.subtitleTracks.orEmpty()
-                    .any { it.codec?.lowercase() in setOf("ass", "ssa") },
+                hasHardContainer = mediaSpec.playMethod == PlayMethod.DIRECT &&
+                    isHardPlaybackContainer(uiState.container),
+                hasStyledSubtitles = uiState.subtitleTracks.any { it.isStyledSubtitle() },
+                isAdaptiveHlsStream = isLikelyAdaptiveHlsStreamUrl(effectiveStreamUrl),
             )
-            controller.sendCustomCommand(
-                SessionCommand(PlaybackEngineCommand.SET_ENGINE, Bundle.EMPTY),
-                Bundle().apply {
-                    putString(PlaybackEngineCommand.ARG_REQUEST_JSON, PlaybackEngineCommand.encode(engineRequest))
-                },
-            )
-            // No surface re-attach needed here: the service publishes the new engine
-            // via ActivePlayerHolder and the PlayerView re-binds to it directly.
+            val switchResult = controller.awaitEngineSwitch(engineRequest)
+            if (!switchResult.success) {
+                viewModel.onEngineSwitchFailed("Playback engine could not be prepared for this route.")
+                return@LaunchedEffect
+            }
+            if (switchResult.swapped) {
+                return@LaunchedEffect
+            }
         }
         backend.mount(mediaSpec)
     }
@@ -452,10 +498,12 @@ fun PlayerScreen(
             downloadStorage.locateLocalMedia(serverId, profileId, fileId)?.uriString
         }
         val effectiveStreamUrl = localUri ?: streamUrl
+        val delivery = if (localUri == null) uiState.playbackPlan?.delivery ?: uiState.delivery else null
 
         val mediaSpec = VideoPlayerMediaSpec(
             streamUrl = effectiveStreamUrl,
             playMethod = if (localUri != null) com.continuum.app.model.playback.PlayMethod.DIRECT else playMethod,
+            delivery = delivery,
             serverUrl = uiState.serverUrl,
             container = uiState.container,
             subtitles = uiState.subtitleTracks,
@@ -464,6 +512,11 @@ fun PlayerScreen(
             artworkUrl = uiState.artworkUrl,
             startPositionSeconds = uiState.startPosition,
             durationSeconds = uiState.duration,
+            audioPassthroughCodecs = if (localUri == null) {
+                uiState.playbackPlan.validatedPassthroughCodecs()
+            } else {
+                emptyList()
+            },
         )
         backend.refresh(mediaSpec)
     }
@@ -752,3 +805,56 @@ private fun produceRoomClosedState(
     val soloClosedReason = remember { MutableStateFlow<String?>(null) }
     return (controller?.closedReason ?: soloClosedReason).collectAsState()
 }
+
+private data class EngineSwitchResult(
+    val success: Boolean,
+    val swapped: Boolean,
+)
+
+private suspend fun MediaController.awaitEngineSwitch(request: VideoPlaybackBackendRequest): EngineSwitchResult =
+    suspendCancellableCoroutine { continuation ->
+        val future = sendCustomCommand(
+            SessionCommand(PlaybackEngineCommand.SET_ENGINE, Bundle.EMPTY),
+            Bundle().apply {
+                putString(PlaybackEngineCommand.ARG_REQUEST_JSON, PlaybackEngineCommand.encode(request))
+            },
+        )
+        future.addListener(
+            {
+                val switchResult = runCatching {
+                    val result = future.get()
+                    EngineSwitchResult(
+                        success = result.resultCode == SessionResult.RESULT_SUCCESS,
+                        swapped = result.extras.getBoolean(PlaybackEngineCommand.RESULT_SWAPPED, false),
+                    )
+                }.getOrDefault(EngineSwitchResult(success = false, swapped = false))
+                if (continuation.isActive) {
+                    continuation.resume(switchResult)
+                }
+            },
+            MoreExecutors.directExecutor(),
+        )
+        continuation.invokeOnCancellation { future.cancel(false) }
+    }
+
+private fun PlayerSubtitleInfo.isStyledSubtitle(): Boolean {
+    val normalizedCodec = codec
+        ?.trim()
+        ?.lowercase()
+        ?.replace('_', '-')
+    val normalizedUrl = url.substringBefore('?').substringBefore('#').lowercase()
+    return normalizedCodec in setOf("ass", "ssa", "text/x-ssa") ||
+        normalizedUrl.endsWith(".ass") ||
+        normalizedUrl.endsWith(".ssa")
+}
+
+private fun PlaybackExecutionPlan?.validatedPassthroughCodecs(): List<String> {
+    val plan = this ?: return emptyList()
+    return plan.source.audioCodec
+        ?.takeIf { plan.claims.audio.passthrough }
+        ?.let { listOf(it) }
+        .orEmpty()
+}
+
+private fun isHardPlaybackContainer(container: String?): Boolean =
+    isMpvPreferredOriginalPlaybackContainer(container)

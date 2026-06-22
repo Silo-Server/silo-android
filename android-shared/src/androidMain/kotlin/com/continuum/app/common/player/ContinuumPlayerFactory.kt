@@ -24,6 +24,7 @@ import com.continuum.app.common.player.subtitle.SubtitleOffsetHolder
 import com.continuum.app.model.playback.AudioPassthroughCapabilities
 import com.continuum.app.model.playback.HdrCapabilities
 import com.continuum.app.model.playback.PlayMethod
+import com.continuum.app.model.playback.PlaybackDelivery
 import com.continuum.app.model.playback.PlayerSubtitleInfo
 import com.continuum.app.network.TokenManager
 
@@ -247,6 +248,7 @@ class ContinuumPlayerFactory(
     fun buildMediaItem(
         streamUrl: String,
         playMethod: PlayMethod,
+        delivery: PlaybackDelivery? = null,
         serverUrl: String,
         container: String? = null,
         subtitles: List<PlayerSubtitleInfo> = emptyList(),
@@ -282,7 +284,7 @@ class ContinuumPlayerFactory(
             builder.setMediaMetadata(metadataBuilder.build())
         }
 
-        mediaItemMimeType(playMethod, container)?.let { builder.setMimeType(it) }
+        mediaItemMimeType(playMethod, container, delivery)?.let { builder.setMimeType(it) }
 
         return builder.build()
     }
@@ -327,19 +329,34 @@ internal fun videoContainerMimeType(container: String?): String? {
         "mp4", "m4v" -> "video/mp4"
         "webm" -> "video/webm"
         "mov", "qt" -> "video/quicktime"
-        "ts", "mpegts", "mpeg-ts", "m2ts" -> "video/mp2t"
+        "ts", "mpegts", "mpeg-ts", "m2ts", "mts" -> "video/mp2t"
         "avi" -> "video/x-msvideo"
         else -> null
     }
 }
 
-internal fun mediaItemMimeType(playMethod: PlayMethod, container: String?): String? =
-    when (playMethod) {
-        // Both full transcode and remux are served through the transcode-start
-        // endpoint as an HLS manifest. Keep the semantic playMethod distinct so
-        // engine routing can still choose MPV for remuxed ASS/SSA subtitles.
+internal fun mediaItemMimeType(
+    playMethod: PlayMethod,
+    container: String?,
+    delivery: PlaybackDelivery? = null,
+): String? {
+    if (delivery != null) {
+        return when (delivery) {
+            PlaybackDelivery.ORIGINAL_HTTP,
+            PlaybackDelivery.CLIENT_LOCAL_NORMALIZATION,
+            -> videoContainerMimeType(container)
+            // The server's progressive remux path currently remuxes into MP4
+            // even when the source container was MKV/AVI/etc.
+            PlaybackDelivery.SERVER_REMUX_PROGRESSIVE -> MimeTypes.VIDEO_MP4
+            PlaybackDelivery.SERVER_REMUX_HLS,
+            PlaybackDelivery.SERVER_TRANSCODE_HLS,
+            -> MimeTypes.APPLICATION_M3U8
+        }
+    }
+    return when (playMethod) {
         PlayMethod.TRANSCODE,
         PlayMethod.REMUX,
         -> MimeTypes.APPLICATION_M3U8
         PlayMethod.DIRECT -> videoContainerMimeType(container)
     }
+}

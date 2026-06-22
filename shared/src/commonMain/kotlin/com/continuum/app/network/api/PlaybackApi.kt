@@ -4,6 +4,8 @@ import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import com.continuum.app.model.playback.ChangeAudioResponse
+import com.continuum.app.model.playback.PlaybackPlanResponse
+import com.continuum.app.model.playback.PlaybackRouteEventRequest
 import com.continuum.app.model.playback.PlaybackSessionResponse
 import com.continuum.app.model.playback.ProgressRequest
 import com.continuum.app.model.playback.StartPlaybackRequest
@@ -17,6 +19,13 @@ class PlaybackApi(private val client: HttpClient) {
 
     suspend fun startPlayback(request: StartPlaybackRequest): ApiResult<PlaybackSessionResponse> = safeApiCall {
         client.post("/api/v1/playback/start") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
+    suspend fun decidePlayback(request: StartPlaybackRequest): ApiResult<PlaybackPlanResponse> = safeApiCall {
+        client.post("/api/v1/playback/decide") {
             contentType(ContentType.Application.Json)
             setBody(request)
         }
@@ -51,6 +60,16 @@ class PlaybackApi(private val client: HttpClient) {
         client.patch("/api/v1/playback/$sessionId/audio") {
             contentType(ContentType.Application.Json)
             setBody(ChangeAudioRequest(audioTrackIndex = audioTrackIndex, position = position))
+        }
+    }
+
+    suspend fun reportRouteEvent(
+        sessionId: String,
+        request: PlaybackRouteEventRequest,
+    ): ApiResult<Unit> = safeApiCall {
+        client.post("/api/v1/playback/$sessionId/route-events") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
         }
     }
 }

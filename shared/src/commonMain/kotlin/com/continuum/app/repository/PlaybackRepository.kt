@@ -2,6 +2,10 @@ package com.continuum.app.repository
 
 import com.continuum.app.model.playback.ChangeAudioResponse
 import com.continuum.app.model.playback.ClientCodecCapabilities
+import com.continuum.app.model.playback.ClientPlaybackContext
+import com.continuum.app.model.playback.PlayMethod
+import com.continuum.app.model.playback.PlaybackPlanResponse
+import com.continuum.app.model.playback.PlaybackRouteEventRequest
 import com.continuum.app.model.playback.PlaybackSessionResponse
 import com.continuum.app.model.playback.ProgressRequest
 import com.continuum.app.model.playback.StartPlaybackRequest
@@ -25,13 +29,20 @@ class PlaybackRepository(
         subtitleTrackIndex: Int? = null,
         startPosition: Double? = null,
         capabilities: ClientCodecCapabilities,
+        clientPlaybackContext: ClientPlaybackContext? = null,
+        preserveDirectAudioSelection: Boolean = false,
+        playMethod: PlayMethod? = null,
     ): ApiResult<PlaybackSessionResponse> =
         playbackApi.startPlayback(
             StartPlaybackRequest(
                 fileId = fileId,
                 profileId = profileId,
+                playMethod = playMethod?.wireValue(),
                 startPosition = startPosition,
                 audioTrackIndex = audioTrackIndex,
+                subtitleTrackIndex = subtitleTrackIndex,
+                qualityPreference = qualityPreference,
+                preserveDirectAudioSelection = preserveDirectAudioSelection,
                 codecsVideo = capabilities.codecsVideo,
                 codecsAudio = capabilities.codecsAudio,
                 containers = capabilities.containers,
@@ -39,6 +50,41 @@ class PlaybackRepository(
                 hdr = capabilities.hdr,
                 hdrDetails = capabilities.hdrDetails,
                 audioPassthrough = capabilities.audioPassthrough,
+                clientPlaybackContext = clientPlaybackContext,
+            ),
+        )
+
+    /** Requests a non-counting V2 route plan without starting a playback session. */
+    suspend fun decidePlayback(
+        fileId: Int,
+        profileId: String,
+        qualityPreference: String? = null,
+        audioTrackIndex: Int? = null,
+        subtitleTrackIndex: Int? = null,
+        startPosition: Double? = null,
+        capabilities: ClientCodecCapabilities,
+        clientPlaybackContext: ClientPlaybackContext? = null,
+        preserveDirectAudioSelection: Boolean = false,
+        playMethod: PlayMethod? = null,
+    ): ApiResult<PlaybackPlanResponse> =
+        playbackApi.decidePlayback(
+            StartPlaybackRequest(
+                fileId = fileId,
+                profileId = profileId,
+                playMethod = playMethod?.wireValue(),
+                startPosition = startPosition,
+                audioTrackIndex = audioTrackIndex,
+                subtitleTrackIndex = subtitleTrackIndex,
+                qualityPreference = qualityPreference,
+                preserveDirectAudioSelection = preserveDirectAudioSelection,
+                codecsVideo = capabilities.codecsVideo,
+                codecsAudio = capabilities.codecsAudio,
+                containers = capabilities.containers,
+                maxResolution = capabilities.maxResolution,
+                hdr = capabilities.hdr,
+                hdrDetails = capabilities.hdrDetails,
+                audioPassthrough = capabilities.audioPassthrough,
+                clientPlaybackContext = clientPlaybackContext,
             ),
         )
 
@@ -68,4 +114,12 @@ class PlaybackRepository(
         position: Double? = null,
     ): ApiResult<ChangeAudioResponse> =
         playbackApi.changeAudio(sessionId, audioTrackIndex, position)
+
+    suspend fun reportRouteEvent(
+        sessionId: String,
+        request: PlaybackRouteEventRequest,
+    ): ApiResult<Unit> =
+        playbackApi.reportRouteEvent(sessionId, request)
 }
+
+private fun PlayMethod.wireValue(): String = name.lowercase()

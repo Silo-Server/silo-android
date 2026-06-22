@@ -130,10 +130,10 @@ data class TvMarqueeContent(
             prettyResolution(summary.resolution)?.let(badges::add)
             summary.hdr?.takeIf { it.isNotBlank() }?.let { hdr ->
                 val lower = hdr.lowercase()
-                badges.add(if (lower.contains("dv") || lower.contains("dolby")) "DOLBY VISION" else hdr.uppercase())
+                badges.add(if (lower.contains("dv") || lower.contains("dolby")) "HDR" else hdr.uppercase())
             }
             summary.audio?.takeIf { it.isNotBlank() }?.let { audio ->
-                badges.add(if (audio.lowercase().contains("atmos")) "ATMOS" else audio.uppercase())
+                badges.add(audio.replace("atmos", "", ignoreCase = true).trim().ifBlank { "AUDIO" }.uppercase())
             }
             return badges
         }

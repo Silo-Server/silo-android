@@ -3,6 +3,7 @@ package com.continuum.app.common.player.video
 import com.continuum.app.model.catalog.TimeRange
 import com.continuum.app.model.catalog.VersionChapter
 import com.continuum.app.model.playback.PlayMethod
+import com.continuum.app.model.playback.PlaybackDelivery
 import com.continuum.app.model.playback.PlayerSubtitleInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,6 +35,7 @@ class VideoPlaybackSessionCoordinatorTest {
                 fileId = 44,
                 streamUrl = "https://lib.strm.cafe/api/stream/movie",
                 playMethod = PlayMethod.DIRECT,
+                delivery = PlaybackDelivery.ORIGINAL_HTTP,
                 container = "mkv",
                 title = "Michael",
                 subtitle = "Movie",
@@ -62,6 +64,7 @@ class VideoPlaybackSessionCoordinatorTest {
         assertEquals(44, ready.fileId)
         assertEquals("https://lib.strm.cafe/api/stream/movie", ready.streamUrl)
         assertEquals(PlayMethod.DIRECT, ready.playMethod)
+        assertEquals(PlaybackDelivery.ORIGINAL_HTTP, ready.delivery)
         assertEquals("mkv", ready.container)
         assertEquals("Michael", ready.title)
         assertEquals("Movie", ready.subtitle)

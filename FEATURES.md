@@ -24,7 +24,7 @@ File pointers are repository-relative.
 | Runtime preflight fallback (undecodable track → transcode) | ✅ | ✅ | `PlaybackPreflightListener` |
 | Mid-stream audio-track switch | ✅ | ✅ | May trigger server re-mux |
 | Hardware decoder enumeration (H.264/HEVC/AV1/VP9/DV) | ✅ | ✅ | `MediaCodecCapabilitiesProbe` |
-| Dolby Vision profiles 5 / 7 / 8 (P7 dual-instance gate) | ✅ | ✅ | |
+| Dolby Vision profiles 5 / 8 | ✅ | ✅ | Profile 7 is blocked for launch until route validation exists. |
 | Panel HDR probe (HDR10, HDR10+, HLG, DV) + per-profile HDR toggle | ✅ | ✅ | `DisplayHdrProbe` |
 | Audio passthrough (E-AC3 JOC/Atmos, TrueHD, DTS-HD) | ✅ | ✅ | TV prioritizes passthrough; `AudioCapabilityManager` |
 | FFmpeg audio extension (lossless fallback) | ✅ | ✅ | Build-flag gated; `FfmpegAudioSupport` |

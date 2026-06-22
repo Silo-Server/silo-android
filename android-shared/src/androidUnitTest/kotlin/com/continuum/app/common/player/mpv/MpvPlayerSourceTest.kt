@@ -49,6 +49,35 @@ class MpvPlayerSourceTest {
     }
 
     @Test
+    fun mpvPlayerKeepsTlsVerificationEnabledAndConfiguresPassthroughExplicitly() {
+        val text = source.readText()
+
+        assertFalse(text.contains("setOptionString(\"tls-verify\", \"no\")"))
+        assertTrue(text.contains("setOptionString(\"tls-verify\", \"yes\")"))
+        assertTrue(text.contains("setOptionString(\"msg-level\", \"all=info\")"))
+        assertTrue(text.contains("android-ca-bundle.pem"))
+        assertTrue(text.contains("TrustManagerFactory.getDefaultAlgorithm()"))
+        assertTrue(text.contains("setOptionString(\"tls-ca-file\", caBundle.path)"))
+        assertTrue(text.contains("fun setAudioPassthroughCodecs("))
+        assertTrue(text.contains("setOption(\"audio-spdif\", value)"))
+        assertTrue(text.contains("Blocking MPV speed="))
+    }
+
+    @Test
+    fun mpvPlayerConvertsInitialLoadFailureToMedia3Error() {
+        val text = source.readText()
+        val eventBody = text.substringAfter("override fun event(eventId: Int)")
+            .substringBefore("private fun setPlayerStateAndNotifyIfChanged")
+
+        assertTrue(text.contains("private var currentPlayerError: PlaybackException?"))
+        assertTrue(text.contains("override fun getPlayerError(): PlaybackException? = currentPlayerError"))
+        assertTrue(eventBody.contains("MPVLib.MpvEvent.MPV_EVENT_END_FILE"))
+        assertTrue(eventBody.contains("failPlaybackOpen()"))
+        assertTrue(text.contains("listener.onPlayerError(error)"))
+        assertTrue(text.contains("PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED"))
+    }
+
+    @Test
     fun mpvPlayerAttachesEveryMedia3VideoSurfacePath() {
         val text = source.readText()
 

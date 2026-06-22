@@ -6,6 +6,7 @@ import com.continuum.app.common.player.AudioTrackManager
 import com.continuum.app.common.player.ContinuumPlayerFactory
 import com.continuum.app.common.player.VideoPlayerMediaSpec
 import com.continuum.app.common.player.mountVideoMedia
+import com.continuum.app.common.player.mpv.MpvPlayer
 import com.continuum.app.common.player.refreshMountedVideoMedia
 import com.continuum.app.common.player.video.VideoPlayerTrackEntry
 import com.continuum.app.common.player.video.VideoTrackSelectionCoordinator
@@ -31,6 +32,7 @@ class MpvVideoPlaybackBackend(
         playWhenReady: Boolean,
     ) {
         mountedSpec = spec
+        (player as? MpvPlayer)?.setAudioPassthroughCodecs(spec.audioPassthroughCodecs)
         mountVideoMedia(
             player = player,
             playerFactory = playerFactory,
@@ -42,6 +44,7 @@ class MpvVideoPlaybackBackend(
 
     override fun refresh(spec: VideoPlayerMediaSpec) {
         mountedSpec = spec
+        (player as? MpvPlayer)?.setAudioPassthroughCodecs(spec.audioPassthroughCodecs)
         refreshMountedVideoMedia(
             player = player,
             playerFactory = playerFactory,

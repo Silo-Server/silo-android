@@ -1,6 +1,8 @@
 package com.continuum.app.common.player.backend
 
 import com.continuum.app.model.playback.PlayMethod
+import com.continuum.app.model.playback.PlaybackDelivery
+import com.continuum.app.model.playback.PlaybackEngineKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -31,6 +33,53 @@ class VideoPlaybackBackendSelectorTest {
     }
 
     @Test
+    fun autoHonorsPlannedMpvDirectWhenDeviceSupportsIt() {
+        val request = VideoPlaybackBackendRequest(
+            playMethod = PlayMethod.DIRECT,
+            delivery = PlaybackDelivery.ORIGINAL_HTTP,
+            plannedEngine = PlaybackEngineKind.MPV_DIRECT,
+            mpvSupportedOnDevice = true,
+        )
+
+        assertEquals(VideoPlaybackBackendKind.Mpv, VideoPlaybackBackendSelector.select(request))
+    }
+
+    @Test
+    fun autoForcesMedia3ForPlannedHlsDelivery() {
+        val request = VideoPlaybackBackendRequest(
+            playMethod = PlayMethod.REMUX,
+            delivery = PlaybackDelivery.SERVER_REMUX_HLS,
+            plannedEngine = PlaybackEngineKind.MPV_DIRECT,
+            hasHardContainer = true,
+        )
+
+        assertEquals(VideoPlaybackBackendKind.Media3, VideoPlaybackBackendSelector.select(request))
+    }
+
+    @Test
+    fun autoUsesMpvForLegacyProgressiveServerRemuxWhenDeviceSupportsIt() {
+        val request = VideoPlaybackBackendRequest(
+            playMethod = PlayMethod.REMUX,
+            delivery = PlaybackDelivery.SERVER_REMUX_PROGRESSIVE,
+            hasHardContainer = true,
+        )
+
+        assertEquals(VideoPlaybackBackendKind.Mpv, VideoPlaybackBackendSelector.select(request))
+    }
+
+    @Test
+    fun autoHonorsExplicitPlannedMedia3ProgressiveServerRemux() {
+        val request = VideoPlaybackBackendRequest(
+            playMethod = PlayMethod.REMUX,
+            delivery = PlaybackDelivery.SERVER_REMUX_PROGRESSIVE,
+            plannedEngine = PlaybackEngineKind.MEDIA3_PROGRESSIVE_REMUX,
+            hasHardContainer = true,
+        )
+
+        assertEquals(VideoPlaybackBackendKind.Media3, VideoPlaybackBackendSelector.select(request))
+    }
+
+    @Test
     fun autoUsesMpvForHardContainersOrStyledSubtitles() {
         assertEquals(
             VideoPlaybackBackendKind.Mpv,
@@ -40,6 +89,37 @@ class VideoPlaybackBackendSelectorTest {
             VideoPlaybackBackendKind.Mpv,
             VideoPlaybackBackendSelector.select(VideoPlaybackBackendRequest(hasStyledSubtitles = true)),
         )
+    }
+
+    @Test
+    fun autoUsesMedia3ForAdaptiveHlsEvenWithStyledSubtitles() {
+        val request = VideoPlaybackBackendRequest(
+            playMethod = PlayMethod.REMUX,
+            hasStyledSubtitles = true,
+            isAdaptiveHlsStream = true,
+        )
+
+        assertEquals(VideoPlaybackBackendKind.Media3, VideoPlaybackBackendSelector.select(request))
+    }
+
+    @Test
+    fun autoUsesMedia3ForPlainProgressiveMp4Direct() {
+        val request = VideoPlaybackBackendRequest(
+            playMethod = PlayMethod.DIRECT,
+            delivery = PlaybackDelivery.ORIGINAL_HTTP,
+            hasHardContainer = false,
+            hasStyledSubtitles = false,
+        )
+
+        assertEquals(VideoPlaybackBackendKind.Media3, VideoPlaybackBackendSelector.select(request))
+    }
+
+    @Test
+    fun hlsStreamUrlDetectionHandlesPlaylistUrlsWithoutLeakingUrlIntoRequest() {
+        assertEquals(true, isLikelyAdaptiveHlsStreamUrl("/api/v1/playback/transcode/session/master.m3u8"))
+        assertEquals(true, isLikelyAdaptiveHlsStreamUrl("https://example.test/video/playlist.m3u8?token=secret"))
+        assertEquals(false, isLikelyAdaptiveHlsStreamUrl("https://example.test/video/file.mkv"))
+        assertEquals(false, VideoPlaybackBackendRequest().isAdaptiveHlsStream)
     }
 
     @Test

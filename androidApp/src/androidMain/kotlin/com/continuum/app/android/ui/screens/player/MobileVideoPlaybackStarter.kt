@@ -8,7 +8,11 @@ import com.continuum.app.common.player.StartParams
 import com.continuum.app.common.player.video.VideoPlaybackStartRequest
 import com.continuum.app.common.player.video.VideoPlaybackStartResult
 import com.continuum.app.common.player.video.VideoPlaybackStarter
+import com.continuum.app.common.player.video.canPlayResolvedStreamDirectly
+import com.continuum.app.common.player.video.requestedOriginalPlaybackMethod
+import com.continuum.app.common.player.video.resolvedPlaybackDelivery
 import com.continuum.app.common.settings.PlayerSettingsStore
+import com.continuum.app.android.BuildConfig
 import com.continuum.app.model.catalog.FileVersion
 import com.continuum.app.model.catalog.WatchDetail
 import com.continuum.app.model.playback.PlayMethod
@@ -63,6 +67,16 @@ class MobileVideoPlaybackStarter(
             val accessToken = playbackSessionManager.getAccessToken()
                 ?: return failure(request.contentId, "Not authenticated")
             val capabilities = capabilityDetector.detect()
+            val playbackContext = capabilityDetector.detectPlaybackContext(
+                formFactor = "mobile",
+                appVersion = BuildConfig.VERSION_NAME,
+            )
+            val requestedPlayMethod = version.requestedOriginalPlaybackMethod(
+                playbackContext = playbackContext,
+                audioTrackIndex = request.audioTrackIndex,
+            )
+            val preserveDirectSelection = request.audioTrackIndex != null ||
+                requestedPlayMethod == PlayMethod.DIRECT
             // Skip-back-on-resume: nudge a genuine resume back a few seconds.
             // Suppressed for Start Over / retry (request flag) and Watch Together
             // (roomId — all participants must land on the synced anchor). The same
@@ -86,13 +100,17 @@ class MobileVideoPlaybackStarter(
             )
 
             val session = when (
-                val r = playbackSessionManager.startSession(
+                val r = playbackSessionManager.startSessionV2(
                     fileId = version.fileId,
                     profileId = profileId,
                     capabilities = capabilities,
                     audioTrackIndex = request.audioTrackIndex,
+                    subtitleTrackIndex = request.subtitleTrackIndex,
                     qualityPreference = preferredQuality,
                     startPosition = startRequestPosition,
+                    clientPlaybackContext = playbackContext,
+                    preserveDirectAudioSelection = preserveDirectSelection,
+                    playMethod = requestedPlayMethod,
                 )
             ) {
                 is ApiResult.Success -> r.data
@@ -104,9 +122,31 @@ class MobileVideoPlaybackStarter(
                 )
             }
 
-            val resolved: PlaybackSessionResponse = when (session.playMethod) {
-                PlayMethod.DIRECT -> session
-                PlayMethod.REMUX, PlayMethod.TRANSCODE -> {
+            val immediateFallbackMode = session.playbackPlan?.immediateServerFallbackMode()
+            val resolved: PlaybackSessionResponse = when {
+                session.canPlayResolvedStreamDirectly() && immediateFallbackMode == null -> session
+                immediateFallbackMode != null -> {
+                    when (val r = playbackSessionManager.startTranscodeFallback(
+                        session = session,
+                        seekSeconds = startRequestPosition ?: 0.0,
+                        resolution = version.resolution.orEmpty(),
+                        mode = immediateFallbackMode,
+                        audioTrackIndex = session.audioTrackIndex,
+                        subtitleTrackIndex = request.subtitleTrackIndex ?: -1,
+                    )) {
+                        is ApiResult.Success -> r.data
+                        is ApiResult.Error -> return failure(
+                            request.contentId,
+                            "Failed to start playback fallback: ${r.message}",
+                        )
+                        is ApiResult.NetworkError -> return failure(
+                            request.contentId,
+                            "Network error starting fallback: ${r.exception.message}",
+                            r.exception,
+                        )
+                    }
+                }
+                session.playMethod == PlayMethod.REMUX || session.playMethod == PlayMethod.TRANSCODE -> {
                     val mode = if (session.playMethod == PlayMethod.REMUX) {
                         PlaybackSessionManager.TranscodeMode.REMUX
                     } else {
@@ -117,6 +157,8 @@ class MobileVideoPlaybackStarter(
                         seekSeconds = startRequestPosition ?: 0.0,
                         resolution = version.resolution.orEmpty(),
                         mode = mode,
+                        audioTrackIndex = session.audioTrackIndex,
+                        subtitleTrackIndex = request.subtitleTrackIndex ?: -1,
                     )) {
                         is ApiResult.Success -> r.data
                         is ApiResult.Error -> return failure(
@@ -130,7 +172,12 @@ class MobileVideoPlaybackStarter(
                         )
                     }
                 }
+                else -> session
             }
+            val resolvedDelivery = resolved.resolvedPlaybackDelivery()
+            val resolvedStreamUrl = resolved.playbackPlan?.stream?.url
+                ?.takeIf { it.isNotBlank() }
+                ?: resolved.streamUrl
 
             val startPos = resolvePlaybackStartPosition(
                 // For a resume, follow the server's actual cut (resolved.position)
@@ -150,8 +197,12 @@ class MobileVideoPlaybackStarter(
                     fileId = version.fileId,
                     capabilities = capabilities,
                     audioTrackIndex = request.audioTrackIndex ?: resolved.audioTrackIndex,
+                    subtitleTrackIndex = request.subtitleTrackIndex,
                     qualityPreference = preferredQuality,
                     startPosition = startPos,
+                    clientPlaybackContext = playbackContext,
+                    preserveDirectAudioSelection = preserveDirectSelection,
+                    playMethod = requestedPlayMethod,
                 ),
                 session = resolved,
             )
@@ -160,8 +211,10 @@ class MobileVideoPlaybackStarter(
                 contentId = request.contentId,
                 fileId = version.fileId,
                 sessionId = resolved.sessionId,
-                streamUrl = resolved.streamUrl,
+                streamUrl = resolvedStreamUrl,
                 playMethod = resolved.playMethod,
+                playbackPlan = resolved.playbackPlan,
+                delivery = resolvedDelivery,
                 container = version.container,
                 title = watchDetail.title,
                 subtitle = buildSubtitle(watchDetail).takeIf { it.isNotBlank() },
@@ -244,5 +297,17 @@ class MobileVideoPlaybackStarter(
 
     private companion object {
         const val TAG = "MobileVideoPlaybackStarter"
+    }
+}
+
+private fun com.continuum.app.model.playback.PlaybackExecutionPlan.immediateServerFallbackMode():
+    PlaybackSessionManager.TranscodeMode? {
+    val blockers = capabilities.blockers.toSet()
+    return when {
+        "dolby_vision_profile_7_not_launch_claimed" in blockers ->
+            PlaybackSessionManager.TranscodeMode.FULL
+        "bitmap_subtitle_route_not_validated" in blockers ->
+            PlaybackSessionManager.TranscodeMode.FULL
+        else -> null
     }
 }
