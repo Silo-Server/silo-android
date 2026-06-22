@@ -22,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import com.continuum.app.android.ui.components.MainAppHeaderBodyHeight
 import com.continuum.app.android.ui.components.MainAppTopBar
@@ -134,7 +135,7 @@ fun MainScreen(
         if (currentTab !in visibleTabs) {
             val fallback = fallbackMobileTab(visibleTabs, currentTab) ?: Tab.Home
             navController.navigate(fallback.route) {
-                popUpTo(Route.Video.route) { saveState = true }
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                 launchSingleTop = true
                 restoreState = true
             }
@@ -147,7 +148,7 @@ fun MainScreen(
                 currentTab = currentTab,
                 onTabSelected = { tab ->
                     navController.navigate(tab.route) {
-                        popUpTo(Route.Video.route) { saveState = true }
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                         launchSingleTop = true
                         restoreState = true
                     }

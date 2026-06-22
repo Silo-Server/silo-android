@@ -193,7 +193,7 @@ fun AppNavigation(
                 code = code,
                 onDone = {
                     if (!navController.popBackStack()) {
-                        navController.navigate(Route.Video.route) {
+                        navController.navigate(Route.Home.route) {
                             popUpTo(0) { inclusive = true }
                         }
                     }
@@ -216,7 +216,7 @@ fun AppNavigation(
                     // already exist (so the user stays signed in), else
                     // ProfileSelection or Login as appropriate.
                     val target = when (destination) {
-                        ServerSwitchDestination.Home -> Route.Video.route
+                        ServerSwitchDestination.Home -> Route.Home.route
                         ServerSwitchDestination.ProfileSelection -> Route.ProfileSelection.route
                         ServerSwitchDestination.Login -> Route.Login.route
                     }
@@ -233,7 +233,7 @@ fun AppNavigation(
         composable(Route.ProfileSelection.route) {
             ProfileSelectionScreen(
                 onNavigateToHome = {
-                    navController.navigate(Route.Video.route) {
+                    navController.navigate(Route.Home.route) {
                         popUpTo(0) { inclusive = true }
                     }
                 },
@@ -270,17 +270,6 @@ fun AppNavigation(
         }
 
         // ---- Main tabs ----
-        // Legacy media-mode routes kept as aliases so existing navigations
-        // (login/start, server switch) still resolve into the new shell.
-        composable(Route.Video.route) {
-            MainScreen(navController, Tab.Home)
-        }
-        composable(Route.Audio.route) {
-            MainScreen(navController, Tab.Libraries)
-        }
-        composable(Route.Reading.route) {
-            MainScreen(navController, Tab.Libraries)
-        }
         composable(Route.Home.route) {
             MainScreen(navController, Tab.Home)
         }

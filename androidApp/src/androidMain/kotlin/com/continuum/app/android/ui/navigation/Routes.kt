@@ -50,9 +50,6 @@ sealed class Route(val route: String) {
     }
 
     // --- Main tabs (inside bottom nav scaffold) ---
-    data object Video : Route("video")
-    data object Audio : Route("audio")
-    data object Reading : Route("reading")
     data object Downloads : Route("downloads")
     data class Search(
         val mediaType: String? = null,
@@ -69,7 +66,8 @@ sealed class Route(val route: String) {
     data object Settings : Route("settings")
     data object CardOverlays : Route("settings/card_overlays")
 
-    // Legacy tab routes retained so old saved back stacks do not crash.
+    // Canonical tab routes — Home is the start destination and the bottom-nav /
+    // popUpTo anchor; Libraries and Recommendations back the other media tabs.
     data object Home : Route("home")
     data object Libraries : Route("libraries")
     data object Recommendations : Route("recommendations")
