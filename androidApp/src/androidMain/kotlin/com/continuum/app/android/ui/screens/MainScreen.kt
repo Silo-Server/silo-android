@@ -183,7 +183,6 @@ fun MainScreen(
                             onSearchClick = { navController.navigate(Route.Search().route) },
                             onPersonalListsClick = { navController.navigate(Route.PersonalLists.route) },
                             onCalendarClick = { navController.navigate(Route.Calendar.route) },
-                            onInboxClick = { navController.navigate(Route.Inbox.route) },
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
                             onSwitchProfileClick = {
                                 navController.navigate(Route.ProfileSelection.route)
@@ -289,7 +288,6 @@ fun MainScreen(
                         { navController.navigate(Route.Calendar.route) }
                     },
                     onRequestsClick = { navController.navigate(Route.Requests.route) },
-                    onInboxClick = { navController.navigate(Route.Inbox.route) },
                     onSettingsClick = { navController.navigate(Route.Settings.route) },
                     onSwitchProfileClick = {
                         navController.navigate(Route.ProfileSelection.route)

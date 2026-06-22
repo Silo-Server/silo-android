@@ -20,11 +20,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -54,9 +51,7 @@ import com.continuum.app.android.ui.components.LoadingIndicator
 import com.continuum.app.android.ui.screens.profiles.ProfileAvatar
 import com.continuum.app.model.profile.Profile
 import com.continuum.app.model.section.splitFeatured
-import com.continuum.app.repository.NotificationsRepository
 import com.continuum.app.viewmodel.HomeViewModel
-import org.koin.compose.koinInject
 
 private const val ChromeFadeDistanceDp = 72f
 
@@ -82,7 +77,6 @@ fun HomeScreen(
     onSearchClick: () -> Unit,
     onPersonalListsClick: () -> Unit,
     onCalendarClick: () -> Unit,
-    onInboxClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -184,7 +178,6 @@ fun HomeScreen(
             onSearchClick = onSearchClick,
             onPersonalListsClick = onPersonalListsClick,
             onCalendarClick = onCalendarClick,
-            onInboxClick = onInboxClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,
@@ -199,7 +192,6 @@ private fun HomeFloatingChrome(
     onSearchClick: () -> Unit,
     onPersonalListsClick: () -> Unit,
     onCalendarClick: () -> Unit,
-    onInboxClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -230,7 +222,7 @@ private fun HomeFloatingChrome(
                 width = 72.dp,
             )
 
-            // Trailing: search + notifications + profile menu cluster.
+            // Trailing: search + profile menu cluster.
             androidx.compose.foundation.layout.Row(
                 modifier = Modifier.align(Alignment.CenterEnd),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -241,23 +233,6 @@ private fun HomeFloatingChrome(
                         imageVector = Icons.Outlined.Search,
                         contentDescription = "Search",
                     )
-                }
-
-                val notificationsRepository = koinInject<NotificationsRepository>()
-                val unreadCount by notificationsRepository.unreadCount.collectAsState()
-                HomeChromeButton(onClick = onInboxClick) {
-                    BadgedBox(
-                        badge = {
-                            if (unreadCount > 0) {
-                                Badge { Text(if (unreadCount > 99) "99+" else unreadCount.toString()) }
-                            }
-                        },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Notifications,
-                            contentDescription = "Notifications",
-                        )
-                    }
                 }
 
                 HomeProfileMenu(

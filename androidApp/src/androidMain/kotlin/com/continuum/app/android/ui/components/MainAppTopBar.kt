@@ -17,11 +17,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -29,7 +26,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -46,8 +42,6 @@ import androidx.compose.ui.unit.dp
 import com.continuum.app.android.R
 import com.continuum.app.android.ui.screens.profiles.ProfileAvatar
 import com.continuum.app.model.profile.Profile
-import com.continuum.app.repository.NotificationsRepository
-import org.koin.compose.koinInject
 
 val MainAppHeaderContentPadding = 104.dp
 
@@ -59,7 +53,6 @@ fun MainAppTopBar(
     onPersonalListsClick: () -> Unit,
     onCalendarClick: (() -> Unit)? = null,
     onRequestsClick: (() -> Unit)? = null,
-    onInboxClick: (() -> Unit)? = null,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -111,25 +104,6 @@ fun MainAppTopBar(
                         imageVector = Icons.Outlined.Search,
                         contentDescription = null,
                     )
-                }
-
-                if (onInboxClick != null) {
-                    val notificationsRepository = koinInject<NotificationsRepository>()
-                    val unreadCount by notificationsRepository.unreadCount.collectAsState()
-                    HeaderActionButton(onClick = onInboxClick) {
-                        BadgedBox(
-                            badge = {
-                                if (unreadCount > 0) {
-                                    Badge { Text(if (unreadCount > 99) "99+" else unreadCount.toString()) }
-                                }
-                            },
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Notifications,
-                                contentDescription = "Notifications",
-                            )
-                        }
-                    }
                 }
 
                 Box {

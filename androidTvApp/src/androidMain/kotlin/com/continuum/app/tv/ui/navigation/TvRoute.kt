@@ -247,9 +247,6 @@ sealed class TvMainRoute(val route: String) {
     data object MyRequests : TvMainRoute("main/requests/mine")
     data object Settings : TvMainRoute("main/settings")
 
-    /** Notifications inbox — opened from the profile menu's "Notifications" row. */
-    data object Inbox : TvMainRoute("main/inbox")
-
     data object Collections : TvMainRoute("main/collections")
     data object Favorites : TvMainRoute("main/favorites")
     data object Watchlist : TvMainRoute("main/watchlist")

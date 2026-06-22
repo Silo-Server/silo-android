@@ -91,6 +91,7 @@ private val CascadePanelHeaderTracking = 1.8.sp
 private val CascadeFlyoutHeaderTracking = 1.7.sp
 private val CascadeFooterTracking = 0.6.sp
 private val CascadeFooterLineHeight = 12.sp
+private const val CascadeFlyoutFollowDelayMillis = 80L
 
 /**
  * The Skyline cascading library selector — a faithful Compose-for-TV port of
@@ -176,10 +177,10 @@ fun TvCascadeSelector(
     val anyFocused = focusedRowId != null || focusedPill != null
     LaunchedEffect(anyFocused) { onPanelFocusChanged(anyFocused) }
 
-    // Flyout follows the resting focused row after a ~150 ms debounce.
+    // Flyout follows the resting focused row after a short debounce.
     LaunchedEffect(focusedRowId) {
         val id = focusedRowId ?: return@LaunchedEffect
-        delay(150)
+        delay(CascadeFlyoutFollowDelayMillis)
         if (focusedRowId == id) anchorId = id
     }
 

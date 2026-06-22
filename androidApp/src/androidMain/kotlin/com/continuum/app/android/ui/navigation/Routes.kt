@@ -197,9 +197,6 @@ sealed class Route(val route: String) {
     // --- Calendar / upcoming ---
     data object Calendar : Route("calendar")
 
-    // --- Notifications ---
-    data object Inbox : Route("inbox")
-
     // --- Personal data ---
     data object Favorites : Route("favorites")
     data object Watchlist : Route("watchlist")

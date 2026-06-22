@@ -33,7 +33,6 @@ import com.continuum.app.android.ui.screens.detail.ItemDetailScreen
 import com.continuum.app.android.ui.screens.detail.ItemDetailViewModel
 import com.continuum.app.android.ui.screens.watchtogether.WatchTogetherEntrySheet
 import com.continuum.app.android.ui.screens.watchtogether.WatchTogetherLobbyScreen
-import com.continuum.app.android.ui.screens.notifications.InboxScreen
 import com.continuum.app.android.ui.screens.people.PersonDetailScreen
 import com.continuum.app.android.ui.screens.people.PersonDetailViewModel
 import com.continuum.app.android.ui.screens.personal.FavoritesScreen
@@ -644,13 +643,6 @@ fun AppNavigation(
         composable(Route.Calendar.route) {
             MainScreen(navController, Tab.Calendar)
         }
-        composable(Route.Inbox.route) {
-            InboxScreen(
-                onBackClick = { navController.popBackStack() },
-                onItemClick = { contentId -> navController.navigate(Route.ItemDetail(contentId).route) },
-            )
-        }
-
         composable(Route.History.route) {
             HistoryScreen(
                 onBackClick = { navController.popBackStack() },

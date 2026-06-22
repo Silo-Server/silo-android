@@ -1,6 +1,8 @@
 package com.continuum.app.tv.ui.shell
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,7 +30,6 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
@@ -105,7 +106,6 @@ import com.continuum.app.model.personal.UserLibrary
 import com.continuum.app.network.ApiResult
 import com.continuum.app.network.ServerRegistry
 import com.continuum.app.repository.AuthRepository
-import com.continuum.app.repository.NotificationsRepository
 import com.continuum.app.repository.PersonalDataRepository
 import com.continuum.app.repository.ProfileRepository
 import com.continuum.app.tv.data.preferences.TvLibraryScopeStore
@@ -117,7 +117,6 @@ import com.continuum.app.tv.ui.components.tvSkylinePanelChrome
 import com.continuum.app.tv.ui.navigation.TvMainRoute
 import com.continuum.app.tv.ui.screens.library.TvLibraryDetailScreen
 import com.continuum.app.tv.ui.screens.library.TvLibraryTab
-import com.continuum.app.tv.ui.screens.notifications.TvInboxScreen
 import com.continuum.app.tv.ui.screens.admin.TvAdminHubScreen
 import com.continuum.app.tv.ui.screens.admin.TvAdminLogsScreen
 import com.continuum.app.tv.ui.screens.admin.TvAdminScansScreen
@@ -171,9 +170,7 @@ fun TvMainShell(
     val authRepository: AuthRepository = koinInject()
     val personalDataRepository: PersonalDataRepository = koinInject()
     val profileRepository: ProfileRepository = koinInject()
-    val notificationsRepository: NotificationsRepository = koinInject()
     val tvLibraryScopeStore: TvLibraryScopeStore = koinInject()
-    val unreadCount by notificationsRepository.unreadCount.collectAsState()
     val serverUrl = rememberProfileServerUrl()
 
     // The raw list of libraries visible to this profile on TV, sorted by the
@@ -311,8 +308,8 @@ fun TvMainShell(
     }
 
     // Secondary routes (reached FROM another screen — Settings -> Favorites/
-    // Watchlist/History/Collections/Requests, Requests -> MyRequests, profile ->
-    // Inbox) push onto the current route instead of flattening to the tab root,
+    // Watchlist/History/Collections/Requests, Requests -> MyRequests) push onto
+    // the current route instead of flattening to the tab root,
     // so Back returns to the parent screen (e.g. Settings) rather than Home.
     val navigateToSecondary: (String) -> Unit = { route ->
         if (route != currentRoute) {
@@ -429,15 +426,6 @@ fun TvMainShell(
         action()
     }
 
-    // Open the notifications inbox: close the profile menu, navigate to the
-    // nested inbox route, then move focus into the content area so the D-pad
-    // lands on the inbox rather than lingering on the (now-hidden) menu.
-    val openInbox: () -> Unit = {
-        profileMenuOpen = false
-        navigateToSecondary(TvMainRoute.Inbox.route)
-        moveFocusToContent(TvMainRoute.Inbox.route)
-    }
-
     // Scroll-driven visibility for the top menu bar. Mirrors Apple's
     // `TVTopMenuBar` hide-on-scroll behavior (spec A.1): scrolling content
     // down fades/translates the menu out; scrolling up restores it. The
@@ -478,7 +466,7 @@ fun TvMainShell(
         // would be wrongly ejected even though that type exists.
         if (!librariesLoaded) return@LaunchedEffect
         // Only media-root tabs are eligible for the "tab no longer visible"
-        // redirect. Non-tab routes (Settings, Inbox, Favorites, Search, …) map
+        // redirect. Non-tab routes (Settings, Favorites, Search, …) map
         // to null and must be left alone — otherwise navigating to Settings
         // would silently eject the user back to Home. If the selected root is a
         // LibraryType whose type has no libraries, snap to Home.
@@ -797,16 +785,6 @@ fun TvMainShell(
                 composable(TvMainRoute.ManageSessions.route) {
                     TvManageSessionsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
                 }
-                composable(TvMainRoute.Inbox.route) {
-                    TvInboxScreen(
-                        onOpenItemDetail = onOpenItemDetail,
-                        onBack = {
-                            if (nestedNav.previousBackStackEntry != null) {
-                                nestedNav.popBackStack()
-                            }
-                        },
-                    )
-                }
                 composable(TvMainRoute.Calendar.route) {
                     TvCalendarScreen(
                         onOpenItemDetail = onOpenItemDetail,
@@ -875,13 +853,35 @@ fun TvMainShell(
             selectedRoot = selectedRoot,
             destinations = visibleRoots,
             accountState = accountSnapshot,
-            unreadCount = unreadCount,
             onSelectRoot = onSelectRoot,
+            onSelectTab = { type ->
+                // Enter/Select on a library-type tab jumps straight to that
+                // type's Recommended content. Prefer a full scope commit (so it
+                // lands on Recommended and closes any open preview panel); fall
+                // back to a plain route nav if the active library hasn't
+                // resolved yet.
+                val activeLib = activeLibrary(type)
+                if (activeLib != null) {
+                    commitScope(type, activeLib, TvLibraryPill.Recommended)
+                } else {
+                    onSelectRoot(TvRootDestination.LibraryType(type))
+                }
+            },
             onSearchClick = onSearchPressed,
             onProfileClick = { profileMenuOpen = !profileMenuOpen },
             onMoveDown = { moveFocusToContent(currentRoute) },
             isMenuFocused = isMenuFocused,
-            onMenuFocusChange = { isMenuFocused = it },
+            onMenuFocusChange = { focused ->
+                isMenuFocused = focused
+                // Focus on a bar button ⟹ focus is NOT inside a cascade panel,
+                // so clear any stale "entered" flag. Without this, focus that
+                // returns to the bar from an entered panel by a path other than
+                // closePanel (e.g. a geometric d-pad-Up escape out of the panel)
+                // leaves panelEntersFocus stuck true, which gates off dwell
+                // preview-switching — the panel then stays frozen under the
+                // previously-entered tab while you move along the top tabs.
+                if (focused) panelEntersFocus = false
+            },
             isFocusSuppressed = profileMenuOpen,
             focusRequest = menuFocusRequest,
             profileFocusRequest = profileFocusRequest,
@@ -912,6 +912,11 @@ fun TvMainShell(
                 val panel = TvTopMenuPanel.Root(dest)
                 val active = openPanel == panel
                 val anchor = tabAnchors[panel]
+                val panelAlpha by animateFloatAsState(
+                    targetValue = if (active) 1f else 0f,
+                    animationSpec = tween(durationMillis = if (active) 90 else 70),
+                    label = "tvTopMenuCascadePanelAlpha",
+                )
                 Box(
                     modifier = Modifier
                         .absoluteOffset {
@@ -924,7 +929,7 @@ fun TvMainShell(
                             )
                         }
                         .widthIn(max = maxPanelWidthDp)
-                        .alpha(if (active) 1f else 0f)
+                        .alpha(panelAlpha)
                         .focusProperties { canFocus = active }
                         .zIndex(2f),
                 ) {
@@ -948,7 +953,6 @@ fun TvMainShell(
         if (profileMenuOpen) {
             TvProfileDropdown(
                 accountState = accountSnapshot,
-                onNotifications = openInbox,
                 onSwitchProfile = closeMenuAnd(onSwitchProfile),
                 onWatchlist = closeMenuAnd {
                     navigateToSecondary(TvMainRoute.Watchlist.route)
@@ -1065,7 +1069,7 @@ private fun openBrowseItem(
 /**
  * Maps an in-app route string to the corresponding top-menu destination, or
  * `null` when the route is not one of the media-root tabs. Non-tab routes
- * (Settings, Collections, Favorites, Watchlist, History, Inbox, ForYou, …) are
+ * (Settings, Collections, Favorites, Watchlist, History, ForYou, …) are
  * legitimately navigable destinations reached from the profile menu / detail
  * flows; they must not be treated as the Video tab. Returning `null` keeps the
  * top bar from highlighting any tab and tells the redirect effect to leave the
@@ -1084,7 +1088,7 @@ private fun mapRouteToRoot(route: String): TvRootDestination? = when (route) {
     TvMainRoute.Calendar.route -> TvRootDestination.Calendar
     // Search / ForYou are no longer tabs — they map to null so no top tab is
     // highlighted (Search is a trailing icon; ForYou is reached as a Home row).
-    // Requests/MyRequests/Settings/Inbox/Audio/Libraries are likewise non-tab.
+    // Requests/MyRequests/Settings/Audio/Libraries are likewise non-tab.
     else -> null
 }
 
@@ -1144,16 +1148,14 @@ private fun cascadePanelOffset(
  * consumes input and focuses its first row on open; Back/Menu closes it and
  * returns focus to the avatar via [onDismiss].
  *
- * Row set + order mirrors tvOS, plus the Android-only Notifications row near
- * the top: Notifications · Switch Profile · Watchlist · Favorites · History ·
- * Settings · (Admin Dashboard, admin only) · Switch Server · Sign Out.
+ * Row set + order mirrors tvOS: Switch Profile · Watchlist · Favorites ·
+ * History · Settings · (Admin Dashboard, admin only) · Switch Server · Sign Out.
  * Calendar is no longer here — it is a top-level tab.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun TvProfileDropdown(
     accountState: TvAccountState,
-    onNotifications: () -> Unit,
     onSwitchProfile: () -> Unit,
     onWatchlist: () -> Unit,
     onFavorites: () -> Unit,
@@ -1193,12 +1195,11 @@ private fun TvProfileDropdown(
         ProfileDropdownDivider()
 
         ProfileDropdownRow(
-            label = "Notifications",
-            icon = Icons.Filled.Notifications,
+            label = "Switch Profile",
+            icon = Icons.Filled.People,
             focusRequester = firstFocus,
-            onClick = onNotifications,
+            onClick = onSwitchProfile,
         )
-        ProfileDropdownRow(label = "Switch Profile", icon = Icons.Filled.People, onClick = onSwitchProfile)
         ProfileDropdownRow(label = "Watchlist", icon = Icons.Filled.Bookmark, onClick = onWatchlist)
         ProfileDropdownRow(label = "Favorites", icon = Icons.Filled.Favorite, onClick = onFavorites)
         ProfileDropdownRow(label = "History", icon = Icons.Filled.History, onClick = onHistory)
