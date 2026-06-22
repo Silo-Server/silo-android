@@ -1,5 +1,6 @@
 package com.continuum.app.tv.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
@@ -43,6 +44,7 @@ import org.koin.compose.koinInject
  * Recommended so their lower row band, focus marquee, and ambient backdrop
  * stay pixel-aligned.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TvSkylineSectionFeed(
     sections: List<ResolvedSection>,

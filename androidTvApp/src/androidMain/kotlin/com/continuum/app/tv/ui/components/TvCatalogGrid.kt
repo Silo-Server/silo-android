@@ -1,5 +1,6 @@
 package com.continuum.app.tv.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,7 +46,7 @@ import com.continuum.app.tv.ui.util.tvArtworkAspectRatioForMediaType
  * Rendered with [TvMediaCard] so each cell gets native TV focus behavior
  * without the card floating inside a wider adaptive grid cell.
  */
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun TvCatalogGrid(
     items: List<BrowseItem>,

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -35,6 +36,7 @@ import com.continuum.app.android.ui.util.formatClockTime
  * instantly vs. where it will stall. While scrubbing, the displayed time follows
  * the thumb rather than the actual playback position.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerProgressBar(
     position: Double,
