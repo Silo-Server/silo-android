@@ -83,6 +83,8 @@ internal fun HeroBackdropImage(
             thumbhash = thumbhash,
             contentDescription = null,
             contentScale = ContentScale.Crop,
+            // Heavily blurred + full-screen: full-res decode is wasted, so cap it.
+            decodeSizePx = 360,
             modifier = Modifier
                 .fillMaxSize()
                 .blur(22.dp)

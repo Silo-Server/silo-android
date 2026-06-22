@@ -1,11 +1,14 @@
 package com.continuum.app.common.ui.components
 
+import android.util.Base64
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import coil3.compose.AsyncImage
@@ -15,16 +18,22 @@ import coil3.request.crossfade
 private val DefaultPlaceholderColor = Color(0xFF1A1D27)
 
 /**
- * Async image composable that shows a neutral placeholder while the real image
- * loads from the network.
+ * Async image with an instant ThumbHash blur-up placeholder.
  *
- * Uses Coil for async image loading with crossfade.
+ * Decodes [thumbhash] (a tiny base64-encoded ThumbHash) into a small bitmap and
+ * shows it immediately, crossfading to the full network image as it loads — so
+ * posters/backdrops blur up instead of popping in from a flat color. Falls back
+ * to a neutral placeholder when no thumbhash is supplied or decoding fails.
  *
  * @param url The remote image URL to load.
- * @param thumbhash Base64-encoded thumbhash reserved for a future decoded preview.
+ * @param thumbhash Base64-encoded ThumbHash for the instant blurred preview.
  * @param contentDescription Accessibility description for the image.
  * @param modifier Compose modifier.
  * @param contentScale How the image content should be scaled.
+ * @param transparent When true, skip the opaque placeholder fill (e.g. logos).
+ * @param decodeSizePx Optional max decode size (px). Caps bitmap memory where
+ *   full resolution would be wasted — e.g. a heavily-blurred full-screen
+ *   backdrop. Null lets Coil size to the layout bounds.
  */
 @Composable
 fun ThumbhashImage(
@@ -34,20 +43,36 @@ fun ThumbhashImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
     transparent: Boolean = false,
+    decodeSizePx: Int? = null,
 ) {
     val context = LocalContext.current
 
+    val placeholder = remember(thumbhash) {
+        thumbhash?.takeIf { it.isNotBlank() }?.let { hash ->
+            runCatching { ThumbHash.toImageBitmap(Base64.decode(hash, Base64.DEFAULT)) }
+                .getOrNull()
+                ?.let { BitmapPainter(it) }
+        }
+    }
+
     if (url.isNullOrBlank()) {
-        if (!transparent) {
-            Box(modifier = modifier.background(DefaultPlaceholderColor))
+        when {
+            placeholder != null -> Image(
+                painter = placeholder,
+                contentDescription = contentDescription,
+                contentScale = contentScale,
+                modifier = modifier,
+            )
+            !transparent -> Box(modifier = modifier.background(DefaultPlaceholderColor))
         }
         return
     }
 
-    val model = remember(url) {
+    val model = remember(url, decodeSizePx) {
         ImageRequest.Builder(context)
             .data(url)
             .crossfade(300)
+            .apply { decodeSizePx?.let { size(it) } }
             .build()
     }
 
@@ -55,6 +80,10 @@ fun ThumbhashImage(
         model = model,
         contentDescription = contentDescription,
         contentScale = contentScale,
-        modifier = if (transparent) modifier else modifier.background(DefaultPlaceholderColor),
+        placeholder = placeholder,
+        modifier = when {
+            transparent || placeholder != null -> modifier
+            else -> modifier.background(DefaultPlaceholderColor)
+        },
     )
 }
