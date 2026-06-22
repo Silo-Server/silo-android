@@ -272,6 +272,7 @@ fun PlayerOverlay(
                 isPaused = state.isPaused,
                 position = state.position,
                 duration = state.duration,
+                bufferedPosition = state.bufferedPosition,
                 hasChapters = state.chapters.isNotEmpty(),
                 hasTracks = state.subtitleTracks.isNotEmpty() || state.audioTracks.isNotEmpty(),
                 isOrientationLocked = isOrientationLocked,

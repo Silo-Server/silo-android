@@ -609,7 +609,11 @@ fun PlayerScreen(
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
                 if (controller.isPlaying || controller.playbackState == Player.STATE_BUFFERING) {
-                    viewModel.onPositionChanged(controller.currentPosition, controller.duration)
+                    viewModel.onPositionChanged(
+                        controller.currentPosition,
+                        controller.duration,
+                        controller.bufferedPosition.coerceAtLeast(0L),
+                    )
                 }
                 delay(500)
             }

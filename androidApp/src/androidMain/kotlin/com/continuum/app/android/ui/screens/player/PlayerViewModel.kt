@@ -139,6 +139,7 @@ class PlayerViewModel(
         val startPosition: Double = 0.0,
         val position: Double = 0.0,
         val duration: Double = 0.0,
+        val bufferedPosition: Double = 0.0,
         val isPlaying: Boolean = false,
         val isPaused: Boolean = false,
         val subtitleTracks: List<PlayerSubtitleInfo> = emptyList(),
@@ -633,17 +634,19 @@ class PlayerViewModel(
     }
 
     /** Called by the player when the current position changes. */
-    fun onPositionChanged(positionMs: Long, durationMs: Long) {
+    fun onPositionChanged(positionMs: Long, durationMs: Long, bufferedPositionMs: Long = 0L) {
         if (positionMs < 0) return
 
         val positionSec = positionMs / 1000.0
         val durationSec = durationMs / 1000.0
+        val bufferedSec = bufferedPositionMs / 1000.0
         val previousPosition = _uiState.value.position
 
         _uiState.update { state ->
             state.copy(
                 position = positionSec,
                 duration = if (durationSec > 0) durationSec else state.duration,
+                bufferedPosition = bufferedSec,
                 // synthesize from the credits range — server doesn't tell us when to
                 // surface the next-episode prompt, so we infer it from the credits start.
                 showNextEpisode = state.credits?.let { positionSec >= it.start && state.nextEpisodeContentId != null } ?: false,

@@ -51,6 +51,7 @@ fun PlayerControls(
     isPaused: Boolean,
     position: Double,
     duration: Double,
+    bufferedPosition: Double,
     hasChapters: Boolean,
     hasTracks: Boolean,
     isOrientationLocked: Boolean,
@@ -202,6 +203,7 @@ fun PlayerControls(
             PlayerProgressBar(
                 position = position,
                 duration = duration,
+                bufferedPosition = bufferedPosition,
                 onSeek = onSeek,
                 enabled = seekEnabled,
             )
