@@ -55,6 +55,15 @@ class MainTvActivity : ComponentActivity() {
     // the user on Main — see [handleIntent] and the collector in TvAppNavigation.
     private val pendingDeepLink: MutableStateFlow<Uri?> by inject(named("pendingDeepLink"))
 
+    companion object {
+        // The startup splash plays once per process (a genuine cold launch). It
+        // survives Activity recreation / return-from-background so we don't replay
+        // it on warm re-open; a process death resets it, which is itself a cold
+        // start. Mirrors the phone-side flag in MainActivity.
+        @Volatile
+        private var hasShownColdSplash = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -64,7 +73,7 @@ class MainTvActivity : ComponentActivity() {
 
         setContent {
             var startRoute by remember { mutableStateOf<String?>(null) }
-            var splashPlaybackComplete by remember { mutableStateOf(false) }
+            var splashPlaybackComplete by remember { mutableStateOf(hasShownColdSplash) }
 
             LaunchedEffect(Unit) {
                 val route = resolveStartDestination()
@@ -97,7 +106,10 @@ class MainTvActivity : ComponentActivity() {
                                     .width(videoWidth)
                                     .aspectRatio(16f / 9f),
                                 backgroundColor = Color.Transparent,
-                                onPlaybackComplete = { splashPlaybackComplete = true },
+                                onPlaybackComplete = {
+                                    splashPlaybackComplete = true
+                                    hasShownColdSplash = true
+                                },
                             )
                         }
                     }

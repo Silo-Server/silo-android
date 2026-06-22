@@ -44,12 +44,8 @@ private val ContinuumDarkColorScheme = darkColorScheme(
 
 @Composable
 fun ContinuumTheme(
-    darkTheme: Boolean = true,
-    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    @Suppress("UNUSED_PARAMETER") val _unused = darkTheme to dynamicColor
-
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {

@@ -102,7 +102,7 @@ fun MainAppTopBar(
                 ) {
                     androidx.compose.material3.Icon(
                         imageVector = Icons.Outlined.Search,
-                        contentDescription = null,
+                        contentDescription = "Search",
                     )
                 }
 
@@ -126,7 +126,7 @@ fun MainAppTopBar(
                             ) {
                                 androidx.compose.material3.Icon(
                                     imageVector = Icons.Outlined.Person,
-                                    contentDescription = null,
+                                    contentDescription = "Account and menu",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }

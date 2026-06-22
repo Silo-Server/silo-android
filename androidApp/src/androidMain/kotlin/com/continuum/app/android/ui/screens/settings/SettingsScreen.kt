@@ -127,13 +127,6 @@ fun SettingsScreen(
             }
 
             item {
-                AppearanceSettings(
-                    currentTheme = state.theme,
-                    onThemeChanged = viewModel::setTheme,
-                )
-            }
-
-            item {
                 SettingsSectionCard {
                     SettingsRowLabel(
                         title = "Card Overlays",

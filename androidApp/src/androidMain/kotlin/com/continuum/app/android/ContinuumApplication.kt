@@ -6,6 +6,11 @@ import android.app.NotificationManager
 import android.os.Build
 import androidx.work.Configuration
 import androidx.work.WorkManager
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import coil3.request.crossfade
 import com.continuum.app.android.di.androidModule
 import com.continuum.app.android.downloads.AppWorkerFactory
 import com.continuum.app.android.notifications.NotificationsForegroundStarter
@@ -14,6 +19,7 @@ import com.continuum.app.common.di.playerModule
 import com.continuum.app.common.downloads.DownloadWorker
 import com.continuum.app.di.sharedModules
 import kotlinx.coroutines.launch
+import okio.Path.Companion.toOkioPath
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
 
@@ -26,7 +32,7 @@ import org.koin.core.context.startKoin
  * crashes when constructing DI-built workers like DownloadWorker. The
  * Provider path is the modern, reliable recipe.
  */
-class ContinuumApplication : Application(), Configuration.Provider {
+class ContinuumApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         val koinApp = startKoin {
@@ -86,6 +92,23 @@ class ContinuumApplication : Application(), Configuration.Provider {
                 .setWorkerFactory(AppWorkerFactory())
                 .build()
         }
+
+    /**
+     * Tunes the shared Coil image loader: a generous on-disk artwork cache so
+     * posters/backdrops survive between sessions (Coil's default disk cap is
+     * small — 2% of free space, capped at 250MB). Memory cache and network
+     * stack stay at Coil's heap-proportional defaults.
+     */
+    override fun newImageLoader(context: PlatformContext): ImageLoader =
+        ImageLoader.Builder(context)
+            .crossfade(true)
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache").toOkioPath())
+                    .maxSizeBytes(512L * 1024 * 1024)
+                    .build()
+            }
+            .build()
 
     /**
      * Channel for offline download progress / completion notifications.

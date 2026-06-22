@@ -10,11 +10,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,9 +25,7 @@ import com.continuum.app.android.ui.navigation.AppNavigation
 import com.continuum.app.android.ui.navigation.Route
 import com.continuum.app.android.ui.navigation.deviceLoginPairRouteOrNull
 import com.continuum.app.android.ui.navigation.hasLocalDownloadsForScope
-import com.continuum.app.android.ui.screens.settings.ThemePreference
 import com.continuum.app.android.ui.theme.ContinuumTheme
-import com.continuum.app.android.ui.theme.ThemeManager
 import com.continuum.app.common.settings.PlayerSettingsStore
 import com.continuum.app.common.startup.warmAuthenticatedStartup
 import com.continuum.app.common.ui.components.StartupSplashVideo
@@ -47,6 +43,15 @@ import org.koin.java.KoinJavaComponent.get
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        // The startup splash plays once per process (a genuine cold launch). It
+        // survives Activity recreation / return-from-background so we don't replay
+        // it on warm re-open; a process death resets it, which is itself a cold
+        // start. Mirrors the TV-side flag in MainTvActivity.
+        @Volatile
+        private var hasShownColdSplash = false
+    }
+
     private val incomingDeviceLoginRoutes = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
     // POST_NOTIFICATIONS is required on Android 13+ for any notification —
@@ -63,18 +68,10 @@ class MainActivity : ComponentActivity() {
         maybeRequestNotificationPermission()
         maybeRequestLegacyPublicDownloadPermission()
 
-        val themeManager = get<ThemeManager>(ThemeManager::class.java)
-
         setContent {
-            val themePref by themeManager.themePreference.collectAsState()
             var startRoute by remember { mutableStateOf<String?>(null) }
             var pendingExternalRoute by remember { mutableStateOf<String?>(null) }
-            var splashPlaybackComplete by remember { mutableStateOf(false) }
-            val darkTheme = when (themePref) {
-                ThemePreference.DARK -> true
-                ThemePreference.LIGHT -> false
-                ThemePreference.SYSTEM -> isSystemInDarkTheme()
-            }
+            var splashPlaybackComplete by remember { mutableStateOf(hasShownColdSplash) }
 
             LaunchedEffect(Unit) {
                 val route = resolveStartDestination()
@@ -87,12 +84,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            ContinuumTheme(darkTheme = darkTheme) {
+            ContinuumTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val resolvedRoute = startRoute
                     if (resolvedRoute == null || !splashPlaybackComplete) {
                         StartupSplashVideo(
-                            onPlaybackComplete = { splashPlaybackComplete = true },
+                            onPlaybackComplete = {
+                                splashPlaybackComplete = true
+                                hasShownColdSplash = true
+                            },
                         )
                     } else {
                         AppNavigation(

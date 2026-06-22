@@ -63,7 +63,6 @@ import com.continuum.app.android.ui.screens.player.PlayerViewModel
 import com.continuum.app.android.ui.screens.reading.ReadingHubViewModel
 import com.continuum.app.android.ui.screens.search.SearchViewModel
 import com.continuum.app.android.ui.screens.settings.SettingsViewModel
-import com.continuum.app.android.ui.theme.ThemeManager
 import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.workmanager.dsl.worker
 import org.koin.core.module.dsl.viewModel
@@ -140,7 +139,6 @@ val androidModule = module {
     }
 
     // App-wide services
-    single { ThemeManager(androidContext()) }
     single<AndroidServerSettingsCache> { AndroidServerSettingsCache(androidContext()) }
     single<com.continuum.app.network.DeviceMetadataProvider> {
         AndroidDeviceMetadataProvider(androidContext(), platform = "android")
@@ -289,7 +287,7 @@ val androidModule = module {
             tmdbId = args.second,
         )
     }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { AdminEntryViewModel(get(), get()) }
     viewModel { AdminStatsViewModel(get()) }
     viewModel { AdminUsersViewModel(get()) }

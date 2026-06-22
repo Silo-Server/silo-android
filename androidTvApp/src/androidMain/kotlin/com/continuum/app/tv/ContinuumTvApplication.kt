@@ -3,6 +3,11 @@ package com.continuum.app.tv
 import android.app.Application
 import androidx.work.Configuration
 import androidx.work.WorkManager
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import coil3.request.crossfade
 import com.continuum.app.common.di.playerInfraModule
 import com.continuum.app.common.di.playerModule
 import com.continuum.app.di.sharedModules
@@ -10,6 +15,7 @@ import com.continuum.app.tv.di.androidTvModule
 import com.continuum.app.tv.notifications.NotificationsForegroundStarter
 import com.continuum.app.tv.watchnext.TvWorkerFactory
 import kotlinx.coroutines.launch
+import okio.Path.Companion.toOkioPath
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
 
@@ -23,7 +29,7 @@ import org.koin.core.context.startKoin
  * constructor. Mirrors the phone app's ContinuumApplication +
  * AppWorkerFactory recipe (see that file for the full history).
  */
-class ContinuumTvApplication : Application(), Configuration.Provider {
+class ContinuumTvApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         val koinApp = startKoin {
@@ -84,4 +90,19 @@ class ContinuumTvApplication : Application(), Configuration.Provider {
                 .setWorkerFactory(TvWorkerFactory())
                 .build()
         }
+
+    /**
+     * Tunes the shared Coil image loader with a generous on-disk artwork cache
+     * so posters/backdrops survive between sessions. Mirrors the phone app.
+     */
+    override fun newImageLoader(context: PlatformContext): ImageLoader =
+        ImageLoader.Builder(context)
+            .crossfade(true)
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache").toOkioPath())
+                    .maxSizeBytes(512L * 1024 * 1024)
+                    .build()
+            }
+            .build()
 }

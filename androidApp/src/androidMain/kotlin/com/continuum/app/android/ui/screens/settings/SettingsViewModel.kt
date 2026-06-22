@@ -12,7 +12,6 @@ import com.continuum.app.model.auth.isActingAdmin
 import com.continuum.app.model.notifications.NotificationPreferencesUpdate
 import com.continuum.app.model.profile.UpdateProfileRequest
 import com.continuum.app.network.ApiResult
-import com.continuum.app.android.ui.theme.ThemeManager
 import com.continuum.app.repository.AuthRepository
 import com.continuum.app.repository.NotificationsRepository
 import com.continuum.app.repository.ProfileRepository
@@ -24,15 +23,6 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-
-/**
- * Theme preference for the app appearance.
- */
-enum class ThemePreference(val label: String) {
-    SYSTEM("System"),
-    DARK("Dark"),
-    LIGHT("Light"),
-}
 
 /**
  * Subtitle display mode.
@@ -54,9 +44,6 @@ data class SettingsUiState(
     val loggedOut: Boolean = false,
     // Client admin is hidden for now even when the server would accept acting-admin.
     val isAdminVisible: Boolean = false,
-
-    // Appearance
-    val theme: ThemePreference = ThemePreference.SYSTEM,
 
     // Playback
     val defaultQuality: String = "Auto",
@@ -88,7 +75,6 @@ data class SettingsUiState(
 
 class SettingsViewModel(
     private val authRepository: AuthRepository,
-    private val themeManager: ThemeManager,
     private val playerSettingsStore: PlayerSettingsStore,
     private val profileRepository: ProfileRepository,
     private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
@@ -104,7 +90,6 @@ class SettingsViewModel(
         observePlayerSettings()
         observePlaybackBehaviorSettings()
         observeNotifications()
-        _uiState.update { it.copy(theme = themeManager.themePreference.value) }
     }
 
     private fun loadUserInfo() {
@@ -311,13 +296,6 @@ class SettingsViewModel(
 
     fun onLogoutConsumed() {
         _uiState.update { it.copy(loggedOut = false) }
-    }
-
-    // -- Appearance --
-
-    fun setTheme(theme: ThemePreference) {
-        themeManager.setTheme(theme)
-        _uiState.update { it.copy(theme = theme) }
     }
 
     // -- Playback --

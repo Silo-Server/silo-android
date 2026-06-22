@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -289,7 +290,7 @@ private fun FeaturedCardContent(
         modifier = modifier.graphicsLayer { alpha = visibility.coerceIn(0f, 1f) },
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        val eyebrow = eyebrowFor(item)
+        val eyebrow = remember(item) { eyebrowFor(item) }
         if (eyebrow != null) {
             Text(
                 text = eyebrow.uppercase(),
@@ -335,7 +336,7 @@ private fun FeaturedCardContent(
             )
         }
 
-        val chips = metadataChips(item)
+        val chips = remember(item) { metadataChips(item) }
         if (chips.isNotEmpty()) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 chips.forEach { chip -> MetadataChip(chip) }
