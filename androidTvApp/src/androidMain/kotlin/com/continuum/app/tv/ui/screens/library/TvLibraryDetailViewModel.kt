@@ -106,12 +106,16 @@ class TvLibraryDetailViewModel(
     private var loadedRecommended = false
     private var loadedBrowse = false
     private var loadedCollections = false
+    private var loadedFilters = false
     private var browseGeneration = 0
     private var browseSnapshot: String? = null
 
     init {
+        // Only the default Recommended tab loads eagerly. Filters (the genre
+        // rail) are fetched lazily when Browse is first opened — the
+        // `/catalog/filters` call is slow and is wasted work for the (common)
+        // case where the user never leaves Recommended.
         loadRecommended()
-        loadFilters()
     }
 
     fun onTabSelected(tab: TvLibraryTab) {
@@ -119,7 +123,10 @@ class TvLibraryDetailViewModel(
         _uiState.update { it.copy(selectedTab = tab) }
         when (tab) {
             TvLibraryTab.Recommended -> if (!loadedRecommended) loadRecommended()
-            TvLibraryTab.Browse -> if (!loadedBrowse) loadBrowse(reset = true)
+            TvLibraryTab.Browse -> {
+                if (!loadedFilters) loadFilters()
+                if (!loadedBrowse) loadBrowse(reset = true)
+            }
             TvLibraryTab.Collections -> if (!loadedCollections) loadCollections()
         }
     }
@@ -215,14 +222,35 @@ class TvLibraryDetailViewModel(
                 }
             }
 
-            val resolved = layout.sections.map { section ->
-                async {
-                    when (val result = sectionRepository.getLibrarySectionItems(libraryId, section.id)) {
-                        is ApiResult.Success -> result.data.section ?: section
-                        else -> section
+            // `/library/{id}/sections` already returns every section with its
+            // items hydrated inline — byte-for-byte the same objects the
+            // per-section `/items` endpoint returns (progress + user_state
+            // included). Render them directly instead of re-fetching each one:
+            // the previous fan-out was an N+1 that re-downloaded data already in
+            // hand (10–14 extra requests per library open).
+            //
+            // Defensive fallback: resolve only sections the server left
+            // un-inlined (older deployments / a dynamically-resolved section
+            // type that reports a non-zero total but ships no items). The
+            // measured common case has every section populated and makes zero
+            // extra calls.
+            val sections = layout.sections
+            val unresolved = sections.filter { it.items.isEmpty() && it.totalCount > 0 }
+            val resolved = if (unresolved.isEmpty()) {
+                sections
+            } else {
+                val resolvedById = unresolved.map { section ->
+                    async {
+                        section.id to when (
+                            val result = sectionRepository.getLibrarySectionItems(libraryId, section.id)
+                        ) {
+                            is ApiResult.Success -> result.data.section ?: section
+                            else -> section
+                        }
                     }
-                }
-            }.awaitAll()
+                }.awaitAll().toMap()
+                sections.map { section -> resolvedById[section.id] ?: section }
+            }
 
             _uiState.update {
                 it.copy(
@@ -235,6 +263,7 @@ class TvLibraryDetailViewModel(
     }
 
     private fun loadFilters() {
+        loadedFilters = true
         viewModelScope.launch {
             _uiState.update { it.copy(filtersLoading = true) }
             when (val filters = catalogRepository.getFilters(libraryId)) {
