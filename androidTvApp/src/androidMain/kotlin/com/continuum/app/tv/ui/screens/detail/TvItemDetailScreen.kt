@@ -809,7 +809,7 @@ private fun EpisodesSection(
 
         TvDetailEpisodeRail(
             episodes = state.episodes,
-            currentContentId = detail.contentId.takeIf { detail.type == "episode" },
+            currentContentId = currentEpisodeRailContentId(detail, state),
             onEpisodeSelected = onEpisodeSelected,
             // Up returns to the hero only when the season chips aren't above the
             // rail (the chips own the Up traversal when present).
@@ -817,6 +817,17 @@ private fun EpisodesSection(
         )
     }
 }
+
+private fun currentEpisodeRailContentId(detail: ItemDetail, state: TvItemDetailUiState): String? =
+    when (detail.type) {
+        "episode" -> detail.contentId
+        "series",
+        "season",
+        -> state.nextUpEpisode
+            ?.takeIf { it.userData?.isInProgress == true }
+            ?.contentId
+        else -> null
+    }
 
 private fun episodeEyebrowLabel(detail: ItemDetail, state: TvItemDetailUiState): String {
     state.selectedSeason?.takeIf { it > 0 }?.let { return "Season $it" }
