@@ -1,6 +1,8 @@
 package com.continuum.app.tv.ui.screens.library
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -55,6 +58,7 @@ import com.continuum.app.tv.ui.components.TvSkylineSectionFeed
 import com.continuum.app.tv.ui.shell.TvTopMenuLayout
 import com.continuum.app.tv.ui.theme.Spacing
 import com.continuum.app.tv.ui.theme.SubtleSurface
+import com.continuum.app.tv.ui.theme.TvSmoothBringIntoViewSpec
 import com.continuum.app.tv.ui.theme.monoGroupHeader
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -234,6 +238,7 @@ private fun LibraryTab(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryGrid(
     state: TvLibraryDetailViewModel.UiState,
@@ -274,60 +279,63 @@ private fun LibraryGrid(
         gridState.scrollToItem(0)
     }
 
-    LazyVerticalGrid(
-        state = gridState,
-        columns = GridCells.Fixed(LibraryBrowseGridColumns),
-        modifier = Modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
-        verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
-        contentPadding = PaddingValues(
-            start = Spacing.safeArea,
-            top = TvTopMenuLayout.contentTopInset,
-            end = Spacing.md,
-            bottom = Spacing.xxxl,
-        ),
-    ) {
-        if (state.browseLoading && state.browseItems.isEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }, key = "loading") {
-                InlineLoadingState()
+    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Fixed(LibraryBrowseGridColumns),
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
+            verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
+            contentPadding = PaddingValues(
+                start = Spacing.safeArea,
+                top = TvTopMenuLayout.contentTopInset,
+                end = Spacing.md,
+                bottom = Spacing.xxxl,
+            ),
+        ) {
+            if (state.browseLoading && state.browseItems.isEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "loading") {
+                    InlineLoadingState()
+                }
+            } else if (state.browseItems.isEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
+                    TvCatalogEmptyState(message = "No titles match the current filters.")
+                }
+            } else {
+                itemsIndexed(
+                    state.browseItems,
+                    key = { _, item -> item.contentId },
+                    contentType = { _, item -> item.type },
+                ) { index, item ->
+                    val (actions, userState) = com.continuum.app.tv.ui.components.rememberTvBrowseItemCardActions(item)
+                    TvMediaCard(
+                        title = item.title,
+                        posterUrl = item.posterUrl,
+                        posterThumbhash = item.posterThumbhash,
+                        year = item.year.takeIf { it > 0 },
+                        userState = userState,
+                        mediaType = item.type,
+                        width = TvCardWidth,
+                        fillWidth = true,
+                        onClick = { onItemClick(item.contentId) },
+                        focusRequester = firstItemFocusRequester.takeIf { index == 0 },
+                        modifier = Modifier.fillMaxWidth(),
+                        overlay = com.continuum.app.overlays.OverlayDataExtractor.fromBrowseItem(item),
+                        actions = actions,
+                    )
+                }
             }
-        } else if (state.browseItems.isEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
-                TvCatalogEmptyState(message = "No titles match the current filters.")
-            }
-        } else {
-            itemsIndexed(
-                state.browseItems,
-                key = { _, item -> item.contentId },
-                contentType = { _, item -> item.type },
-            ) { index, item ->
-                val (actions, userState) = com.continuum.app.tv.ui.components.rememberTvBrowseItemCardActions(item)
-                TvMediaCard(
-                    title = item.title,
-                    posterUrl = item.posterUrl,
-                    posterThumbhash = item.posterThumbhash,
-                    year = item.year.takeIf { it > 0 },
-                    userState = userState,
-                    mediaType = item.type,
-                    width = TvCardWidth,
-                    fillWidth = true,
-                    onClick = { onItemClick(item.contentId) },
-                    focusRequester = firstItemFocusRequester.takeIf { index == 0 },
-                    modifier = Modifier.fillMaxWidth(),
-                    overlay = com.continuum.app.overlays.OverlayDataExtractor.fromBrowseItem(item),
-                    actions = actions,
-                )
-            }
-        }
 
-        if (state.browseLoadingMore) {
-            item(span = { GridItemSpan(maxLineSpan) }, key = "loading-more") {
-                InlineLoadingState(verticalPadding = 24.dp)
+            if (state.browseLoadingMore) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "loading-more") {
+                    InlineLoadingState(verticalPadding = 24.dp)
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CollectionsTab(
     state: TvLibraryDetailViewModel.UiState,
@@ -351,59 +359,61 @@ private fun CollectionsTab(
         initialFocusRequested = true
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(LibraryGridColumns),
-        modifier = Modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
-        verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
-        contentPadding = PaddingValues(
-            start = Spacing.safeArea,
-            top = TvTopMenuLayout.contentTopInset,
-            end = Spacing.safeArea,
-            bottom = Spacing.xxxl,
-        ),
-    ) {
-        when {
-            state.collectionsLoading && state.collections.isEmpty() -> {
-                item(span = { GridItemSpan(maxLineSpan) }, key = "loading") {
-                    InlineLoadingState()
-                }
-            }
-            state.collectionsError != null && state.collections.isEmpty() -> {
-                item(span = { GridItemSpan(maxLineSpan) }, key = "error") {
-                    TvErrorScreen(message = state.collectionsError, onRetry = onRetry)
-                }
-            }
-            state.collections.isEmpty() -> {
-                item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
-                    TvCatalogEmptyState(message = "No collections in this library.")
-                }
-            }
-            // Grouped collections (tvOS `TVLibraryCollectionsView`): a mono
-            // uppercase group header, then a grid of 2:3 poster cards. A
-            // section with an empty name (flat / ungrouped bucket) renders no
-            // header.
-            else -> state.collectionSections.forEachIndexed { sectionIndex, section ->
-                if (section.collections.isEmpty()) return@forEachIndexed
-                if (section.name.isNotEmpty()) {
-                    item(
-                        span = { GridItemSpan(maxLineSpan) },
-                        key = "group-header:$sectionIndex:${section.name}",
-                    ) {
-                        CollectionsGroupHeader(name = section.name)
+    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(LibraryGridColumns),
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
+            verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
+            contentPadding = PaddingValues(
+                start = Spacing.safeArea,
+                top = TvTopMenuLayout.contentTopInset,
+                end = Spacing.safeArea,
+                bottom = Spacing.xxxl,
+            ),
+        ) {
+            when {
+                state.collectionsLoading && state.collections.isEmpty() -> {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "loading") {
+                        InlineLoadingState()
                     }
                 }
-                itemsIndexed(
-                    section.collections,
-                    key = { _, collection -> "$sectionIndex:${collection.id}" },
-                    contentType = { _, collection -> "collection" },
-                ) { _, collection ->
-                    TvCollectionCard(
-                        collection = collection,
-                        onClick = { onCollectionClick(collection.id, collection.name) },
-                        focusRequester = firstCollectionFocusRequester
-                            .takeIf { collection.id == firstCollectionId },
-                    )
+                state.collectionsError != null && state.collections.isEmpty() -> {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "error") {
+                        TvErrorScreen(message = state.collectionsError, onRetry = onRetry)
+                    }
+                }
+                state.collections.isEmpty() -> {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
+                        TvCatalogEmptyState(message = "No collections in this library.")
+                    }
+                }
+                // Grouped collections (tvOS `TVLibraryCollectionsView`): a mono
+                // uppercase group header, then a grid of 2:3 poster cards. A
+                // section with an empty name (flat / ungrouped bucket) renders no
+                // header.
+                else -> state.collectionSections.forEachIndexed { sectionIndex, section ->
+                    if (section.collections.isEmpty()) return@forEachIndexed
+                    if (section.name.isNotEmpty()) {
+                        item(
+                            span = { GridItemSpan(maxLineSpan) },
+                            key = "group-header:$sectionIndex:${section.name}",
+                        ) {
+                            CollectionsGroupHeader(name = section.name)
+                        }
+                    }
+                    itemsIndexed(
+                        section.collections,
+                        key = { _, collection -> "$sectionIndex:${collection.id}" },
+                        contentType = { _, collection -> "collection" },
+                    ) { _, collection ->
+                        TvCollectionCard(
+                            collection = collection,
+                            onClick = { onCollectionClick(collection.id, collection.name) },
+                            focusRequester = firstCollectionFocusRequester
+                                .takeIf { collection.id == firstCollectionId },
+                        )
+                    }
                 }
             }
         }

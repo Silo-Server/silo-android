@@ -17,9 +17,9 @@ fun tvPageStartPadding(
 
 /**
  * `BringIntoViewSpec` tuned for 10-ft D-pad navigation. Compose's default
- * spec uses an under-damped spring that settles quickly — on TV that reads
+ * spec uses an under-damped spring that settles quickly. On TV that reads
  * as a snap, especially between tall row items where the travel distance
- * is large. A longer tween with `FastOutSlowIn` easing gives focus
+ * is large. A deliberate tween with `FastOutSlowIn` easing gives focus
  * transitions between rows a smoother, more cinematic feel that tracks
  * closer to tvOS's scroll animation. The scroll distance keeps a modest
  * viewport gutter around focused content so TV rows do not settle half
@@ -28,7 +28,7 @@ fun tvPageStartPadding(
 @OptIn(ExperimentalFoundationApi::class)
 val TvSmoothBringIntoViewSpec: BringIntoViewSpec = object : BringIntoViewSpec {
     override val scrollAnimationSpec: AnimationSpec<Float> = tween(
-        durationMillis = 320,
+        durationMillis = 520,
         easing = FastOutSlowInEasing,
     )
 
