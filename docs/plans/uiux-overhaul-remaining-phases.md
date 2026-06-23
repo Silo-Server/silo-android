@@ -4,7 +4,17 @@ Handoff doc for picking up the UI/UX + performance overhaul in a new session.
 Self-contained: read this top-to-bottom and you have everything needed to start.
 
 - **Branch:** `uiux-fluidity-overhaul` (off `main`, base commit `17fb749`).
-- **Status:** Phases 1–6 done, committed, both apps compile clean. Phases 7–8 remain.
+- **Status:** Phases 1–8 implemented + committed; both apps compile clean and
+  build minified release. **Phases 7 & 8 are GATED** — they need the owner's
+  on-device checkpoint (TV D-pad focus for 7; minified smoke test + baseline
+  profile generation for 8) before merge.
+- **⚠️ Test-suite caveat discovered during phase 7:** `:androidTvApp:testDebugUnitTest`
+  had NOT compiled since `071e1c0` (orphaned watch-together test), so every TV
+  source guard was silently dormant. Fixed in `a7d978b9` (suite now 371 green).
+  The full `:androidApp:testDebugUnitTest` also has **11 pre-existing failures**
+  (not 4): 7 are the `URISyntaxException` Windows path→URI env issue, 4 are a
+  `PersonDetailViewModelTest` Integer→Long `ClassCastException` — all pre-date
+  and are untouched by phases 6–8.
 - **Owner priority (overriding all):** the app must FEEL fluid and fast. Weight
   perceived-speed/smoothness over feature breadth. A recurring pattern in this
   codebase is polish that was built but never wired up — favor connecting that.
@@ -194,7 +204,28 @@ the similar rail. Watch for dropped frames / mismatched bounds.
 
 ---
 
-## 4. Phase 7 — TV focus state-machine refactor ⚠️ GATED
+## 4. Phase 7 — TV focus state-machine refactor ✅ IMPLEMENTED (GATED) — `e9184e20`
+
+**Shipped:** consolidated the loose counters/booleans/effects into one holder,
+`TvShellFocusState` (new `ui/shell/TvShellFocusState.kt`), with a derived `mode`
+enum (Content / MenuFocused / ProfileMenu / Panel) and named transitions. The
+4-way Back precedence + mode logic that the "fix focus" commits kept breaking is
+extracted into PURE functions (`tvShellMode` / `tvShellBackAction`) and covered
+by REAL unit tests (`TvShellFocusStateTest`, 15 cases). The Compose-side
+focus-dispatch guards (UP-exit cancel, double-move prevention, runCatching,
+centralized shell Back) are pinned by `TvShellFocusSourceTest` (each tied to its
+origin fix commit). The nudge COUNTERS were retained (collapsing them into direct
+FocusRequesters crosses the shell/child boundary — a follow-up). Behavior-
+preserving; full TV unit suite green (371).
+
+⚠️ **Owner checkpoint before merge:** D-pad focus *dispatch* is unverifiable off
+a TV. Verify: Up from top content row → selected tab; dropdown open/close →
+avatar; library-tab Down → cascade + Back closes it; menu-focused Back → content
+(not app exit); cascade commit → scoped content.
+
+### Original phase 7 plan (for reference)
+
+## 4b. Phase 7 — TV focus state-machine refactor ⚠️ GATED
 
 **Owner agreed to a checkpoint before merging this.** It's the riskiest file.
 
@@ -232,7 +263,36 @@ Existing guards to preserve: `runCatching` around every `requestFocus()`,
 
 ---
 
-## 5. Phase 8 — R8/minify + Baseline Profile ⚠️ GATED
+## 5. Phase 8 — R8/minify + Baseline Profile ✅ IMPLEMENTED (GATED) — `d4fbba3e`
+
+**Shipped:** `release` buildType on both apps (`isMinifyEnabled` +
+`isShrinkResources`, debug-signed for installable smoke testing) sharing one root
+`proguard-rules.pro` with keep rules for the reflection/JNI-heavy components
+(kotlinx.serialization serializers under `com.continuum.app.**`, Koin ViewModels,
+Media3 FFmpeg `Class.forName` renderer, libmpv JNI, BouncyCastle TLS-PSK, Room,
++ Ktor/OkHttp/Coil3/zxing dontwarns). `androidx.profileinstaller` in both apps;
+new `:baselineprofile` macrobenchmark module (cold-start + scroll generator,
+managed `pixel6Api34` device) targeting `:androidApp`; root `build.gradle.kts`
+pins `com.android.test`/`kotlin-android`/`androidx.baselineprofile` apply-false so
+the new module's plugins reconcile with the apps' shared AGP/Kotlin artifacts.
+
+**Verified here:** both apps `assembleRelease` build clean through R8 (~35–42 MB
+per-ABI); `:baselineprofile` configures, generator compiles, generation variants
+assemble. (A Windows file-contention flake appears only when building *all*
+release-type variants' ABI splits at once — use `--max-workers=3`; the real
+generation flow builds one variant.)
+
+⚠️ **Owner checkpoint before merge — both are device-gated:**
+1. Install a minified release and smoke-test: boot + Media3 playback + MPV
+   playback + LAN (TLS-PSK) pairing (R8 breakage is runtime-only).
+2. Generate the profile on a device/emulator:
+   `./gradlew :baselineprofile:generateBaselineProfile` (a richer logged-in
+   Home-scroll journey needs a test server/account). Measure cold-start + size
+   before/after.
+
+### Original phase 8 plan (for reference)
+
+## 5b. Phase 8 — R8/minify + Baseline Profile ⚠️ GATED
 
 **Owner agreed to a checkpoint before declaring done.** Owner chose "both now".
 
