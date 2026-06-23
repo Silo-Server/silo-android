@@ -59,6 +59,9 @@ kotlin {
 
             // QR-code rendering for device-login (sub-project C).
             implementation(libs.zxing.core)
+            // Installs the Baseline Profile into the app at first run so hot paths
+            // are AOT-compiled — faster cold start on TV hardware.
+            implementation(libs.androidx.profileinstaller)
         }
 
         // First tests in this module — JUnit 4 via kotlin-test-junit, mirroring
@@ -97,6 +100,24 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    buildTypes {
+        release {
+            // Launch-prep: full R8 + resource shrinking, sharing the root
+            // proguard-rules.pro with :androidApp (same reflection/JNI-heavy
+            // shared + android-shared stack). R8 breakage is runtime-only, so a
+            // minified install must be smoke-tested on a TV before shipping.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                rootProject.file("proguard-rules.pro"),
+            )
+            // No release keystore yet (pre-1.0). Debug-sign the minified build so
+            // the gated on-device smoke test is installable; replace with a real
+            // release signingConfig before the first store upload.
+            signingConfig = signingConfigs.getByName("debug")
+        }
     }
     // Mirror androidApp's ABI split strategy. See that file for rationale.
     bundle {
