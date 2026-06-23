@@ -26,7 +26,7 @@ SKIP_BUILD=0
 
 APK_PATH="$REPO_ROOT/androidTvApp/build/outputs/apk/debug/androidTvApp-universal-debug.apk"
 GRADLE_TASK=":androidTvApp:assembleDebug"
-APP_ID="com.continuum.app.tv"
+APP_ID="com.silo.app.tv"
 
 log() { printf "\n\033[1;34m[build-push-shield]\033[0m %s\n" "$*"; }
 die() { printf "\n\033[1;31m[build-push-shield] ERROR:\033[0m %s\n" "$*" >&2; exit 1; }

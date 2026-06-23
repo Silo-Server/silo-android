@@ -3,6 +3,7 @@ package com.continuum.app.tv.ui.screens.auth
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -50,9 +54,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.continuum.app.repository.DeviceLoginRepository
@@ -81,6 +87,7 @@ import org.koin.compose.viewmodel.koinViewModel
 fun TvLoginScreen(
     onLoginSuccess: () -> Unit,
     onCreateAccount: () -> Unit = {},
+    onChangeServer: () -> Unit = {},
     signupEnabled: Boolean = false,
     viewModel: TvLoginViewModel = koinViewModel(),
 ) {
@@ -147,6 +154,7 @@ fun TvLoginScreen(
                     signupEnabled = signupEnabled,
                     onCreateAccount = onCreateAccount,
                     onBackToPhone = { showPasswordForm = false },
+                    onChangeServer = onChangeServer,
                     scope = scope,
                     modifier = Modifier.width(390.dp),
                 )
@@ -167,6 +175,7 @@ fun TvLoginScreen(
                         state = deviceState,
                         onRetry = viewModel::restartDeviceLogin,
                         onUsePassword = { showPasswordForm = true },
+                        onChangeServer = onChangeServer,
                         usePasswordFocus = usePasswordFocus,
                         modifier = Modifier.width(300.dp),
                     )
@@ -251,9 +260,11 @@ private fun CredentialFormCard(
     signupEnabled: Boolean,
     onCreateAccount: () -> Unit,
     onBackToPhone: () -> Unit,
+    onChangeServer: () -> Unit,
     scope: kotlinx.coroutines.CoroutineScope,
     modifier: Modifier = Modifier,
 ) {
+    var passwordVisible by remember { mutableStateOf(false) }
     Column(
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
         modifier = modifier
@@ -297,7 +308,27 @@ private fun CredentialFormCard(
             onValueChange = onPasswordChanged,
             label = { Text("Password") },
             singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
+            visualTransformation = if (passwordVisible) {
+                VisualTransformation.None
+            } else {
+                PasswordVisualTransformation()
+            },
+            // Show/hide toggle — tvOS TVLoginView offers this; the remote can
+            // focus the icon to reveal the typed password before submitting.
+            trailingIcon = {
+                Icon(
+                    imageVector = if (passwordVisible) {
+                        Icons.Default.VisibilityOff
+                    } else {
+                        Icons.Default.Visibility
+                    },
+                    contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { passwordVisible = !passwordVisible }
+                        .padding(6.dp),
+                )
+            },
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
                 imeAction = ImeAction.Done,
@@ -368,11 +399,19 @@ private fun CredentialFormCard(
 
         Spacer(modifier = Modifier.height(Spacing.xs))
 
-        // Return to the phone-first surface (the QR pairing remains live).
-        AuroraGhostButton(
-            label = "Back to phone sign-in",
-            onClick = onBackToPhone,
-        )
+        // Return to the phone-first surface (the QR pairing remains live), or
+        // bail out to server setup to point this TV at a different server —
+        // both affordances mirror tvOS TVLoginView.
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            AuroraGhostButton(
+                label = "Back to phone sign-in",
+                onClick = onBackToPhone,
+            )
+            AuroraGhostButton(
+                label = "Change server",
+                onClick = onChangeServer,
+            )
+        }
     }
 }
 
@@ -439,6 +478,7 @@ private fun QrLoginCard(
     state: DeviceLoginRepository.DeviceLoginState,
     onRetry: () -> Unit,
     onUsePassword: () -> Unit,
+    onChangeServer: () -> Unit,
     usePasswordFocus: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
@@ -513,6 +553,10 @@ private fun QrLoginCard(
             label = "Use a password instead",
             onClick = onUsePassword,
             modifier = Modifier.focusRequester(usePasswordFocus),
+        )
+        AuroraGhostButton(
+            label = "Change server",
+            onClick = onChangeServer,
         )
     }
 }

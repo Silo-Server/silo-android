@@ -10,15 +10,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 import kotlin.random.Random
@@ -29,10 +27,13 @@ import kotlin.random.Random
  * screen gets its own variant (where the light band sits, how bright) so the
  * flow feels related but never identical, inside one plum-night palette.
  *
- * The SwiftUI original layers the warm bloom + ribbons with `.screen`; we draw
- * the night gradient, bloom and ribbons into a single blurred layer using
- * additive [BlendMode.Plus] so the bright warm/pink/violet bands *add* light to
- * the dark night (a real glow), then blur the layer into flowing aurora.
+ * The SwiftUI original layers the warm bloom + ribbons with `.screen` and a
+ * heavy `.blur(72)`. We can't lean on that: `Modifier.blur` is a RenderEffect
+ * that no-ops below API 31 (e.g. the Nvidia Shield on Android 11), which turns
+ * hard-edged ribbon capsules into a sharp diagonal stripe. So instead we paint
+ * the bands as wide, vertically-squashed radial glows that are *inherently*
+ * soft — additive [BlendMode.Plus] over the dark night reads as flowing aurora
+ * on every API level, no blur required.
  */
 data class TvAuroraVariant(
     val rotationDegrees: Float,
@@ -67,9 +68,10 @@ fun TvAuroraBackdrop(
     }
 
     Box(modifier = modifier.fillMaxSize().background(NightBottom)) {
-        // Glow layer: night gradient + additive bloom + additive ribbons, all
-        // blurred together so the bright bands read as flowing aurora light.
-        Canvas(Modifier.matchParentSize().blur(64.dp)) {
+        // Glow layer: night gradient + additive bloom + additive aurora glows.
+        // Everything here is a smooth gradient, so it stays soft without any
+        // RenderEffect blur (which the Shield's Android 11 ignores).
+        Canvas(Modifier.matchParentSize()) {
             val w = size.width
             val h = size.height
 
@@ -90,16 +92,29 @@ fun TvAuroraBackdrop(
                 blendMode = BlendMode.Plus,
             )
 
-            // Three soft, wide light bands rotated as a group (additive).
-            // Profile selection keeps the bloom but suppresses the bands; on
-            // Android's canvas they read as a hard diagonal stripe, unlike tvOS.
+            // Aurora band: a row of wide, vertically-squashed radial glows in
+            // the warm→pink→violet→teal palette, rotated as a group. They
+            // overlap into one flowing ribbon of light with no hard edges.
+            // Profile selection keeps the bloom but suppresses the band.
             if (variant.ribbonIntensity > 0f) {
                 val cy = h * variant.centerY
                 val ribbonAlpha = variant.intensity * variant.ribbonIntensity
+                val glowColors = listOf(
+                    Color(0xFFFFD9A4),
+                    Color(0xFFFF90A8),
+                    Color(0xFFC490FF),
+                    Color(0xFF9B8BFF),
+                    Color(0xFF8FE7CF),
+                )
+                val glowRadius = max(w, h) * 0.34f
                 rotate(degrees = variant.rotationDegrees, pivot = Offset(w / 2f, cy)) {
-                    ribbon(cy + 0f, w * 1.7f, 150f, listOf(Color(0xFFFFD9A4), Color(0xFFFF90A8), Color(0xFFC490FF)), ribbonAlpha)
-                    ribbon(cy + 96f, w * 1.7f, 116f, listOf(Color(0xFFFFADC6), Color(0xFF9B8BFF)), ribbonAlpha)
-                    ribbon(cy - 120f, w * 1.5f, 92f, listOf(Color(0xFFC6F0E2), Color(0xFF8FE7CF)), ribbonAlpha * 0.7f)
+                    glowColors.forEachIndexed { i, c ->
+                        val t = i / (glowColors.size - 1f)
+                        val gx = w * (0.12f + 0.76f * t)
+                        val gy = cy + (if (i % 2 == 0) -1f else 1f) * h * 0.035f
+                        val a = ribbonAlpha * if (i == glowColors.lastIndex) 0.34f else 0.46f
+                        auroraGlow(Offset(gx, gy), glowRadius, c, a, verticalSquash = 0.24f)
+                    }
                 }
             }
         }
@@ -161,26 +176,29 @@ fun TvAuroraBackdrop(
     }
 }
 
-/** One soft, wide horizontal light band centered on the canvas, at [yCenter]. */
-private fun DrawScope.ribbon(
-    yCenter: Float,
-    width: Float,
-    height: Float,
-    colors: List<Color>,
-    intensity: Float,
+/**
+ * One soft aurora glow — a radial gradient squashed vertically into a wide,
+ * flat ellipse so a row of them overlaps into a flowing band of light. Radial
+ * gradients fade smoothly to transparent, so the result is soft on every API
+ * level without relying on [androidx.compose.ui.draw.blur].
+ */
+private fun DrawScope.auroraGlow(
+    center: Offset,
+    radius: Float,
+    color: Color,
+    alpha: Float,
+    verticalSquash: Float,
 ) {
-    val left = (size.width - width) / 2f
-    val top = yCenter - height / 2f
-    drawRoundRect(
-        brush = Brush.horizontalGradient(
-            colors = listOf(Color.Transparent) + colors + listOf(Color.Transparent),
-            startX = left,
-            endX = left + width,
-        ),
-        topLeft = Offset(left, top),
-        size = Size(width, height),
-        cornerRadius = CornerRadius(height / 2f, height / 2f),
-        alpha = intensity.coerceIn(0f, 1f),
-        blendMode = BlendMode.Plus,
-    )
+    withTransform({ scale(scaleX = 1f, scaleY = verticalSquash, pivot = center) }) {
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(color.copy(alpha = alpha.coerceIn(0f, 1f)), Color.Transparent),
+                center = center,
+                radius = radius,
+            ),
+            radius = radius,
+            center = center,
+            blendMode = BlendMode.Plus,
+        )
+    }
 }

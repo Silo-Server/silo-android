@@ -87,7 +87,7 @@ android {
     namespace = "com.continuum.app.tv"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.continuum.app.tv"
+        applicationId = "com.silo.app.tv"
         minSdk = 24
         targetSdk = 35
         versionCode = 1

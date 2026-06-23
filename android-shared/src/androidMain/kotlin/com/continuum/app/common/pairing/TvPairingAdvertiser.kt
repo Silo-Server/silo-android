@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
+import android.util.Log
 import com.continuum.app.pairing.PairingProtocol
 import com.continuum.app.pairing.PairingReceiverState
 import kotlinx.coroutines.CoroutineScope
@@ -34,6 +35,10 @@ class TvPairingAdvertiser(
     private val receiver: PairingReceiver,
     private val receiverStateProvider: () -> PairingReceiverState,
 ) {
+    private companion object {
+        private const val TAG = "TvPairingAdvertiser"
+    }
+
     private val nsdManager: NsdManager =
         context.getSystemService(Context.NSD_SERVICE) as NsdManager
 
@@ -59,6 +64,7 @@ class TvPairingAdvertiser(
             val socket = ServerSocket(0).also { serverSocket = it }
             val port = socket.localPort
             registerService(port, identity)
+            Log.i(TAG, "started pairing listener on port $port")
             receiver.setAdvertising()
             acceptLoop(socket)
         }
@@ -85,12 +91,15 @@ class TvPairingAdvertiser(
             val client: Socket = try {
                 withContext(Dispatchers.IO) { socket.accept() }
             } catch (_: Throwable) {
+                Log.i(TAG, "pairing listener stopped")
                 return // socket closed (stop()) — exit the loop.
             }
             if (!busy.compareAndSet(false, true)) {
+                Log.i(TAG, "rejected pairing connection while busy")
                 runCatching { client.close() } // already serving someone — busy.
                 continue
             }
+            Log.i(TAG, "accepted pairing connection")
             val connScope = scope ?: run {
                 runCatching { client.close() }
                 return
@@ -100,16 +109,20 @@ class TvPairingAdvertiser(
                     val transport = withContext(Dispatchers.IO) {
                         TlsPskPairingTransport.accept(client)
                     }
+                    Log.i(TAG, "pairing TLS connected")
                     receiver.run(transport)
-                } catch (_: Throwable) {
+                    Log.i(TAG, "pairing session ended")
+                } catch (t: Throwable) {
+                    Log.w(TAG, "pairing connection failed", t)
                     runCatching { client.close() }
                 } finally {
                     // Release for the next peer and resume advertising state —
                     // but only if we're still running. After stop()/cancellation
                     // the NSD + socket are down, so leave the receiver Idle rather
-                    // than falsely claiming Advertising.
+                    // than falsely claiming Advertising. Completed is a terminal
+                    // UI dwell state; the setup screen advances after showing it.
                     busy.set(false)
-                    if (running.get()) {
+                    if (running.get() && receiver.status.value !is PairingReceiverStatus.Completed) {
                         receiver.setAdvertising()
                     }
                 }
@@ -131,9 +144,15 @@ class TvPairingAdvertiser(
         }
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {}
-            override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {}
-            override fun onServiceUnregistered(info: NsdServiceInfo) {}
-            override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {}
+            override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
+                Log.w(TAG, "pairing service registration failed: $errorCode")
+            }
+            override fun onServiceUnregistered(info: NsdServiceInfo) {
+                Log.i(TAG, "pairing service unregistered")
+            }
+            override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {
+                Log.w(TAG, "pairing service unregistration failed: $errorCode")
+            }
         }
         registrationListener = listener
         nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)

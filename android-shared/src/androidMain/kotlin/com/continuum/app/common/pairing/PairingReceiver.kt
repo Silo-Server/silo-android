@@ -1,5 +1,6 @@
 package com.continuum.app.common.pairing
 
+import android.util.Log
 import com.continuum.app.pairing.PairingMessage
 import com.continuum.app.pairing.PairingReceiverState
 import com.continuum.app.pairing.PairingProtocol
@@ -8,6 +9,7 @@ import com.continuum.app.repository.DeviceLoginRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,16 +41,23 @@ sealed class PairingReceiverStatus {
     data object Connected : PairingReceiverStatus()
 
     /** Device-login started for a pushed server (interim). */
-    data class Pairing(val serverURL: String) : PairingReceiverStatus()
+    data class Pairing(val serverURL: String, val serverName: String) : PairingReceiverStatus()
 
     /** Showing the match code for a pushed server while the phone approves. */
-    data class AwaitingApproval(val serverURL: String, val matchCode: String) : PairingReceiverStatus()
+    data class AwaitingApproval(
+        val serverURL: String,
+        val serverName: String,
+        val matchCode: String,
+    ) : PairingReceiverStatus()
 
-    /** A server finished signing in. */
-    data object SignedIn : PairingReceiverStatus()
+    /** A single server finished signing in; the phone may push more. */
+    data class SignedIn(val serverCount: Int) : PairingReceiverStatus()
+
+    /** The phone sent Done after one or more servers signed in. */
+    data class Completed(val serverNames: List<String>) : PairingReceiverStatus()
 
     /** Terminal failure. */
-    data class Failed(val message: String) : PairingReceiverStatus()
+    data class Failed(val serverName: String, val message: String) : PairingReceiverStatus()
 }
 
 /**
@@ -74,6 +83,10 @@ class PairingReceiver(
     private val identityProvider: () -> PairingDeviceIdentity,
     private val receiverStateProvider: () -> PairingReceiverState,
 ) {
+    private companion object {
+        private const val TAG = "PairingReceiver"
+    }
+
     private val _status = MutableStateFlow<PairingReceiverStatus>(PairingReceiverStatus.Idle)
     val status: StateFlow<PairingReceiverStatus> = _status.asStateFlow()
 
@@ -83,11 +96,23 @@ class PairingReceiver(
     /** The in-flight device-login child job, so EOF/Cancel teardown can cancel it. */
     private var pushJob: Job? = null
 
+    /** Active transport, so the UI can cancel the in-place receiver flow. */
+    private var activeTransport: PairingTransport? = null
+
+    private var signedInCount = 0
+    private val signedInNames = mutableListOf<String>()
+
     fun setAdvertising() {
         _status.value = PairingReceiverStatus.Advertising
     }
 
     fun setIdle() {
+        _status.value = PairingReceiverStatus.Idle
+    }
+
+    fun cancelActiveSession() {
+        pushJob?.cancel()
+        runCatching { activeTransport?.close() }
         _status.value = PairingReceiverStatus.Idle
     }
 
@@ -100,8 +125,13 @@ class PairingReceiver(
     suspend fun run(transport: PairingTransport) {
         pollingServerUrl = null
         pushJob = null
+        activeTransport = transport
+        signedInCount = 0
+        signedInNames.clear()
+        var preserveTerminalStatus = false
         try {
             val identity = identityProvider()
+            Log.i(TAG, "sending pairing hello")
             transport.send(
                 PairingMessage.Hello(
                     tvName = identity.name,
@@ -111,6 +141,7 @@ class PairingReceiver(
                 ),
             )
             _status.value = PairingReceiverStatus.Connected
+            Log.i(TAG, "pairing receiver connected")
 
             // Collect inbound messages on the session scope. PushServer launches
             // the device-login work as a CHILD coroutine (rather than blocking the
@@ -122,8 +153,23 @@ class PairingReceiver(
                     when (message) {
                         is PairingMessage.PushServer ->
                             handlePushServer(message, transport, sessionScope)
-                        is PairingMessage.Done -> return@collectMessage false
-                        is PairingMessage.Cancel -> return@collectMessage false
+                        is PairingMessage.Done -> {
+                            Log.i(TAG, "received pairing done")
+                            pushJob?.cancelAndJoin()
+                            if (signedInCount > 0) {
+                                _status.value = PairingReceiverStatus.Completed(signedInNames.toList())
+                                preserveTerminalStatus = true
+                            } else {
+                                _status.value = PairingReceiverStatus.Idle
+                            }
+                            return@collectMessage false
+                        }
+                        is PairingMessage.Cancel -> {
+                            Log.i(TAG, "received pairing cancel")
+                            pushJob?.cancelAndJoin()
+                            _status.value = PairingReceiverStatus.Idle
+                            return@collectMessage false
+                        }
                         else -> {
                             // Receiver only consumes phone→TV message kinds; ignore others.
                         }
@@ -140,6 +186,12 @@ class PairingReceiver(
         } finally {
             pushJob?.cancel()
             pushJob = null
+            if (activeTransport === transport) {
+                activeTransport = null
+            }
+            if (!preserveTerminalStatus) {
+                _status.value = PairingReceiverStatus.Idle
+            }
             transport.close()
         }
     }
@@ -156,12 +208,14 @@ class PairingReceiver(
     ) {
         if (pollingServerUrl != null) return // one at a time; ignore overlap.
         val serverURL = message.serverURL
+        val serverName = message.serverName?.takeIf { it.isNotBlank() } ?: serverURL
+        Log.i(TAG, "received pushed server")
         pollingServerUrl = serverURL
         // Run the device-login begin/await CONCURRENTLY with continued inbound
         // reading so Cancel/EOF can cancel this job and tear the session down.
         pushJob = sessionScope.launch {
             try {
-                runDeviceLogin(serverURL, transport)
+                runDeviceLogin(serverURL, serverName, transport)
             } finally {
                 deviceLogin.reset()
                 pollingServerUrl = null
@@ -171,12 +225,13 @@ class PairingReceiver(
 
     private suspend fun runDeviceLogin(
         serverURL: String,
+        serverName: String,
         transport: PairingTransport,
     ) {
         // Point the auth/network stack at the pushed candidate. AuthRepository
         // upserts into the ServerRegistry and switches to it.
         authPort.setServerUrl(serverURL)
-        _status.value = PairingReceiverStatus.Pairing(serverURL)
+        _status.value = PairingReceiverStatus.Pairing(serverURL, serverName)
 
         val identity = identityProvider()
         var deviceStartedSent = false
@@ -193,6 +248,7 @@ class PairingReceiver(
                                     val session = state.session
                                     _status.value = PairingReceiverStatus.AwaitingApproval(
                                         serverURL = serverURL,
+                                        serverName = serverName,
                                         matchCode = session.matchCode,
                                     )
                                     transport.send(
@@ -202,6 +258,7 @@ class PairingReceiver(
                                             matchCode = session.matchCode,
                                         ),
                                     )
+                                    Log.i(TAG, "sent device-started")
                                 }
                                 true
                             }
@@ -222,7 +279,9 @@ class PairingReceiver(
                                         expiresIn = response.expiresIn ?: 0L,
                                     )
                                 }
-                                _status.value = PairingReceiverStatus.SignedIn
+                                signedInCount += 1
+                                signedInNames += serverName
+                                _status.value = PairingReceiverStatus.SignedIn(signedInCount)
                                 transport.send(
                                     PairingMessage.ServerResult(
                                         serverURL = serverURL,
@@ -230,11 +289,13 @@ class PairingReceiver(
                                         error = null,
                                     ),
                                 )
+                                Log.i(TAG, "sent signed-in result")
                                 false // terminal — stop observing.
                             }
                             is DeviceLoginRepository.DeviceLoginState.Failed -> {
                                 _status.value = PairingReceiverStatus.Failed(
-                                    state.message ?: state.reason.name,
+                                    serverName = serverName,
+                                    message = state.message ?: state.reason.name,
                                 )
                                 transport.send(
                                     PairingMessage.ServerResult(
@@ -243,6 +304,7 @@ class PairingReceiver(
                                         error = state.message ?: state.reason.name,
                                     ),
                                 )
+                                Log.i(TAG, "sent failed result")
                                 false // terminal — stop observing.
                             }
                             else -> true // Idle / Initiating — keep observing.

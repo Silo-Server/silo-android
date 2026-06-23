@@ -181,6 +181,7 @@ class PairingReceiverTest {
 
         val status = recv.status.value
         assertIs<PairingReceiverStatus.AwaitingApproval>(status)
+        assertEquals("Srv", status.serverName)
         assertEquals("MATCH-42", status.matchCode)
 
         // Approve → ServerResult(signedIn).
@@ -191,7 +192,7 @@ class PairingReceiverTest {
         assertEquals("https://srv.test", result.serverURL)
         assertEquals(PairingServerStatus.SignedIn, result.status)
         assertEquals(null, result.error)
-        assertEquals(PairingReceiverStatus.SignedIn, recv.status.value)
+        assertEquals(PairingReceiverStatus.SignedIn(serverCount = 1), recv.status.value)
         assertTrue(login.resetCalled)
         // Tokens from the approved response must be persisted (so the TV is
         // authenticated, not just navigated to profile selection).
@@ -201,6 +202,7 @@ class PairingReceiverTest {
         transport.deliver(PairingMessage.Done)
         job.join()
         assertTrue(transport.closed)
+        assertEquals(PairingReceiverStatus.Completed(listOf("Srv")), recv.status.value)
     }
 
     @Test
@@ -222,7 +224,9 @@ class PairingReceiverTest {
         val result = transport.sent.filterIsInstance<PairingMessage.ServerResult>().single()
         assertEquals(PairingServerStatus.Failed, result.status)
         assertEquals("denied-by-user", result.error)
-        assertIs<PairingReceiverStatus.Failed>(recv.status.value)
+        val failed = recv.status.value
+        assertIs<PairingReceiverStatus.Failed>(failed)
+        assertEquals("https://srv.test", failed.serverName)
 
         transport.deliver(PairingMessage.Done)
         job.join()

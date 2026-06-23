@@ -218,6 +218,14 @@ fun TvAppNavigation(
             TvLoginScreen(
                 signupEnabled = signupEnabled,
                 onCreateAccount = { navController.navigate(TvRoute.Signup.route) },
+                // Point this TV at a different server — drop Login so Back from
+                // setup can't return to a credential form with no server bound.
+                onChangeServer = {
+                    navController.navigate(TvRoute.ServerSetup.route) {
+                        popUpTo(TvRoute.Login.ROUTE) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
                 onLoginSuccess = {
                     navController.navigate(TvRoute.ProfileSelection.route) {
                         popUpTo(TvRoute.Login.ROUTE) { inclusive = true }

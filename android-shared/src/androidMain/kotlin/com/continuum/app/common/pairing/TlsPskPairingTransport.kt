@@ -1,5 +1,6 @@
 package com.continuum.app.common.pairing
 
+import android.util.Log
 import com.continuum.app.pairing.PairingFrame
 import com.continuum.app.pairing.PairingFrameBuffer
 import com.continuum.app.pairing.PairingMessage
@@ -14,17 +15,19 @@ import kotlinx.coroutines.sync.withLock
 import org.bouncycastle.tls.AlertLevel
 import org.bouncycastle.tls.BasicTlsPSKExternal
 import org.bouncycastle.tls.CipherSuite
-import org.bouncycastle.tls.DefaultTlsServer
+import org.bouncycastle.tls.PSKTlsServer
 import org.bouncycastle.tls.PRFAlgorithm
 import org.bouncycastle.tls.ProtocolVersion
 import org.bouncycastle.tls.TlsPSKExternal
+import org.bouncycastle.tls.TlsPSKIdentityManager
 import org.bouncycastle.tls.TlsServerProtocol
 import org.bouncycastle.tls.crypto.impl.bc.BcTlsCrypto
-import java.util.Vector
+import java.io.EOFException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.Socket
 import java.security.SecureRandom
+import java.util.Vector
 
 /**
  * The fixed (non-secret) pre-shared key + identity compiled into the app. This
@@ -36,44 +39,48 @@ internal object PairingPsk {
     val key: ByteArray = "silo-companion-pairing-v1".toByteArray(Charsets.UTF_8)
     val identity: ByteArray = "silo-pairing".toByteArray(Charsets.UTF_8)
 
-    /**
-     * iOS (Network.framework) appends [tls_ciphersuite_t.AES_128_GCM_SHA256],
-     * which is the TLS 1.3 suite TLS_AES_128_GCM_SHA256 (0x1301) negotiated with
-     * an external PSK — NOT the TLS 1.2 TLS_PSK_WITH_AES_128_GCM_SHA256 suite.
-     */
-    const val cipherSuite: Int = CipherSuite.TLS_AES_128_GCM_SHA256
+    const val tls12CipherSuite: Int = CipherSuite.TLS_PSK_WITH_AES_128_GCM_SHA256
+    const val tls13CipherSuite: Int = CipherSuite.TLS_AES_128_GCM_SHA256
 }
 
 /**
  * A [PairingTransport] over a TLS-PSK server handshake on an accepted socket,
  * matching the iOS receiver exactly (PSK = "silo-companion-pairing-v1", PSK
- * identity = "silo-pairing", TLS 1.3 external PSK, cipher
- * TLS_AES_128_GCM_SHA256).
+ * identity = "silo-pairing", and the PSK cipher suites Apple offers for the
+ * same `PairingSession.tlsParameters()` used by iOS and tvOS.
  *
- * BouncyCastle's [TlsServerProtocol] drives the handshake over the raw socket
- * streams; outbound frames are written and inbound bytes are fed to
- * [PairingFrameBuffer] → [PairingMessageCodec].
+ * BouncyCastle's blocking stream mode waits for the peer's first application
+ * record before returning from TLS 1.3 PSK accept with iOS clients. That
+ * deadlocks the pairing protocol because the phone waits for TV `hello` first.
+ * This transport therefore drives [TlsServerProtocol] in non-blocking mode over
+ * the raw socket, returns as soon as TLS is connected, then writes the TV's
+ * first framed message immediately like tvOS does.
  */
 class TlsPskPairingTransport private constructor(
     private val socket: Socket,
     private val protocol: TlsServerProtocol,
-    private val tlsIn: InputStream,
-    private val tlsOut: OutputStream,
+    private val rawIn: InputStream,
+    private val rawOut: OutputStream,
 ) : PairingTransport {
-
-    private val sendMutex = Mutex()
+    private val protocolMutex = Mutex()
 
     override val incoming: Flow<PairingMessage> = callbackFlow {
         val buffer = PairingFrameBuffer()
         val chunk = ByteArray(64 * 1024)
         try {
+            for (message in drainIncoming(buffer)) {
+                trySend(message)
+            }
             while (true) {
-                val read = tlsIn.read(chunk)
+                val read = rawIn.read(chunk)
                 if (read < 0) break // clean EOF
                 if (read == 0) continue
-                val received = chunk.copyOf(read)
-                for (payload in buffer.append(received)) {
-                    val message = PairingMessageCodec.decode(payload.toString(Charsets.UTF_8))
+                val messages = protocolMutex.withLock {
+                    protocol.offerInput(chunk, 0, read)
+                    flushOutputLocked()
+                    drainIncomingLocked(buffer)
+                }
+                for (message in messages) {
                     trySend(message)
                 }
             }
@@ -87,9 +94,9 @@ class TlsPskPairingTransport private constructor(
     override suspend fun send(message: PairingMessage) {
         val payload = PairingMessageCodec.encode(message).toByteArray(Charsets.UTF_8)
         val framed = PairingFrame.encode(payload)
-        sendMutex.withLock {
-            tlsOut.write(framed)
-            tlsOut.flush()
+        protocolMutex.withLock {
+            protocol.writeApplicationData(framed, 0, framed.size)
+            flushOutputLocked()
         }
     }
 
@@ -100,49 +107,115 @@ class TlsPskPairingTransport private constructor(
         runCatching { socket.close() }
     }
 
+    private suspend fun drainIncoming(buffer: PairingFrameBuffer): List<PairingMessage> =
+        protocolMutex.withLock { drainIncomingLocked(buffer) }
+
+    private fun drainIncomingLocked(buffer: PairingFrameBuffer): List<PairingMessage> {
+        val messages = mutableListOf<PairingMessage>()
+        val plain = ByteArray(64 * 1024)
+        while (protocol.getAvailableInputBytes() > 0) {
+            val read = protocol.readInput(plain, 0, plain.size)
+            if (read <= 0) break
+            val received = plain.copyOf(read)
+            for (payload in buffer.append(received)) {
+                messages += PairingMessageCodec.decode(payload.toString(Charsets.UTF_8))
+            }
+        }
+        return messages
+    }
+
+    private fun flushOutputLocked() {
+        val out = ByteArray(64 * 1024)
+        while (protocol.getAvailableOutputBytes() > 0) {
+            val read = protocol.readOutput(out, 0, out.size)
+            if (read <= 0) break
+            rawOut.write(out, 0, read)
+        }
+        rawOut.flush()
+    }
+
     companion object {
+        private const val TAG = "TlsPskPairing"
+
         /**
          * Perform the TLS-PSK server handshake over [socket] and return a ready
          * transport. Blocking — call off the main thread (the advertiser's
          * accept loop runs on [Dispatchers.IO]).
          */
         fun accept(socket: Socket): TlsPskPairingTransport {
+            Log.i(TAG, "starting TLS-PSK accept")
             val crypto = BcTlsCrypto(SecureRandom())
-            val protocol = TlsServerProtocol(socket.getInputStream(), socket.getOutputStream())
+            val rawIn = socket.getInputStream()
+            val rawOut = socket.getOutputStream()
+            val protocol = TlsServerProtocol()
             val server = SiloPskTlsServer(crypto)
             protocol.accept(server)
+            flushOutput(protocol, rawOut)
+            val chunk = ByteArray(64 * 1024)
+            while (!protocol.isConnected) {
+                val read = rawIn.read(chunk)
+                if (read < 0) {
+                    throw EOFException("Pairing TLS handshake closed before completion")
+                }
+                if (read == 0) continue
+                protocol.offerInput(chunk, 0, read)
+                flushOutput(protocol, rawOut)
+            }
+            flushOutput(protocol, rawOut)
+            Log.i(TAG, "TLS-PSK accept connected")
             return TlsPskPairingTransport(
                 socket = socket,
                 protocol = protocol,
-                tlsIn = protocol.inputStream,
-                tlsOut = protocol.outputStream,
+                rawIn = rawIn,
+                rawOut = rawOut,
             )
+        }
+
+        private fun flushOutput(protocol: TlsServerProtocol, rawOut: OutputStream) {
+            val out = ByteArray(64 * 1024)
+            while (protocol.getAvailableOutputBytes() > 0) {
+                val read = protocol.readOutput(out, 0, out.size)
+                if (read <= 0) break
+                rawOut.write(out, 0, read)
+            }
+            rawOut.flush()
         }
     }
 }
 
 /**
- * TLS 1.3 server pinned to the fixed pairing PSK as an EXTERNAL PSK and the
- * single AES-128-GCM cipher suite iOS negotiates (TLS_AES_128_GCM_SHA256).
+ * TLS server pinned to the fixed pairing PSK and the AES-128-GCM PSK suites
+ * used by the Apple pairing stack.
  *
- * iOS's Network.framework uses `sec_protocol_options_add_pre_shared_key` +
- * `tls_ciphersuite_t.AES_128_GCM_SHA256`, i.e. a TLS 1.3 external PSK — not the
- * TLS 1.2 `TLS_PSK_WITH_AES_128_GCM_SHA256` suite. We therefore offer TLS 1.3
- * only and supply the fixed key/identity via [getExternalPSK], the BouncyCastle
- * 1.3 external-PSK hook. The PRF for this suite is HKDF-SHA256.
- *
- * NOTE: this TLS 1.3 external-PSK interop with the real iOS NWConnection CANNOT
- * be verified headless — it needs real-device interop verification. Implemented
- * to match iOS's external-PSK configuration as closely as BouncyCastle allows.
+ * Network.framework with `sec_protocol_options_add_pre_shared_key` sends a TLS
+ * 1.2 PSK ClientHello with `TLS_PSK_WITH_AES_128_GCM_SHA256` and no
+ * `supported_versions` extension. Keeping the TLS 1.3 external-PSK hook lets
+ * command-line probes and future Apple stacks negotiate TLS 1.3 when they
+ * actually offer it, but the Apple app path relies on the TLS 1.2 identity
+ * manager passed to [PSKTlsServer].
  */
 private class SiloPskTlsServer(
     private val bcCrypto: BcTlsCrypto,
-) : DefaultTlsServer(bcCrypto) {
+) : PSKTlsServer(
+    bcCrypto,
+    object : TlsPSKIdentityManager {
+        override fun getHint(): ByteArray? = null
 
-    override fun getCipherSuites(): IntArray = intArrayOf(PairingPsk.cipherSuite)
+        override fun getPSK(identity: ByteArray?): ByteArray = PairingPsk.key
+    },
+) {
 
-    override fun getSupportedVersions(): Array<ProtocolVersion> =
-        ProtocolVersion.TLSv13.only()
+    override fun getCipherSuites(): IntArray = intArrayOf(
+        PairingPsk.tls13CipherSuite,
+        PairingPsk.tls12CipherSuite,
+    )
+
+    override fun getSupportedVersions(): Array<ProtocolVersion> = arrayOf(
+        ProtocolVersion.TLSv13,
+        ProtocolVersion.TLSv12,
+    )
+
+    override fun allowCertificateStatus(): Boolean = false
 
     /**
      * TLS 1.3 external-PSK hook: the client offers identities in its
