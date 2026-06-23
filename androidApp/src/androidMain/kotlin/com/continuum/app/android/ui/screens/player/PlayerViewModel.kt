@@ -554,6 +554,8 @@ class PlayerViewModel(
         val sessionId = state.sessionId ?: return
         val versions = state.versions
         val versionIndex = state.selectedVersionIndex
+        val selectedAudioIndex = state.selectedAudioIndex
+        val selectedSubtitleIndex = state.selectedSubtitleIndex
         val version = versions.getOrNull(versionIndex) ?: return
 
         val notice = when (reason) {
@@ -580,7 +582,7 @@ class PlayerViewModel(
                 position = state.position,
                 isPaused = state.isPaused,
                 streamUrl = state.streamUrl.orEmpty(),
-                audioTrackIndex = state.selectedAudioIndex,
+                audioTrackIndex = selectedAudioIndex,
                 durationSeconds = state.duration,
                 subtitleUrls = state.subtitleTracks,
                 playbackInfo = null,
@@ -591,6 +593,8 @@ class PlayerViewModel(
                 seekSeconds = state.position,
                 resolution = version.resolution.orEmpty(),
                 mode = com.continuum.app.common.player.PlaybackSessionManager.TranscodeMode.FULL,
+                audioTrackIndex = selectedAudioIndex,
+                subtitleTrackIndex = selectedSubtitleIndex,
             )) {
                 is ApiResult.Success -> {
                     val fallback = r.data
