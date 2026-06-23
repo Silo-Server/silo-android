@@ -29,7 +29,7 @@ class TvProfileSelectionScreenSourceTest {
     fun utilityChipsAreInTopChromeNotTitleBand() {
         assertTrue(source.contains("private val ProfileUtilityChromeTop = 40.dp"))
         assertTrue(source.contains("private val ProfileHeaderTop = 92.dp"))
-        assertTrue(source.contains("private val ProfileUtilityChangeServerWidth = 132.dp"))
+        assertTrue(source.contains("private val ProfileUtilityChangeServerWidth = 164.dp"))
         assertTrue(source.contains("private val ProfileUtilitySignOutWidth = 100.dp"))
     }
 
