@@ -200,7 +200,7 @@ open class PlaybackSessionManager(
         resolution: String,
         mode: TranscodeMode,
         audioTrackIndex: Int? = null,
-        subtitleTrackIndex: Int = -1,
+        subtitleTrackIndex: Int? = null,
     ): ApiResult<PlaybackSessionResponse> {
         val isRemux = mode == TranscodeMode.REMUX
         val request = TranscodeStartRequest(

@@ -166,13 +166,14 @@ private fun normalizedSubtitleLanguage(language: String?): String? {
 private fun normalizedSubtitleCodec(codecOrMime: String?): String? {
     val normalized = codecOrMime
         ?.trim()
+        ?.takeIf { it.isNotBlank() }
         ?.lowercase()
         ?.replace('_', '-')
         ?: return null
     return when {
         normalized == "ass" || normalized == "ssa" || normalized.contains("x-ssa") -> "ssa"
         normalized == "srt" || normalized.contains("subrip") -> "srt"
-        normalized == "vtt" || normalized.contains("webvtt") -> "vtt"
+        normalized == "vtt" || normalized == "text/vtt" || normalized.contains("webvtt") -> "vtt"
         normalized.contains("pgs") || normalized.contains("hdmv") -> "pgs"
         normalized.contains("dvd") || normalized.contains("dvb") -> "dvd"
         else -> normalized
@@ -1061,7 +1062,7 @@ class TvPlayerViewModel(
         return state.subtitleUrls
             .firstOrNull { selected.matchesMountedSubtitle(it) }
             ?.index
-            ?: selected.index
+            ?: -1
     }
 
     fun onPositionChanged(positionMs: Long, durationMs: Long) {

@@ -133,7 +133,7 @@ class MobileVideoPlaybackStarter(
                         resolution = version.resolution.orEmpty(),
                         mode = immediateFallbackMode,
                         audioTrackIndex = session.audioTrackIndex,
-                        subtitleTrackIndex = request.subtitleTrackIndex ?: -1,
+                        subtitleTrackIndex = request.subtitleTrackIndex,
                     )) {
                         is ApiResult.Success -> r.data
                         is ApiResult.Error -> return failure(
@@ -159,7 +159,7 @@ class MobileVideoPlaybackStarter(
                         resolution = version.resolution.orEmpty(),
                         mode = mode,
                         audioTrackIndex = session.audioTrackIndex,
-                        subtitleTrackIndex = request.subtitleTrackIndex ?: -1,
+                        subtitleTrackIndex = request.subtitleTrackIndex,
                     )) {
                         is ApiResult.Success -> r.data
                         is ApiResult.Error -> return failure(

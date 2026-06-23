@@ -129,9 +129,19 @@ class HomeViewModel(
                                     // a successful refetch that returned items at the top
                                     // level, leaving the section empty and filtered out.
                                     val data = itemsResult.data
-                                    val hydrated = data.section
-                                        ?: section.copy(items = data.items)
-                                    hydrated to true
+                                    val responseSection = data.section
+                                    val hydrated = when {
+                                        responseSection != null && responseSection.items.isNotEmpty() ->
+                                            responseSection
+                                        responseSection != null && responseSection.totalCount == 0 ->
+                                            responseSection
+                                        responseSection != null && data.items.isNotEmpty() ->
+                                            responseSection.copy(items = data.items)
+                                        data.items.isNotEmpty() ->
+                                            section.copy(items = data.items)
+                                        else -> null
+                                    }
+                                    if (hydrated != null) hydrated to true else section to false
                                 }
                                 else -> section to false
                             }

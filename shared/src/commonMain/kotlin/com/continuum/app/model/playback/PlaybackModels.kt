@@ -1,5 +1,7 @@
 package com.continuum.app.model.playback
 
+import io.ktor.client.plugins.logging.DEFAULT
+import io.ktor.client.plugins.logging.Logger
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
@@ -158,6 +160,7 @@ data class PlaybackExecutionPlan(
 @OptIn(ExperimentalSerializationApi::class)
 internal object TolerantPlaybackPlanSerializer : KSerializer<PlaybackExecutionPlan?> {
     private val delegate = PlaybackExecutionPlan.serializer()
+    private val logger = Logger.DEFAULT
     override val descriptor: SerialDescriptor = delegate.descriptor
 
     override fun deserialize(decoder: Decoder): PlaybackExecutionPlan? {
@@ -168,6 +171,7 @@ internal object TolerantPlaybackPlanSerializer : KSerializer<PlaybackExecutionPl
         return try {
             jsonDecoder.json.decodeFromJsonElement(delegate, element)
         } catch (e: SerializationException) {
+            logger.log("Dropping malformed playback_plan; falling back to V1 routing: ${e.message}")
             null
         }
     }
@@ -394,7 +398,7 @@ data class TranscodeStartRequest(
     @SerialName("target_bitrate_kbps") val targetBitrateKbps: Int,
     @SerialName("segment_duration") val segmentDuration: Int,
     @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
-    @SerialName("subtitle_track_index") val subtitleTrackIndex: Int,
+    @SerialName("subtitle_track_index") val subtitleTrackIndex: Int? = null,
     @SerialName("subtitle_burn_in") val subtitleBurnIn: Boolean
 )
 

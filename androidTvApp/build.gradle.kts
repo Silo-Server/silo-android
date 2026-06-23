@@ -84,10 +84,16 @@ kotlin {
 }
 
 android {
+    val allowDebugReleaseSigning = providers
+        .gradleProperty("allowDebugReleaseSigning")
+        .orElse(providers.environmentVariable("ALLOW_DEBUG_RELEASE_SIGNING"))
+        .map(String::toBoolean)
+        .getOrElse(false)
+
     namespace = "com.continuum.app.tv"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.silo.app.tv"
+        applicationId = "com.continuum.app.tv"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -113,10 +119,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 rootProject.file("proguard-rules.pro"),
             )
-            // No release keystore yet (pre-1.0). Debug-sign the minified build so
-            // the gated on-device smoke test is installable; replace with a real
-            // release signingConfig before the first store upload.
-            signingConfig = signingConfigs.getByName("debug")
+            // No release keystore yet (pre-1.0). Only debug-sign release builds
+            // for local smoke tests when explicitly opted in.
+            if (allowDebugReleaseSigning) {
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
     // Mirror androidApp's ABI split strategy. See that file for rationale.

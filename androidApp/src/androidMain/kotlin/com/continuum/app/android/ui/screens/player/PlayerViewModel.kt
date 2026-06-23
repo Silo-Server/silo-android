@@ -7,6 +7,7 @@ import com.continuum.app.android.BuildConfig
 import com.continuum.app.common.downloads.DownloadEnqueuer
 import com.continuum.app.common.downloads.OfflineMediaResolver
 import com.continuum.app.common.player.PlaybackCapabilityDetector
+import com.continuum.app.common.player.Playability
 import com.continuum.app.common.player.PlaybackSessionLifecycle
 import com.continuum.app.common.player.PlaybackSessionManager
 import com.continuum.app.common.player.PlayerNotice
@@ -271,6 +272,7 @@ class PlayerViewModel(
     private val autoPlayGuard = AutoPlayGuard(threshold = { passOutThreshold.value })
     // Once-per-episode guard for the credits/ended trigger; reset on each load.
     private var autoAdvanceHandled = false
+    private var engineSwitchFallbackAttempted = false
     val hdrEnabled: StateFlow<Boolean> = playerSettingsStore.hdrEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val subtitleAppearance: StateFlow<SubtitleAppearance> = playerSettingsStore.subtitleAppearanceFlow
@@ -374,6 +376,7 @@ class PlayerViewModel(
         // New item: re-arm the once-per-episode auto-advance trigger. (The
         // AutoPlayGuard streak intentionally PERSISTS across episodes.)
         autoAdvanceHandled = false
+        engineSwitchFallbackAttempted = false
         // Cancel any in-flight resolve from the previous episode so its result
         // can't land on this one and overwrite the fresh next-episode pointer.
         resolveNextEpisodeJob?.cancel()
@@ -546,7 +549,7 @@ class PlayerViewModel(
      * reads differently than "DV Profile 7 not supported", and a single
      * "not supported" banner would hide both.
      */
-    fun onUnsupportedPlayback(reason: com.continuum.app.common.player.Playability) {
+    fun onUnsupportedPlayback(reason: Playability) {
         val state = _uiState.value
         val sessionId = state.sessionId ?: return
         val versions = state.versions
@@ -554,15 +557,15 @@ class PlayerViewModel(
         val version = versions.getOrNull(versionIndex) ?: return
 
         val notice = when (reason) {
-            is com.continuum.app.common.player.Playability.UnsupportedDvProfile ->
+            is Playability.UnsupportedDvProfile ->
                 "This device cannot play Dolby Vision Profile ${reason.profile}. Falling back to transcoded stream."
-            is com.continuum.app.common.player.Playability.UnsupportedAudioCodec ->
+            is Playability.UnsupportedAudioCodec ->
                 "Lossless audio not supported on this output. Falling back to transcoded stream."
-            is com.continuum.app.common.player.Playability.UnsupportedChannelCount ->
+            is Playability.UnsupportedChannelCount ->
                 "Audio channel count not supported. Falling back to transcoded stream."
-            is com.continuum.app.common.player.Playability.StartupStalled ->
+            is Playability.StartupStalled ->
                 "Playback did not start cleanly on this device. Falling back to transcoded stream."
-            com.continuum.app.common.player.Playability.Supported -> return
+            Playability.Supported -> return
         }
         Log.i(TAG, "Preflight fallback: $notice")
 
@@ -624,6 +627,17 @@ class PlayerViewModel(
     }
 
     fun onEngineSwitchFailed(message: String) {
+        val state = _uiState.value
+        if (
+            !engineSwitchFallbackAttempted &&
+            state.sessionId != null &&
+            state.streamUrl != null &&
+            state.versions.getOrNull(state.selectedVersionIndex) != null
+        ) {
+            engineSwitchFallbackAttempted = true
+            onUnsupportedPlayback(Playability.StartupStalled(bufferedAheadMs = 0L, stalledForMs = 0L))
+            return
+        }
         _uiState.update {
             it.copy(
                 isLoading = false,
@@ -831,6 +845,8 @@ class PlayerViewModel(
                             it.copy(
                                 streamUrl = response.streamUrl,
                                 playMethod = response.playMethod,
+                                playbackPlan = null,
+                                delivery = null,
                                 selectedAudioIndex = response.audioTrackIndex,
                             )
                         }
@@ -1263,6 +1279,7 @@ class PlayerViewModel(
             }
             // Cancel any in-flight intro skip countdown — we're loading a new version.
             introAutoSkipController.reset()
+            engineSwitchFallbackAttempted = false
 
             _uiState.update { it.copy(isLoading = true, selectedVersionIndex = index, sessionId = null) }
 
@@ -1283,6 +1300,8 @@ class PlayerViewModel(
                 fileId = version.fileId,
                 profileId = profileId,
                 capabilities = capabilities,
+                audioTrackIndex = currentState.selectedAudioIndex,
+                subtitleTrackIndex = currentState.selectedSubtitleIndex,
                 startPosition = currentPosition,
                 clientPlaybackContext = playbackContext,
                 preserveDirectAudioSelection = preserveDirectSelection,
@@ -1309,6 +1328,7 @@ class PlayerViewModel(
                                 resolution = version.resolution.orEmpty(),
                                 mode = mode,
                                 audioTrackIndex = session.audioTrackIndex,
+                                subtitleTrackIndex = currentState.selectedSubtitleIndex,
                             )) {
                                 is ApiResult.Success -> fallback.data
                                 is ApiResult.Error -> {
@@ -1371,6 +1391,7 @@ class PlayerViewModel(
                             fileId = version.fileId,
                             capabilities = capabilities,
                             audioTrackIndex = resolved.audioTrackIndex,
+                            subtitleTrackIndex = currentState.selectedSubtitleIndex,
                             qualityPreference = null,
                             startPosition = resolvedStartPosition,
                             clientPlaybackContext = playbackContext,

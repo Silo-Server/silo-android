@@ -270,7 +270,6 @@ fun TvPlayerScreen(
         state.playbackPlan,
         state.delivery,
         state.container,
-        state.subtitleUrls,
         state.streamUrl,
     ) {
         val plan = state.playbackPlan
@@ -752,7 +751,8 @@ fun TvPlayerScreen(
         val backend = videoBackend ?: return@LaunchedEffect
         val url = state.streamUrl ?: return@LaunchedEffect
         val method = state.playMethod ?: return@LaunchedEffect
-        val delivery = state.playbackPlan?.delivery ?: state.delivery
+        val plan = state.playbackPlan
+        val delivery = plan?.delivery ?: state.delivery
         val mediaSpec = VideoPlayerMediaSpec(
             streamUrl = url,
             playMethod = method,
@@ -764,8 +764,30 @@ fun TvPlayerScreen(
             artworkUrl = state.artworkUrl,
             startPositionSeconds = state.startPosition,
             durationSeconds = state.duration,
-            audioPassthroughCodecs = state.playbackPlan.validatedPassthroughCodecs(),
+            audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
         )
+        val controller = mediaController ?: return@LaunchedEffect
+        val engineRequest = VideoPlaybackBackendRequest(
+            contentId = contentId,
+            fileId = preferredFileId,
+            playMethod = method,
+            delivery = delivery,
+            plannedEngine = plan?.engine,
+            routeFamily = plan?.routeFamily,
+            formFactor = VideoPlaybackFormFactor.Tv,
+            hasHardContainer = method == com.continuum.app.model.playback.PlayMethod.DIRECT &&
+                isHardPlaybackContainer(state.container),
+            hasStyledSubtitles = state.subtitleUrls.any { it.isStyledSubtitle() },
+            isAdaptiveHlsStream = isLikelyAdaptiveHlsStreamUrl(url),
+        )
+        val switchResult = controller.awaitEngineSwitch(engineRequest)
+        if (!switchResult.success) {
+            viewModel.onEngineSwitchFailed("Playback engine could not be prepared for this route.")
+            return@LaunchedEffect
+        }
+        if (switchResult.swapped) {
+            return@LaunchedEffect
+        }
         backend.refresh(mediaSpec)
     }
 

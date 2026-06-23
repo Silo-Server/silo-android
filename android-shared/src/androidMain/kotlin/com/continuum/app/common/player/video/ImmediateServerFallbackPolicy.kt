@@ -22,11 +22,12 @@ object PlaybackRouteBlockers {
  */
 fun PlaybackExecutionPlan.immediateServerFallbackMode(): PlaybackSessionManager.TranscodeMode? {
     val blockers = capabilities.blockers.toSet()
+    if (blockers.isEmpty()) return null
     return when {
         PlaybackRouteBlockers.DOLBY_VISION_PROFILE_7_NOT_LAUNCH_CLAIMED in blockers ->
             PlaybackSessionManager.TranscodeMode.FULL
         PlaybackRouteBlockers.BITMAP_SUBTITLE_ROUTE_NOT_VALIDATED in blockers ->
             PlaybackSessionManager.TranscodeMode.FULL
-        else -> null
+        else -> PlaybackSessionManager.TranscodeMode.FULL
     }
 }

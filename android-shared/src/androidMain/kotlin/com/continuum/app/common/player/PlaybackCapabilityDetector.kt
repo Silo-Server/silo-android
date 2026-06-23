@@ -83,7 +83,9 @@ class PlaybackCapabilityDetector(
                     val supported = when (profile) {
                         // Launch policy: do not claim Profile 7 direct playback.
                         7 -> false
-                        8 -> supportedHdr.dolbyVisionProfiles.contains(8) || supportedHdr.hdr10
+                        8 -> supportedHdr.dolbyVisionProfiles.contains(8) ||
+                            supportedHdr.hdr10 ||
+                            supportedHdr.hlg
                         else -> supportedHdr.dolbyVisionProfiles.contains(profile)
                     }
                     if (!supported) return Playability.UnsupportedDvProfile(profile)
@@ -184,12 +186,9 @@ class PlaybackCapabilityDetector(
             supportedAbis = supportedAbis,
         )
         val passthrough = caps.audioPassthrough
-        val media3Audio = caps.codecsAudio
-        val mpvAudio = if (ffmpegAvailable) {
-            (caps.codecsAudio + FfmpegAudioSupport.codecShortCodes).distinct()
-        } else {
-            caps.codecsAudio
-        }
+        val decodeAudio = detectSoftwareAudioCodecs(ffmpegAvailable)
+        val media3Audio = decodeAudio
+        val mpvAudio = decodeAudio
         return ClientPlaybackContext(
             formFactor = formFactor,
             appVersion = appVersion,

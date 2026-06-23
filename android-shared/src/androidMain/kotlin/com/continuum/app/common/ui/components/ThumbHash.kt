@@ -34,7 +34,7 @@ internal object ThumbHash {
         val qDc = ((header24 shr 12) and 63) / 31.5f - 1f
         val lScale = ((header24 shr 18) and 31) / 31f
         val hasAlpha = (header24 shr 23) != 0
-        val lCount = if (hasAlpha) 5 else 7
+        val lCount = header16 and 7
         val pScale = ((header16 shr 3) and 63) / 63f
         val qScale = ((header16 shr 9) and 63) / 63f
         val isLandscape = (header16 shr 15) != 0

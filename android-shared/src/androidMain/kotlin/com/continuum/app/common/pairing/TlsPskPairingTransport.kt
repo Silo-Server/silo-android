@@ -136,6 +136,7 @@ class TlsPskPairingTransport private constructor(
 
     companion object {
         private const val TAG = "TlsPskPairing"
+        private const val HANDSHAKE_TIMEOUT_MS = 10_000
 
         /**
          * Perform the TLS-PSK server handshake over [socket] and return a ready
@@ -144,24 +145,30 @@ class TlsPskPairingTransport private constructor(
          */
         fun accept(socket: Socket): TlsPskPairingTransport {
             Log.i(TAG, "starting TLS-PSK accept")
+            val previousSoTimeout = socket.soTimeout
+            socket.soTimeout = HANDSHAKE_TIMEOUT_MS
             val crypto = BcTlsCrypto(SecureRandom())
             val rawIn = socket.getInputStream()
             val rawOut = socket.getOutputStream()
             val protocol = TlsServerProtocol()
             val server = SiloPskTlsServer(crypto)
-            protocol.accept(server)
-            flushOutput(protocol, rawOut)
-            val chunk = ByteArray(64 * 1024)
-            while (!protocol.isConnected) {
-                val read = rawIn.read(chunk)
-                if (read < 0) {
-                    throw EOFException("Pairing TLS handshake closed before completion")
-                }
-                if (read == 0) continue
-                protocol.offerInput(chunk, 0, read)
+            try {
+                protocol.accept(server)
                 flushOutput(protocol, rawOut)
+                val chunk = ByteArray(64 * 1024)
+                while (!protocol.isConnected) {
+                    val read = rawIn.read(chunk)
+                    if (read < 0) {
+                        throw EOFException("Pairing TLS handshake closed before completion")
+                    }
+                    if (read == 0) continue
+                    protocol.offerInput(chunk, 0, read)
+                    flushOutput(protocol, rawOut)
+                }
+                flushOutput(protocol, rawOut)
+            } finally {
+                runCatching { socket.soTimeout = previousSoTimeout }
             }
-            flushOutput(protocol, rawOut)
             Log.i(TAG, "TLS-PSK accept connected")
             return TlsPskPairingTransport(
                 socket = socket,

@@ -231,7 +231,6 @@ fun PlayerScreen(
         uiState.playbackPlan,
         uiState.delivery,
         uiState.container,
-        uiState.subtitleTracks,
         uiState.streamUrl,
     ) {
         val plan = uiState.playbackPlan
@@ -498,7 +497,8 @@ fun PlayerScreen(
             downloadStorage.locateLocalMedia(serverId, profileId, fileId)?.uriString
         }
         val effectiveStreamUrl = localUri ?: streamUrl
-        val delivery = if (localUri == null) uiState.playbackPlan?.delivery ?: uiState.delivery else null
+        val plan = if (localUri == null) uiState.playbackPlan else null
+        val delivery = if (localUri == null) plan?.delivery ?: uiState.delivery else null
 
         val mediaSpec = VideoPlayerMediaSpec(
             streamUrl = effectiveStreamUrl,
@@ -513,11 +513,34 @@ fun PlayerScreen(
             startPositionSeconds = uiState.startPosition,
             durationSeconds = uiState.duration,
             audioPassthroughCodecs = if (localUri == null) {
-                uiState.playbackPlan.validatedPassthroughCodecs()
+                plan.validatedPassthroughCodecs()
             } else {
                 emptyList()
             },
         )
+        mediaController?.let { controller ->
+            val engineRequest = VideoPlaybackBackendRequest(
+                contentId = contentId,
+                fileId = activeFileId ?: initialFileId,
+                playMethod = mediaSpec.playMethod,
+                delivery = delivery,
+                plannedEngine = plan?.engine,
+                routeFamily = plan?.routeFamily,
+                formFactor = VideoPlaybackFormFactor.Mobile,
+                hasHardContainer = mediaSpec.playMethod == PlayMethod.DIRECT &&
+                    isHardPlaybackContainer(uiState.container),
+                hasStyledSubtitles = uiState.subtitleTracks.any { it.isStyledSubtitle() },
+                isAdaptiveHlsStream = isLikelyAdaptiveHlsStreamUrl(effectiveStreamUrl),
+            )
+            val switchResult = controller.awaitEngineSwitch(engineRequest)
+            if (!switchResult.success) {
+                viewModel.onEngineSwitchFailed("Playback engine could not be prepared for this route.")
+                return@LaunchedEffect
+            }
+            if (switchResult.swapped) {
+                return@LaunchedEffect
+            }
+        }
         backend.refresh(mediaSpec)
     }
 

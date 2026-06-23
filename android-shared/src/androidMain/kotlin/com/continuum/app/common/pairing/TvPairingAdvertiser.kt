@@ -122,7 +122,17 @@ class TvPairingAdvertiser(
                     // than falsely claiming Advertising. Completed is a terminal
                     // UI dwell state; the setup screen advances after showing it.
                     busy.set(false)
-                    if (running.get() && receiver.status.value !is PairingReceiverStatus.Completed) {
+                    if (receiver.status.value is PairingReceiverStatus.Completed) {
+                        running.set(false)
+                        runCatching { socket.close() }
+                        if (serverSocket === socket) {
+                            serverSocket = null
+                        }
+                        registrationListener?.let { listener ->
+                            runCatching { nsdManager.unregisterService(listener) }
+                        }
+                        registrationListener = null
+                    } else if (running.get()) {
                         receiver.setAdvertising()
                     }
                 }
