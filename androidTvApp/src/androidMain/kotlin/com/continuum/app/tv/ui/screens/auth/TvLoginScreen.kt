@@ -126,20 +126,19 @@ fun TvLoginScreen(
         TvAuroraBackdrop(variant = TvAuroraVariant.SignIn)
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(Spacing.md),
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(top = 32.dp, bottom = 32.dp, start = 54.dp, end = 54.dp),
+                .padding(top = 32.dp, bottom = 32.dp, start = 48.dp, end = 48.dp),
         ) {
             BrandHeader()
 
-            Spacer(modifier = Modifier.height(Spacing.sm))
+            Spacer(modifier = Modifier.height(Spacing.lg))
 
             AuroraEyebrow(text = "Step 02 — Sign in")
 
-            Spacer(modifier = Modifier.height(Spacing.sm))
+            Spacer(modifier = Modifier.height(Spacing.xl))
 
             if (showPasswordForm) {
                 CredentialFormCard(
@@ -156,7 +155,7 @@ fun TvLoginScreen(
                     onBackToPhone = { showPasswordForm = false },
                     onChangeServer = onChangeServer,
                     scope = scope,
-                    modifier = Modifier.width(390.dp),
+                    modifier = Modifier.width(400.dp),
                 )
             } else {
                 Row(
@@ -266,93 +265,112 @@ private fun CredentialFormCard(
 ) {
     var passwordVisible by remember { mutableStateOf(false) }
     Column(
-        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+        verticalArrangement = Arrangement.spacedBy(Spacing.lg),
         modifier = modifier
-            .auroraGlass(15.dp)
-            .padding(24.dp),
+            .auroraGlass(20.dp)
+            .padding(28.dp),
     ) {
-        Text(
-            text = "Sign in",
-            style = TvLoginTextStyles.Title,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Text(
-            text = "Use the account from your Silo server.",
-            style = TvLoginTextStyles.Body,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Text(
+                text = "Sign in",
+                style = TvLoginTextStyles.Title,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = "Use the account from your Silo server.",
+                style = TvLoginTextStyles.Body,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
-        OutlinedTextField(
-            value = state.username,
-            onValueChange = onUsernameChanged,
-            label = { Text("Username") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Text,
-                imeAction = ImeAction.Next,
-            ),
-            enabled = !state.isLoading,
-            textStyle = TvLoginTextStyles.Field,
-            modifier = Modifier
-                .fillMaxWidth()
-                .bringIntoViewRequester(usernameBringIntoView)
-                .onFocusEvent { fs ->
-                    if (fs.isFocused) scope.launch { usernameBringIntoView.bringIntoView() }
-                }
-                .focusRequester(usernameFocus),
-            colors = tvOutlinedTextFieldColors(),
-        )
-
-        OutlinedTextField(
-            value = state.password,
-            onValueChange = onPasswordChanged,
-            label = { Text("Password") },
-            singleLine = true,
-            visualTransformation = if (passwordVisible) {
-                VisualTransformation.None
-            } else {
-                PasswordVisualTransformation()
-            },
-            // Show/hide toggle — tvOS TVLoginView offers this; the remote can
-            // focus the icon to reveal the typed password before submitting.
-            trailingIcon = {
-                Icon(
-                    imageVector = if (passwordVisible) {
-                        Icons.Default.VisibilityOff
-                    } else {
-                        Icons.Default.Visibility
-                    },
-                    contentDescription = if (passwordVisible) "Hide password" else "Show password",
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { passwordVisible = !passwordVisible }
-                        .padding(6.dp),
-                )
-            },
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Password,
-                imeAction = ImeAction.Done,
-            ),
-            keyboardActions = KeyboardActions(
-                onDone = {
-                    if (!state.isLoading &&
-                        state.username.isNotBlank() &&
-                        state.password.isNotBlank()
-                    ) {
-                        onLoginClick()
+        // Username — a mono uppercase caption labels each field, matching the
+        // server-setup card; the Material floating label is dropped so nothing
+        // floats oversized in the border notch.
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Text(
+                text = "USERNAME",
+                style = TvLoginTextStyles.InputLabel,
+                color = Color.White.copy(alpha = 0.52f),
+            )
+            OutlinedTextField(
+                value = state.username,
+                onValueChange = onUsernameChanged,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Next,
+                ),
+                enabled = !state.isLoading,
+                textStyle = TvLoginTextStyles.Field,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .bringIntoViewRequester(usernameBringIntoView)
+                    .onFocusEvent { fs ->
+                        if (fs.isFocused) scope.launch { usernameBringIntoView.bringIntoView() }
                     }
+                    .focusRequester(usernameFocus),
+                colors = tvOutlinedTextFieldColors(),
+            )
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Text(
+                text = "PASSWORD",
+                style = TvLoginTextStyles.InputLabel,
+                color = Color.White.copy(alpha = 0.52f),
+            )
+            OutlinedTextField(
+                value = state.password,
+                onValueChange = onPasswordChanged,
+                singleLine = true,
+                visualTransformation = if (passwordVisible) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
                 },
-            ),
-            enabled = !state.isLoading,
-            textStyle = TvLoginTextStyles.Field,
-            modifier = Modifier
-                .fillMaxWidth()
-                .bringIntoViewRequester(passwordBringIntoView)
-                .onFocusEvent { fs ->
-                    if (fs.isFocused) scope.launch { passwordBringIntoView.bringIntoView() }
+                // Show/hide toggle — tvOS TVLoginView offers this; the remote can
+                // focus the icon to reveal the typed password before submitting.
+                trailingIcon = {
+                    Icon(
+                        imageVector = if (passwordVisible) {
+                            Icons.Default.VisibilityOff
+                        } else {
+                            Icons.Default.Visibility
+                        },
+                        contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { passwordVisible = !passwordVisible }
+                            .padding(6.dp),
+                    )
                 },
-            colors = tvOutlinedTextFieldColors(),
-        )
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        if (!state.isLoading &&
+                            state.username.isNotBlank() &&
+                            state.password.isNotBlank()
+                        ) {
+                            onLoginClick()
+                        }
+                    },
+                ),
+                enabled = !state.isLoading,
+                textStyle = TvLoginTextStyles.Field,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .bringIntoViewRequester(passwordBringIntoView)
+                    .onFocusEvent { fs ->
+                        if (fs.isFocused) scope.launch { passwordBringIntoView.bringIntoView() }
+                    },
+                colors = tvOutlinedTextFieldColors(),
+            )
+        }
 
         if (state.error != null) {
             Text(
@@ -373,7 +391,9 @@ private fun CredentialFormCard(
                 label = if (state.isLoading) "Signing in…" else "Sign In",
                 icon = Icons.AutoMirrored.Filled.Login,
                 onClick = onLoginClick,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp),
             )
         }
 
@@ -381,35 +401,38 @@ private fun CredentialFormCard(
         // ServerSetup probe forwards that flag through the Login route so this
         // affordance never appears on signup-disabled servers.
         if (signupEnabled) {
-            Text(
-                text = "Don't have an account yet?",
-                style = TvLoginTextStyles.Body,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TvHeroActionPill(
-                label = "Create Account",
-                icon = Icons.Default.AccountCircle,
-                variant = TvPillVariant.Hollow,
-                heightOverride = 28.dp,
-                horizontalPaddingOverride = 16.dp,
-                labelStyle = TvLoginTextStyles.Button,
-                onClick = onCreateAccount,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Text(
+                    text = "Don't have an account yet?",
+                    style = TvLoginTextStyles.Body,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TvHeroActionPill(
+                    label = "Create Account",
+                    icon = Icons.Default.AccountCircle,
+                    variant = TvPillVariant.Hollow,
+                    heightOverride = 36.dp,
+                    horizontalPaddingOverride = 18.dp,
+                    labelStyle = TvLoginTextStyles.Button,
+                    onClick = onCreateAccount,
+                )
+            }
         }
-
-        Spacer(modifier = Modifier.height(Spacing.xs))
 
         // Return to the phone-first surface (the QR pairing remains live), or
         // bail out to server setup to point this TV at a different server —
-        // both affordances mirror tvOS TVLoginView.
-        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        // both affordances mirror tvOS TVLoginView. Stacked full-width like the
+        // QR pane so the long "Back to phone sign-in" label never wraps.
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             AuroraGhostButton(
                 label = "Back to phone sign-in",
                 onClick = onBackToPhone,
+                modifier = Modifier.fillMaxWidth(),
             )
             AuroraGhostButton(
                 label = "Change server",
                 onClick = onChangeServer,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
@@ -425,24 +448,33 @@ private object TvLoginTextStyles {
 
     val Title = TextStyle(
         fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 20.sp,
+        fontSize = 26.sp,
+        lineHeight = 32.sp,
         letterSpacing = 0.sp,
     )
 
     val Body = TextStyle(
         fontWeight = FontWeight.Normal,
         fontSize = 16.sp,
-        lineHeight = 20.sp,
+        lineHeight = 22.sp,
         letterSpacing = 0.sp,
     )
 
     val Field = TextStyle(
         fontWeight = FontWeight.Normal,
-        fontSize = 16.sp,
-        lineHeight = 20.sp,
+        fontSize = 17.sp,
+        lineHeight = 22.sp,
         letterSpacing = 0.sp,
         color = Color.White,
+    )
+
+    /** Mono uppercase caption that labels each input — mirrors server setup. */
+    val InputLabel = TextStyle(
+        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 13.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 3.sp,
     )
 
     val Error = TextStyle(
