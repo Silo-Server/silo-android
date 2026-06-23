@@ -232,6 +232,7 @@ fun TvMainShell(
     val focusManager = LocalFocusManager.current
     val contentFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
+    var contentUpFallback by remember { mutableStateOf<(() -> Boolean)?>(null) }
 
     // All shell focus/overlay state — the menu-refocus / profile-refocus /
     // panel-entry nudge counters, the menu-focused / profile-open / panel flags —
@@ -515,12 +516,19 @@ fun TvMainShell(
                 .onPreviewKeyEvent { ev ->
                     when {
                         ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp -> {
-                            // Try to move focus up inside content; if that
-                            // fails (we're already on the top row), hand
-                            // focus to the menu bar.
-                            val moved = focusManager.moveFocus(FocusDirection.Up)
-                            if (!moved) {
-                                focusState.requestMenuFocus()
+                            val contentHandledUp = contentUpFallback?.invoke()
+                            if (contentHandledUp != null) {
+                                if (!contentHandledUp) {
+                                    focusState.requestMenuFocus()
+                                }
+                            } else {
+                                // Try to move focus up inside content; if that
+                                // fails (we're already on the top row), hand
+                                // focus to the menu bar.
+                                val moved = focusManager.moveFocus(FocusDirection.Up)
+                                if (!moved) {
+                                    focusState.requestMenuFocus()
+                                }
                             }
                             // Always consume: we performed the move (or routed
                             // to the menu) ourselves in the preview phase.
@@ -556,6 +564,7 @@ fun TvMainShell(
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
+                        onContentUpFallbackChanged = { contentUpFallback = it },
                     )
                 }
                 composable(TvMainRoute.Home.route) {
@@ -572,6 +581,7 @@ fun TvMainShell(
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
+                        onContentUpFallbackChanged = { contentUpFallback = it },
                     )
                 }
                 composable(TvMainRoute.Search.route) {
@@ -615,6 +625,7 @@ fun TvMainShell(
                         onItemClick = onOpenItemDetail,
                         onLibraryCollectionClick = onOpenLibraryCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onContentUpFallbackChanged = { contentUpFallback = it },
                     )
                 }
                 composable(TvMainRoute.Series.route) {
@@ -627,6 +638,7 @@ fun TvMainShell(
                         onItemClick = onOpenItemDetail,
                         onLibraryCollectionClick = onOpenLibraryCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onContentUpFallbackChanged = { contentUpFallback = it },
                     )
                 }
                 composable(TvMainRoute.Music.route) {
@@ -639,6 +651,7 @@ fun TvMainShell(
                         onItemClick = onOpenItemDetail,
                         onLibraryCollectionClick = onOpenLibraryCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onContentUpFallbackChanged = { contentUpFallback = it },
                     )
                 }
                 composable(TvMainRoute.Audiobooks.route) {
@@ -651,6 +664,7 @@ fun TvMainShell(
                         onItemClick = onOpenItemDetail,
                         onLibraryCollectionClick = onOpenLibraryCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onContentUpFallbackChanged = { contentUpFallback = it },
                     )
                 }
                 composable(TvMainRoute.ForYou.route) {
@@ -962,6 +976,7 @@ private fun TvLibraryTypeContent(
     onItemClick: (contentId: String) -> Unit,
     onLibraryCollectionClick: (libraryId: Int, collectionId: String, title: String) -> Unit,
     onInitialContentFocus: () -> Unit,
+    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
 ) {
     if (library == null) {
         // Only assert "no libraries" once loading has settled AND this type
@@ -1000,6 +1015,7 @@ private fun TvLibraryTypeContent(
             onInitialContentFocus = onInitialContentFocus,
             initialSection = selectedPill.toLibraryTab(),
             sectionRequestNonce = sectionRequestNonce,
+            onContentUpFallbackChanged = onContentUpFallbackChanged,
         )
     }
 }

@@ -89,6 +89,7 @@ fun TvLibraryDetailScreen(
     // section-apply effect on it (not just initialSection) makes re-committing
     // the SAME pill re-apply the section instead of being a silent no-op.
     sectionRequestNonce: Int = 0,
+    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
     viewModel: TvLibraryDetailViewModel = koinViewModel(
         key = "library-$libraryId",
         parameters = { parametersOf(libraryId, libraryTitle, libraryType) },
@@ -117,6 +118,7 @@ fun TvLibraryDetailScreen(
                 onRetry = viewModel::retryRecommended,
                 onInitialContentFocus = onInitialContentFocus,
                 focusRequest = sectionRequestNonce,
+                onContentUpFallbackChanged = onContentUpFallbackChanged,
             )
             TvLibraryTab.Browse -> LibraryTab(
                 state = state,
@@ -147,6 +149,7 @@ private fun RecommendedTab(
     onRetry: () -> Unit,
     onInitialContentFocus: () -> Unit,
     focusRequest: Int,
+    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)?,
 ) {
     val rows = remember(state.sections) {
         state.sections.filter { !it.featured && it.items.isNotEmpty() }
@@ -181,6 +184,7 @@ private fun RecommendedTab(
                 onItemClick = onItemClick,
                 focusRequest = focusRequest,
                 onInitialContentFocus = onInitialContentFocus,
+                onContentUpFallbackChanged = onContentUpFallbackChanged,
             )
         }
     }

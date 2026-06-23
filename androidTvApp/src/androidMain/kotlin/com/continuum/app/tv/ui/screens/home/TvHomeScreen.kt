@@ -32,6 +32,7 @@ fun TvHomeScreen(
     onOpenForYou: () -> Unit = {},
     onInitialContentFocus: () -> Unit = {},
     focusRequest: Int = 0,
+    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
     viewModel: HomeViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -53,6 +54,7 @@ fun TvHomeScreen(
             onOpenForYou = onOpenForYou,
             onInitialContentFocus = onInitialContentFocus,
             focusRequest = focusRequest,
+            onContentUpFallbackChanged = onContentUpFallbackChanged,
             onSetWatched = viewModel::setWatched,
             onToggleFavorite = viewModel::toggleFavorite,
             onToggleWatchlist = viewModel::toggleWatchlist,
@@ -69,6 +71,7 @@ private fun TvHomeContent(
     onOpenForYou: () -> Unit = {},
     onInitialContentFocus: () -> Unit,
     focusRequest: Int,
+    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)?,
     onSetWatched: (String, Boolean) -> Unit = { _, _ -> },
     onToggleFavorite: (String, Boolean) -> Unit = { _, _ -> },
     onToggleWatchlist: (String, Boolean) -> Unit = { _, _ -> },
@@ -79,6 +82,7 @@ private fun TvHomeContent(
         onItemClick = onItemClick,
         focusRequest = focusRequest,
         onInitialContentFocus = onInitialContentFocus,
+        onContentUpFallbackChanged = onContentUpFallbackChanged,
         iconForSection = { section ->
             if (section.isTvProgressRow()) Icons.Filled.PlayCircle else null
         },

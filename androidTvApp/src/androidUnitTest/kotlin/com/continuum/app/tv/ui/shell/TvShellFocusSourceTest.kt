@@ -58,6 +58,9 @@ class TvShellFocusSourceTest {
         // …b823d1f: do the up-move ourselves and route to the bar only when we're
         // already on the top row, consuming the event so the default focus system
         // can't run a second moveFocus(Up) and skip a row.
+        assertTrue(shell.contains("var contentUpFallback by remember"))
+        assertTrue(shell.contains("val contentHandledUp = contentUpFallback?.invoke()"))
+        assertTrue(shell.indexOf("val contentHandledUp = contentUpFallback?.invoke()") < shell.indexOf("val moved = focusManager.moveFocus(FocusDirection.Up)"))
         assertTrue(shell.contains("val moved = focusManager.moveFocus(FocusDirection.Up)"))
         assertTrue(shell.contains("focusState.requestMenuFocus()"))
     }
@@ -81,6 +84,7 @@ class TvShellFocusSourceTest {
         assertTrue(topMenu.contains("if (focusRequest == lastHandledFocusRequest) return@LaunchedEffect"))
         assertTrue(topMenu.contains("if (profileFocusRequest > 0)"))
         assertTrue(topMenu.contains("enter = { barEntryRequester }"))
-        assertTrue(topMenu.contains("runCatching { target.requestFocus() }"))
+        assertTrue(topMenu.contains("runCatching { selectedEntryRequester().requestFocus() }"))
+        assertTrue(!topMenu.contains("selectedEntryFocus()"))
     }
 }

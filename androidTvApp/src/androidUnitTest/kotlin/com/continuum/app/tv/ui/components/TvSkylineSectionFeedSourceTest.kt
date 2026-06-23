@@ -18,11 +18,17 @@ class TvSkylineSectionFeedSourceTest {
         assertTrue(source.contains("state = rowBandState"))
         assertTrue(source.contains("itemsIndexed("))
         assertTrue(source.contains("val onItemFocused: (SectionItem, String, Int) -> Unit"))
-        // Vertical scroll is owned by the focus system's bringIntoView (the
-        // provided TvSmoothBringIntoViewSpec), never a manual animated scroll.
-        // Match the call form so the explanatory comment that names the removed
-        // API doesn't trip this guard.
-        assertTrue(!source.contains(".animateScrollToItem("))
+        // Vertical row-band motion is owned once by the feed, matching tvOS'
+        // view-aligned row stack, while the Skyline bring-into-view spec keeps
+        // card focus from issuing competing vertical relocation requests.
+        assertTrue(source.contains("var focusedRowIndex by remember(rows)"))
+        assertTrue(source.contains("rowBandState.animateScrollToItem(focusedRowIndex)"))
+        assertTrue(source.contains("LocalBringIntoViewSpec provides TvSkylineBringIntoViewSpec"))
+        assertTrue(source.contains("private const val TvSkylineVerticalContainerRatio = 3f"))
+        assertTrue(source.contains("TvSmoothBringIntoViewSpec.calculateScrollDistance"))
+        assertTrue(source.contains("onContentUpFallbackChanged?.invoke"))
+        assertTrue(source.contains("rowBandState.animateScrollToItem(currentRow - 1)"))
+        assertTrue(source.contains("focusManager.moveFocus(FocusDirection.Up)"))
         assertTrue(source.contains("TvRootHeroBackdrop("))
         assertTrue(source.contains("TvFocusMarquee("))
         assertTrue(source.contains("fun ResolvedSection.isTvProgressRow()"))

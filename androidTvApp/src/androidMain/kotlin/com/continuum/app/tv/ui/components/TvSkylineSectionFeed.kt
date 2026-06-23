@@ -1,7 +1,11 @@
 package com.continuum.app.tv.ui.components
 
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,17 +19,23 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import com.continuum.app.model.catalog.ItemDetail
@@ -37,6 +47,7 @@ import com.continuum.app.tv.ui.theme.RowDimens
 import com.continuum.app.tv.ui.theme.Spacing
 import com.continuum.app.tv.ui.theme.TvSmoothBringIntoViewSpec
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 /**
@@ -59,6 +70,7 @@ fun TvSkylineSectionFeed(
         if (it.isTvProgressRow()) TvRowStyle.Backdrop else TvRowStyle.Poster
     },
     cardActions: (ResolvedSection, SectionItem) -> TvMediaCardActions = { _, _ -> TvMediaCardActions() },
+    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
 ) {
     val rows = remember(sections) { sections.filter { it.items.isNotEmpty() } }
     val tintState = rememberAmbientBackdropTintState()
@@ -86,11 +98,39 @@ fun TvSkylineSectionFeed(
     }
 
     val rowBandState = rememberLazyListState()
-    // Vertical scroll is owned by the focus system's bringIntoView (governed by
-    // the provided TvSmoothBringIntoViewSpec) — no manual animateScrollToItem,
-    // which previously fought it. onItemFocused only drives the marquee preview.
-    val onItemFocused: (SectionItem, String, Int) -> Unit = { item, rowTitle, _ ->
+    var focusedRowIndex by remember(rows) { mutableIntStateOf(-1) }
+    val focusManager = LocalFocusManager.current
+    val rowBandScope = rememberCoroutineScope()
+    // Skyline matches tvOS' view-aligned row stack: vertical motion is owned by
+    // this feed, while each row's LazyRow still handles horizontal card scroll.
+    val onItemFocused: (SectionItem, String, Int) -> Unit = { item, rowTitle, rowIndex ->
         marquee.preview(item, rowTitle)
+        focusedRowIndex = rowIndex
+    }
+
+    LaunchedEffect(focusedRowIndex, rows.size) {
+        if (focusedRowIndex in rows.indices) {
+            rowBandState.animateScrollToItem(focusedRowIndex)
+        }
+    }
+
+    val currentContentUpFallback = rememberUpdatedState<() -> Boolean> {
+        val currentRow = focusedRowIndex
+        if (currentRow <= 0 || currentRow !in rows.indices) {
+            false
+        } else {
+            rowBandScope.launch {
+                rowBandState.animateScrollToItem(currentRow - 1)
+                withFrameNanos { }
+                focusManager.moveFocus(FocusDirection.Up)
+            }
+            true
+        }
+    }
+
+    DisposableEffect(onContentUpFallbackChanged) {
+        onContentUpFallbackChanged?.invoke { currentContentUpFallback.value() }
+        onDispose { onContentUpFallbackChanged?.invoke(null) }
     }
 
     LaunchedEffect(marquee.content?.heroBackdropUrl) {
@@ -123,7 +163,7 @@ fun TvSkylineSectionFeed(
 
     CompositionLocalProvider(
         LocalAmbientBackdropTint provides tintState,
-        LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec,
+        LocalBringIntoViewSpec provides TvSkylineBringIntoViewSpec,
     ) {
         BoxWithConstraints(
             modifier = modifier
@@ -224,3 +264,27 @@ private const val TvSkylineRowBandHeightFraction = 0.50f
 
 /** Gap between the marquee block and the top of the row band. */
 private val TvSkylineMarqueeBottomGap = 16.dp
+
+// Row-band relocation requests are close to row-sized; horizontal card rails
+// have much wider viewports and must still use the smooth scroll distance.
+private const val TvSkylineVerticalContainerRatio = 3f
+
+private val TvSkylineBringIntoViewSpec: BringIntoViewSpec = object : BringIntoViewSpec {
+    override val scrollAnimationSpec: AnimationSpec<Float> = tween(
+        durationMillis = 520,
+        easing = FastOutSlowInEasing,
+    )
+
+    override fun calculateScrollDistance(
+        offset: Float,
+        size: Float,
+        containerSize: Float,
+    ): Float {
+        val isVerticalRowBand = size > 0f && containerSize <= size * TvSkylineVerticalContainerRatio
+        return if (isVerticalRowBand) {
+            0f
+        } else {
+            TvSmoothBringIntoViewSpec.calculateScrollDistance(offset, size, containerSize)
+        }
+    }
+}

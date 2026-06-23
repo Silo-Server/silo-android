@@ -173,6 +173,13 @@ fun TvTopMenuBar(
     // (which is unreliable while the parent suppresses focus mid-animation).
     var focusedButton by remember { mutableStateOf<TvTopMenuFocus?>(null) }
 
+    fun selectedEntryRequester(): FocusRequester = when (val root = selectedRoot) {
+        TvRootDestination.Home -> homeFocusRequester
+        TvRootDestination.Calendar -> calendarFocusRequester
+        is TvRootDestination.LibraryType -> tabFocusRequesters[root.type] ?: homeFocusRequester
+        null -> if (isSearchActive) searchFocusRequester else homeFocusRequester
+    }
+
     // Focus the selected tab when `focusRequest` actually changes (the
     // content→bar Up path). We track the last-handled value so a bare
     // suppression lift (e.g. closing the profile dropdown, which flips
@@ -183,13 +190,7 @@ fun TvTopMenuBar(
         if (isFocusSuppressed) return@LaunchedEffect
         if (focusRequest == lastHandledFocusRequest) return@LaunchedEffect
         lastHandledFocusRequest = focusRequest
-        val target = when (val root = selectedRoot) {
-            TvRootDestination.Home -> homeFocusRequester
-            TvRootDestination.Calendar -> calendarFocusRequester
-            is TvRootDestination.LibraryType -> tabFocusRequesters[root.type] ?: homeFocusRequester
-            null -> if (isSearchActive) searchFocusRequester else homeFocusRequester
-        }
-        runCatching { target.requestFocus() }
+        runCatching { selectedEntryRequester().requestFocus() }
     }
 
     LaunchedEffect(focusedButton) {
@@ -236,12 +237,7 @@ fun TvTopMenuBar(
     // currently-selected tab, not whatever the geometric focus search would
     // pick (which, with the old align-zoned layout, wrongly landed in the
     // trailing cluster). On non-tab routes (Search) we enter the search icon.
-    val barEntryRequester = when (val root = selectedRoot) {
-        TvRootDestination.Home -> homeFocusRequester
-        TvRootDestination.Calendar -> calendarFocusRequester
-        is TvRootDestination.LibraryType -> tabFocusRequesters[root.type] ?: homeFocusRequester
-        null -> if (isSearchActive) searchFocusRequester else homeFocusRequester
-    }
+    val barEntryRequester = selectedEntryRequester()
 
     // Single full-width Row (wordmark · flexible gap · centered tabs · flexible
     // gap · trailing search+profile) so D-pad Left/Right traverse the whole bar
