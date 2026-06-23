@@ -116,15 +116,27 @@ fun TvSkylineSectionFeed(
 
     val currentContentUpFallback = rememberUpdatedState<() -> Boolean> {
         val currentRow = focusedRowIndex
-        if (currentRow <= 0 || currentRow !in rows.indices) {
-            false
-        } else {
-            rowBandScope.launch {
-                rowBandState.animateScrollToItem(currentRow - 1)
-                withFrameNanos { }
-                focusManager.moveFocus(FocusDirection.Up)
+        when {
+            currentRow <= 0 || currentRow !in rows.indices ->
+                // Top row (or unfocused): report not-handled so the shell hands
+                // focus to the menu bar.
+                false
+            // Previous row is already laid out: move immediately so the returned
+            // value is HONEST — the old code launched the move asynchronously and
+            // returned `true` before it ran, so a failed move stranded focus
+            // (neither moved up nor escalated to the menu).
+            focusManager.moveFocus(FocusDirection.Up) -> true
+            else -> {
+                // Previous row is scrolled off; bring it on-screen first, then
+                // move once the scroll settles (animateScrollToItem suspends until
+                // it does, so the row is laid out before moveFocus).
+                rowBandScope.launch {
+                    rowBandState.animateScrollToItem(currentRow - 1)
+                    withFrameNanos { }
+                    focusManager.moveFocus(FocusDirection.Up)
+                }
+                true
             }
-            true
         }
     }
 

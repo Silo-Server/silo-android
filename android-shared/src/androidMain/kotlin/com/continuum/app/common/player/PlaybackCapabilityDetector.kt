@@ -37,6 +37,11 @@ class PlaybackCapabilityDetector(
     private val context: Context,
     private val audioCapabilityManager: AudioCapabilityManager,
 ) {
+    // Platform software-audio decoders are static for the process; cache the
+    // MediaCodecList enumeration so back-to-back detect()/detectPlaybackContext()
+    // calls per playback start don't re-run it.
+    @Volatile
+    private var cachedPlatformSoftwareAudioCodecs: List<String>? = null
     /**
      * Inspect the resolved [Tracks] object (emitted by `Player.Listener.onTracksChanged`)
      * and declare whether direct play can proceed. Looks at the selected video
@@ -299,6 +304,7 @@ class PlaybackCapabilityDetector(
     }
 
     private fun detectPlatformSoftwareAudioCodecs(): List<String> {
+        cachedPlatformSoftwareAudioCodecs?.let { return it }
         val result = mutableSetOf<String>()
         val list = runCatching { MediaCodecList(MediaCodecList.REGULAR_CODECS) }.getOrNull()
             ?: return listOf("aac", "mp3")
@@ -317,7 +323,7 @@ class PlaybackCapabilityDetector(
                 }
             }
         }
-        return result.toList()
+        return result.toList().also { cachedPlatformSoftwareAudioCodecs = it }
     }
 }
 

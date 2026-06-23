@@ -9,6 +9,7 @@ import com.continuum.app.common.player.video.VideoPlaybackStartRequest
 import com.continuum.app.common.player.video.VideoPlaybackStartResult
 import com.continuum.app.common.player.video.VideoPlaybackStarter
 import com.continuum.app.common.player.video.canPlayResolvedStreamDirectly
+import com.continuum.app.common.player.video.immediateServerFallbackMode
 import com.continuum.app.common.player.video.requestedOriginalPlaybackMethod
 import com.continuum.app.common.player.video.resolvedPlaybackDelivery
 import com.continuum.app.common.settings.PlayerSettingsStore
@@ -247,12 +248,15 @@ class MobileVideoPlaybackStarter(
         contentId: String,
         message: String,
         cause: Throwable? = null,
-    ): VideoPlaybackStartResult.Error =
-        VideoPlaybackStartResult.Error(
+    ): VideoPlaybackStartResult.Error {
+        // Log the throwable here instead of stashing it on the (unread) result —
+        // the message already carries the human-facing detail.
+        if (cause != null) Log.w(TAG, "Playback start failed: $message", cause)
+        return VideoPlaybackStartResult.Error(
             contentId = contentId,
             message = message,
-            cause = cause,
         )
+    }
 
     private fun pickPreferredVersion(
         versions: List<FileVersion>,
@@ -297,17 +301,5 @@ class MobileVideoPlaybackStarter(
 
     private companion object {
         const val TAG = "MobileVideoPlaybackStarter"
-    }
-}
-
-private fun com.continuum.app.model.playback.PlaybackExecutionPlan.immediateServerFallbackMode():
-    PlaybackSessionManager.TranscodeMode? {
-    val blockers = capabilities.blockers.toSet()
-    return when {
-        "dolby_vision_profile_7_not_launch_claimed" in blockers ->
-            PlaybackSessionManager.TranscodeMode.FULL
-        "bitmap_subtitle_route_not_validated" in blockers ->
-            PlaybackSessionManager.TranscodeMode.FULL
-        else -> null
     }
 }

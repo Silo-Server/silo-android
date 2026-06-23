@@ -122,4 +122,12 @@ class PlaybackRepository(
         playbackApi.reportRouteEvent(sessionId, request)
 }
 
-private fun PlayMethod.wireValue(): String = name.lowercase()
+// Mirror the enum's @SerialName wire values explicitly (not name.lowercase()),
+// so adding a constant whose serial name differs from its lowercased name is a
+// compile error here rather than a silently wrong wire value. Exhaustive on
+// purpose — no `else`.
+private fun PlayMethod.wireValue(): String = when (this) {
+    PlayMethod.DIRECT -> "direct"
+    PlayMethod.REMUX -> "remux"
+    PlayMethod.TRANSCODE -> "transcode"
+}

@@ -91,6 +91,32 @@ class PlaybackModelsV2SerializationTest {
     }
 
     @Test
+    fun incompletePlaybackPlanDegradesToNullInsteadOfFailingTheResponse() {
+        // A present-but-incomplete plan (missing the required `plan_id`) must NOT
+        // throw and fail the ENTIRE session-start decode — it degrades to null so
+        // the client falls back to legacy V1 routing rather than refusing playback.
+        val decoded = json.decodeFromString<PlaybackSessionResponse>(
+            """
+            {
+              "session_id": "s1",
+              "user_id": 1,
+              "media_file_id": 42,
+              "play_method": "direct",
+              "stream_url": "/stream/s1",
+              "audio_track_index": 0,
+              "playback_plan": {
+                "delivery": "original_http",
+                "engine": "mpv_direct",
+                "route_family": "compatibility_direct"
+              }
+            }
+            """.trimIndent(),
+        )
+        assertEquals("s1", decoded.sessionId)
+        assertEquals(null, decoded.playbackPlan)
+    }
+
+    @Test
     fun transcodeStartResponseModelsStreamOriginSeconds() {
         val decoded = json.decodeFromString<TranscodeStartResponse>(
             """

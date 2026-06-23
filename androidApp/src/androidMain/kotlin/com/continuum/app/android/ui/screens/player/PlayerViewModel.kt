@@ -18,6 +18,7 @@ import com.continuum.app.common.player.video.VideoPlaybackSessionCoordinator
 import com.continuum.app.common.player.video.VideoPlaybackStartRequest
 import com.continuum.app.common.player.video.VideoPlayerUiState
 import com.continuum.app.common.player.video.canPlayResolvedStreamDirectly
+import com.continuum.app.common.player.video.immediateServerFallbackMode
 import com.continuum.app.common.player.video.requestedOriginalPlaybackMethod
 import com.continuum.app.common.player.video.resolvedPlaybackDelivery
 import com.continuum.app.common.settings.PlayerSettingsStore
@@ -1517,17 +1518,6 @@ class PlayerViewModel(
         }
     }
 
-    private fun PlaybackExecutionPlan.immediateServerFallbackMode():
-        PlaybackSessionManager.TranscodeMode? {
-        val blockers = capabilities.blockers.toSet()
-        return when {
-            "dolby_vision_profile_7_not_launch_claimed" in blockers ->
-                PlaybackSessionManager.TranscodeMode.FULL
-            "bitmap_subtitle_route_not_validated" in blockers ->
-                PlaybackSessionManager.TranscodeMode.FULL
-            else -> null
-        }
-    }
 
     /**
      * Offline-first playback path. Returns true (and populates UiState with a

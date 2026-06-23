@@ -418,6 +418,14 @@ class MpvPlayer(
     private var initialIndex: Int = 0
     private var initialSeekTo: Long = 0L
     private var awaitingInitialLoad: Boolean = false
+    /**
+     * True between issuing a seamless playlist auto-advance and the next item
+     * becoming ready. The advance re-arms [awaitingInitialLoad]; without this
+     * flag the END_FILE for the just-finished item (which mpv delivers AFTER we
+     * prepared the next one) would trip the initial-open failure guard and raise
+     * a spurious fatal error mid-queue. Consumed by that one expected END_FILE.
+     */
+    private var seamlessAdvanceInFlight: Boolean = false
     private var oldMediaItem: MediaItem? = null
     private var currentVideoWidth: Int = 0
     private var currentVideoHeight: Int = 0
@@ -483,6 +491,11 @@ class MpvPlayer(
                                 )
                             } else {
                                 prepareMediaItem(currentMediaItemIndex + 1)
+                                // Mark the advance AFTER prepareMediaItem (whose
+                                // resetInternalState clears the flag) so the
+                                // upcoming END_FILE for the finished item isn't
+                                // mistaken for an initial-open failure.
+                                seamlessAdvanceInFlight = true
                                 playWhenReady = true
                             }
                         } else {
@@ -647,7 +660,15 @@ class MpvPlayer(
 
                 MPVLib.MpvEvent.MPV_EVENT_END_FILE -> {
                     if (awaitingInitialLoad && !isPlayerReady) {
-                        failPlaybackOpen()
+                        if (seamlessAdvanceInFlight) {
+                            // Expected END_FILE for the item we just advanced past
+                            // during a seamless playlist transition — not an open
+                            // failure. Consume the suppression; a genuine failure to
+                            // open the NEXT item will arrive with the flag cleared.
+                            seamlessAdvanceInFlight = false
+                        } else {
+                            failPlaybackOpen()
+                        }
                     }
                 }
             }
@@ -1303,6 +1324,7 @@ class MpvPlayer(
 
     private fun resetInternalState() {
         isPlayerReady = false
+        seamlessAdvanceInFlight = false
         isSeekable = false
         playbackState = STATE_IDLE
         currentPositionMs = null
@@ -1478,13 +1500,22 @@ class MpvPlayer(
     fun setAudioPassthroughCodecs(codecs: List<String>) {
         val value = codecs
             .mapNotNull { codec ->
-                when (codec.lowercase()) {
-                    "ac3" -> "ac3"
-                    "eac3", "eac3_joc" -> "eac3"
+                // mpv's `audio-spdif` only accepts these bitstream formats.
+                // Normalize common server/codec spelling variants so they aren't
+                // dropped on a hyphen/underscore mismatch. Anything genuinely
+                // unsupported (e.g. AC-4, which mpv cannot bitstream) is LOGGED
+                // rather than silently dropped, so a capability/engine mismatch is
+                // diagnosable instead of degrading to silent software decode.
+                when (codec.lowercase().replace('_', '-')) {
+                    "ac3", "ac-3" -> "ac3"
+                    "eac3", "e-ac3", "eac3-joc", "ec3" -> "eac3"
                     "dts" -> "dts"
-                    "dts_hd", "dts-hd" -> "dts-hd"
-                    "truehd" -> "truehd"
-                    else -> null
+                    "dts-hd", "dtshd", "dts-hd-ma", "dtshd-ma" -> "dts-hd"
+                    "truehd", "mlp" -> "truehd"
+                    else -> {
+                        Log.w(TAG, "Unsupported mpv passthrough codec dropped: $codec")
+                        null
+                    }
                 }
             }
             .distinct()

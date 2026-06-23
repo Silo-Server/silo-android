@@ -1,10 +1,12 @@
 package com.continuum.app.common.ui.components
 
 import android.util.Base64
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -14,8 +16,23 @@ import androidx.compose.ui.platform.LocalContext
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val DefaultPlaceholderColor = Color(0xFF1A1D27)
+
+/**
+ * Process-wide cache of decoded ThumbHash placeholders, keyed by base64 hash.
+ * Decoded placeholders are tiny (≤32×32 ARGB) but the decode is a per-pixel
+ * cosine pass; caching keeps fast scrolling (and scroll-back) off that path.
+ * Thread-safe ([LruCache] is internally synchronized).
+ */
+private val ThumbhashPainterCache = LruCache<String, BitmapPainter>(256)
+
+private fun decodeThumbhashPainter(hash: String): BitmapPainter? =
+    runCatching { ThumbHash.toImageBitmap(Base64.decode(hash, Base64.DEFAULT)) }
+        .getOrNull()
+        ?.let { BitmapPainter(it) }
 
 /**
  * Async image with an instant ThumbHash blur-up placeholder.
@@ -47,13 +64,23 @@ fun ThumbhashImage(
 ) {
     val context = LocalContext.current
 
-    val placeholder = remember(thumbhash) {
-        thumbhash?.takeIf { it.isNotBlank() }?.let { hash ->
-            runCatching { ThumbHash.toImageBitmap(Base64.decode(hash, Base64.DEFAULT)) }
-                .getOrNull()
-                ?.let { BitmapPainter(it) }
-        }
+    // Cached placeholders resolve synchronously (instant on scroll-back); a cold
+    // hash decodes off the composition thread and blurs up a frame later, so the
+    // per-cell cosine decode never blocks scrolling.
+    val cachedPlaceholder = remember(thumbhash) {
+        thumbhash?.takeIf { it.isNotBlank() }?.let { ThumbhashPainterCache.get(it) }
     }
+    // Plain `val` (not `by`) so the null-checked `placeholder` smart-casts below.
+    val placeholder = produceState(initialValue = cachedPlaceholder, thumbhash, cachedPlaceholder) {
+        if (cachedPlaceholder != null) return@produceState
+        val hash = thumbhash?.takeIf { it.isNotBlank() } ?: run {
+            value = null
+            return@produceState
+        }
+        val decoded = withContext(Dispatchers.Default) { decodeThumbhashPainter(hash) }
+        if (decoded != null) ThumbhashPainterCache.put(hash, decoded)
+        value = decoded
+    }.value
 
     if (url.isNullOrBlank()) {
         when {

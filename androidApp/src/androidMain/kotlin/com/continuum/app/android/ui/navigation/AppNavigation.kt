@@ -296,6 +296,22 @@ fun AppNavigation(
         composable(Route.Downloads.route) {
             MainScreen(navController, Tab.Downloads)
         }
+        // ---- Legacy route aliases (defensive) ----
+        // Pre-consolidation builds had standalone Video/Audio/Reading/Inbox
+        // destinations; they were folded into the Home shell. A NavController
+        // back stack restored from such a build could still reference these route
+        // strings — and navigating to a route with no registered destination
+        // throws (crash on launch). Register no-op aliases that redirect to Home
+        // so a restore can never hit an unregistered destination.
+        for (legacyRoute in listOf("video", "audio", "reading", "inbox")) {
+            composable(legacyRoute) {
+                LaunchedEffect(Unit) {
+                    navController.navigate(Route.Home.route) {
+                        popUpTo(legacyRoute) { inclusive = true }
+                    }
+                }
+            }
+        }
         composable(Route.Settings.route) {
             SettingsScreen(
                 onNavigateToServers = {

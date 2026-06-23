@@ -1,7 +1,15 @@
 package com.continuum.app.model.playback
 
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonNull
 
 @Serializable
 enum class PlayMethod {
@@ -24,7 +32,9 @@ data class PlaybackSessionResponse(
     @SerialName("duration_seconds") val durationSeconds: Double? = null,
     @SerialName("subtitle_urls") val subtitleUrls: List<PlayerSubtitleInfo>? = null,
     @SerialName("playback_info") val playbackInfo: PlaybackInfo? = null,
-    @SerialName("playback_plan") val playbackPlan: PlaybackExecutionPlan? = null,
+    @SerialName("playback_plan")
+    @Serializable(with = TolerantPlaybackPlanSerializer::class)
+    val playbackPlan: PlaybackExecutionPlan? = null,
 )
 
 @Serializable
@@ -135,6 +145,38 @@ data class PlaybackExecutionPlan(
     @SerialName("decision_trace") val decisionTrace: List<String> = emptyList(),
 )
 
+/**
+ * Deserializes a [PlaybackExecutionPlan] but yields `null` when the server sends
+ * a present-but-incomplete/malformed plan (a missing required field such as
+ * `plan_id`/`delivery`/`engine`/`route_family`, a malformed `fallbacks[]` /
+ * `degradation_warnings[]` entry, or an unknown enum value). Without this, a
+ * single missing field throws [SerializationException] and fails the decode of
+ * the ENTIRE session-start response — turning an HTTP-200 into a NetworkError so
+ * playback never starts. A null plan instead makes the client fall back to the
+ * legacy V1 routing, which is the safe degrade.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+internal object TolerantPlaybackPlanSerializer : KSerializer<PlaybackExecutionPlan?> {
+    private val delegate = PlaybackExecutionPlan.serializer()
+    override val descriptor: SerialDescriptor = delegate.descriptor
+
+    override fun deserialize(decoder: Decoder): PlaybackExecutionPlan? {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: return runCatching { delegate.deserialize(decoder) }.getOrNull()
+        val element = jsonDecoder.decodeJsonElement()
+        if (element is JsonNull) return null
+        return try {
+            jsonDecoder.json.decodeFromJsonElement(delegate, element)
+        } catch (e: SerializationException) {
+            null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: PlaybackExecutionPlan?) {
+        if (value == null) encoder.encodeNull() else delegate.serialize(encoder, value)
+    }
+}
+
 @Serializable
 data class PlaybackStreamRequest(
     val url: String? = null,
@@ -232,7 +274,9 @@ data class PlaybackDegradationWarning(
 
 @Serializable
 data class PlaybackPlanResponse(
-    @SerialName("playback_plan") val playbackPlan: PlaybackExecutionPlan,
+    @SerialName("playback_plan")
+    @Serializable(with = TolerantPlaybackPlanSerializer::class)
+    val playbackPlan: PlaybackExecutionPlan? = null,
 )
 
 @Serializable

@@ -41,6 +41,5 @@ sealed interface VideoPlaybackStartResult {
     data class Error(
         val contentId: String,
         val message: String,
-        val cause: Throwable? = null,
     ) : VideoPlaybackStartResult
 }

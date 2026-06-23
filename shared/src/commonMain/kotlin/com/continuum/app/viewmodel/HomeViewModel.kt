@@ -122,7 +122,17 @@ class HomeViewModel(
                     val byId = needsFetch.map { section ->
                         viewModelScope.async {
                             section.id to when (val itemsResult = sectionRepository.getHomeSectionItems(section.id)) {
-                                is ApiResult.Success -> (itemsResult.data.section ?: section) to true
+                                is ApiResult.Success -> {
+                                    // The response carries items either nested under
+                                    // `section` or as a sibling top-level `items` list.
+                                    // Honor both — using only `.section` silently drops
+                                    // a successful refetch that returned items at the top
+                                    // level, leaving the section empty and filtered out.
+                                    val data = itemsResult.data
+                                    val hydrated = data.section
+                                        ?: section.copy(items = data.items)
+                                    hydrated to true
+                                }
                                 else -> section to false
                             }
                         }

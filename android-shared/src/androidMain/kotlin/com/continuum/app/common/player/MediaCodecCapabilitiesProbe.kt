@@ -25,7 +25,16 @@ object MediaCodecCapabilitiesProbe {
         val supportsDvProfile7: Boolean,
     )
 
-    fun probe(): ProbeResult {
+    // Decoder/HDR support is static for the process lifetime; the MediaCodecList
+    // enumeration is expensive and was being run up to 4× per playback start
+    // (detect() runs it twice and is itself called twice). Probe once, cache.
+    @Volatile
+    private var cached: ProbeResult? = null
+
+    fun probe(): ProbeResult =
+        cached ?: synchronized(this) { cached ?: computeProbe().also { cached = it } }
+
+    private fun computeProbe(): ProbeResult {
         val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
         // Track the largest supported height PER codec rather than a single
         // global max. Otherwise one beefy decoder (e.g. H.264 at 4K) lets us

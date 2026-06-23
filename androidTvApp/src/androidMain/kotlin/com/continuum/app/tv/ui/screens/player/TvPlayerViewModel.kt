@@ -393,6 +393,9 @@ class TvPlayerViewModel(
 
     companion object {
         private const val TAG = "TvPlayerViewModel"
+        // A transient network blip retries the same route this many times before
+        // demoting to a server transcode (resets once playback progresses).
+        private const val MAX_TRANSIENT_NETWORK_RETRIES = 1
         // Record a durable position roughly every 10s of content time.
         private const val POSITION_RECORD_INTERVAL_SEC = 10.0
         // Auto-play countdown shown on the Up-Next overlay before the next
@@ -451,6 +454,19 @@ class TvPlayerViewModel(
     private var pendingInitialSubtitleIndex: Int? = launchArgs.initialSubtitleTrackIndex
     private var autoTextSubtitleSelectionAttempted = false
     private val recoveryPlanner = PlaybackRecoveryPlanner()
+
+    /**
+     * Engines we've already mounted for the current content, so the recovery
+     * planner never bounces back to one that already failed (MEDIA3_DIRECT ↔
+     * MPV_DIRECT ping-pong). Cleared on every fresh [loadContent].
+     */
+    private val attemptedEngines = mutableSetOf<PlaybackEngineKind>()
+
+    /** Guards [startServerRecoveryFallback] against concurrent fallbacks racing the same session. */
+    private var recoveryJob: Job? = null
+
+    /** Same-route retries spent on transient network errors; reset once playback progresses. */
+    private var transientNetworkRetries = 0
 
     data class UiState(
         val isLoading: Boolean = true,
@@ -748,6 +764,8 @@ class TvPlayerViewModel(
         suppressResumeRewind: Boolean = false,
     ) {
         introAutoSkipController.reset()
+        // Fresh content: forget engines attempted for the previous item.
+        attemptedEngines.clear()
 
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
@@ -864,7 +882,7 @@ class TvPlayerViewModel(
         }
         Log.i(TAG, "Preflight fallback: $notice")
 
-        val recoveryAction = recoveryPlanner.planForPlayability(state.playbackPlan, reason)
+        val recoveryAction = recoveryPlanner.planForPlayability(state.playbackPlan, reason, attemptedEngines)
         if (applyAlternateDirectFallback(state, recoveryAction)) return
         startServerRecoveryFallback(notice, recoveryAction, state)
     }
@@ -874,7 +892,14 @@ class TvPlayerViewModel(
         recoveryAction: PlaybackRecoveryAction,
         state: UiState,
     ) {
-        viewModelScope.launch {
+        // Single-flight: a second player/preflight error arriving before the
+        // first fallback finishes must not launch a competing transcode session
+        // (which would orphan one server session and race _uiState).
+        if (recoveryJob?.isActive == true) {
+            Log.i(TAG, "Server recovery already in flight; ignoring duplicate fallback request")
+            return
+        }
+        recoveryJob = viewModelScope.launch {
             val sessionId = state.sessionId ?: return@launch
             val activeFileId = state.selectedFileId ?: state.mediaFileId ?: return@launch
             val capabilities = capabilityDetector.detect()
@@ -908,7 +933,12 @@ class TvPlayerViewModel(
                     planId = state.playbackPlan?.planId,
                     fromEngine = state.playbackPlan?.engine,
                     toEngine = PlaybackEngineKind.MEDIA3_HLS,
-                    delivery = state.playbackPlan?.delivery ?: state.delivery,
+                    // Report the remux delivery the planner actually chose
+                    // (progressive vs HLS) rather than the source delivery.
+                    delivery = when (recoveryAction) {
+                        is PlaybackRecoveryAction.ServerRemux -> recoveryAction.delivery
+                        else -> state.playbackPlan?.delivery ?: state.delivery
+                    },
                     routeFamily = state.playbackPlan?.routeFamily,
                     fallbackReason = fallbackMode.name.lowercase(),
                     errorClass = when (recoveryAction) {
@@ -980,6 +1010,10 @@ class TvPlayerViewModel(
         val action = recoveryAction as? PlaybackRecoveryAction.AlternateDirectEngine ?: return false
         val plan = state.playbackPlan ?: return false
         val sessionId = state.sessionId ?: return false
+        // Record the engine we're leaving (and the one we're moving to) so a later
+        // failure can't bounce back to an engine that already failed.
+        attemptedEngines.add(plan.engine)
+        attemptedEngines.add(action.engine)
         val nextRouteFamily = when (action.engine) {
             PlaybackEngineKind.MPV_DIRECT -> PlaybackRouteFamily.COMPATIBILITY_DIRECT
             PlaybackEngineKind.MEDIA3_DIRECT -> PlaybackRouteFamily.PLATFORM_NATIVE
@@ -1041,6 +1075,11 @@ class TvPlayerViewModel(
                 position = positionSec,
                 duration = if (durationSec > 0) durationSec else it.duration,
             )
+        }
+        // Playback is progressing — restore the transient-network retry budget so
+        // a later, unrelated blip gets a fresh retry instead of demoting at once.
+        if (positionSec > 0 && transientNetworkRetries > 0) {
+            transientNetworkRetries = 0
         }
         // F2: auto-advance / prompt when playback CROSSES the credits point —
         // only on the transition from before to after, so resuming an episode
@@ -1867,7 +1906,24 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
             ?: "Playback failed. Please try again."
-        val recoveryAction = recoveryPlanner.planForPlayerError(state.playbackPlan, error)
+        // #8: a transient network blip shouldn't immediately demote a healthy
+        // direct stream to a server transcode for the rest of playback. Retry the
+        // SAME route a bounded number of times first; transientNetworkRetries
+        // resets to 0 once playback actually progresses (onPositionChanged), so a
+        // persistent outage still falls through to the recovery ladder below.
+        val isTransientNetwork =
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT
+        if (isTransientNetwork &&
+            state.sessionId != null &&
+            transientNetworkRetries < MAX_TRANSIENT_NETWORK_RETRIES
+        ) {
+            transientNetworkRetries++
+            Log.i(TAG, "Transient network error; retrying same route ($transientNetworkRetries/$MAX_TRANSIENT_NETWORK_RETRIES)")
+            retry()
+            return
+        }
+        val recoveryAction = recoveryPlanner.planForPlayerError(state.playbackPlan, error, attemptedEngines)
         if (applyAlternateDirectFallback(state, recoveryAction)) return
         if (state.sessionId != null && recoveryAction != PlaybackRecoveryAction.None) {
             startServerRecoveryFallback(message, recoveryAction, state)
@@ -1884,11 +1940,15 @@ class TvPlayerViewModel(
     fun onEngineSwitchFailed(message: String) {
         val state = _uiState.value
         if (state.sessionId != null) {
-            startServerRecoveryFallback(
-                notice = message,
-                recoveryAction = PlaybackRecoveryAction.ServerRemux("engine_switch_failed"),
-                state = state,
+            // Don't blindly remux: prefer another direct engine, then fall through
+            // the plan's remux/transcode ladder. A transcode-only source can't be
+            // rescued by a remux that copies the same streams.
+            val recoveryAction = recoveryPlanner.planForEngineSwitchFailure(
+                state.playbackPlan,
+                attemptedEngines,
             )
+            if (applyAlternateDirectFallback(state, recoveryAction)) return
+            startServerRecoveryFallback(message, recoveryAction, state)
             return
         }
         _uiState.update {
