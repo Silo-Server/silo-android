@@ -167,7 +167,9 @@ fun TvCascadeSelector(
     var focusFirstPillToken by remember { mutableIntStateOf(0) }
     LaunchedEffect(focusFirstPillToken) {
         if (focusFirstPillToken > 0) {
-            pills.firstOrNull()?.let { pillRequesters[it]?.requestFocus() }
+            pills.firstOrNull()?.let { pill ->
+                pillRequesters[pill]?.let { runCatching { it.requestFocus() } }
+            }
         }
     }
 
@@ -188,7 +190,9 @@ fun TvCascadeSelector(
     LaunchedEffect(focusEntryToken) {
         if (entersPanel && focusEntryToken > 0) {
             if (isSingleLibrary) {
-                pills.firstOrNull()?.let { pillRequesters[it]?.requestFocus() }
+                pills.firstOrNull()?.let { pill ->
+                    pillRequesters[pill]?.let { runCatching { it.requestFocus() } }
+                }
             } else {
                 flyoutVisible = true
                 val target = currentScopeId ?: libraries.firstOrNull()?.id
@@ -201,7 +205,7 @@ fun TvCascadeSelector(
                         val index = libraries.indexOfFirst { it.id == id }
                         lazyListState.scrollToItem(index.coerceAtLeast(0))
                     }
-                    libraryRequesters[id]?.requestFocus()
+                    libraryRequesters[id]?.let { runCatching { it.requestFocus() } }
                 }
             }
         }
@@ -374,7 +378,7 @@ fun TvCascadeSelector(
                             } else {
                                 val target = anchorId ?: libraries.firstOrNull()?.id
                                 if (target != null) {
-                                    libraryRequesters[target]?.requestFocus()
+                                    libraryRequesters[target]?.let { runCatching { it.requestFocus() } }
                                     true
                                 } else {
                                     false

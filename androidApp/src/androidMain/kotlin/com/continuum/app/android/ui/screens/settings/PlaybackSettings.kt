@@ -16,7 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-private val qualityOptions = listOf("Auto", "Original", "1080p", "720p", "480p")
+private val qualityOptions = listOf("Auto", "Original", "4K", "1080p", "720p", "480p")
 private val languageOptions = listOf("Default", "English", "Spanish", "French", "German", "Japanese", "Korean", "Chinese", "Portuguese", "Italian", "Russian")
 
 // Discrete choices for the two behavior settings (0 = off). Dropdown idiom

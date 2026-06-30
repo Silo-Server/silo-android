@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -134,6 +135,7 @@ fun ReflowableReader(
     var pageCount by remember(source) { mutableStateOf(1) }
     var page by remember(source) { mutableStateOf(0) }
     var controller by remember(source) { mutableStateOf<ReflowController?>(null) }
+    var webViewResetKey by remember(source) { mutableStateOf(0) }
 
     val scope = rememberCoroutineScope()
     val loadSection: () -> Unit = {
@@ -190,42 +192,47 @@ fun ReflowableReader(
     Box(
         modifier = Modifier.fillMaxSize(),
     ) {
-        ReflowWebView(
-            modifier = Modifier.fillMaxSize(),
-            onTap = { xFraction ->
-                when {
-                    xFraction < 1f / 3f -> prevPage()
-                    xFraction > 2f / 3f -> nextPage()
-                    else -> onToggleChrome()
-                }
-            },
-            onScale = onTextScaleNudge,
-            onReady = { c -> controller = c },
-            onCrash = { controller?.let { loadSection() } },
-            onEvent = { ev ->
-                when (ev) {
-                    is ReflowEvent.Paginated -> {
-                        pageCount = ev.pageCount.coerceAtLeast(1)
-                        relocationGate.consumeInitialPageTarget(pageCount)?.let { target ->
-                            controller?.goToPage(target)
+        key(webViewResetKey) {
+            ReflowWebView(
+                modifier = Modifier.fillMaxSize(),
+                onTap = { xFraction ->
+                    when {
+                        xFraction < 1f / 3f -> prevPage()
+                        xFraction > 2f / 3f -> nextPage()
+                        else -> onToggleChrome()
+                    }
+                },
+                onScale = onTextScaleNudge,
+                onReady = { c -> controller = c },
+                onCrash = {
+                    controller = null
+                    webViewResetKey += 1
+                },
+                onEvent = { ev ->
+                    when (ev) {
+                        is ReflowEvent.Paginated -> {
+                            pageCount = ev.pageCount.coerceAtLeast(1)
+                            relocationGate.consumeInitialPageTarget(pageCount)?.let { target ->
+                                controller?.goToPage(target)
+                            }
+                            pendingPageProgression = 0.0
                         }
-                        pendingPageProgression = 0.0
+                        is ReflowEvent.Relocated -> {
+                            page = ev.page
+                            if (!relocationGate.shouldPersistRelocation(ev.page)) return@ReflowWebView
+                            val bp = weights.bookProgression(sectionIndex, ev.pageProgression)
+                            onLocatorChanged(
+                                ReflowLocatorCodec.encode(
+                                    ReflowLocator(sectionIndex, ev.pageProgression, bp),
+                                ),
+                                bp,
+                            )
+                        }
+                        ReflowEvent.Ready, is ReflowEvent.Error -> {}
                     }
-                    is ReflowEvent.Relocated -> {
-                        page = ev.page
-                        if (!relocationGate.shouldPersistRelocation(ev.page)) return@ReflowWebView
-                        val bp = weights.bookProgression(sectionIndex, ev.pageProgression)
-                        onLocatorChanged(
-                            ReflowLocatorCodec.encode(
-                                ReflowLocator(sectionIndex, ev.pageProgression, bp),
-                            ),
-                            bp,
-                        )
-                    }
-                    ReflowEvent.Ready, is ReflowEvent.Error -> {}
-                }
-            },
-        )
+                },
+            )
+        }
     }
 }
 

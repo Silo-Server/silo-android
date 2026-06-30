@@ -41,6 +41,7 @@ import com.continuum.app.android.ui.screens.recommendations.RecommendationsScree
 import com.continuum.app.model.navigation.MediaMode
 import com.continuum.app.model.navigation.MediaModeCapabilities
 import com.continuum.app.model.navigation.mobileMediaModeCapabilities
+import com.continuum.app.model.feature.CLIENT_REQUESTS_SURFACE_ENABLED
 import com.continuum.app.network.ApiResult
 import com.continuum.app.network.ServerRegistry
 import com.continuum.app.repository.PersonalDataRepository
@@ -295,7 +296,11 @@ fun MainScreen(
                     } else {
                         { navController.navigate(Route.Calendar.route) }
                     },
-                    onRequestsClick = { navController.navigate(Route.Requests.route) },
+                    onRequestsClick = if (CLIENT_REQUESTS_SURFACE_ENABLED) {
+                        { navController.navigate(Route.Requests.route) }
+                    } else {
+                        null
+                    },
                     onSettingsClick = { navController.navigate(Route.Settings.route) },
                     onSwitchProfileClick = {
                         navController.navigate(Route.ProfileSelection.route)

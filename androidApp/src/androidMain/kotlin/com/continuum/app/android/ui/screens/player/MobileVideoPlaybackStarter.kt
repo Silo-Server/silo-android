@@ -14,7 +14,6 @@ import com.continuum.app.common.player.video.requestedOriginalPlaybackMethod
 import com.continuum.app.common.player.video.resolvedPlaybackDelivery
 import com.continuum.app.common.settings.PlayerSettingsStore
 import com.continuum.app.android.BuildConfig
-import com.continuum.app.model.catalog.FileVersion
 import com.continuum.app.model.catalog.WatchDetail
 import com.continuum.app.model.playback.PlayMethod
 import com.continuum.app.model.playback.PlaybackSessionResponse
@@ -22,6 +21,7 @@ import com.continuum.app.model.playback.applyResumeRewind
 import com.continuum.app.model.playback.resolvePlaybackStartPosition
 import com.continuum.app.model.playback.resolvePlaybackStartRequestPosition
 import com.continuum.app.network.ApiResult
+import com.continuum.app.playback.selectPlaybackVersion
 import com.continuum.app.repository.CatalogRepository
 import com.continuum.app.repository.ProfileRepository
 import kotlinx.coroutines.flow.first
@@ -56,7 +56,7 @@ class MobileVideoPlaybackStarter(
                 .first().ifBlank { null }
             val version = request.preferredFileId
                 ?.let { id -> watchDetail.versions.firstOrNull { it.fileId == id } }
-                ?: pickPreferredVersion(
+                ?: selectPlaybackVersion(
                     watchDetail.versions,
                     watchDetail.userData?.lastFileId,
                     preferredQuality,
@@ -256,38 +256,6 @@ class MobileVideoPlaybackStarter(
             contentId = contentId,
             message = message,
         )
-    }
-
-    private fun pickPreferredVersion(
-        versions: List<FileVersion>,
-        lastFileId: Int?,
-        preferredQuality: String?,
-    ): FileVersion {
-        if (lastFileId != null) {
-            versions.firstOrNull { it.fileId == lastFileId }?.let { return it }
-        }
-        val target = preferredQuality?.lowercase().orEmpty()
-        if (target.isBlank() || target == "auto") {
-            return versions.first()
-        }
-        val preferredRank = resolutionRank(target)
-        return versions
-            .sortedByDescending { resolutionRank(it.resolution) }
-            .firstOrNull { version ->
-                target == "original" || resolutionRank(version.resolution) <= preferredRank
-            }
-            ?: versions.first()
-    }
-
-    private fun resolutionRank(value: String?): Int {
-        val normalized = value?.lowercase().orEmpty()
-        return when {
-            normalized.contains("2160") || normalized.contains("4k") -> 2160
-            normalized.contains("1080") -> 1080
-            normalized.contains("720") -> 720
-            normalized.contains("480") -> 480
-            else -> 0
-        }
     }
 
     private fun buildSubtitle(watchDetail: WatchDetail): String {

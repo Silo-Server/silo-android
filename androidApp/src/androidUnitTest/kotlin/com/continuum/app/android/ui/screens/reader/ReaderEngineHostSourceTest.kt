@@ -152,6 +152,7 @@ class ReaderEngineHostSourceTest {
     @Test
     fun reflowWebViewKeepsBridgeCallbacksFreshAcrossRecomposition() {
         val webViewSource = reflowWebViewSourceFile.readText()
+        val readerSource = reflowSourceFile.readText()
 
         assertTrue(webViewSource.contains("val currentOnEvent by rememberUpdatedState(onEvent)"))
         assertTrue(webViewSource.contains("val currentOnCrash by rememberUpdatedState(onCrash)"))
@@ -159,6 +160,9 @@ class ReaderEngineHostSourceTest {
         assertTrue(webViewSource.contains("currentOnReady(ReflowController(webView))"))
         assertTrue(webViewSource.contains("currentOnCrash()"))
         assertTrue(webViewSource.contains("currentOnEvent(event)"))
+        assertTrue(readerSource.contains("var webViewResetKey by remember(source)"))
+        assertTrue(readerSource.contains("key(webViewResetKey)"))
+        assertTrue(readerSource.contains("webViewResetKey += 1"))
     }
 
     @Test

@@ -49,6 +49,7 @@ import com.continuum.app.common.player.AutoPlayGuard
 import com.continuum.app.network.ServerRegistry
 import com.continuum.app.network.errorMessage
 import com.continuum.app.playback.nextEpisodeAfter
+import com.continuum.app.playback.selectPlaybackVersion
 import com.continuum.app.repository.CatalogRepository
 import com.continuum.app.repository.PersonalDataRepository
 import com.continuum.app.repository.ProfileRepository
@@ -1505,42 +1506,17 @@ class PlayerViewModel(
         preferredFileId: Int?,
         preferredQuality: String?,
     ): Int {
+        if (watchDetail.versions.isEmpty()) return 0
         if (preferredFileId != null) {
             val index = watchDetail.versions.indexOfFirst { it.fileId == preferredFileId }
             if (index >= 0) return index
         }
-        // If the user has a last-used file ID, prefer that version
-        val lastFileId = watchDetail.userData?.lastFileId
-        if (lastFileId != null) {
-            val index = watchDetail.versions.indexOfFirst { it.fileId == lastFileId }
-            if (index >= 0) return index
-        }
-        val qualityIndex = preferredVersionIndex(watchDetail.versions, preferredQuality)
-        if (qualityIndex >= 0) return qualityIndex
-        return 0
-    }
-
-    private fun preferredVersionIndex(versions: List<FileVersion>, preferredQuality: String?): Int {
-        val target = preferredQuality?.lowercase().orEmpty()
-        if (target.isBlank() || target == "auto") return -1
-        val preferredRank = resolutionRank(target)
-        return versions.withIndex()
-            .sortedByDescending { (_, version) -> resolutionRank(version.resolution) }
-            .firstOrNull { (_, version) ->
-                target == "original" || resolutionRank(version.resolution) <= preferredRank
-            }
-            ?.index ?: -1
-    }
-
-    private fun resolutionRank(value: String?): Int {
-        val normalized = value?.lowercase().orEmpty()
-        return when {
-            normalized.contains("2160") || normalized.contains("4k") -> 2160
-            normalized.contains("1080") -> 1080
-            normalized.contains("720") -> 720
-            normalized.contains("480") -> 480
-            else -> 0
-        }
+        val selected = selectPlaybackVersion(
+            versions = watchDetail.versions,
+            lastFileId = watchDetail.userData?.lastFileId,
+            preferredQuality = preferredQuality,
+        )
+        return watchDetail.versions.indexOfFirst { it.fileId == selected.fileId }.takeIf { it >= 0 } ?: 0
     }
 
 

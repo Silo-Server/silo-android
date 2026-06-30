@@ -550,7 +550,7 @@ private fun HeroActionRow(
                 onClick = {
                     if (playReady) {
                         onPlay(
-                            playContentId, selectedFileId,
+                            playContentId, selectorSelectedFileId,
                             selectorAudioIndex, selectorSubtitleIndex,
                             playType, resumePosition,
                         )
@@ -566,7 +566,7 @@ private fun HeroActionRow(
                     onClick = {
                         if (playReady) {
                             onPlay(
-                                playContentId, selectedFileId,
+                                playContentId, selectorSelectedFileId,
                                 selectorAudioIndex, selectorSubtitleIndex,
                                 playType, 0.0,
                             )

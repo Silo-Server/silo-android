@@ -76,7 +76,7 @@ fun ReflowWebView(
             // installs the EPUB directory as <base>, these flags let relative
             // chapter resources render instead of falling back to broken alt text.
             settings.allowFileAccessFromFileURLs = true
-            settings.allowUniversalAccessFromFileURLs = true
+            settings.allowUniversalAccessFromFileURLs = false
             setBackgroundColor(android.graphics.Color.TRANSPARENT)
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false

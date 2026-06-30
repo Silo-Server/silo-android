@@ -58,6 +58,39 @@ class ReaderFileCacheTest {
     }
 
     @Test
+    fun `invalid existing cache entry is deleted and refetched when validator rejects it`() {
+        val cacheDir = newCacheDir()
+        File(cacheDir, "abc.epub").writeText("not an epub")
+
+        val result = cacheReaderFile(
+            cacheDir = cacheDir,
+            fileName = "abc.epub",
+            validate = { it.readText() == "valid epub" },
+        ) { out ->
+            out.write("valid epub".toByteArray())
+        }
+
+        assertEquals("valid epub", result.readText())
+    }
+
+    @Test
+    fun `invalid fetched cache entry is deleted and fails validation`() {
+        val cacheDir = newCacheDir()
+
+        assertFailsWith<IOException> {
+            cacheReaderFile(
+                cacheDir = cacheDir,
+                fileName = "abc.epub",
+                validate = { it.readText() == "valid epub" },
+            ) { out ->
+                out.write("not an epub".toByteArray())
+            }
+        }
+
+        assertFalse(File(cacheDir, "abc.epub").exists())
+    }
+
+    @Test
     fun `empty cache entry is refetched`() {
         val cacheDir = newCacheDir()
         File(cacheDir, "abc.pdf").writeText("")

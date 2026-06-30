@@ -81,7 +81,7 @@ fun TvServerListScreen(
     LaunchedEffect(state.servers.size) {
         // Anchor focus on the first row whenever the list materializes so
         // d-pad navigation has somewhere to land.
-        if (state.servers.isNotEmpty()) firstFocus.requestFocus()
+        if (state.servers.isNotEmpty()) runCatching { firstFocus.requestFocus() }
     }
 
     Box(

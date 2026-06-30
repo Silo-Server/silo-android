@@ -11,7 +11,7 @@ import com.continuum.app.android.ui.screens.reader.readerDirectoryBaseUrl
 internal class EpubReflowSource(private val book: EpubBook) : ReflowableSource {
     override val sections: List<ReflowSection> =
         book.spine.mapIndexed { i, href ->
-            val html = book.readChapterHtml(href)
+            val html = book.readChapterHtml(href)?.let(::sanitizeEpubChapterHtml)
             val text = html?.htmlToReadableText().orEmpty()
             ReflowSection(
                 index = i,
@@ -24,7 +24,7 @@ internal class EpubReflowSource(private val book: EpubBook) : ReflowableSource {
         sections.map { ReflowTocEntry(it.title ?: "", it.index) }
 
     override suspend fun html(index: Int): String? =
-        book.spine.getOrNull(index)?.let { book.readChapterHtml(it) }
+        book.spine.getOrNull(index)?.let { book.readChapterHtml(it)?.let(::sanitizeEpubChapterHtml) }
 
     override fun baseUrl(index: Int): String =
         book.spine.getOrNull(index)?.let { book.chapterBaseUrl(it) }

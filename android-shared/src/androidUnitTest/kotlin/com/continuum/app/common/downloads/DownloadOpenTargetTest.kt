@@ -133,6 +133,18 @@ class DownloadOpenTargetTest {
     }
 
     @Test
+    fun `open target refuses to invent unknown download format`() {
+        val target = DownloadOpenTarget.from(
+            isComplete = true,
+            localUri = "content://downloads/unknown",
+            displayName = null,
+            container = null,
+        )
+
+        assertEquals(null, target)
+    }
+
+    @Test
     fun `open target supports completed video downloads`() {
         val target = DownloadOpenTarget.from(
             isComplete = true,

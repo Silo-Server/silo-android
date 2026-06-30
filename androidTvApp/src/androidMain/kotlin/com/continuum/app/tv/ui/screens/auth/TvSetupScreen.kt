@@ -85,7 +85,7 @@ fun TvSetupScreen(
             onSetupComplete()
         }
     }
-    LaunchedEffect(Unit) { usernameFocus.requestFocus() }
+    LaunchedEffect(Unit) { runCatching { usernameFocus.requestFocus() } }
 
     Box(
         modifier = Modifier

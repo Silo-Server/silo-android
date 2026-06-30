@@ -19,8 +19,8 @@ class ReflowWebViewEpubResourceTest {
         )
         assertTrue(
             webView.contains("settings.allowFileAccessFromFileURLs = true") &&
-                webView.contains("settings.allowUniversalAccessFromFileURLs = true"),
-            "The asset-backed reflow WebView must be allowed to load EPUB CSS/images from the app cache file URL.",
+                webView.contains("settings.allowUniversalAccessFromFileURLs = false"),
+            "The asset-backed reflow WebView may load EPUB CSS/images from the app cache, but must not grant universal file-origin access.",
         )
     }
 }

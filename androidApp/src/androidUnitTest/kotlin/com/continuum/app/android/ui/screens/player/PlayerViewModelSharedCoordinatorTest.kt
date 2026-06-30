@@ -196,6 +196,22 @@ class PlayerViewModelSharedCoordinatorTest {
     }
 
     @Test
+    fun mobilePlayerViewModelUsesSharedVersionSelectorForUiFallback() {
+        assertTrue(
+            viewModelSource.contains("selectPlaybackVersion("),
+            "Mobile UI fallback selection must use the same shared version selector as playback startup.",
+        )
+        assertFalse(
+            viewModelSource.contains("private fun preferredVersionIndex("),
+            "Mobile PlayerViewModel must not carry a second quality-ranking implementation.",
+        )
+        assertFalse(
+            viewModelSource.contains("private fun resolutionRank("),
+            "Resolution ranking belongs in the shared playback selector.",
+        )
+    }
+
+    @Test
     fun androidModuleWiresMobileStarterAndCoordinatorIntoPlayerViewModel() {
         assertTrue(
             moduleSource.contains("MobileVideoPlaybackStarter"),

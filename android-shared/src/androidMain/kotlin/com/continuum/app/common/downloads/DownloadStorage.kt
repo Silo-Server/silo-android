@@ -143,7 +143,7 @@ class DownloadStorage(
             ?.removePrefix(".")
             ?.replace(Regex("[^a-z0-9]"), "")
             ?.takeIf { it.isNotBlank() }
-            ?: "download"
+            ?: throw IllegalArgumentException("Original download filename or container is required")
         return "$fileId.$extension"
     }
 

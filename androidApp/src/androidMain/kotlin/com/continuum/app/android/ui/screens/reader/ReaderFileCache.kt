@@ -8,6 +8,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.net.URI
 import java.security.MessageDigest
@@ -38,11 +39,15 @@ internal fun readerCacheFileName(url: String, serverUrl: String, extension: Stri
 internal fun cacheReaderFile(
     cacheDir: File,
     fileName: String,
+    validate: ((File) -> Boolean)? = null,
     fetch: (OutputStream) -> Unit,
 ): File {
     cacheDir.mkdirs()
     val target = File(cacheDir, fileName)
-    if (target.exists() && target.length() > 0) return target
+    if (target.exists() && target.length() > 0) {
+        if (validate == null || validate(target)) return target
+        target.delete()
+    }
     val tmp = File.createTempFile("$fileName.", ".tmp", cacheDir)
     try {
         FileOutputStream(tmp).use(fetch)
@@ -59,6 +64,10 @@ internal fun cacheReaderFile(
         } finally {
             tmp.delete()
         }
+    }
+    if (validate != null && !validate(target)) {
+        target.delete()
+        throw IOException("Cached reader file failed validation")
     }
     return target
 }
@@ -88,14 +97,15 @@ internal suspend fun resolveReaderFile(
     }
     val cacheDir = File(context.cacheDir, "readers")
     val fileName = readerCacheFileName(url, serverUrl, extension)
+    val validate = readerCacheValidatorFor(extension)
     if (requestUrl.startsWith("content://")) {
-        return@withContext cacheReaderFile(cacheDir, fileName) { out ->
+        return@withContext cacheReaderFile(cacheDir, fileName, validate) { out ->
             context.contentResolver.openInputStream(Uri.parse(requestUrl))?.use { input ->
                 input.copyTo(out)
             } ?: error("Could not open content reader file")
         }
     }
-    cacheReaderFile(cacheDir, fileName) { out ->
+    cacheReaderFile(cacheDir, fileName, validate) { out ->
         val req = Request.Builder().url(requestUrl).build()
         okHttp.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) error("HTTP ${resp.code} fetching reader file")
@@ -109,6 +119,19 @@ internal suspend fun resolveReaderFile(
         }
     }
 }
+
+private fun readerCacheValidatorFor(extension: String): ((File) -> Boolean)? =
+    when (extension.trim().lowercase().removePrefix(".")) {
+        "epub" -> ::hasZipMagic
+        else -> null
+    }
+
+private fun hasZipMagic(file: File): Boolean =
+    runCatching {
+        file.inputStream().use { input ->
+            input.read() == 'P'.code && input.read() == 'K'.code
+        }
+    }.getOrDefault(false)
 
 internal fun readerFileFromFileUrl(fileUrl: String): File =
     runCatching { File(URI(fileUrl)) }.getOrElse {

@@ -115,7 +115,11 @@ fun TvLoginScreen(
     // username field; the phone-first surface focuses the "Use a password
     // instead" affordance so the remote never lands on a non-actionable QR.
     LaunchedEffect(showPasswordForm) {
-        if (showPasswordForm) usernameFocus.requestFocus() else usePasswordFocus.requestFocus()
+        if (showPasswordForm) {
+            runCatching { usernameFocus.requestFocus() }
+        } else {
+            runCatching { usePasswordFocus.requestFocus() }
+        }
     }
 
     Box(
@@ -130,7 +134,7 @@ fun TvLoginScreen(
                 .align(Alignment.TopCenter)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(top = 32.dp, bottom = 32.dp, start = 48.dp, end = 48.dp),
+                .padding(top = 32.dp, bottom = 32.dp, start = 54.dp, end = 54.dp),
         ) {
             BrandHeader()
 
@@ -155,7 +159,7 @@ fun TvLoginScreen(
                     onBackToPhone = { showPasswordForm = false },
                     onChangeServer = onChangeServer,
                     scope = scope,
-                    modifier = Modifier.width(400.dp),
+                    modifier = Modifier.width(390.dp),
                 )
             } else {
                 Row(
@@ -472,8 +476,8 @@ private object TvLoginTextStyles {
     val InputLabel = TextStyle(
         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 13.sp,
-        lineHeight = 16.sp,
+        fontSize = 16.sp,
+        lineHeight = 19.sp,
         letterSpacing = 3.sp,
     )
 
@@ -518,8 +522,8 @@ private fun QrLoginCard(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
         modifier = modifier
-            .auroraGlass(12.dp, emphasized = true)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .auroraGlass(15.dp)
+            .padding(24.dp),
     ) {
         when (state) {
             DeviceLoginRepository.DeviceLoginState.Idle,

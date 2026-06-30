@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.continuum.app.android.ui.components.ContinuumTopBar
+import com.continuum.app.model.feature.CLIENT_REQUESTS_SURFACE_ENABLED
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -120,6 +121,7 @@ fun SettingsScreen(
                     isAdminVisible = state.isAdminVisible,
                     onManageSessions = viewModel::loadSessions,
                     onPairDevice = onPairDevice,
+                    isRequestsVisible = CLIENT_REQUESTS_SURFACE_ENABLED,
                     onRequests = onNavigateToRequests,
                     onAdmin = onNavigateToAdmin,
                     onSignOut = viewModel::logout,

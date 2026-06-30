@@ -363,6 +363,7 @@ class SettingsViewModel(
         when (value.lowercase()) {
             "auto" -> "Auto"
             "original" -> "Original"
+            "2160p", "4k" -> "4K"
             else -> value.uppercase()
         }
 
@@ -370,6 +371,7 @@ class SettingsViewModel(
         when (value) {
             "Auto" -> "auto"
             "Original" -> "original"
+            "4K" -> "2160p"
             else -> value.lowercase()
         }
 

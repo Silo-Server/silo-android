@@ -42,6 +42,7 @@ import com.continuum.app.model.catalog.isBookLikeItemType
 import com.continuum.app.model.ebook.chooseEbookVersion
 import com.continuum.app.model.ebook.isInAppReadableEbookVersion
 import com.continuum.app.model.ebook.isSupportedEbookVersion
+import com.continuum.app.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import com.continuum.app.network.ServerRegistry
 import org.koin.compose.koinInject
 
@@ -333,6 +334,7 @@ fun ItemDetailScreen(
                             onSeasonSelected = { viewModel.selectSeason(it) },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
+                            onToggleWatched = { viewModel.toggleWatched() },
                             userRating = state.userRating,
                             onSetRating = { viewModel.setRating(it) },
                             onClearRating = { viewModel.clearRating() },
@@ -352,8 +354,10 @@ fun ItemDetailScreen(
                                 )
                             },
                             seriesDownloadState = seriesDownloadState,
-                            onWatchTogether = {
-                                onWatchTogether(nextEpisode?.contentId ?: detail.contentId, null)
+                            onWatchTogether = if (CLIENT_WATCH_TOGETHER_SURFACE_ENABLED) {
+                                { onWatchTogether(nextEpisode?.contentId ?: detail.contentId, null) }
+                            } else {
+                                null
                             },
                         )
                     }
@@ -394,6 +398,7 @@ fun ItemDetailScreen(
                             },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
+                            onToggleWatched = { viewModel.toggleWatched() },
                             userRating = state.userRating,
                             onSetRating = { viewModel.setRating(it) },
                             onClearRating = { viewModel.clearRating() },
@@ -425,7 +430,11 @@ fun ItemDetailScreen(
                                     }
                                 }
                             },
-                            onWatchTogether = { onWatchTogether(detail.contentId, explicitFileId) },
+                            onWatchTogether = if (CLIENT_WATCH_TOGETHER_SURFACE_ENABLED) {
+                                { onWatchTogether(detail.contentId, explicitFileId) }
+                            } else {
+                                null
+                            },
                         )
                     }
                 }

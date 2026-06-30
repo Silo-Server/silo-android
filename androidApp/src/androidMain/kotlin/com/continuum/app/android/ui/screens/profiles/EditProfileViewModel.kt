@@ -3,6 +3,7 @@ package com.continuum.app.android.ui.screens.profiles
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.continuum.app.model.profile.UpdateProfileRequest
+import com.continuum.app.model.profile.canonicalProfileQualityPreference
 import com.continuum.app.network.ApiResult
 import com.continuum.app.repository.ProfileRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -117,7 +118,7 @@ class EditProfileViewModel(
 
     fun onQualitySelected(quality: String) {
         _uiState.update {
-            it.copy(qualityPreference = if (quality == "Auto") null else quality)
+            it.copy(qualityPreference = canonicalProfileQualityPreference(quality))
         }
     }
 

@@ -127,6 +127,9 @@ fun TvServerSetupScreen(
         pairingAdvertiser.start()
         onDispose { pairingAdvertiser.stop() }
     }
+    LaunchedEffect(isActivePairing) {
+        if (!isActivePairing) runCatching { focusRequester.requestFocus() }
+    }
     LaunchedEffect(pairingStatus) {
         if (pairingStatus is PairingReceiverStatus.Completed) {
             delay(1_800)
@@ -728,16 +731,16 @@ private object TvServerSetupTextStyles {
     val InputLabel = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 13.sp,
-        lineHeight = 16.sp,
+        fontSize = 16.sp,
+        lineHeight = 19.sp,
         letterSpacing = 3.sp,
     )
 
     val Pill = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 12.sp,
-        lineHeight = 15.sp,
+        fontSize = 16.sp,
+        lineHeight = 19.sp,
         letterSpacing = 2.sp,
     )
 
@@ -750,8 +753,8 @@ private object TvServerSetupTextStyles {
 
     val PairingDetail = TextStyle(
         fontWeight = FontWeight.Normal,
-        fontSize = 15.sp,
-        lineHeight = 21.sp,
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
         letterSpacing = 0.sp,
     )
 
@@ -765,8 +768,8 @@ private object TvServerSetupTextStyles {
     val CodeLabel = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 14.sp,
-        lineHeight = 18.sp,
+        fontSize = 16.sp,
+        lineHeight = 20.sp,
         letterSpacing = 2.sp,
     )
 

@@ -56,6 +56,7 @@ fun SeriesDetailContent(
     onSeasonSelected: (Int) -> Unit,
     onFavoriteClick: () -> Unit,
     onWatchlistClick: () -> Unit,
+    onToggleWatched: () -> Unit,
     userRating: Int? = null,
     onSetRating: (Int) -> Unit = {},
     onClearRating: () -> Unit = {},
@@ -108,7 +109,7 @@ fun SeriesDetailContent(
                     isWatched = detail.userData?.played == true,
                     onToggleFavorite = onFavoriteClick,
                     onToggleWatchlist = onWatchlistClick,
-                    onToggleWatched = { /* no-op until shared API exposes it */ },
+                    onToggleWatched = onToggleWatched,
                     userRating = userRating,
                     onRateClick = { showRatingSheet = true },
                     overflow = if (onWatchTogether != null) {

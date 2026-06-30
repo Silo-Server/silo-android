@@ -36,6 +36,7 @@ import com.continuum.app.android.ui.screens.auth.AuthColors
 import com.continuum.app.android.ui.screens.auth.AuthErrorBanner
 import com.continuum.app.android.ui.screens.auth.ContinuumButton
 import com.continuum.app.android.ui.screens.auth.ContinuumTextField
+import com.continuum.app.model.profile.displayProfileQualityPreference
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -189,7 +190,7 @@ fun EditProfileScreen(
                 // -- Quality preference --
                 DropdownField(
                     label = "Quality Preference",
-                    selected = state.qualityPreference ?: "Auto",
+                    selected = displayProfileQualityPreference(state.qualityPreference),
                     options = QUALITY_OPTIONS,
                     onSelected = viewModel::onQualitySelected,
                 )

@@ -53,6 +53,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.continuum.app.common.settings.OverlayPrefsStore
+import com.continuum.app.model.feature.CLIENT_REQUESTS_SURFACE_ENABLED
 import com.continuum.app.model.settings.SubtitleBackgroundStylePreset
 import com.continuum.app.model.settings.SubtitleFontSizePreset
 import com.continuum.app.model.settings.SubtitlePositionPreset
@@ -333,7 +334,9 @@ private fun SettingsRootMenu(
                 SettingsActionRow(label = "Watchlist", onClick = onNavigateToWatchlist)
                 SettingsActionRow(label = "Watch history", onClick = onNavigateToHistory)
                 SettingsActionRow(label = "Collections", onClick = onNavigateToCollections)
-                SettingsActionRow(label = "Requests", onClick = onNavigateToRequests)
+                if (CLIENT_REQUESTS_SURFACE_ENABLED) {
+                    SettingsActionRow(label = "Requests", onClick = onNavigateToRequests)
+                }
             }
         }
 

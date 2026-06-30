@@ -5,6 +5,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -147,18 +148,27 @@ class DownloadStorageTest {
     }
 
     @Test
-    fun `prepareWrite creates parent directories and returns target`() {
+    fun `prepareWrite refuses to invent a non-original download extension`() {
         val storage = newStorage()
-        val target = storage.prepareWrite("srv1", "profA", 7)
+
+        assertFailsWith<IllegalArgumentException> {
+            storage.prepareWrite("srv1", "profA", 7)
+        }
+    }
+
+    @Test
+    fun `prepareWrite creates parent directories and returns target when original container is known`() {
+        val storage = newStorage()
+        val target = storage.prepareWrite("srv1", "profA", 7, container = "epub")
         assertTrue(target.uriString.startsWith("file://"))
-        assertEquals("7.download", target.displayName)
+        assertEquals("7.epub", target.displayName)
     }
 
     @Test
     fun `exists round-trips with a real write`() {
         val storage = newStorage()
         assertFalse(storage.exists("srv1", "profA", 1))
-        val f = storage.prepareWrite("srv1", "profA", 1)
+        val f = storage.prepareWrite("srv1", "profA", 1, fileName = "Movie.mkv")
         f.writeTargetBytes(ByteArray(256))
         assertTrue(storage.exists("srv1", "profA", 1))
     }
@@ -174,8 +184,8 @@ class DownloadStorageTest {
     @Test
     fun `delete removes only the targeted file`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1).writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv1", "profA", 2).writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv").writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", "profA", 2, fileName = "Two.mkv").writeTargetBytes(ByteArray(10))
 
         assertTrue(storage.delete("srv1", "profA", 1))
         assertFalse(storage.exists("srv1", "profA", 1))
@@ -187,9 +197,12 @@ class DownloadStorageTest {
     @Test
     fun `deleteAllForProfile isolates other profiles on the same server`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1, mediaType = DownloadMediaType.Movie.wire).writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv1", "profA", 2, mediaType = DownloadMediaType.Audiobook.wire).writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv1", "profB", 3, mediaType = DownloadMediaType.Ebook.wire).writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv", mediaType = DownloadMediaType.Movie.wire)
+            .writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", "profA", 2, fileName = "Two.m4b", mediaType = DownloadMediaType.Audiobook.wire)
+            .writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", "profB", 3, fileName = "Three.epub", mediaType = DownloadMediaType.Ebook.wire)
+            .writeTargetBytes(ByteArray(10))
 
         assertTrue(storage.deleteAllForProfile("srv1", "profA"))
         assertFalse(storage.exists("srv1", "profA", 1))
@@ -200,9 +213,12 @@ class DownloadStorageTest {
     @Test
     fun `deleteAllForServer wipes everything under a server`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1, mediaType = DownloadMediaType.Movie.wire).writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv1", "profB", 2, mediaType = DownloadMediaType.Audiobook.wire).writeTargetBytes(ByteArray(10))
-        storage.prepareWrite("srv2", "profA", 3, mediaType = DownloadMediaType.Ebook.wire).writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv", mediaType = DownloadMediaType.Movie.wire)
+            .writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv1", "profB", 2, fileName = "Two.m4b", mediaType = DownloadMediaType.Audiobook.wire)
+            .writeTargetBytes(ByteArray(10))
+        storage.prepareWrite("srv2", "profA", 3, fileName = "Three.epub", mediaType = DownloadMediaType.Ebook.wire)
+            .writeTargetBytes(ByteArray(10))
 
         assertTrue(storage.deleteAllForServer("srv1"))
         assertFalse(storage.exists("srv1", "profA", 1))
@@ -213,18 +229,18 @@ class DownloadStorageTest {
     @Test
     fun `totalBytesUsed sums every downloaded file under the root`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1).writeTargetBytes(ByteArray(100))
-        storage.prepareWrite("srv1", "profB", 2).writeTargetBytes(ByteArray(250))
-        storage.prepareWrite("srv2", "profA", 3).writeTargetBytes(ByteArray(50))
+        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv").writeTargetBytes(ByteArray(100))
+        storage.prepareWrite("srv1", "profB", 2, fileName = "Two.mkv").writeTargetBytes(ByteArray(250))
+        storage.prepareWrite("srv2", "profA", 3, fileName = "Three.mkv").writeTargetBytes(ByteArray(50))
         assertEquals(400L, storage.totalBytesUsed())
     }
 
     @Test
     fun `scoped totalBytesUsed sums only one server profile`() {
         val storage = newStorage()
-        storage.prepareWrite("srv1", "profA", 1).writeTargetBytes(ByteArray(100))
-        storage.prepareWrite("srv1", "profB", 2).writeTargetBytes(ByteArray(250))
-        storage.prepareWrite("srv2", "profA", 3).writeTargetBytes(ByteArray(50))
+        storage.prepareWrite("srv1", "profA", 1, fileName = "One.mkv").writeTargetBytes(ByteArray(100))
+        storage.prepareWrite("srv1", "profB", 2, fileName = "Two.mkv").writeTargetBytes(ByteArray(250))
+        storage.prepareWrite("srv2", "profA", 3, fileName = "Three.mkv").writeTargetBytes(ByteArray(50))
 
         assertEquals(100L, storage.totalBytesUsed("srv1", "profA"))
     }

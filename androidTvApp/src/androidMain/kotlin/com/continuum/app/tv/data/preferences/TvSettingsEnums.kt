@@ -19,13 +19,19 @@ package com.continuum.app.tv.data.preferences
 enum class PlaybackQuality(val label: String, val wireValue: String) {
     Auto("Auto", "auto"),
     Original("Original", "original"),
+    P4K("4K", "2160p"),
     P1080("1080p", "1080p"),
     P720("720p", "720p"),
     P480("480p", "480p");
 
     companion object {
-        fun fromWire(value: String?): PlaybackQuality =
-            values().firstOrNull { it.wireValue == value } ?: Auto
+        fun fromWire(value: String?): PlaybackQuality {
+            val normalized = value?.lowercase()
+            return when (normalized) {
+                "4k" -> P4K
+                else -> values().firstOrNull { it.wireValue == normalized } ?: Auto
+            }
+        }
     }
 }
 

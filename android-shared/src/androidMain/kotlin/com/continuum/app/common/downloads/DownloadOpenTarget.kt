@@ -18,7 +18,8 @@ data class DownloadOpenTarget(
             val extension = normalizedDownloadExtension(container)
             val safeName = displayName
                 ?.takeIf { it.isNotBlank() }
-                ?: "download.${extension.ifBlank { "download" }}"
+                ?: extension.takeIf { it.isNotBlank() }?.let { "download.$it" }
+                ?: return null
             return DownloadOpenTarget(
                 uriString = localUri,
                 displayName = safeName,

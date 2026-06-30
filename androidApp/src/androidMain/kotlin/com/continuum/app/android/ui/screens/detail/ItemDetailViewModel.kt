@@ -7,6 +7,7 @@ import com.continuum.app.common.downloads.DownloadEnqueuer
 import com.continuum.app.model.catalog.EpisodeListItem
 import com.continuum.app.model.catalog.FileVersion
 import com.continuum.app.model.catalog.ItemDetail
+import com.continuum.app.model.catalog.LeafItemUserData
 import com.continuum.app.model.catalog.Season
 import com.continuum.app.model.catalog.sortedForDisplay
 import com.continuum.app.model.download.DownloadRecord
@@ -519,6 +520,27 @@ class ItemDetailViewModel(
                     _uiState.update { it.copy(isInWatchlist = current) }
                 }
             }
+        }
+    }
+
+    fun toggleWatched() {
+        val currentDetail = _uiState.value.detail ?: return
+        val current = currentDetail.userData?.played == true
+        val target = !current
+        updatePlayedState(target)
+        viewModelScope.launch {
+            when (personalDataRepository.setWatched(contentId, target)) {
+                is ApiResult.Success -> { /* already updated */ }
+                else -> updatePlayedState(current)
+            }
+        }
+    }
+
+    private fun updatePlayedState(played: Boolean) {
+        _uiState.update { state ->
+            val detail = state.detail ?: return@update state
+            val userData = detail.userData ?: LeafItemUserData()
+            state.copy(detail = detail.copy(userData = userData.copy(played = played)))
         }
     }
 }

@@ -15,12 +15,12 @@ class MobileDownloadVisibilityTest {
     @Test
     fun `local download visibility only counts active server profile bytes`() {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))
-        storage.prepareWrite("srv1", "profB", 1).writeBytes(ByteArray(100))
-        storage.prepareWrite("srv2", "profA", 2).writeBytes(ByteArray(100))
+        storage.prepareWrite("srv1", "profB", 1, fileName = "one.mkv").writeBytes(ByteArray(100))
+        storage.prepareWrite("srv2", "profA", 2, fileName = "two.mkv").writeBytes(ByteArray(100))
 
         assertFalse(hasLocalDownloadsForScope(storage, "srv1", "profA"))
 
-        storage.prepareWrite("srv1", "profA", 3).writeBytes(ByteArray(100))
+        storage.prepareWrite("srv1", "profA", 3, fileName = "three.mkv").writeBytes(ByteArray(100))
 
         assertTrue(hasLocalDownloadsForScope(storage, "srv1", "profA"))
     }
@@ -35,7 +35,7 @@ class MobileDownloadVisibilityTest {
     @Test
     fun `missing active scope does not make global downloads visible`() {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))
-        storage.prepareWrite("srv1", "profA", 1).writeBytes(ByteArray(100))
+        storage.prepareWrite("srv1", "profA", 1, fileName = "one.mkv").writeBytes(ByteArray(100))
 
         assertFalse(hasLocalDownloadsForScope(storage, null, "profA"))
         assertFalse(hasLocalDownloadsForScope(storage, "srv1", null))

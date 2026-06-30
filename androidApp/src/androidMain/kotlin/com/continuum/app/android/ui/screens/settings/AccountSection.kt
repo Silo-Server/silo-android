@@ -55,6 +55,7 @@ fun AccountSection(
     isLoadingUser: Boolean,
     onManageSessions: () -> Unit,
     onPairDevice: () -> Unit,
+    isRequestsVisible: Boolean = false,
     onRequests: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
@@ -145,13 +146,15 @@ fun AccountSection(
                 showChevron = true,
             )
 
-            SettingsRowLabel(
-                title = "Requests",
-                icon = Icons.Default.Movie,
-                badgeColor = SettingsBadgeOrange,
-                onClick = onRequests,
-                showChevron = true,
-            )
+            if (isRequestsVisible) {
+                SettingsRowLabel(
+                    title = "Requests",
+                    icon = Icons.Default.Movie,
+                    badgeColor = SettingsBadgeOrange,
+                    onClick = onRequests,
+                    showChevron = true,
+                )
+            }
 
             if (isAdminVisible) {
                 // iOS "Admin Dashboard": indigo badge, wrench icon.
