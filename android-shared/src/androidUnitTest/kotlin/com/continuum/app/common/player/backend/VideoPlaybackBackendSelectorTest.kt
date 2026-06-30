@@ -26,6 +26,30 @@ class VideoPlaybackBackendSelectorTest {
     }
 
     @Test
+    fun explicitMpvPreferenceFallsBackToMedia3WhenDeviceUnsupported() {
+        val request = VideoPlaybackBackendRequest(
+            preference = VideoPlaybackBackendPreference.Mpv,
+            mpvSupportedOnDevice = false,
+        )
+
+        assertEquals(VideoPlaybackBackendKind.Media3, VideoPlaybackBackendSelector.select(request))
+    }
+
+    @Test
+    fun plannedMpvDirectFallsBackToMedia3WhenDeviceUnsupported() {
+        val request = VideoPlaybackBackendRequest(
+            playMethod = PlayMethod.DIRECT,
+            delivery = PlaybackDelivery.ORIGINAL_HTTP,
+            plannedEngine = PlaybackEngineKind.MPV_DIRECT,
+            hasHardContainer = true,
+            hasStyledSubtitles = true,
+            mpvSupportedOnDevice = false,
+        )
+
+        assertEquals(VideoPlaybackBackendKind.Media3, VideoPlaybackBackendSelector.select(request))
+    }
+
+    @Test
     fun autoUsesMedia3ForTranscode() {
         val request = VideoPlaybackBackendRequest(playMethod = PlayMethod.TRANSCODE)
 
