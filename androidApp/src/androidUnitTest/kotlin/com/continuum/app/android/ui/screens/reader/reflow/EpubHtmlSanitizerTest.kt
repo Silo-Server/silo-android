@@ -28,4 +28,25 @@ class EpubHtmlSanitizerTest {
         assertFalse(sanitized.contains("style=", ignoreCase = true))
         assertTrue(sanitized.contains("../images/cover.jpg"))
     }
+
+    @Test
+    fun sanitizerRemovesEntityEncodedUnsafeResourceUrls() {
+        val html = """
+            <html><body>
+              <a href="jav&#x61;script:alert(1)">encoded js</a>
+              <img src="java&#x0A;script:alert(1)" />
+              <a href='&#x68;ttps://example.invalid/track'>remote</a>
+              <img src="&sol;&sol;example.invalid/cover.jpg" />
+              <a href="chapter&#x2d;1.xhtml">chapter</a>
+            </body></html>
+        """.trimIndent()
+
+        val sanitized = sanitizeEpubChapterHtml(html)
+
+        assertFalse(sanitized.contains("jav&#x61;script", ignoreCase = true))
+        assertFalse(sanitized.contains("java&#x0A;script", ignoreCase = true))
+        assertFalse(sanitized.contains("&#x68;ttps", ignoreCase = true))
+        assertFalse(sanitized.contains("&sol;&sol;example.invalid", ignoreCase = true))
+        assertTrue(sanitized.contains("chapter&#x2d;1.xhtml"))
+    }
 }

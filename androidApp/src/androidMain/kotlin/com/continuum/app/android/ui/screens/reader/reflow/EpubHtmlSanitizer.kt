@@ -21,7 +21,11 @@ internal fun sanitizeEpubChapterHtml(html: String): String =
         }
 
 private fun isUnsafeEpubResourceUrl(value: String): Boolean {
-    val normalized = value.trim().lowercase()
+    val normalized = value
+        .decodeHtmlCharacterReferences()
+        .trim()
+        .filterNot { it.isIgnoredUrlPolicyCharacter() }
+        .lowercase()
     return normalized.startsWith("javascript:") ||
         normalized.startsWith("vbscript:") ||
         normalized.startsWith("data:") ||
@@ -30,6 +34,50 @@ private fun isUnsafeEpubResourceUrl(value: String): Boolean {
         normalized.startsWith("file://") ||
         normalized.startsWith("//")
 }
+
+private fun String.decodeHtmlCharacterReferences(): String =
+    HTML_CHARACTER_REFERENCE_REGEX.replace(this) { match ->
+        decodeHtmlCharacterReference(match.groupValues[1]) ?: match.value
+    }
+
+private fun decodeHtmlCharacterReference(reference: String): String? {
+    val value = reference.removeSuffix(";")
+    val codePoint = when {
+        value.startsWith("#x", ignoreCase = true) ->
+            value.drop(2).toIntOrNull(radix = 16)
+        value.startsWith("#") ->
+            value.drop(1).toIntOrNull(radix = 10)
+        else ->
+            return namedHtmlCharacterReference(value)
+    } ?: return null
+
+    return when (codePoint) {
+        in 0..Char.MAX_VALUE.code -> codePoint.toChar().toString()
+        in 0..0x10FFFF -> String(Character.toChars(codePoint))
+        else -> null
+    }
+}
+
+private fun namedHtmlCharacterReference(name: String): String? =
+    when (name.lowercase()) {
+        "amp" -> "&"
+        "apos" -> "'"
+        "colon" -> ":"
+        "gt" -> ">"
+        "lt" -> "<"
+        "newline" -> "\n"
+        "quot" -> "\""
+        "sol" -> "/"
+        "tab" -> "\t"
+        else -> null
+    }
+
+private fun Char.isIgnoredUrlPolicyCharacter(): Boolean =
+    code <= 0x20 || code == 0x7F || isWhitespace()
+
+private val HTML_CHARACTER_REFERENCE_REGEX = Regex(
+    """&(#x[0-9a-fA-F]+;?|#[0-9]+;?|[a-zA-Z][a-zA-Z0-9]+;)""",
+)
 
 private val BLOCKED_ELEMENT_WITH_BODY_REGEX = Regex(
     """<\s*(script|iframe|object|embed|form|textarea|select|button)\b[^>]*>.*?<\s*/\s*\1\s*>""",

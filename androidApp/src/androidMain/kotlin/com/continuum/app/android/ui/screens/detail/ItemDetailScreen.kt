@@ -157,6 +157,10 @@ fun ItemDetailScreen(
                     .takeIf { state.hasExplicitAudioSelection }
                 val explicitSubtitleIndex = state.selectedSubtitleIndex
                     .takeIf { state.hasExplicitSubtitleSelection }
+                val playbackFileId = explicitFileId ?: detail.versions
+                    .getOrNull(effectiveSelectedVersionIndex)
+                    ?.fileId
+                    ?.takeIf { state.hasExplicitAudioSelection || state.hasExplicitSubtitleSelection }
                 val effectiveAudiobookFileId = detail.versions
                     .getOrNull(effectiveSelectedVersionIndex)
                     ?.fileId
@@ -390,7 +394,7 @@ fun ItemDetailScreen(
                             onPlayClick = {
                                 onPlayClick(
                                     detail.contentId,
-                                    explicitFileId,
+                                    playbackFileId,
                                     explicitAudioIndex,
                                     explicitSubtitleIndex,
                                     playbackResumePosition(detail.userData),

@@ -27,4 +27,14 @@ class MobileDetailActionsSourceTest {
         assertTrue(viewModel.contains("fun toggleWatched()"))
         assertTrue(viewModel.contains("personalDataRepository.setWatched(contentId, target)"))
     }
+
+    @Test
+    fun moviePlayPinsDisplayedVersionWhenTrackOverrideIsSelected() {
+        assertTrue(itemDetail.contains("val playbackFileId = explicitFileId ?: detail.versions"))
+        assertTrue(itemDetail.contains(".getOrNull(effectiveSelectedVersionIndex)"))
+        assertTrue(itemDetail.contains("?.takeIf { state.hasExplicitAudioSelection || state.hasExplicitSubtitleSelection }"))
+        assertTrue(itemDetail.contains("playbackFileId,"))
+        assertTrue(itemDetail.contains("explicitAudioIndex,"))
+        assertTrue(itemDetail.contains("explicitSubtitleIndex,"))
+    }
 }

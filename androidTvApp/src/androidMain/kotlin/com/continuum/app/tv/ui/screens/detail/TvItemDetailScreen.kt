@@ -498,6 +498,8 @@ private fun HeroActionRow(
     val selectorSubtitleIndex =
         if (isSeriesOrSeason) state.selectedNextUpSubtitleIndex else state.selectedSubtitleIndex
     val selectedFileId = selectorSelectedFileId ?: selectorVersions.firstOrNull()?.fileId
+    val hasTrackOverride = selectorAudioIndex != null || selectorSubtitleIndex != null
+    val playFileId = selectorSelectedFileId ?: selectedFileId.takeIf { hasTrackOverride }
     // The effective playable version drives the inline playback selector row.
     val selectedVersion = remember(selectorVersions, selectedFileId) {
         selectorVersions.firstOrNull { it.fileId == selectedFileId } ?: selectorVersions.firstOrNull()
@@ -550,7 +552,7 @@ private fun HeroActionRow(
                 onClick = {
                     if (playReady) {
                         onPlay(
-                            playContentId, selectorSelectedFileId,
+                            playContentId, playFileId,
                             selectorAudioIndex, selectorSubtitleIndex,
                             playType, resumePosition,
                         )
@@ -566,7 +568,7 @@ private fun HeroActionRow(
                     onClick = {
                         if (playReady) {
                             onPlay(
-                                playContentId, selectorSelectedFileId,
+                                playContentId, playFileId,
                                 selectorAudioIndex, selectorSubtitleIndex,
                                 playType, 0.0,
                             )
