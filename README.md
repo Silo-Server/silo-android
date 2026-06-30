@@ -37,9 +37,12 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 | **DI** | **Koin** 4.1.0 |
 | **Persistence** | AndroidX DataStore · EncryptedSharedPreferences (tokens) · WorkManager (downloads) |
 | **Images** | Coil 3 (Ktor-backed) |
-| **SDK** | minSdk 24 · targetSdk 35 · compileSdk 36 · JDK 21 |
+| **SDK** | Android 7.0+ / minSdk 24 · targetSdk 35 · compileSdk 36 · JDK 21 |
 
 The clients talk to a Silo server over its `/api/v1/*` REST + WebSocket API. The server owns the library, scanning, metadata, transcoding decisions, and auth; the clients render it and drive playback.
+
+Android 7.0 and 7.1 (API 24/25) are supported on both phone and Android TV. Those devices use the Media3 playback path;
+the optional MPV backend remains gated to API 26+ devices because the bundled `dev.jdtech.mpv:libmpv` artifact declares a higher runtime floor.
 
 ---
 
