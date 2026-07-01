@@ -49,6 +49,9 @@ import java.util.concurrent.CopyOnWriteArraySet
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 
+private const val FitVideoZoom = 0.0
+private const val CropLetterboxVideoZoom = 0.42
+
 @androidx.media3.common.util.UnstableApi
 class MpvPlayer(
     context: Context,
@@ -64,7 +67,7 @@ class MpvPlayer(
     private val hwDec: String = "mediacodec-copy",
     private val bufferSizeMb: Int = 64,
     private val httpHeaderFieldsProvider: () -> List<Pair<String, String>> = { emptyList() },
-) : BasePlayer(), MPVLib.EventObserver, AudioManager.OnAudioFocusChangeListener {
+) : BasePlayer(), MPVLib.EventObserver, AudioManager.OnAudioFocusChangeListener, MpvVideoScaleController {
 
     val mpv: MPVLib
     private val audioManager: AudioManager by lazy { context.getSystemService()!! }
@@ -76,6 +79,9 @@ class MpvPlayer(
     private var currentTextureView: TextureView? = null
     private var currentSurfaceTexture: SurfaceTexture? = null
     private var currentTextureSurface: Surface? = null
+    private var currentSurfaceWidth: Int = 0
+    private var currentSurfaceHeight: Int = 0
+    private var videoScaleMode: MpvVideoScaleMode = MpvVideoScaleMode.Fit
 
     private constructor(
         builder: Builder
@@ -511,6 +517,7 @@ class MpvPlayer(
                 }
 
                 "paused-for-cache" -> {
+                    Log.d(TAG, "paused-for-cache=$value ready=$isPlayerReady state=$playbackState")
                     if (isPlayerReady) {
                         if (value) {
                             setPlayerStateAndNotifyIfChanged(playbackState = STATE_BUFFERING)
@@ -604,6 +611,9 @@ class MpvPlayer(
 
                 "demuxer-cache-time" -> {
                     currentCacheDurationMs = (value * 1000).toLong()
+                    if (!isPlayerReady) {
+                        Log.d(TAG, "demuxer-cache-time=$value ready=false")
+                    }
                 }
 
                 "speed" -> {
@@ -628,6 +638,10 @@ class MpvPlayer(
             if (isReleased) return@post
             when (eventId) {
                 MPVLib.MpvEvent.MPV_EVENT_START_FILE -> {
+                    Log.i(
+                        TAG,
+                        "MPV_EVENT_START_FILE awaiting=$awaitingInitialLoad ready=$isPlayerReady commands=${initialCommands.size}",
+                    )
                     if (!isPlayerReady) {
                         for (command in initialCommands) {
                             mpv.command(command)
@@ -640,6 +654,10 @@ class MpvPlayer(
                 }
 
                 MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> {
+                    Log.i(
+                        TAG,
+                        "MPV_EVENT_PLAYBACK_RESTART initial=$awaitingInitialLoad ready=$isPlayerReady cacheMs=${currentCacheDurationMs ?: -1}",
+                    )
                     awaitingInitialLoad = false
                     currentPlayerError = null
                     if (!isPlayerReady) {
@@ -659,6 +677,10 @@ class MpvPlayer(
                 }
 
                 MPVLib.MpvEvent.MPV_EVENT_END_FILE -> {
+                    Log.i(
+                        TAG,
+                        "MPV_EVENT_END_FILE awaiting=$awaitingInitialLoad ready=$isPlayerReady seamless=$seamlessAdvanceInFlight",
+                    )
                     if (awaitingInitialLoad && !isPlayerReady) {
                         if (seamlessAdvanceInFlight) {
                             // Expected END_FILE for the item we just advanced past
@@ -863,6 +885,10 @@ class MpvPlayer(
 
     override fun prepare() {
         applyHttpHeaderFields()
+        Log.i(
+            TAG,
+            "prepare: items=${internalMediaItems.size} initialIndex=$initialIndex initialSeekMs=$initialSeekTo",
+        )
         internalMediaItems.forEachIndexed { index, mediaItem ->
             mpv.command(
                 arrayOf(
@@ -895,7 +921,7 @@ class MpvPlayer(
     }
 
     private fun applyHttpHeaderFields() {
-        val headerString = httpHeaderFieldsProvider()
+        val headers = httpHeaderFieldsProvider()
             .filter { (name, value) ->
                 name.isNotBlank() &&
                     value.isNotBlank() &&
@@ -903,7 +929,8 @@ class MpvPlayer(
                     !value.containsHeaderSeparator() &&
                     ':' !in name
             }
-            .joinToString("\r\n") { (name, value) -> "$name: $value" }
+        val headerString = headers.joinToString("\r\n") { (name, value) -> "$name: $value" }
+        Log.d(TAG, "MPV HTTP headers applied count=${headers.size}")
         mpv.setPropertyString("http-header-fields", headerString)
     }
 
@@ -1041,6 +1068,19 @@ class MpvPlayer(
 
     override fun getPlaybackParameters(): PlaybackParameters = playbackParameters
 
+    override fun setVideoScaleMode(mode: MpvVideoScaleMode) {
+        videoScaleMode = mode
+        applyVideoScaleMode()
+    }
+
+    fun setAudioDelayMs(delayMs: Int) {
+        mpv.setPropertyDouble("audio-delay", delayMs / 1000.0)
+    }
+
+    fun setSubtitleDelayMs(delayMs: Int) {
+        mpv.setPropertyDouble("sub-delay", delayMs / 1000.0)
+    }
+
     override fun stop() {
         if (isReleased) return
         mpv.command(arrayOf("stop"))
@@ -1083,7 +1123,8 @@ class MpvPlayer(
         for (override in parameters.overrides) {
             val trackType = MpvTrackType.fromMedia3TrackType(override.key.type)
             notOverriddenTypes.remove(trackType)
-            val id = override.key.getFormat(0).id ?: continue
+            val trackIndex = override.value.trackIndices.firstOrNull() ?: continue
+            val id = override.key.getFormat(trackIndex).id ?: continue
 
             selectTrack(trackType, id)
         }
@@ -1406,7 +1447,38 @@ class MpvPlayer(
 
     private fun updateVideoSurfaceSize(width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
+        currentSurfaceWidth = width
+        currentSurfaceHeight = height
         mpv.setPropertyString("android-surface-size", "${width}x$height")
+        if (videoScaleMode != MpvVideoScaleMode.Fit) {
+            applyVideoScaleMode()
+        }
+    }
+
+    private fun applyVideoScaleMode() {
+        mpv.setPropertyString("video-unscaled", "no")
+        when (videoScaleMode) {
+            MpvVideoScaleMode.Fit -> {
+                mpv.setPropertyString("video-aspect-override", "-1")
+                mpv.setPropertyDouble("panscan", 0.0)
+                mpv.setPropertyDouble("video-zoom", FitVideoZoom)
+            }
+            MpvVideoScaleMode.Zoom -> {
+                mpv.setPropertyString("video-aspect-override", "-1")
+                mpv.setPropertyDouble("panscan", 1.0)
+                mpv.setPropertyDouble("video-zoom", CropLetterboxVideoZoom)
+            }
+            MpvVideoScaleMode.Stretch -> {
+                val surfaceAspect = if (currentSurfaceWidth > 0 && currentSurfaceHeight > 0) {
+                    (currentSurfaceWidth.toDouble() / currentSurfaceHeight).toString()
+                } else {
+                    "-1"
+                }
+                mpv.setPropertyString("video-aspect-override", surfaceAspect)
+                mpv.setPropertyDouble("panscan", 0.0)
+                mpv.setPropertyDouble("video-zoom", FitVideoZoom)
+            }
+        }
     }
 
     private fun attachTextureSurface(

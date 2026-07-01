@@ -70,27 +70,27 @@ internal val CascadeFlyoutPadding = 5.dp
 internal val CascadeFlyoutCornerRadius = 9.dp
 internal val CascadeMaxListHeight = 180.dp
 internal val TvCascadeSelectorMaxPanelWidth = 389.dp
-internal val CascadePanelHeaderSize = 7.sp
-internal val CascadeFlyoutHeaderSize = 6.5.sp
-internal val CascadeFooterTextSize = 9.5.sp
-internal val CascadeRowTextSize = 11.sp
+internal val CascadePanelHeaderSize = 13.sp
+internal val CascadeFlyoutHeaderSize = 13.sp
+internal val CascadeFooterTextSize = 13.sp
+internal val CascadeRowTextSize = 13.sp
 internal val CascadeRowIconSize = 15.dp
 internal val CascadeRowPaddingHorizontal = 9.dp
 internal val CascadeRowPaddingVertical = 8.dp
 internal val CascadeRowCornerRadius = 7.dp
-internal val CascadeFlyoutRowTextSize = 10.sp
+internal val CascadeFlyoutRowTextSize = 13.sp
 internal val CascadeFlyoutRowIconSize = 9.dp
 internal val CascadeFlyoutRowPaddingHorizontal = 8.dp
 internal val CascadeFlyoutRowPaddingVertical = 6.5.dp
 internal val CascadeFlyoutRowCornerRadius = 6.dp
 
 private val CascadeRowSpacing = 7.dp
-private val CascadeRowTrailingIconSize = 8.5.dp
+private val CascadeRowTrailingIconSize = 9.5.dp
 private val CascadeFlyoutRowSpacing = 6.dp
-private val CascadePanelHeaderTracking = 1.8.sp
-private val CascadeFlyoutHeaderTracking = 1.7.sp
+private val CascadePanelHeaderTracking = 1.5.sp
+private val CascadeFlyoutHeaderTracking = 1.45.sp
 private val CascadeFooterTracking = 0.6.sp
-private val CascadeFooterLineHeight = 12.sp
+private val CascadeFooterLineHeight = 16.sp
 private const val CascadeFlyoutFollowDelayMillis = 80L
 
 /**

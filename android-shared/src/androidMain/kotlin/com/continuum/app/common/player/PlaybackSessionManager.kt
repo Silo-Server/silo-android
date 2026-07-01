@@ -95,6 +95,7 @@ open class PlaybackSessionManager(
                 "containers=${capabilities.containers} max=${capabilities.maxResolution} " +
                 "hdr=${capabilities.hdr} hdrDetails=${capabilities.hdrDetails} " +
                 "passthrough=${capabilities.audioPassthrough} " +
+                "qualityPreference=$qualityPreference " +
                 "preserveDirectAudioSelection=$preserveDirectAudioSelection " +
                 "requestedPlayMethod=$playMethod",
         )
@@ -217,6 +218,15 @@ open class PlaybackSessionManager(
             audioTrackIndex = audioTrackIndex,
             subtitleTrackIndex = subtitleTrackIndex,
             subtitleBurnIn = false,
+        )
+        Log.i(
+            TAG,
+            "startTranscodeFallback session=${session.sessionId} mode=$mode seekSeconds=$seekSeconds " +
+                "targetResolution=${request.targetResolution} " +
+                "targetCodecVideo=${request.targetCodecVideo} " +
+                "targetCodecAudio=${request.targetCodecAudio} " +
+                "targetBitrateKbps=${request.targetBitrateKbps} " +
+                "audioTrackIndex=$audioTrackIndex subtitleTrackIndex=$subtitleTrackIndex",
         )
         return when (val r = playbackRepository.startTranscode(request)) {
             is ApiResult.Success -> {

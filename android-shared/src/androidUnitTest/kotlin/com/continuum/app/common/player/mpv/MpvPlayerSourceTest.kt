@@ -78,6 +78,19 @@ class MpvPlayerSourceTest {
     }
 
     @Test
+    fun mpvPlayerLogsStartupReadinessAndCacheTransitions() {
+        val text = source.readText()
+
+        assertTrue(text.contains("prepare: items="))
+        assertTrue(text.contains("MPV_EVENT_START_FILE"))
+        assertTrue(text.contains("MPV_EVENT_PLAYBACK_RESTART"))
+        assertTrue(text.contains("MPV_EVENT_END_FILE"))
+        assertTrue(text.contains("paused-for-cache="))
+        assertTrue(text.contains("demuxer-cache-time="))
+        assertTrue(text.contains("MPV HTTP headers applied count="))
+    }
+
+    @Test
     fun mpvPlayerAttachesEveryMedia3VideoSurfacePath() {
         val text = source.readText()
 
@@ -90,6 +103,44 @@ class MpvPlayerSourceTest {
         assertTrue(text.contains("override fun setVideoSurfaceHolder(surfaceHolder: SurfaceHolder?)"))
         assertTrue(text.contains("surfaceHolder?.addCallback(surfaceCallback)"))
         assertTrue(text.contains("setVideoSurfaceHolder(surfaceView?.holder)"))
+    }
+
+    @Test
+    fun mpvPlayerExposesHudControlledVideoScaleAndSyncOffsets() {
+        val text = source.readText()
+        val scaleModeSource = java.io.File(
+            "src/androidMain/kotlin/com/continuum/app/common/player/mpv/MpvVideoScaleMode.kt",
+        ).readText()
+
+        assertTrue(scaleModeSource.contains("enum class MpvVideoScaleMode"))
+        assertTrue(scaleModeSource.contains("interface MpvVideoScaleController"))
+        assertTrue(text.contains("fun setVideoScaleMode(mode: MpvVideoScaleMode)"))
+        assertTrue(text.contains("MpvVideoScaleController"))
+        assertTrue(text.contains("MpvVideoScaleMode.Fit"))
+        assertTrue(text.contains("setPropertyString(\"video-aspect-override\", \"-1\")"))
+        assertTrue(text.contains("setPropertyDouble(\"panscan\", 1.0)"))
+        assertTrue(text.contains("setPropertyDouble(\"video-zoom\", FitVideoZoom)"))
+        assertTrue(text.contains("setPropertyDouble(\"video-zoom\", CropLetterboxVideoZoom)"))
+        assertTrue(text.contains("private const val CropLetterboxVideoZoom"))
+        assertTrue(text.contains("video-aspect-override\", surfaceAspect"))
+        assertTrue(text.contains("fun setAudioDelayMs(delayMs: Int)"))
+        assertTrue(text.contains("setPropertyDouble(\"audio-delay\", delayMs / 1000.0)"))
+        assertTrue(text.contains("fun setSubtitleDelayMs(delayMs: Int)"))
+        assertTrue(text.contains("setPropertyDouble(\"sub-delay\", delayMs / 1000.0)"))
+    }
+
+    @Test
+    fun mpvPlayerHonorsSelectedTrackIndexFromMedia3Overrides() {
+        val text = source.readText()
+        val overrideLoop = text.substringAfter("for (override in parameters.overrides)")
+            .substringBefore("for (notOverriddenType in notOverriddenTypes)")
+
+        assertTrue(overrideLoop.contains("override.value.trackIndices.firstOrNull()"))
+        assertTrue(overrideLoop.contains("override.key.getFormat(trackIndex).id"))
+        assertFalse(
+            overrideLoop.contains("override.key.getFormat(0).id"),
+            "MPV must select the actual overridden format, not always the first format in the group.",
+        )
     }
 
     @Test

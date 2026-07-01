@@ -3,7 +3,6 @@ package com.continuum.app.tv.ui.screens.auth
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,19 +19,15 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.focus.onFocusEvent
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -46,15 +40,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -68,11 +59,11 @@ import com.continuum.app.tv.ui.components.AuroraGhostButton
 import com.continuum.app.tv.ui.components.AuroraPrimaryButton
 import com.continuum.app.tv.ui.components.AuroraStepRow
 import com.continuum.app.tv.ui.components.auroraGlass
+import com.continuum.app.tv.ui.components.auroraPanel
 import com.continuum.app.tv.ui.components.TvAuroraBackdrop
 import com.continuum.app.tv.ui.components.TvAuroraVariant
 import com.continuum.app.tv.ui.components.TvHeroActionPill
 import com.continuum.app.tv.ui.components.TvPillVariant
-import com.continuum.app.tv.ui.components.tvOutlinedTextFieldColors
 import com.continuum.app.tv.ui.theme.Spacing
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -94,16 +85,25 @@ fun TvLoginScreen(
     val state by viewModel.uiState.collectAsState()
     val deviceState by viewModel.deviceLoginState.collectAsState()
     val usernameFocus = remember { FocusRequester() }
+    val passwordFocus = remember { FocusRequester() }
     val usePasswordFocus = remember { FocusRequester() }
+    val signInFocus = remember { FocusRequester() }
+    val backToPhoneFocus = remember { FocusRequester() }
+    val changeServerFocus = remember { FocusRequester() }
+    val credentialKeyboardFirstKeyFocus = remember { FocusRequester() }
     val usernameBringIntoView = remember { BringIntoViewRequester() }
     val passwordBringIntoView = remember { BringIntoViewRequester() }
     val signInBringIntoView = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
+    val loginScrollState = rememberScrollState()
 
     // Phone-first IA (mirrors tvOS TVLoginView): the QR device-login leads, and
     // the username/password form is one focus-step away behind "Use a password
     // instead". Nothing to type on the remote unless the viewer opts in.
     var showPasswordForm by remember { mutableStateOf(false) }
+    var activeCredentialField by remember { mutableStateOf<TvCredentialField?>(null) }
+    var passwordVisible by remember { mutableStateOf(false) }
+    val credentialKeyboardVisible = showPasswordForm && activeCredentialField != null
 
     LaunchedEffect(state.loginSuccess) {
         if (state.loginSuccess) {
@@ -118,14 +118,25 @@ fun TvLoginScreen(
         if (showPasswordForm) {
             runCatching { usernameFocus.requestFocus() }
         } else {
+            activeCredentialField = null
             runCatching { usePasswordFocus.requestFocus() }
+        }
+    }
+    LaunchedEffect(activeCredentialField) {
+        if (activeCredentialField != null) {
+            loginScrollState.animateScrollTo(0)
+            delay(120)
+            runCatching { credentialKeyboardFirstKeyFocus.requestFocus() }
+        }
+    }
+    LaunchedEffect(credentialKeyboardVisible) {
+        if (!credentialKeyboardVisible) {
+            loginScrollState.scrollTo(0)
         }
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .imePadding(),
+        modifier = Modifier.fillMaxSize(),
     ) {
         TvAuroraBackdrop(variant = TvAuroraVariant.SignIn)
         Column(
@@ -133,33 +144,52 @@ fun TvLoginScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(top = 32.dp, bottom = 32.dp, start = 54.dp, end = 54.dp),
+                .then(if (credentialKeyboardVisible) Modifier.verticalScroll(loginScrollState) else Modifier)
+                .padding(
+                    top = when {
+                        credentialKeyboardVisible -> 18.dp
+                        showPasswordForm -> 20.dp
+                        else -> 32.dp
+                    },
+                    bottom = if (credentialKeyboardVisible) 210.dp else 32.dp,
+                    start = 54.dp,
+                    end = 54.dp,
+                ),
         ) {
             BrandHeader()
 
-            Spacer(modifier = Modifier.height(Spacing.lg))
+            Spacer(modifier = Modifier.height(if (showPasswordForm) Spacing.sm else Spacing.lg))
 
-            AuroraEyebrow(text = "Step 02 — Sign in")
-
-            Spacer(modifier = Modifier.height(Spacing.xl))
+            if (!credentialKeyboardVisible) {
+                AuroraEyebrow(text = "Step 02 — Sign in")
+                Spacer(modifier = Modifier.height(if (showPasswordForm) Spacing.md else Spacing.xl))
+            } else {
+                Spacer(modifier = Modifier.height(6.dp))
+            }
 
             if (showPasswordForm) {
                 CredentialFormCard(
                     state = state,
                     usernameFocus = usernameFocus,
+                    passwordFocus = passwordFocus,
+                    signInFocus = signInFocus,
+                    backToPhoneFocus = backToPhoneFocus,
+                    changeServerFocus = changeServerFocus,
+                    activeField = activeCredentialField,
+                    passwordVisible = passwordVisible,
+                    keyboardVisible = credentialKeyboardVisible,
                     usernameBringIntoView = usernameBringIntoView,
                     passwordBringIntoView = passwordBringIntoView,
                     signInBringIntoView = signInBringIntoView,
-                    onUsernameChanged = viewModel::onUsernameChanged,
-                    onPasswordChanged = viewModel::onPasswordChanged,
                     onLoginClick = viewModel::onLoginClick,
+                    onPasswordVisibilityToggle = { passwordVisible = !passwordVisible },
+                    onOpenKeyboard = { activeCredentialField = it },
                     signupEnabled = signupEnabled,
                     onCreateAccount = onCreateAccount,
                     onBackToPhone = { showPasswordForm = false },
                     onChangeServer = onChangeServer,
                     scope = scope,
-                    modifier = Modifier.width(390.dp),
+                    modifier = Modifier.width(400.dp),
                 )
             } else {
                 Row(
@@ -183,6 +213,57 @@ fun TvLoginScreen(
                         modifier = Modifier.width(300.dp),
                     )
                 }
+            }
+        }
+
+        if (showPasswordForm) {
+            activeCredentialField?.let { field ->
+                SiloCredentialKeyboard(
+                    field = field,
+                    username = state.username,
+                    password = state.password,
+                    passwordVisible = passwordVisible,
+                    enabled = !state.isLoading,
+                    firstKeyFocusRequester = credentialKeyboardFirstKeyFocus,
+                    onAction = { action ->
+                        when (field) {
+                            TvCredentialField.Username -> {
+                                viewModel.onUsernameChanged(
+                                    applyTvCredentialKeyboardAction(state.username, action),
+                                )
+                            }
+                            TvCredentialField.Password -> {
+                                viewModel.onPasswordChanged(
+                                    applyTvCredentialKeyboardAction(state.password, action),
+                                )
+                            }
+                        }
+                    },
+                    onPrimary = {
+                        when (field) {
+                            TvCredentialField.Username -> {
+                                activeCredentialField = TvCredentialField.Password
+                                runCatching { passwordFocus.requestFocus() }
+                            }
+                            TvCredentialField.Password -> {
+                                if (canSubmitTvCredentialLogin(state.username, state.password, state.isLoading)) {
+                                    viewModel.onLoginClick()
+                                }
+                            }
+                        }
+                    },
+                    onTogglePasswordVisibility = { passwordVisible = !passwordVisible },
+                    onDismiss = {
+                        activeCredentialField = null
+                        when (field) {
+                            TvCredentialField.Username -> runCatching { usernameFocus.requestFocus() }
+                            TvCredentialField.Password -> runCatching { passwordFocus.requestFocus() }
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 48.dp, end = 48.dp, bottom = 8.dp),
+                )
             }
         }
     }
@@ -254,12 +335,19 @@ private fun BrandHeader() {
 private fun CredentialFormCard(
     state: TvLoginUiState,
     usernameFocus: FocusRequester,
+    passwordFocus: FocusRequester,
+    signInFocus: FocusRequester,
+    backToPhoneFocus: FocusRequester,
+    changeServerFocus: FocusRequester,
+    activeField: TvCredentialField?,
+    passwordVisible: Boolean,
+    keyboardVisible: Boolean,
     usernameBringIntoView: BringIntoViewRequester,
     passwordBringIntoView: BringIntoViewRequester,
     signInBringIntoView: BringIntoViewRequester,
-    onUsernameChanged: (String) -> Unit,
-    onPasswordChanged: (String) -> Unit,
     onLoginClick: () -> Unit,
+    onPasswordVisibilityToggle: () -> Unit,
+    onOpenKeyboard: (TvCredentialField) -> Unit,
     signupEnabled: Boolean,
     onCreateAccount: () -> Unit,
     onBackToPhone: () -> Unit,
@@ -267,12 +355,11 @@ private fun CredentialFormCard(
     scope: kotlinx.coroutines.CoroutineScope,
     modifier: Modifier = Modifier,
 ) {
-    var passwordVisible by remember { mutableStateOf(false) }
     Column(
-        verticalArrangement = Arrangement.spacedBy(Spacing.lg),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
         modifier = modifier
-            .auroraGlass(20.dp)
-            .padding(28.dp),
+            .auroraPanel(20.dp)
+            .padding(horizontal = 24.dp, vertical = 18.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
             Text(
@@ -296,25 +383,20 @@ private fun CredentialFormCard(
                 style = TvLoginTextStyles.InputLabel,
                 color = Color.White.copy(alpha = 0.52f),
             )
-            OutlinedTextField(
+            CredentialDisplayField(
                 value = state.username,
-                onValueChange = onUsernameChanged,
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Next,
-                ),
+                hint = "Username",
                 enabled = !state.isLoading,
-                textStyle = TvLoginTextStyles.Field,
+                isActive = activeField == TvCredentialField.Username,
+                isPassword = false,
+                passwordVisible = true,
+                focusRequester = usernameFocus,
+                onFocused = {},
+                onOpenKeyboard = { onOpenKeyboard(TvCredentialField.Username) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
-                    .bringIntoViewRequester(usernameBringIntoView)
-                    .onFocusEvent { fs ->
-                        if (fs.isFocused) scope.launch { usernameBringIntoView.bringIntoView() }
-                    }
-                    .focusRequester(usernameFocus),
-                colors = tvOutlinedTextFieldColors(),
+                    .height(48.dp)
+                    .bringIntoViewRequester(usernameBringIntoView),
             )
         }
 
@@ -324,56 +406,31 @@ private fun CredentialFormCard(
                 style = TvLoginTextStyles.InputLabel,
                 color = Color.White.copy(alpha = 0.52f),
             )
-            OutlinedTextField(
-                value = state.password,
-                onValueChange = onPasswordChanged,
-                singleLine = true,
-                visualTransformation = if (passwordVisible) {
-                    VisualTransformation.None
-                } else {
-                    PasswordVisualTransformation()
-                },
-                // Show/hide toggle — tvOS TVLoginView offers this; the remote can
-                // focus the icon to reveal the typed password before submitting.
-                trailingIcon = {
-                    Icon(
-                        imageVector = if (passwordVisible) {
-                            Icons.Default.VisibilityOff
-                        } else {
-                            Icons.Default.Visibility
-                        },
-                        contentDescription = if (passwordVisible) "Hide password" else "Show password",
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { passwordVisible = !passwordVisible }
-                            .padding(6.dp),
-                    )
-                },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = {
-                        if (!state.isLoading &&
-                            state.username.isNotBlank() &&
-                            state.password.isNotBlank()
-                        ) {
-                            onLoginClick()
-                        }
-                    },
-                ),
-                enabled = !state.isLoading,
-                textStyle = TvLoginTextStyles.Field,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .bringIntoViewRequester(passwordBringIntoView)
-                    .onFocusEvent { fs ->
-                        if (fs.isFocused) scope.launch { passwordBringIntoView.bringIntoView() }
-                    },
-                colors = tvOutlinedTextFieldColors(),
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                CredentialDisplayField(
+                    value = state.password,
+                    hint = "Password",
+                    enabled = !state.isLoading,
+                    isActive = activeField == TvCredentialField.Password,
+                    isPassword = true,
+                    passwordVisible = passwordVisible,
+                    focusRequester = passwordFocus,
+                    onFocused = {},
+                    onOpenKeyboard = { onOpenKeyboard(TvCredentialField.Password) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .bringIntoViewRequester(passwordBringIntoView),
+                )
+                CredentialVisibilityButton(
+                    passwordVisible = passwordVisible,
+                    enabled = !state.isLoading,
+                    onClick = onPasswordVisibilityToggle,
+                    modifier = Modifier
+                        .width(48.dp)
+                        .height(48.dp),
+                )
+            }
         }
 
         if (state.error != null) {
@@ -384,27 +441,36 @@ private fun CredentialFormCard(
             )
         }
 
-        Box(
-            modifier = Modifier
-                .bringIntoViewRequester(signInBringIntoView)
-                .onFocusEvent { fs ->
-                    if (fs.hasFocus) scope.launch { signInBringIntoView.bringIntoView() }
-                },
-        ) {
-            AuroraPrimaryButton(
-                label = if (state.isLoading) "Signing in…" else "Sign In",
-                icon = Icons.AutoMirrored.Filled.Login,
-                onClick = onLoginClick,
+        if (!keyboardVisible) {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(58.dp),
-            )
+                    .bringIntoViewRequester(signInBringIntoView)
+                    .onFocusEvent { fs ->
+                        if (fs.hasFocus) scope.launch { signInBringIntoView.bringIntoView() }
+                    },
+            ) {
+                AuroraPrimaryButton(
+                    label = if (state.isLoading) "Signing in…" else "Sign In",
+                    icon = Icons.AutoMirrored.Filled.Login,
+                    onClick = onLoginClick,
+                    focusRequester = signInFocus,
+                    focusHalo = false,
+                    filledAtRest = false,
+                    neutralFocusFill = true,
+                    modifier = Modifier
+                        .focusProperties {
+                            down = backToPhoneFocus
+                        }
+                        .fillMaxWidth()
+                        .height(64.dp),
+                )
+            }
         }
 
         // Surfaced only when the server reports public signup is enabled. The
         // ServerSetup probe forwards that flag through the Login route so this
         // affordance never appears on signup-disabled servers.
-        if (signupEnabled) {
+        if (signupEnabled && !keyboardVisible) {
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 Text(
                     text = "Don't have an account yet?",
@@ -427,16 +493,33 @@ private fun CredentialFormCard(
         // bail out to server setup to point this TV at a different server —
         // both affordances mirror tvOS TVLoginView. Stacked full-width like the
         // QR pane so the long "Back to phone sign-in" label never wraps.
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        if (!keyboardVisible) Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             AuroraGhostButton(
                 label = "Back to phone sign-in",
                 onClick = onBackToPhone,
-                modifier = Modifier.fillMaxWidth(),
+                fontSize = 18.sp,
+                horizontalPadding = 18.dp,
+                verticalPadding = 8.dp,
+                modifier = Modifier
+                    .focusRequester(backToPhoneFocus)
+                    .focusProperties {
+                        up = signInFocus
+                        down = changeServerFocus
+                    }
+                    .fillMaxWidth(),
             )
             AuroraGhostButton(
                 label = "Change server",
                 onClick = onChangeServer,
-                modifier = Modifier.fillMaxWidth(),
+                fontSize = 18.sp,
+                horizontalPadding = 18.dp,
+                verticalPadding = 8.dp,
+                modifier = Modifier
+                    .focusRequester(changeServerFocus)
+                    .focusProperties {
+                        up = backToPhoneFocus
+                    }
+                    .fillMaxWidth(),
             )
         }
     }

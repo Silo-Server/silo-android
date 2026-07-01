@@ -348,38 +348,46 @@ class TvSkylineTokenParityTest {
     }
 
     @Test
-    fun playerHudUsesHalfScaleTvOsShellAndPickerGeometry() {
-        assertTrue(playerHud.contains(".widthIn(max = 550.dp)"))
-        assertTrue(playerHud.contains(".height(190.dp)"))
-        assertTrue(playerHud.contains(".clip(RoundedCornerShape(14.dp))"))
+    fun playerHudUsesAdaptiveAndroidTvShellAndPickerGeometry() {
+        assertTrue(playerHud.contains("private val HudMaxWidth = 600.dp"))
+        assertTrue(playerHud.contains("private val HudMinHeight = 250.dp"))
+        assertTrue(playerHud.contains("private val HudMaxHeight = 310.dp"))
+        assertTrue(playerHud.contains(".widthIn(max = HudMaxWidth)"))
+        assertTrue(playerHud.contains(".fillMaxWidth(0.66f)"))
+        assertTrue(playerHud.contains(".heightIn(min = HudMinHeight, max = HudMaxHeight)"))
+        assertTrue(playerHud.contains(".clip(RoundedCornerShape(HudPanelCorner))"))
         assertTrue(playerHud.contains("width = 0.5.dp"))
-        assertTrue(playerHud.contains(".padding(horizontal = 14.dp, vertical = 11.dp)"))
-        assertTrue(playerHud.contains(".height(24.dp)"))
+        assertTrue(playerHud.contains(".padding(HudPanelPadding)"))
+        assertTrue(playerHud.contains(".height(HudTabHeight)"))
         assertTrue(playerHud.contains(".padding(horizontal = 12.dp)"))
-        assertTrue(playerHud.contains("fontSize = 11.sp"))
+        assertTrue(playerHud.contains("fontSize = 13.sp"))
         assertTrue(playerHud.contains(".width(310.dp)"))
         assertTrue(playerHud.contains(".heightIn(max = 170.dp)"))
         assertTrue(playerHud.contains(".padding(horizontal = 14.dp, vertical = 12.dp)"))
+        assertFalse(playerHud.contains(".widthIn(max = 550.dp)"))
+        assertFalse(playerHud.contains(".height(190.dp)"))
+        assertFalse(playerHud.contains("private val HudMaxWidth = 720.dp"))
+        assertFalse(playerHud.contains(".fillMaxWidth(0.8f)"))
         assertFalse(playerHud.contains(".widthIn(max = 1100.dp)"))
         assertFalse(playerHud.contains(".height(380.dp)"))
         assertFalse(playerHud.contains(".width(620.dp)"))
     }
 
     @Test
-    fun playerHudPaneRowsUseHalfScaleTvOsTypography() {
-        assertTrue(playerHud.contains("horizontalArrangement = Arrangement.spacedBy(24.dp)"))
+    fun playerHudPaneRowsUseReadableAndroidTvTypography() {
+        assertTrue(playerHud.contains("private val HudPaneColumnGap = 28.dp"))
+        assertTrue(playerHud.contains("horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap)"))
         assertTrue(playerHud.contains("verticalArrangement = Arrangement.spacedBy(7.dp)"))
-        assertTrue(playerHud.contains("fontSize = 7.sp"))
         assertTrue(playerHud.contains("fontSize = 17.sp"))
-        assertTrue(playerHud.contains("fontSize = 10.sp"))
-        assertTrue(playerHud.contains("fontSize = 8.sp"))
-        assertTrue(playerHud.contains("fontSize = 11.sp"))
+        assertTrue(playerHud.contains("fontSize = 13.sp"))
         assertTrue(playerHud.contains(".padding(horizontal = 5.dp, vertical = 2.dp)"))
         assertTrue(playerHud.contains(".clip(RoundedCornerShape(5.dp))"))
         assertTrue(playerHud.contains(".padding(horizontal = 7.dp, vertical = 5.5.dp)"))
-        assertTrue(playerHud.contains(".padding(horizontal = 12.dp, vertical = 6.dp)"))
         assertTrue(playerHud.contains("modifier = Modifier.size(9.dp)"))
+        assertFalse(playerHud.contains("horizontalArrangement = Arrangement.spacedBy(24.dp)"))
         assertFalse(playerHud.contains("horizontalArrangement = Arrangement.spacedBy(48.dp)"))
+        assertFalse(playerHud.contains("fontSize = 7.sp"))
+        assertFalse(playerHud.contains("fontSize = 10.sp"))
         assertFalse(playerHud.contains(".padding(horizontal = 24.dp, vertical = 12.dp)"))
         assertFalse(playerHud.contains("modifier = Modifier.size(18.dp)"))
     }

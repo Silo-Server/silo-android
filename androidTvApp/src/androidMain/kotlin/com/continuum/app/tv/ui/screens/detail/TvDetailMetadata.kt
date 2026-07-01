@@ -136,13 +136,12 @@ internal object TvDetailMetadata {
     }
 
     private fun preferredVersion(detail: ItemDetail): FileVersion? {
-        val versions = detail.versions
-        if (versions.isEmpty()) return null
-        val lastId = detail.userData?.lastFileId
-        if (lastId != null) {
-            versions.firstOrNull { it.fileId == lastId }?.let { return it }
-        }
-        return versions.first()
+        return selectTvDetailDisplayVersion(
+            versions = detail.versions,
+            selectedFileId = null,
+            lastFileId = detail.userData?.lastFileId,
+            preferredQuality = null,
+        )
     }
 
     private fun resolutionLabel(raw: String?): String? {

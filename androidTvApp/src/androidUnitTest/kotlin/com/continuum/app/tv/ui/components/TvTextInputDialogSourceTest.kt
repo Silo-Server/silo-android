@@ -9,36 +9,36 @@ class TvTextInputDialogSourceTest {
     ).readText()
 
     @Test
-    fun textEntryDialogUsesPlatformEditTextForReliableTvImeInput() {
+    fun textEntryDialogUsesSiloAnsiKeyboardInsteadOfPlatformIme() {
         assertTrue(
-            source.contains("AndroidView("),
-            "TV text-entry dialogs must host a platform view so Shield/Leanback IME receives a real editable target.",
+            source.contains("TvAnsiKeyboard("),
+            "TV text-entry dialogs should use Silo's own remote keyboard instead of launching the platform IME.",
         )
         assertTrue(
-            source.contains("EditText(context)"),
-            "TV text-entry dialogs must use a real EditText instead of a Compose TextField on Android TV.",
+            source.contains("shouldOpenTvDialogKeyboard(event)"),
+            "The display field should reopen the custom keyboard from center/enter.",
         )
         assertTrue(
-            source.contains("InputMethodManager") &&
-                source.contains("showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)"),
-            "Opening the dialog must focus the platform EditText and explicitly show the TV keyboard.",
+            source.contains("event.type == KeyEventType.KeyDown || event.type == KeyEventType.KeyUp"),
+            "Remote center presses can arrive on key down or key up depending on TV hardware.",
         )
         assertTrue(
-            source.contains("tvInputTypeFor(keyboardType)"),
-            "The dialog must map profile name/PIN keyboard types onto platform input types.",
+            source.contains("keyboardType == KeyboardType.Number || keyboardType == KeyboardType.NumberPassword") &&
+                source.contains("action.text.filter { it.isDigit() }"),
+            "PIN dialogs should keep the shared keyboard but only accept numeric input.",
         )
         assertTrue(
-            source.contains("rememberUpdatedState(onDone)") &&
-                source.contains("currentOnDone()"),
-            "IME Done must use the latest typed value instead of the AndroidView factory's initial lambda.",
+            source.contains("primaryLabel = confirmLabel") &&
+                source.contains("onPrimary = submit"),
+            "The keyboard primary key should perform the dialog's confirm action.",
         )
         assertTrue(
-            source.contains("TYPE_TEXT_FLAG_NO_SUGGESTIONS"),
-            "Profile names should not be altered by TV keyboard suggestions/autocorrect.",
+            !source.contains("AndroidView(") && !source.contains("EditText(context)") && !source.contains("InputMethodManager"),
+            "The platform IME path should stay out of TV dialogs.",
         )
         assertTrue(
             !source.contains("OutlinedTextField"),
-            "Compose TextField focus reports as AndroidComposeView inputType=0 on Shield, so this dialog must not use it.",
+            "TV text-entry dialogs should not fall back to Compose text fields.",
         )
         assertTrue(
             !source.contains("Card(\n                onClick = {}"),

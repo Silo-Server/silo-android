@@ -19,16 +19,11 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon as M3Icon
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -43,12 +38,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
@@ -63,15 +53,17 @@ import com.continuum.app.repository.RequestsRepository
 import com.continuum.app.tv.ui.components.TvErrorScreen
 import com.continuum.app.tv.ui.components.TvFilterChip
 import com.continuum.app.tv.ui.components.TvLoadingScreen
-import com.continuum.app.tv.ui.components.tvOutlinedTextFieldColors
+import com.continuum.app.tv.ui.components.applyTvAnsiKeyboardAction
+import com.continuum.app.tv.ui.screens.search.SearchDisplayField
+import com.continuum.app.tv.ui.screens.search.SiloSearchKeyboard
+import com.continuum.app.tv.ui.screens.search.TV_SEARCH_QUERY_MAX_LENGTH
 import com.continuum.app.tv.ui.shell.TvTopMenuLayout
 import com.continuum.app.tv.ui.theme.ContinuumBlue
-import com.continuum.app.tv.ui.theme.ContinuumBlueBorderIdle
-import com.continuum.app.tv.ui.theme.ElevatedSurface
 import com.continuum.app.tv.ui.theme.Spacing
 import com.continuum.app.tv.ui.theme.sectionEyebrow
 import com.continuum.app.viewmodel.RequestSearchViewModel
 import com.continuum.app.viewmodel.RequestsViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
@@ -100,6 +92,7 @@ fun TvRequestsScreen(
     val searchFieldFocusRequester = remember { FocusRequester() }
     val firstFilterChipFocusRequester = remember { FocusRequester() }
     val firstResultFocusRequester = remember { FocusRequester() }
+    val requestKeyboardFirstKeyFocusRequester = remember { FocusRequester() }
     val hasSubmittedQuery = searchState.hasSubmittedQuery
     val hasSearchResults = visibleSearchResults.isNotEmpty()
     val firstDiscoverSectionKey = visibleDiscoverSections.firstOrNull { it.results.isNotEmpty() }?.key
@@ -112,6 +105,7 @@ fun TvRequestsScreen(
     var actionMessage by remember { mutableStateOf<String?>(null) }
     var actionError by remember { mutableStateOf<String?>(null) }
     var submittingKey by remember { mutableStateOf<String?>(null) }
+    var isRequestKeyboardVisible by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     fun refreshRequests() {
@@ -147,6 +141,12 @@ fun TvRequestsScreen(
                 runCatching { firstFilterChipFocusRequester.requestFocus() }
             }
             focusResultsAfterSearch = false
+        }
+    }
+    LaunchedEffect(isRequestKeyboardVisible) {
+        if (isRequestKeyboardVisible) {
+            delay(120)
+            runCatching { requestKeyboardFirstKeyFocusRequester.requestFocus() }
         }
     }
 
@@ -193,109 +193,136 @@ fun TvRequestsScreen(
         )
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        RequestsHeader(
-            query = searchState.query,
-            mediaType = searchState.mediaType,
-            searchStatus = requestSearchStatusText(
-                query = searchState.submittedQuery,
-                total = visibleSearchResults.size,
-                isSearching = searchState.isLoading,
-                error = searchState.error,
-            ),
-            isRefreshing = state.isRefreshing || submittingKey != null,
-            searchFieldFocusRequester = searchFieldFocusRequester,
-            firstFilterChipFocusRequester = firstFilterChipFocusRequester,
-            firstResultFocusRequester = firstResultFocusRequester,
-            hasFocusableResult = hasFocusableResult,
-            onQueryChanged = searchViewModel::onQueryChanged,
-            onSearchSubmitted = {
-                focusResultsAfterSearch = searchState.query.isNotBlank()
-                searchViewModel.search()
-            },
-            onMediaTypeChanged = { type ->
-                searchViewModel.onMediaTypeChanged(type)
-                if (searchState.query.isNotBlank()) {
-                    searchViewModel.search()
-                }
-            },
-            onRefresh = ::refreshRequests,
-            onOpenMyRequests = onOpenMyRequests,
-        )
-        when {
-            state.isLoading && state.sections.isEmpty() -> TvLoadingScreen()
-            state.error != null && state.sections.isEmpty() && !hasSubmittedQuery -> TvErrorScreen(
-                message = state.error ?: "Requests are unavailable.",
-                onRetry = viewModel::load,
-            )
-            visibleDiscoverSections.none { it.results.isNotEmpty() } && !hasSubmittedQuery -> RequestsEmptyState(
-                message = state.error ?: "Search movies and series to request them.",
-            )
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(24.dp),
-                contentPadding = PaddingValues(bottom = 56.dp),
-            ) {
-                if (actionError != null || searchState.error != null || state.error != null || actionMessage != null) {
-                    item(contentType = "request-notice") {
-                        RequestNotice(
-                            text = actionError ?: searchState.error ?: state.error ?: actionMessage.orEmpty(),
-                            isError = actionError != null || searchState.error != null || state.error != null,
-                        )
-                    }
-                }
-
-                searchEmptyMessage(
-                    query = searchState.query,
+        Column(modifier = Modifier.fillMaxSize()) {
+            RequestsHeader(
+                query = searchState.query,
+                mediaType = searchState.mediaType,
+                searchStatus = requestSearchStatusText(
+                    query = searchState.submittedQuery,
+                    total = visibleSearchResults.size,
                     isSearching = searchState.isLoading,
-                    hasSubmittedQuery = hasSubmittedQuery,
-                    hasSearchResults = hasSearchResults,
-                    hasSearchError = searchState.error != null,
-                )?.let { message ->
-                    item(key = "search-empty", contentType = "request-search-empty") {
-                        RequestSearchEmptyItem(message = message)
+                    error = searchState.error,
+                ),
+                isRefreshing = state.isRefreshing || submittingKey != null,
+                searchFieldFocusRequester = searchFieldFocusRequester,
+                firstFilterChipFocusRequester = firstFilterChipFocusRequester,
+                firstResultFocusRequester = firstResultFocusRequester,
+                hasFocusableResult = hasFocusableResult,
+                onOpenKeyboard = { isRequestKeyboardVisible = true },
+                onMediaTypeChanged = { type ->
+                    searchViewModel.onMediaTypeChanged(type)
+                    if (searchState.query.isNotBlank()) {
+                        searchViewModel.search()
                     }
-                }
+                },
+                onRefresh = ::refreshRequests,
+                onOpenMyRequests = onOpenMyRequests,
+            )
+            when {
+                state.isLoading && state.sections.isEmpty() -> TvLoadingScreen()
+                state.error != null && state.sections.isEmpty() && !hasSubmittedQuery -> TvErrorScreen(
+                    message = state.error ?: "Requests are unavailable.",
+                    onRetry = viewModel::load,
+                )
+                visibleDiscoverSections.none { it.results.isNotEmpty() } && !hasSubmittedQuery -> RequestsEmptyState(
+                    message = state.error ?: "Search movies and series to request them.",
+                )
+                else -> LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                    contentPadding = PaddingValues(bottom = 56.dp),
+                ) {
+                    if (actionError != null || searchState.error != null || state.error != null || actionMessage != null) {
+                        item(contentType = "request-notice") {
+                            RequestNotice(
+                                text = actionError ?: searchState.error ?: state.error ?: actionMessage.orEmpty(),
+                                isError = actionError != null || searchState.error != null || state.error != null,
+                            )
+                        }
+                    }
 
-                if (hasSearchResults) {
-                    item(key = "search-results", contentType = "request-search-results") {
-                        RequestResultRow(
-                            title = "Search Results",
-                            results = visibleSearchResults,
-                            firstItemFocusRequester = firstResultFocusRequester,
-                            firstItemCardModifier = Modifier.focusProperties {
-                                up = firstFilterChipFocusRequester
-                            },
-                            submittingKey = submittingKey,
-                            onItemClick = ::handleRequestItemClick,
-                        )
+                    searchEmptyMessage(
+                        query = searchState.query,
+                        isSearching = searchState.isLoading,
+                        hasSubmittedQuery = hasSubmittedQuery,
+                        hasSearchResults = hasSearchResults,
+                        hasSearchError = searchState.error != null,
+                    )?.let { message ->
+                        item(key = "search-empty", contentType = "request-search-empty") {
+                            RequestSearchEmptyItem(message = message)
+                        }
                     }
-                }
 
-                if (showDiscoverRows) {
-                    items(
-                        visibleDiscoverSections,
-                        key = { it.key },
-                        contentType = { "request-section" },
-                    ) { section ->
-                        RequestSectionRow(
-                            section = section,
-                            firstItemFocusRequester = firstResultFocusRequester
-                                .takeIf { !hasSearchResults && section.key == firstDiscoverSectionKey },
-                            firstItemCardModifier = Modifier.focusProperties {
-                                up = firstFilterChipFocusRequester
-                            },
-                            submittingKey = submittingKey,
-                            onItemClick = ::handleRequestItemClick,
-                        )
+                    if (hasSearchResults) {
+                        item(key = "search-results", contentType = "request-search-results") {
+                            RequestResultRow(
+                                title = "Search Results",
+                                results = visibleSearchResults,
+                                firstItemFocusRequester = firstResultFocusRequester,
+                                firstItemCardModifier = Modifier.focusProperties {
+                                    up = firstFilterChipFocusRequester
+                                },
+                                submittingKey = submittingKey,
+                                onItemClick = ::handleRequestItemClick,
+                            )
+                        }
                     }
+
+                    if (showDiscoverRows) {
+                        items(
+                            visibleDiscoverSections,
+                            key = { it.key },
+                            contentType = { "request-section" },
+                        ) { section ->
+                            RequestSectionRow(
+                                section = section,
+                                firstItemFocusRequester = firstResultFocusRequester
+                                    .takeIf { !hasSearchResults && section.key == firstDiscoverSectionKey },
+                                firstItemCardModifier = Modifier.focusProperties {
+                                    up = firstFilterChipFocusRequester
+                                },
+                                submittingKey = submittingKey,
+                                onItemClick = ::handleRequestItemClick,
+                            )
+                        }
+                    }
+                    item { Spacer(modifier = Modifier.height(8.dp)) }
                 }
-                item { Spacer(modifier = Modifier.height(8.dp)) }
             }
+        }
+
+        if (isRequestKeyboardVisible) {
+            SiloSearchKeyboard(
+                value = searchState.query,
+                enabled = !searchState.isLoading,
+                firstKeyFocusRequester = requestKeyboardFirstKeyFocusRequester,
+                onAction = { action ->
+                    searchViewModel.onQueryChanged(
+                        applyTvAnsiKeyboardAction(
+                            value = searchState.query,
+                            action = action,
+                            maxLength = TV_SEARCH_QUERY_MAX_LENGTH,
+                        ),
+                    )
+                },
+                onSearch = {
+                    isRequestKeyboardVisible = false
+                    focusResultsAfterSearch = searchState.query.isNotBlank()
+                    searchViewModel.search()
+                },
+                onDismiss = {
+                    isRequestKeyboardVisible = false
+                    runCatching { searchFieldFocusRequester.requestFocus() }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 48.dp, end = 48.dp, bottom = 8.dp),
+            )
         }
     }
 }
@@ -385,15 +412,11 @@ private fun RequestsHeader(
     firstFilterChipFocusRequester: FocusRequester,
     firstResultFocusRequester: FocusRequester,
     hasFocusableResult: Boolean,
-    onQueryChanged: (String) -> Unit,
-    onSearchSubmitted: () -> Unit,
+    onOpenKeyboard: () -> Unit,
     onMediaTypeChanged: (String?) -> Unit,
     onRefresh: () -> Unit,
     onOpenMyRequests: () -> Unit,
 ) {
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-
     Column(
         modifier = Modifier.padding(
             start = Spacing.safeArea,
@@ -421,60 +444,15 @@ private fun RequestsHeader(
             modifier = Modifier.widthIn(max = 410.dp),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
-            OutlinedTextField(
+            SearchDisplayField(
                 value = query,
-                onValueChange = onQueryChanged,
-                leadingIcon = {
-                    M3Icon(
-                        imageVector = Icons.Filled.Search,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.72f),
-                    )
-                },
-                placeholder = {
-                    androidx.compose.material3.Text(
-                        text = "Search movies and series to request",
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = 16.sp,
-                            lineHeight = 16.sp,
-                            letterSpacing = 0.sp,
-                        ),
-                        color = Color.White.copy(alpha = 0.56f),
-                    )
-                },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = 16.sp,
-                    lineHeight = 16.sp,
-                    letterSpacing = 0.sp,
-                    color = Color.White,
-                ),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Search,
-                ),
-                keyboardActions = KeyboardActions(
-                    onSearch = {
-                        onSearchSubmitted()
-                        keyboardController?.hide()
-                        if (query.isBlank()) {
-                            runCatching { searchFieldFocusRequester.requestFocus() }
-                        } else {
-                            focusManager.clearFocus(force = true)
-                        }
-                    },
-                ),
-                colors = tvOutlinedTextFieldColors(
-                    focusedContainerColor = ElevatedSurface,
-                    unfocusedContainerColor = ElevatedSurface,
-                    focusedBorderColor = Color.White.copy(alpha = 0.34f),
-                    unfocusedBorderColor = ContinuumBlueBorderIdle,
-                ),
-                shape = RoundedCornerShape(9.dp),
+                hint = "Search movies and series to request",
+                enabled = true,
+                focusRequester = searchFieldFocusRequester,
+                onOpenKeyboard = onOpenKeyboard,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(31.dp)
-                    .focusRequester(searchFieldFocusRequester)
+                    .height(34.dp)
                     .focusProperties { down = firstFilterChipFocusRequester },
             )
             LazyRow(

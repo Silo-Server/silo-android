@@ -32,10 +32,19 @@ class PlaybackBufferPolicyTest {
     }
 
     @Test
+    fun quickStartUsesHeapBoundedByteCapForHighBitrate4kDirectPlay() {
+        val policy = PlaybackBufferPolicy.forMode(PlaybackBufferMode.QuickStart)
+
+        assertEquals(160 * 1024 * 1024, policy.targetBufferBytes)
+        assertFalse(policy.prioritizeTimeOverSizeThresholds)
+        assertTrue(policy.maxBufferMs <= 60_000)
+    }
+
+    @Test
     fun smoothPlaybackUsesHeapBoundedByteCapForHighBitrateRemuxes() {
         val policy = PlaybackBufferPolicy.forMode(PlaybackBufferMode.SmoothPlayback)
 
-        assertEquals(96 * 1024 * 1024, policy.targetBufferBytes)
+        assertEquals(256 * 1024 * 1024, policy.targetBufferBytes)
         assertFalse(policy.prioritizeTimeOverSizeThresholds)
         assertTrue(policy.maxBufferMs <= 90_000)
     }
@@ -52,8 +61,8 @@ class PlaybackBufferPolicyTest {
 
     @Test
     fun allProfilesHaveFiniteTargetByteCaps() {
-        assertEquals(32 * 1024 * 1024, PlaybackBufferPolicy.forMode(PlaybackBufferMode.QuickStart).targetBufferBytes)
-        assertEquals(64 * 1024 * 1024, PlaybackBufferPolicy.forMode(PlaybackBufferMode.Balanced).targetBufferBytes)
-        assertEquals(96 * 1024 * 1024, PlaybackBufferPolicy.forMode(PlaybackBufferMode.SmoothPlayback).targetBufferBytes)
+        assertEquals(160 * 1024 * 1024, PlaybackBufferPolicy.forMode(PlaybackBufferMode.QuickStart).targetBufferBytes)
+        assertEquals(192 * 1024 * 1024, PlaybackBufferPolicy.forMode(PlaybackBufferMode.Balanced).targetBufferBytes)
+        assertEquals(256 * 1024 * 1024, PlaybackBufferPolicy.forMode(PlaybackBufferMode.SmoothPlayback).targetBufferBytes)
     }
 }

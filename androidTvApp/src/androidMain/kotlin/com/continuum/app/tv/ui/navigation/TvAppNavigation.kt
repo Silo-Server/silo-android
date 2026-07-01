@@ -483,6 +483,11 @@ fun TvAppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument(TvRoute.Player.ARG_QUALITY) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
                 navArgument(TvRoute.Player.ARG_ROOM_ID) {
                     // Watch Together room binding; null for solo play. Consumed
                     // by TvPlayerScreen in T3.
@@ -518,6 +523,8 @@ fun TvAppNavigation(
             val preferredFileId = backStack.arguments
                 ?.getString(TvRoute.Player.ARG_FILE_ID)
                 ?.toIntOrNull()
+            val preferredQuality = backStack.arguments
+                ?.getString(TvRoute.Player.ARG_QUALITY)
             val roomId = backStack.arguments
                 ?.getString(TvRoute.Player.ARG_ROOM_ID)
             val audioTrackIndex = backStack.arguments
@@ -535,16 +542,17 @@ fun TvAppNavigation(
             TvPlayerScreen(
                 contentId = contentId,
                 preferredFileId = preferredFileId,
+                preferredQuality = preferredQuality,
                 roomId = roomId,
                 resumePositionOverride = resumePositionOverride,
                 initialAudioTrackIndex = audioTrackIndex,
                 initialSubtitleTrackIndex = subtitleTrackIndex,
                 autoAdvanceCount = autoAdvanceCount,
-                onPlayNext = { nextContentId, nextCount ->
+                onPlayNext = { nextContentId, nextCount, nextQuality ->
                     // Replace the current player in the back stack so an
                     // auto-played chain doesn't pile up episodes behind Back.
                     navController.navigate(
-                        TvRoute.Player(contentId = nextContentId, autoAdvanceCount = nextCount).route,
+                        TvRoute.Player(contentId = nextContentId, quality = nextQuality, autoAdvanceCount = nextCount).route,
                     ) {
                         popUpTo(TvRoute.Player.ROUTE) { inclusive = true }
                     }

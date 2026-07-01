@@ -497,13 +497,23 @@ private fun HeroActionRow(
     val selectorAudioIndex = if (isSeriesOrSeason) state.selectedNextUpAudioIndex else state.selectedAudioIndex
     val selectorSubtitleIndex =
         if (isSeriesOrSeason) state.selectedNextUpSubtitleIndex else state.selectedSubtitleIndex
-    val selectedFileId = selectorSelectedFileId ?: selectorVersions.firstOrNull()?.fileId
+    val selectorLastFileId = if (isSeriesOrSeason) {
+        nextUpDetail?.userData?.lastFileId
+    } else {
+        detail.userData?.lastFileId
+    }
+    val selectedVersion = remember(selectorVersions, selectorSelectedFileId, selectorLastFileId) {
+        selectTvDetailDisplayVersion(
+            versions = selectorVersions,
+            selectedFileId = selectorSelectedFileId,
+            lastFileId = selectorLastFileId,
+            preferredQuality = null,
+        )
+    }
+    val selectedFileId = selectedVersion?.fileId
     val hasTrackOverride = selectorAudioIndex != null || selectorSubtitleIndex != null
     val playFileId = selectorSelectedFileId ?: selectedFileId.takeIf { hasTrackOverride }
     // The effective playable version drives the inline playback selector row.
-    val selectedVersion = remember(selectorVersions, selectedFileId) {
-        selectorVersions.firstOrNull { it.fileId == selectedFileId } ?: selectorVersions.firstOrNull()
-    }
     val isAudiobook = isAudiobookItemType(detail.type)
     // Down from the action cluster lands on the selector row (when shown) rather
     // than skipping into the body. Mirrors Apple's full-width `.focusSection()`.

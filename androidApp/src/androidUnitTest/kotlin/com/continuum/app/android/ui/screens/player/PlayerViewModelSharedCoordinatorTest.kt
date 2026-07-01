@@ -74,6 +74,28 @@ class PlayerViewModelSharedCoordinatorTest {
     }
 
     @Test
+    fun mobilePlayerRefreshesServerBackedSettingsAfterOfflineFallbackBeforeRemoteStartup() {
+        val loadContentBody = viewModelSource
+            .substringAfter("fun loadContent(")
+            .substringBefore("private fun startIntroAutoSkipObserver")
+        val localIndex = loadContentBody.indexOf("tryLocalPlayback(")
+        val refreshIndex = loadContentBody.indexOf("playerSettingsStore.refreshFromServer()")
+        val coordinatorIndex = loadContentBody.indexOf("videoPlaybackCoordinator.start(")
+
+        assertTrue(localIndex >= 0, "loadContent must keep the offline/local fast path")
+        assertTrue(refreshIndex >= 0, "Remote startup must refresh effective server settings")
+        assertTrue(coordinatorIndex >= 0, "Remote startup must use the coordinator")
+        assertTrue(
+            localIndex < refreshIndex,
+            "Mobile must not force a settings network call before local downloaded playback",
+        )
+        assertTrue(
+            refreshIndex < coordinatorIndex,
+            "Mobile must pull user/device effective settings before choosing remote quality/subtitle defaults",
+        )
+    }
+
+    @Test
     fun mobileVersionSwitchStopsLifecycleBeforeReplacingSession() {
         val onSelectVersionBody = viewModelSource
             .substringAfter("fun onSelectVersion(")

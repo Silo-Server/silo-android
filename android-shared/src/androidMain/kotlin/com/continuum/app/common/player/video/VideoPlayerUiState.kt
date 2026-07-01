@@ -27,6 +27,7 @@ sealed interface VideoPlayerUiState {
     data class Ready(
         override val contentId: String,
         val fileId: Int?,
+        val fileResolution: String? = null,
         val streamUrl: String,
         val playMethod: PlayMethod,
         val playbackPlan: PlaybackExecutionPlan? = null,
@@ -45,6 +46,8 @@ sealed interface VideoPlayerUiState {
         val subtitleUrls: List<PlayerSubtitleInfo> = emptyList(),
         val preferredAudioLanguage: String? = null,
         val preferredTextLanguage: String? = null,
+        val preferredSubtitleMode: String? = null,
+        val showForcedSubtitles: Boolean = true,
         val intro: TimeRange? = null,
         val credits: TimeRange? = null,
         val chapters: List<VersionChapter> = emptyList(),

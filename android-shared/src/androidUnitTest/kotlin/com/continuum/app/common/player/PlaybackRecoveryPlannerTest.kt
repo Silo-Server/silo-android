@@ -67,6 +67,17 @@ class PlaybackRecoveryPlannerTest {
     }
 
     @Test
+    fun noPlanDirectStartupStallUsesServerRemuxBeforeFullTranscode() {
+        val action = PlaybackRecoveryPlanner().planForPlayability(
+            currentPlan = null,
+            reason = Playability.StartupStalled(bufferedAheadMs = 0, stalledForMs = 20_000),
+        )
+
+        val remux = assertIs<PlaybackRecoveryAction.ServerRemux>(action)
+        assertEquals(PlaybackDelivery.SERVER_REMUX_HLS, remux.delivery)
+    }
+
+    @Test
     fun serverRemuxCarriesProgressiveDeliveryWhenThatIsTheCandidate() {
         val plan = PlaybackExecutionPlan(
             planId = "s1",

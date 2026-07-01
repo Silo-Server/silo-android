@@ -7,6 +7,7 @@ data class VideoPlaybackStartRequest(
     val resumePositionOverride: Double?,
     val audioTrackIndex: Int? = null,
     val subtitleTrackIndex: Int? = null,
+    val preferredQualityOverride: String? = null,
     /**
      * Suppresses skip-back-on-resume for starts that are NOT a resume — Start
      * Over, retry, or any commanded position that should land exactly. (Watch

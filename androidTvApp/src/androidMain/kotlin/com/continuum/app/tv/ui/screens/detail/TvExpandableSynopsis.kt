@@ -33,10 +33,10 @@ import androidx.tv.material3.Text
  * The hero's overview as an expand-in-place control. Mirrors tvOS
  * `TVExpandableSynopsis` 1:1.
  *
- * The overview is clamped to 3 lines (26sp white@0.82, lineSpacing ≈ 8,
- * maxWidth 1200). Pressing OK/Select toggles [expanded]: when expanded the
- * line clamp is removed AND the [tagline] (28sp serif italic white@0.85) is
- * shown above the overview (only when non-blank).
+     * The overview is clamped to 3 lines and uses the Android TV readability scale
+     * rather than raw tvOS÷2 sizing. Pressing OK/Select toggles [expanded]: when
+     * expanded the line clamp is removed AND the [tagline] is shown above the
+     * overview (only when non-blank).
  *
  * This is a **focusable leaf** — the hero's only text focus stop, reachable by
  * pressing Up from the action row, and actionable so it never feels "stuck".
@@ -103,16 +103,16 @@ internal fun TvExpandableSynopsis(
                 fontFamily = FontFamily.Serif,
                 fontStyle = FontStyle.Italic,
                 fontWeight = FontWeight.Normal,
-                fontSize = 16.sp,
-                lineHeight = 18.sp,
+                fontSize = 18.sp,
+                lineHeight = 21.sp,
                 color = Color.White.copy(alpha = 0.85f),
             )
         }
         Text(
             text = overview,
             fontWeight = FontWeight.Normal,
-            fontSize = 16.sp,
-            lineHeight = 17.sp,
+            fontSize = 18.sp,
+            lineHeight = 22.sp,
             color = Color.White.copy(alpha = 0.82f),
             maxLines = if (expanded) Int.MAX_VALUE else 3,
             overflow = TextOverflow.Ellipsis,

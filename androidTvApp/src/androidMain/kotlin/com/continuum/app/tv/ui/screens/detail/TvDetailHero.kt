@@ -164,8 +164,8 @@ internal fun TvDetailHero(
             Text(
                 text = line,
                 fontWeight = FontWeight.Normal,
-                fontSize = 12.sp,
-                lineHeight = 15.sp,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
                 color = Color.White.copy(alpha = 0.8f),
                 textAlign = TextAlign.End,
                 maxLines = 2,
@@ -376,8 +376,8 @@ private fun HeroEyebrowPill(text: String) {
         Text(
             text = text,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 9.sp,
-            lineHeight = 11.sp,
+            fontSize = 13.sp,
+            lineHeight = 15.sp,
             letterSpacing = 0.sp,
             color = Color.White,
             maxLines = 1,
@@ -397,14 +397,14 @@ private fun SourceRow(tokens: List<String>, ratingChip: String?) {
                 Text(
                     text = "·",
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     color = Color.White.copy(alpha = 0.5f),
                 )
             }
             Text(
                 text = token,
                 fontWeight = FontWeight.Medium,
-                fontSize = 13.sp,
+                fontSize = 14.sp,
                 color = Color.White.copy(alpha = 0.92f),
                 maxLines = 1,
             )
@@ -428,7 +428,7 @@ private fun FactsRow(tokens: List<TvHeroFactToken>) {
                 Text(
                     text = "·",
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 11.sp,
+                    fontSize = 13.sp,
                     color = Color.White.copy(alpha = 0.45f),
                 )
             }
@@ -436,7 +436,7 @@ private fun FactsRow(tokens: List<TvHeroFactToken>) {
                 is TvHeroFactToken.TextToken -> Text(
                     text = token.value,
                     fontWeight = FontWeight.Medium,
-                    fontSize = 11.sp,
+                    fontSize = 13.sp,
                     color = Color.White.copy(alpha = 0.88f),
                     maxLines = 1,
                 )
@@ -453,7 +453,7 @@ private fun FactsRow(tokens: List<TvHeroFactToken>) {
                     Text(
                         text = token.value,
                         fontWeight = FontWeight.Medium,
-                        fontSize = 11.sp,
+                        fontSize = 13.sp,
                         color = Color.White.copy(alpha = 0.88f),
                         maxLines = 1,
                     )
@@ -478,7 +478,7 @@ private fun RatingChip(text: String) {
         Text(
             text = text,
             fontWeight = FontWeight.Black,
-            fontSize = 10.sp,
+            fontSize = 13.sp,
             letterSpacing = 0.sp,
             color = Color.White,
             maxLines = 1,
@@ -500,7 +500,7 @@ private fun QualityChip(text: String) {
         Text(
             text = text,
             fontWeight = FontWeight.Black,
-            fontSize = 8.sp,
+            fontSize = 13.sp,
             letterSpacing = 0.sp,
             color = Color.White,
             maxLines = 1,
@@ -525,13 +525,11 @@ private fun splitDisplayTitle(raw: String): Pair<String, String?> {
 private const val HERO_HEIGHT_FRACTION = 0.907f
 
 /**
- * Hero display title — primary line. Mirrors tvOS `TVHeroTitle`'s
- * `.system(size: 92, weight: .black).width(.compressed)`. Android has no
- * `.compressed` system font, so we use the heaviest available weight
- * (Black) at the same 92sp with tightened tracking + line height to
- * approximate the compressed wordmark; tuned on emulator (Task 9). Kept
- * local so the shared `heroDisplay` token (58sp) used by the home/featured
- * carousels stays unchanged.
+ * Hero display title — primary line. Mirrors tvOS `TVHeroTitle`'s visual
+ * hierarchy on Android TV's half-scale layout canvas. Android has no
+ * `.compressed` system font, so we use the heaviest available weight with
+ * tight line height and keep this local so the shared home `heroDisplay`
+ * token stays unchanged.
  */
 private val heroDisplayHero = TextStyle(
     fontFamily = FontFamily.Default,
@@ -539,8 +537,8 @@ private val heroDisplayHero = TextStyle(
     // tvOS uses 92pt in its 1920x1080 POINT canvas; Android TV is a 960x540 DP
     // canvas (≈half), so the point value must be ~halved or the title overflows
     // the hero. 56sp sits just above the shared home `heroDisplay` (58sp).
-    fontSize = 46.sp,
-    lineHeight = 50.sp,
+    fontSize = 48.sp,
+    lineHeight = 52.sp,
     letterSpacing = 0.sp,
     // Apple shadows the hero title (black@0.55, r16, y4) for legibility on
     // bright backdrops. Inherited by the subtitle/episode `.copy()` variants.

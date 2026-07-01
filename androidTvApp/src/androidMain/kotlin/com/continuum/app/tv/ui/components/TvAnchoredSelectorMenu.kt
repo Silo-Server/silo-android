@@ -57,8 +57,8 @@ data class TvSelectorOption(
 /**
  * A secondary `.compact` squared pill that opens an anchored dropdown of
  * [options]. Trigger layout mirrors tvOS `TVSelectorButton` at the Android TV
- * half-scale: row spacing 6dp, 11dp icon, 9sp tracked label, 11sp value, and
- * 7.5dp chevron.
+ * readability-adjusted half-scale: compact geometry with a larger label/value
+ * floor than the raw tvOS÷2 math so it remains legible from the couch.
  *
  * Each row renders `"Title — Detail"` (the " — Detail" suffix is dropped when
  * [TvSelectorOption.detail] is blank) with a leading check when selected, like
@@ -96,35 +96,35 @@ fun TvAnchoredSelectorMenu(
                     imageVector = icon,
                     contentDescription = null,
                     tint = fg,
-                    modifier = Modifier.size(11.dp),
+                    modifier = Modifier.size(12.dp),
                 )
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(7.dp))
                 Text(
                     text = label.uppercase(),
                     style = MaterialTheme.typography.labelLarge.copy(
-                        fontSize = 9.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp,
                     ),
                     color = fg.copy(alpha = 0.6f),
                     maxLines = 1,
                 )
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(7.dp))
                 Text(
                     text = value,
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = 11.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                     ),
                     color = fg,
                     maxLines = 1,
                 )
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(7.dp))
                 Icon(
                     imageVector = Icons.Filled.KeyboardArrowDown,
                     contentDescription = null,
                     tint = fg.copy(alpha = 0.6f),
-                    modifier = Modifier.size(7.5.dp),
+                    modifier = Modifier.size(8.5.dp),
                 )
             }
         }
@@ -147,13 +147,21 @@ fun TvAnchoredSelectorMenu(
                 DropdownMenuItem(
                     enabled = option.enabled,
                     text = {
-                        androidx.compose.material3.Text(labelText)
+                        androidx.compose.material3.Text(
+                            text = labelText,
+                            style = androidx.compose.material3.MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = 14.sp,
+                                lineHeight = 18.sp,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                        )
                     },
                     leadingIcon = if (option.selected) {
                         {
                             androidx.compose.material3.Icon(
                                 imageVector = Icons.Filled.Check,
                                 contentDescription = null,
+                                modifier = Modifier.size(18.dp),
                             )
                         }
                     } else {

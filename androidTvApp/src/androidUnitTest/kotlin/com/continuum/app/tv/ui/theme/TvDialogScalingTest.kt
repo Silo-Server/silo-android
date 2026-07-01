@@ -72,7 +72,8 @@ class TvDialogScalingTest {
         assertTrue(textInputDialog.contains(".padding(24.dp)"))
         assertTrue(textInputDialog.contains("verticalArrangement = Arrangement.spacedBy(12.dp)"))
         assertTrue(textInputDialog.contains(".height(48.dp)"))
-        assertTrue(textInputDialog.contains("fontSize = 12.sp"))
+        assertTrue(textInputDialog.contains("TvAnsiKeyboard("))
+        assertTrue(textInputDialog.contains("bottom = 28.dp"))
         assertFalse(textInputDialog.contains(".width(640.dp)"))
         assertFalse(textInputDialog.contains(".height(82.dp)"))
     }

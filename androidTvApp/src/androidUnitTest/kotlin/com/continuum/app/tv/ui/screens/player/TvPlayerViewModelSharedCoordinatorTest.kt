@@ -53,6 +53,22 @@ class TvPlayerViewModelSharedCoordinatorTest {
     }
 
     @Test
+    fun tvPlayerRefreshesServerBackedSettingsBeforeRemoteStartup() {
+        val loadContentBody = viewModelSource
+            .substringAfter("private fun loadContent(")
+            .substringBefore("is VideoPlayerUiState.Ready ->")
+        val refreshIndex = loadContentBody.indexOf("playerSettingsStore.refreshFromServer()")
+        val startIndex = loadContentBody.indexOf("videoPlaybackCoordinator.start(")
+
+        assertTrue(refreshIndex >= 0, "TV playback startup must refresh effective server settings")
+        assertTrue(startIndex >= 0, "TV playback startup must still use the coordinator")
+        assertTrue(
+            refreshIndex < startIndex,
+            "TV must pull user/device effective settings before choosing quality/autoplay/subtitle defaults",
+        )
+    }
+
+    @Test
     fun tvPlaybackStarterOwnsTvStartupAlgorithm() {
         val starterFile = java.io.File(
             "src/androidMain/kotlin/com/continuum/app/tv/ui/screens/player/TvVideoPlaybackStarter.kt",
@@ -104,6 +120,10 @@ class TvPlayerViewModelSharedCoordinatorTest {
             "TV starter must adopt the initial session into PlaybackSessionLifecycle",
         )
         assertTrue(
+            starterSource.contains("fileResolution = version.resolution"),
+            "TV starter must preserve the selected version resolution for later recovery fallbacks",
+        )
+        assertTrue(
             starterSource.contains("requestedOriginalPlaybackMethod(") &&
                 starterSource.contains("audioTrackIndex = request.audioTrackIndex") &&
                 starterSource.contains("playMethod = requestedPlayMethod"),
@@ -141,6 +161,18 @@ class TvPlayerViewModelSharedCoordinatorTest {
         assertTrue(
             unsupportedBody.contains("StartParams("),
             "fallback lifecycle adoption must preserve restart parameters for 404 recovery",
+        )
+        assertTrue(
+            viewModelSource.contains("selectedFileResolution = result.fileResolution"),
+            "TV player state must retain the selected source resolution from startup",
+        )
+        assertTrue(
+            unsupportedBody.contains("resolution = state.selectedFileResolution.orEmpty()"),
+            "runtime fallback must pass the selected source resolution instead of an empty target hint",
+        )
+        assertFalse(
+            unsupportedBody.contains("resolution = \"\""),
+            "runtime fallback must not ask the server for an unspecified full transcode",
         )
         assertTrue(
             viewModelSource.contains("private val capabilityDetector: PlaybackCapabilityDetector"),

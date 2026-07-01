@@ -407,6 +407,7 @@ class PlayerViewModel(
                     return@launch
                 }
 
+                runCatching { playerSettingsStore.refreshFromServer() }
                 when (val playbackState = videoPlaybackCoordinator.start(
                     VideoPlaybackStartRequest(
                         contentId = contentId,

@@ -40,6 +40,7 @@ import com.continuum.app.common.player.backend.VideoPlaybackBackendKind
 import com.continuum.app.common.player.backend.VideoPlaybackBackendRequest
 import com.continuum.app.common.player.backend.VideoPlaybackBackendSelector
 import com.continuum.app.common.player.audio.DelayAudioProcessor
+import com.continuum.app.common.player.mpv.MpvPlayer
 import com.continuum.app.common.player.subtitle.SubtitleOffsetHolder
 import com.continuum.app.common.settings.PlayerSettingsStore
 import org.koin.android.ext.android.inject
@@ -165,7 +166,8 @@ class ContinuumPlaybackService : MediaSessionService() {
                     val previous = delayProcessor.getActiveDelayMs()
                     delayProcessor.setDelayMs(delayMs)
                     val p = activePlayer
-                    if (previous != delayMs && p != null && p.isPlaying) {
+                    (p as? MpvPlayer)?.setAudioDelayMs(delayMs)
+                    if (previous != delayMs && p != null && p !is MpvPlayer && p.isPlaying) {
                         p.seekTo(p.currentPosition)
                     }
                 }
@@ -184,7 +186,8 @@ class ContinuumPlaybackService : MediaSessionService() {
                     val previous = subtitleOffsetHolder.getOffsetMs()
                     subtitleOffsetHolder.setOffsetMs(offsetMs)
                     val p = activePlayer
-                    if (previous != offsetMs && p != null) {
+                    (p as? MpvPlayer)?.setSubtitleDelayMs(offsetMs)
+                    if (previous != offsetMs && p != null && p !is MpvPlayer) {
                         reparseCurrentMediaItemAtCurrentPosition(p, offsetMs)
                     }
                 }

@@ -184,8 +184,8 @@ private fun TvCastCard(
             text = member.name,
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 11.sp,
-                lineHeight = 12.sp,
+                fontSize = 13.sp,
+                lineHeight = 15.sp,
             ),
             color = if (isFocused) Color.White else Color.White.copy(alpha = 0.88f),
             // Reserve two lines so single- and two-line names bottom-align,
@@ -201,8 +201,8 @@ private fun TvCastCard(
             Text(
                 text = member.character!!,
                 style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 9.sp,
-                    lineHeight = 10.sp,
+                    fontSize = 13.sp,
+                    lineHeight = 15.sp,
                 ),
                 color = Color.White.copy(alpha = 0.55f),
                 maxLines = 1,

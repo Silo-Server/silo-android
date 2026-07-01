@@ -76,6 +76,7 @@ sealed class TvRoute(val route: String) {
     data class Player(
         val contentId: String,
         val fileId: Int? = null,
+        val quality: String? = null,
         val roomId: String? = null,
         val resumePositionSeconds: Double? = null,
         /** Pre-selected audio track index (0-based) chosen on the detail screen. */
@@ -89,6 +90,7 @@ sealed class TvRoute(val route: String) {
             append("player/$contentId")
             val query = buildList {
                 if (fileId != null) add("fileId=$fileId")
+                if (quality != null) add("quality=${quality.routeEncode()}")
                 if (roomId != null) add("roomId=${roomId.routeEncode()}")
                 if (audioTrackIndex != null) add("audioTrackIndex=$audioTrackIndex")
                 if (subtitleTrackIndex != null) add("subtitleTrackIndex=$subtitleTrackIndex")
@@ -101,11 +103,12 @@ sealed class TvRoute(val route: String) {
         },
     ) {
         companion object {
-            const val ROUTE = "player/{contentId}?fileId={fileId}&roomId={roomId}" +
+            const val ROUTE = "player/{contentId}?fileId={fileId}&quality={quality}&roomId={roomId}" +
                 "&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}" +
                 "&autoAdvanceCount={autoAdvanceCount}&resumePosition={resumePosition}"
             const val ARG_CONTENT_ID = "contentId"
             const val ARG_FILE_ID = "fileId"
+            const val ARG_QUALITY = "quality"
             const val ARG_ROOM_ID = "roomId"
             const val ARG_AUDIO_TRACK_INDEX = "audioTrackIndex"
             const val ARG_SUBTITLE_TRACK_INDEX = "subtitleTrackIndex"

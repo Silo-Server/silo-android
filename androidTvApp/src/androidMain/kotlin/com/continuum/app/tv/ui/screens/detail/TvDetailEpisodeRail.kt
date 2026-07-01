@@ -278,7 +278,8 @@ private fun TvDetailEpisodeCard(
             }
         }
 
-        // Text block mirrors tvOS 18pt/6pt vertical rhythm at Android half scale.
+        // Text block mirrors tvOS vertical rhythm at Android canvas scale, with
+        // a readability floor for episode metadata and descriptions.
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -286,7 +287,7 @@ private fun TvDetailEpisodeCard(
             ) {
                 Text(
                     text = episodeEyebrow(episode),
-                    fontSize = 9.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.0.sp,
                     color = ContinuumOnSurface.copy(alpha = 0.55f),
@@ -299,7 +300,7 @@ private fun TvDetailEpisodeCard(
 
             Text(
                 text = episode.title ?: "Episode ${episode.episodeNumber}",
-                fontSize = 13.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = when {
                     isCurrent -> ContinuumOnSurface
@@ -317,15 +318,15 @@ private fun TvDetailEpisodeCard(
                 // card metrics.
                 Text(
                     text = overview,
-                    fontSize = 10.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Normal,
                     color = ContinuumSecondaryText,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 11.sp,
+                    lineHeight = 14.sp,
                     modifier = Modifier
                         .padding(top = 2.dp)
-                        .height(33.dp),
+                        .height(42.dp),
                 )
             }
         }
@@ -343,8 +344,8 @@ private fun NowViewingTag() {
         Text(
             text = "NOW VIEWING",
             style = capsuleCaps.copy(
-                fontSize = 7.sp,
-                lineHeight = 9.sp,
+                fontSize = 13.sp,
+                lineHeight = 15.sp,
                 letterSpacing = 0.8.sp,
             ),
             color = Color.Black,

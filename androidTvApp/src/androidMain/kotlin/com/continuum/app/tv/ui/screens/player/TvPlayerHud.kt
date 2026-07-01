@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -68,11 +70,21 @@ import com.continuum.app.model.settings.SubtitleBackgroundStylePreset
 import com.continuum.app.model.settings.SubtitleFontSizePreset
 import com.continuum.app.model.settings.SubtitlePositionPreset
 
+private val HudMaxWidth = 600.dp
+private val HudMinHeight = 250.dp
+private val HudMaxHeight = 310.dp
+private val HudPanelCorner = 18.dp
+private val HudPanelPadding = 18.dp
+private val HudContentGap = 12.dp
+private val HudTabHeight = 32.dp
+private val HudPaneBottomPadding = 12.dp
+private val HudPaneColumnGap = 28.dp
+
 /**
  * Floating top-center player HUD mirroring `iosApp/.../tvOS/TVPlayerInfoHUD.swift`.
  *
- * A frosted/opaque dark card (~550dp wide, ~190dp tall, corner ~14dp) drops on
- * top of the video with NO full-screen dim so playback stays visible. A
+ * A frosted/opaque dark card with adaptive Android TV bounds drops on top of
+ * the video with NO full-screen dim so playback stays visible. A
  * horizontal pill TAB BAR sits at the top of the card; the selected pane renders
  * below it.
  *
@@ -174,15 +186,15 @@ fun TvPlayerHud(
     // Top-center card. No full-screen scrim — the video stays visible behind it.
     Box(
         modifier = modifier
-            .widthIn(max = 550.dp)
-            .fillMaxWidth()
-            .height(190.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .widthIn(max = HudMaxWidth)
+            .fillMaxWidth(0.66f)
+            .heightIn(min = HudMinHeight, max = HudMaxHeight)
+            .clip(RoundedCornerShape(HudPanelCorner))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
             .border(
                 width = 0.5.dp,
                 color = Color.White.copy(alpha = 0.14f),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(HudPanelCorner),
             )
             .onPreviewKeyEvent { ev ->
                 if (ev.type == KeyEventType.KeyUp &&
@@ -199,13 +211,13 @@ fun TvPlayerHud(
                     false
                 }
             }
-            .padding(horizontal = 14.dp, vertical = 11.dp),
+            .padding(HudPanelPadding),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer { alpha = if (activePicker != null) 0.28f else 1f },
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(HudContentGap),
         ) {
             // Horizontal pill tab bar at the top.
             Row(
@@ -232,18 +244,20 @@ fun TvPlayerHud(
             // Content pane below the tab bar.
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 when (selectedTab) {
-                    HudTab.Info -> HudInfoPane(
-                        title = title,
-                        positionSec = positionSec,
-                        durationSec = durationSec,
-                        seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber,
-                        stats = stats,
-                        playbackPlan = playbackPlan,
-                        subtitleTracks = subtitleTracks,
-                        chapters = chapters,
-                    )
-                    HudTab.Stats -> HudStatsPane(stats)
+                    HudTab.Info -> HudPaneViewport {
+                        HudInfoPane(
+                            title = title,
+                            positionSec = positionSec,
+                            durationSec = durationSec,
+                            seasonNumber = seasonNumber,
+                            episodeNumber = episodeNumber,
+                            stats = stats,
+                            playbackPlan = playbackPlan,
+                            subtitleTracks = subtitleTracks,
+                            chapters = chapters,
+                        )
+                    }
+                    HudTab.Stats -> HudPaneViewport { HudStatsPane(stats) }
                     HudTab.Video -> HudVideoPane(
                         videoQualities = videoQualities,
                         onSelectVideoQuality = onSelectVideoQuality,
@@ -284,10 +298,12 @@ fun TvPlayerHud(
                         enabled = activePicker == null,
                         onPresentPicker = presentPicker,
                     )
-                    HudTab.Chapters -> HudChaptersPane(
-                        chapters = chapters,
-                        onSelectChapter = onSelectChapter,
-                    )
+                    HudTab.Chapters -> HudPaneViewport {
+                        HudChaptersPane(
+                            chapters = chapters,
+                            onSelectChapter = onSelectChapter,
+                        )
+                    }
                 }
             }
         }
@@ -375,7 +391,7 @@ private fun HudTabPill(
     Box(
         modifier = Modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .height(24.dp)
+            .height(HudTabHeight)
             .clip(RoundedCornerShape(25.dp))
             .background(bg)
             .focusRequester(focusRequester)
@@ -387,11 +403,41 @@ private fun HudTabPill(
             text = label,
             color = fg,
             style = MaterialTheme.typography.titleSmall.copy(
-                fontSize = 11.sp,
-                lineHeight = 13.sp,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.SemiBold,
             ),
         )
+    }
+}
+
+@Composable
+private fun HudPaneViewport(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = HudPaneBottomPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        content = content,
+    )
+}
+
+@Composable
+private fun HudTwoColumnPane(
+    modifier: Modifier = Modifier,
+    left: @Composable ColumnScope.() -> Unit,
+    right: @Composable ColumnScope.() -> Unit,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
+    ) {
+        PaneColumn("Title", modifier = Modifier.weight(1f), content = left)
+        PaneColumn("Stream", modifier = Modifier.weight(1f), content = right)
     }
 }
 
@@ -436,14 +482,9 @@ private fun HudInfoPane(
         stats.resolution?.let { add(it) }
     }
 
-    Row(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(24.dp),
-    ) {
-        // Title column.
-        PaneColumn("Title", modifier = Modifier.weight(1f)) {
+    HudTwoColumnPane(
+        modifier = modifier,
+        left = {
             Text(
                 text = title.ifBlank { "Now Playing" },
                 color = MaterialTheme.colorScheme.onSurface,
@@ -459,20 +500,18 @@ private fun HudInfoPane(
                 Text(
                     text = episodeTag,
                     color = Color.White.copy(alpha = 0.75f),
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 11.sp, lineHeight = 13.sp),
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 13.sp, lineHeight = 16.sp),
                 )
             }
             if (metaBits.isNotEmpty()) {
                 Text(
                     text = metaBits.joinToString("  ·  "),
                     color = Color.White.copy(alpha = 0.65f),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.sp, lineHeight = 12.sp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp),
                 )
             }
-        }
-
-        // Stream column.
-        PaneColumn("Stream", modifier = Modifier.weight(1f)) {
+        },
+        right = {
             if (badges.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     badges.forEach { badge ->
@@ -490,8 +529,8 @@ private fun HudInfoPane(
                                 text = badge,
                                 color = Color.White,
                                 style = MaterialTheme.typography.labelMedium.copy(
-                                    fontSize = 8.sp,
-                                    lineHeight = 10.sp,
+                                    fontSize = 13.sp,
+                                    lineHeight = 16.sp,
                                     fontWeight = FontWeight.SemiBold,
                                 ),
                             )
@@ -502,8 +541,8 @@ private fun HudInfoPane(
             streamRows.forEach { (label, value) ->
                 LabelValueRow(label = label, value = value)
             }
-        }
-    }
+        },
+    )
 }
 
 private fun PlaybackExecutionPlan?.validatedHdrBadge(): String? {
@@ -537,8 +576,8 @@ private fun PaneColumn(
             text = header.uppercase(),
             color = Color.White.copy(alpha = 0.5f),
             style = MaterialTheme.typography.labelMedium.copy(
-                fontSize = 7.sp,
-                lineHeight = 8.sp,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.SemiBold,
             ),
         )
@@ -553,8 +592,8 @@ private fun LabelValueRow(label: String, value: String) {
             text = label,
             color = MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 11.sp,
-                lineHeight = 13.sp,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.Medium,
             ),
         )
@@ -562,7 +601,7 @@ private fun LabelValueRow(label: String, value: String) {
         Text(
             text = value,
             color = Color.White.copy(alpha = 0.7f),
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 11.sp, lineHeight = 13.sp),
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 13.sp, lineHeight = 16.sp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -585,22 +624,26 @@ private fun HudStatsPane(stats: PlayerStatsSnapshot, modifier: Modifier = Modifi
     }
 
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         rows.forEach { (label, value) ->
             Row(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = label,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 13.sp,
+                        lineHeight = 16.sp,
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                     text = value,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 13.sp,
+                        lineHeight = 16.sp,
+                    ),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
@@ -660,7 +703,7 @@ private fun onOffLabel(value: Boolean): String = if (value) "On" else "Off"
 
 /**
  * Video pane — drill-in setting rows opening picker dialogs: Quality, Speed,
- * Aspect, HDR (+ auto behaviors), with the Sleep-timer kept inline below.
+ * Aspect, HDR (+ auto behaviors), and Sleep Timer.
  */
 @Composable
 private fun HudVideoPane(
@@ -685,7 +728,7 @@ private fun HudVideoPane(
 ) {
     Row(
         modifier = modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
     ) {
         // Playback column — Quality / Speed / Aspect / HDR + auto toggles.
         PaneColumn(
@@ -813,53 +856,44 @@ private fun HudVideoPane(
             }
         }
 
-        // Sync / timing column — Sleep timer kept where it is (inline chips).
+        // Sync / timing column.
         PaneColumn(
             "Timers",
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState()),
         ) {
-            Text(
-                text = "Sleep timer",
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontSize = 11.sp,
-                    lineHeight = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                ),
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
-            )
             val activeSleep = sleepTimerState as? SleepTimerState.Active
-            if (activeSleep != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Sleeping in ${formatSleepRemaining(activeSleep.remainingSeconds)}",
-                        style = MaterialTheme.typography.titleSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
+            HudFocusedSettingRow(
+                label = "Sleep timer",
+                value = activeSleep?.let { "Sleeping in ${formatSleepRemaining(it.remainingSeconds)}" } ?: "Off",
+                enabled = enabled,
+                onActivate = {
+                    onPresentPicker(
+                        HudPickerPresentation(
+                            title = "Sleep Timer",
+                            options = buildList {
+                                if (activeSleep != null) {
+                                    add(HudPickerOption("cancel", "Cancel timer"))
+                                }
+                                add(HudPickerOption("off", "Off"))
+                                addAll(
+                                    SLEEP_TIMER_PRESETS.map { minutes ->
+                                        HudPickerOption(minutes.toString(), sleepPresetLabel(minutes))
+                                    },
+                                )
+                            },
+                            selectedId = if (activeSleep != null) "cancel" else "off",
+                            onSelect = { id ->
+                                when (id) {
+                                    "cancel", "off" -> onCancelSleepTimer()
+                                    else -> id.toIntOrNull()?.let(onStartSleepTimer)
+                                }
+                            },
+                        ),
                     )
-                    HudClickChip(label = "Cancel", selected = false, enabled = enabled, onClick = onCancelSleepTimer)
-                }
-            } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    SLEEP_TIMER_PRESETS.forEach { minutes ->
-                        HudClickChip(
-                            label = sleepPresetLabel(minutes),
-                            selected = false,
-                            enabled = enabled,
-                            onClick = { onStartSleepTimer(minutes) },
-                        )
-                    }
-                }
-            }
+                },
+            )
         }
     }
 }
@@ -910,8 +944,8 @@ private fun HudClickChip(
             text = label,
             color = fg,
             style = MaterialTheme.typography.titleSmall.copy(
-                fontSize = 11.sp,
-                lineHeight = 13.sp,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.SemiBold,
             ),
         )
@@ -1008,9 +1042,13 @@ private fun HudSubtitlesPane(
 ) {
     LaunchedEffect(Unit) { onPaneShown() }
 
+    val subtitleTrackFocus = remember { FocusRequester() }
+    val subtitleTextColorFocus = remember { FocusRequester() }
+    val subtitleBackgroundColorFocus = remember { FocusRequester() }
+
     Row(
         modifier = modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
     ) {
         // Tracks + sync column.
         PaneColumn(
@@ -1025,6 +1063,8 @@ private fun HudSubtitlesPane(
                     label = "Subtitles",
                     value = selectedSub?.displayLabel?.ifBlank { "On" } ?: "Off",
                     enabled = enabled,
+                    focusRequester = subtitleTrackFocus,
+                    rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         val options = buildList {
                             add(HudPickerOption(id = "-1", label = "Off"))
@@ -1052,6 +1092,7 @@ private fun HudSubtitlesPane(
                     label = "Delay",
                     value = delayLabel(subtitleDelayMs),
                     enabled = enabled,
+                    rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
                             delayPicker(
@@ -1071,6 +1112,7 @@ private fun HudSubtitlesPane(
                     value = FONT_SIZES.firstOrNull { it.first == appearance.fontSize }?.second
                         ?: appearance.fontSize.name,
                     enabled = enabled,
+                    rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
                             HudPickerPresentation(
@@ -1092,6 +1134,7 @@ private fun HudSubtitlesPane(
                     value = FONT_FAMILIES.firstOrNull { it.first == appearance.fontFamily }?.second
                         ?: appearance.fontFamily,
                     enabled = enabled,
+                    rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
                             HudPickerPresentation(
@@ -1113,6 +1156,7 @@ private fun HudSubtitlesPane(
                     value = BACKGROUND_STYLES.firstOrNull { it.first == appearance.backgroundStyle }?.second
                         ?: appearance.backgroundStyle.name,
                     enabled = enabled,
+                    rightFocusRequester = subtitleBackgroundColorFocus,
                     onActivate = {
                         onPresentPicker(
                             HudPickerPresentation(
@@ -1133,6 +1177,7 @@ private fun HudSubtitlesPane(
                     label = "Opacity",
                     value = "${appearance.backgroundOpacity}%",
                     enabled = enabled,
+                    rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
                             HudPickerPresentation(
@@ -1153,6 +1198,7 @@ private fun HudSubtitlesPane(
                     label = "Outline",
                     value = onOffLabel(appearance.textOutline),
                     enabled = enabled,
+                    rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
                             boolPicker(
@@ -1169,6 +1215,7 @@ private fun HudSubtitlesPane(
                     value = POSITIONS.firstOrNull { it.first == appearance.position }?.second
                         ?: appearance.position.name,
                     enabled = enabled,
+                    rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
                             HudPickerPresentation(
@@ -1194,26 +1241,56 @@ private fun HudSubtitlesPane(
                 .weight(1f)
                 .verticalScroll(rememberScrollState()),
         ) {
+            HudSubtitlePreview(appearance = appearance)
+
+            HudFocusedSettingRow(
+                label = "No background",
+                value = if (appearance.backgroundStyle == SubtitleBackgroundStylePreset.None) "On" else "Off",
+                enabled = enabled,
+                leftFocusRequester = subtitleTrackFocus,
+                onActivate = {
+                    onAppearanceChanged(appearance.copy(backgroundStyle = SubtitleBackgroundStylePreset.None))
+                },
+            )
+
             // Color swatches stay inline — tvOS draws color swatches directly,
             // and a row→dialog of colors would lose the at-a-glance palette.
             StyleSection("Text color") {
-                TEXT_COLOR_SWATCHES.forEach { hex ->
-                    StyleColorSwatch(hex, appearance.fontColor.equals(hex, ignoreCase = true), enabled) {
+                TEXT_COLOR_SWATCHES.forEachIndexed { index, hex ->
+                    StyleColorSwatch(
+                        hex = hex,
+                        selected = appearance.fontColor.equals(hex, ignoreCase = true),
+                        enabled = enabled,
+                        focusRequester = if (index == 0) subtitleTextColorFocus else null,
+                        leftFocusRequester = subtitleTrackFocus,
+                    ) {
                         onAppearanceChanged(appearance.copy(fontColor = hex))
                     }
                 }
             }
             StyleSection("Background color") {
-                BACKGROUND_COLOR_SWATCHES.forEach { hex ->
-                    StyleColorSwatch(hex, appearance.backgroundColor.equals(hex, ignoreCase = true), enabled) {
+                BACKGROUND_COLOR_SWATCHES.forEachIndexed { index, hex ->
+                    StyleColorSwatch(
+                        hex = hex,
+                        selected = appearance.backgroundColor.equals(hex, ignoreCase = true),
+                        enabled = enabled,
+                        focusRequester = if (index == 0) subtitleBackgroundColorFocus else null,
+                        leftFocusRequester = subtitleTrackFocus,
+                    ) {
                         onAppearanceChanged(appearance.copy(backgroundColor = hex))
                     }
                 }
             }
             if (appearance.textOutline) {
                 StyleSection("Outline color") {
-                    OUTLINE_COLOR_SWATCHES.forEach { hex ->
-                        StyleColorSwatch(hex, appearance.textOutlineColor.equals(hex, ignoreCase = true), enabled) {
+                    OUTLINE_COLOR_SWATCHES.forEachIndexed { index, hex ->
+                        StyleColorSwatch(
+                            hex = hex,
+                            selected = appearance.textOutlineColor.equals(hex, ignoreCase = true),
+                            enabled = enabled,
+                            focusRequester = if (index == 0) subtitleBackgroundColorFocus else null,
+                            leftFocusRequester = subtitleTrackFocus,
+                        ) {
                             onAppearanceChanged(appearance.copy(textOutlineColor = hex))
                         }
                     }
@@ -1227,10 +1304,20 @@ private fun HudSubtitlesPane(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     if (onSearchSubtitles != null) {
-                        HudActionRow(label = "Search subtitles", enabled = enabled, onClick = onSearchSubtitles)
+                        HudActionRow(
+                            label = "Search subtitles",
+                            enabled = enabled,
+                            leftFocusRequester = subtitleTrackFocus,
+                            onClick = onSearchSubtitles,
+                        )
                     }
                     if (onTranslateWithAi != null) {
-                        HudActionRow(label = "Translate with AI", enabled = enabled, onClick = onTranslateWithAi)
+                        HudActionRow(
+                            label = "Translate with AI",
+                            enabled = enabled,
+                            leftFocusRequester = subtitleTrackFocus,
+                            onClick = onTranslateWithAi,
+                        )
                     }
                 }
             }
@@ -1239,6 +1326,60 @@ private fun HudSubtitlesPane(
 }
 
 @Composable
+private fun HudSubtitlePreview(
+    appearance: SubtitleAppearance,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(6.dp)
+    val backgroundAlpha = if (appearance.backgroundStyle == SubtitleBackgroundStylePreset.None) {
+        0f
+    } else {
+        appearance.backgroundOpacity.coerceIn(0, 100) / 100f
+    }
+    val backgroundColor = hexToColor(appearance.backgroundColor).copy(alpha = backgroundAlpha)
+    val borderColor = when {
+        appearance.textOutline || appearance.backgroundStyle == SubtitleBackgroundStylePreset.Outline ->
+            hexToColor(appearance.textOutlineColor).copy(alpha = 0.7f)
+        else -> Color.Transparent
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 5.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Text(
+            text = "Example",
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(backgroundColor)
+                .border(0.5.dp, borderColor, shape)
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "Subtitle example",
+                color = hexToColor(appearance.fontColor),
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 14.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun StyleSection(title: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(top = 5.dp)) {
         Text(
@@ -1246,33 +1387,58 @@ private fun StyleSection(title: String, content: @Composable () -> Unit) {
             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
         )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) { content() }
     }
 }
 
 @Composable
-private fun StyleColorSwatch(hex: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun StyleColorSwatch(
+    hex: String,
+    selected: Boolean,
+    enabled: Boolean,
+    focusRequester: FocusRequester? = null,
+    leftFocusRequester: FocusRequester? = null,
+    onClick: () -> Unit,
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
+    val swatchColor = hexToColor(hex)
+    val isLightSwatch = isLightHexColor(hex)
+    val checkTint = if (isLightSwatch) Color.Black.copy(alpha = 0.78f) else Color.White
     val ring = when {
+        isFocused && isLightSwatch -> Color.Black.copy(alpha = 0.78f)
         isFocused -> Color.White
+        selected && isLightSwatch -> Color.Black.copy(alpha = 0.62f)
         selected -> Color.White.copy(alpha = 0.85f)
         else -> Color.White.copy(alpha = 0.25f)
     }
     Box(
         modifier = Modifier
-            .size(28.dp)
+            .size(24.dp)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .focusProperties {
+                if (leftFocusRequester != null) left = leftFocusRequester
+            }
             .clip(CircleShape)
-            .background(hexToColor(hex))
+            .background(swatchColor)
             .border(width = if (isFocused || selected) 2.dp else 1.dp, color = ring, shape = CircleShape)
+            .focusable(enabled = enabled, interactionSource = interactionSource)
             .clickable(enabled = enabled, interactionSource = interactionSource, indication = null) { onClick() },
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = checkTint,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+    }
 }
 
 private fun hexToColor(hex: String): Color = try {
@@ -1280,6 +1446,15 @@ private fun hexToColor(hex: String): Color = try {
     Color(0xFF000000.toInt() or (cleaned.toLong(16).toInt() and 0x00FFFFFF))
 } catch (_: NumberFormatException) {
     Color.White
+}
+
+private fun isLightHexColor(hex: String): Boolean {
+    val cleaned = hex.removePrefix("#")
+    val value = cleaned.toLongOrNull(16) ?: return false
+    val red = ((value shr 16) and 0xFF) / 255.0
+    val green = ((value shr 8) and 0xFF) / 255.0
+    val blue = (value and 0xFF) / 255.0
+    return (red * 0.299 + green * 0.587 + blue * 0.114) > 0.72
 }
 
 // Subtitle-appearance option sets are shared with the Settings → Subtitles
@@ -1311,6 +1486,8 @@ private fun delayLabel(valueMs: Int): String =
 private fun HudActionRow(
     label: String,
     enabled: Boolean = true,
+    focusRequester: FocusRequester? = null,
+    leftFocusRequester: FocusRequester? = null,
     onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -1322,6 +1499,10 @@ private fun HudActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .focusProperties {
+                if (leftFocusRequester != null) left = leftFocusRequester
+            }
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
             .clickable(enabled = enabled, interactionSource = interactionSource, indication = null) { onClick() }
@@ -1397,15 +1578,11 @@ private fun HudChaptersPane(
         HudEmptyStatePane("No chapters in this title", modifier)
         return
     }
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
+    Column(
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        itemsIndexed(
-            chapters,
-            key = { _, c -> c.index },
-            contentType = { _, _ -> "hud-chapter" },
-        ) { idx, ch ->
+        chapters.forEachIndexed { idx, ch ->
             HudChapterRow(
                 chapter = ch,
                 onSelect = { onSelectChapter(idx) },
@@ -1439,8 +1616,8 @@ private fun HudChapterRow(
             text = formatTime(chapter.startSeconds),
             color = fg.copy(alpha = 0.72f),
             style = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 10.sp,
-                lineHeight = 12.sp,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.Medium,
             ),
         )
@@ -1448,8 +1625,8 @@ private fun HudChapterRow(
             text = chapter.title.ifBlank { "Chapter ${chapter.index + 1}" },
             color = fg,
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 11.sp,
-                lineHeight = 13.sp,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.SemiBold,
             ),
             modifier = Modifier.weight(1f),
@@ -1517,6 +1694,9 @@ internal fun HudFocusedSettingRow(
     value: String,
     enabled: Boolean = true,
     colorHex: String? = null,
+    focusRequester: FocusRequester? = null,
+    leftFocusRequester: FocusRequester? = null,
+    rightFocusRequester: FocusRequester? = null,
     onActivate: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -1531,6 +1711,11 @@ internal fun HudFocusedSettingRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .focusProperties {
+                if (leftFocusRequester != null) left = leftFocusRequester
+                if (rightFocusRequester != null) right = rightFocusRequester
+            }
             .graphicsLayer { alpha = rowAlpha }
             .clip(RoundedCornerShape(5.dp))
             .background(bg)
@@ -1546,8 +1731,8 @@ internal fun HudFocusedSettingRow(
             text = label,
             color = labelColor,
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 11.sp,
-                lineHeight = 13.sp,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.Medium,
             ),
             maxLines = 1,
@@ -1571,8 +1756,8 @@ internal fun HudFocusedSettingRow(
                 text = value,
                 color = valueColor,
                 style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = 11.sp,
-                    lineHeight = 13.sp,
+                    fontSize = 13.sp,
+                    lineHeight = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                 ),
                 maxLines = 1,
@@ -1635,8 +1820,8 @@ internal fun HudPickerDialog(
                 text = presentation.title,
                 color = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.headlineSmall.copy(
-                    fontSize = 15.sp,
-                    lineHeight = 17.sp,
+                    fontSize = 17.sp,
+                    lineHeight = 20.sp,
                     fontWeight = FontWeight.SemiBold,
                 ),
             )
@@ -1702,8 +1887,8 @@ private fun HudPickerOptionRow(
             text = option.label,
             color = fg,
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 11.sp,
-                lineHeight = 13.sp,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.Medium,
             ),
             maxLines = 1,

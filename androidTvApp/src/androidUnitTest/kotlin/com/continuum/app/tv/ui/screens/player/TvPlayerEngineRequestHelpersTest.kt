@@ -33,8 +33,8 @@ class TvPlayerEngineRequestHelpersTest {
 
     @Test
     fun hardContainerDetectionFlagsMpvOriginalContainers() {
-        assertTrue(isHardPlaybackContainer("mkv"))
-        assertTrue(isHardPlaybackContainer(".Matroska"))
+        assertFalse(isHardPlaybackContainer("mkv"))
+        assertFalse(isHardPlaybackContainer(".Matroska"))
         assertTrue(isHardPlaybackContainer("avi"))
         assertTrue(isHardPlaybackContainer("mov"))
         assertTrue(isHardPlaybackContainer("qt"))

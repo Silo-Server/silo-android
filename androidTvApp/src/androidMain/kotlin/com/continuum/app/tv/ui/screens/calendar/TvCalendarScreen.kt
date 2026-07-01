@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -63,20 +64,18 @@ import com.continuum.app.model.calendar.CalendarBadge
 import com.continuum.app.model.calendar.CalendarFilter
 import com.continuum.app.model.calendar.CalendarItem
 import com.continuum.app.model.calendar.CalendarItemType
+import com.continuum.app.tv.ui.components.LocalAmbientBackdropTint
 import com.continuum.app.tv.ui.components.TvLoadingScreen
+import com.continuum.app.tv.ui.components.TvRootHeroBackdrop
+import com.continuum.app.tv.ui.components.rememberAmbientBackdropTintState
 import com.continuum.app.tv.ui.shell.TvTopMenuLayout
-import com.continuum.app.tv.ui.theme.ContinuumBlue
 import com.continuum.app.tv.ui.theme.DarkOnPrimary
 import com.continuum.app.tv.ui.theme.FocusedContainer
 import com.continuum.app.tv.ui.theme.FocusedContent
+import com.continuum.app.tv.ui.theme.RowDimens
 import com.continuum.app.tv.ui.theme.Spacing
-import com.continuum.app.model.personal.UserLibrary
-import com.continuum.app.network.ApiResult
-import com.continuum.app.repository.PersonalDataRepository
 import com.continuum.app.viewmodel.CalendarViewModel
-import androidx.compose.runtime.produceState
 import kotlinx.coroutines.launch
-import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -88,8 +87,7 @@ import java.util.Locale
  * `GET /api/v1/calendar`). Rebuilt to match the silo-apple tvOS Calendar:
  *
  *  - A single segmented Following / Trending / All capsule (one container, the
- *    selected segment filled), plus the Android-only per-library rail in the
- *    same grammar when the user has more than one library.
+ *    selected segment filled), matching tvOS without an Android-only rail.
  *  - A focusable week strip: prev/next chevrons around seven day cells (weekday
  *    + day number + an event-dot when the day has releases), a selected-day
  *    highlight independent of "today", a "Today" jump, and a trailing
@@ -114,17 +112,6 @@ fun TvCalendarScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
 
-    // Library list for the per-library filter — same source the phone Calendar
-    // uses (PersonalDataRepository.listUserLibraries). Only surfaced when the
-    // user has more than one library, matching the phone.
-    val personalDataRepository: PersonalDataRepository = koinInject()
-    val libraries by produceState(initialValue = emptyList<UserLibrary>()) {
-        value = when (val result = personalDataRepository.listUserLibraries()) {
-            is ApiResult.Success -> result.data
-            else -> emptyList()
-        }
-    }
-
     // First focusable element is the segmented filter capsule so the D-pad
     // lands there when the Calendar tab swaps in; gate the jump so a silent
     // re-emission doesn't yank focus back after the user has navigated.
@@ -145,90 +132,126 @@ fun TvCalendarScreen(
     val scope = rememberCoroutineScope()
     var shelfFocusDay by remember { mutableStateOf<String?>(null) }
     var shelfFocusRequest by remember { mutableIntStateOf(0) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-    ) {
-        Column(
-            modifier = Modifier.padding(
-                start = Spacing.safeArea,
-                end = Spacing.safeArea,
-                top = TvTopMenuLayout.contentTopInset,
-                bottom = Spacing.sm,
-            ),
-            verticalArrangement = Arrangement.spacedBy(Spacing.md),
-        ) {
-            FilterBar(
-                selected = state.filter,
-                onSelect = viewModel::setFilter,
-                firstSegmentFocusRequester = filterFocusRequester,
-            )
-
-            if (libraries.size > 1) {
-                LibraryRail(
-                    libraries = libraries,
-                    selectedLibraryId = state.libraryId,
-                    onSelect = viewModel::setLibrary,
-                )
-            }
-
-            WeekStrip(
-                weekDates = state.weekDates,
-                today = state.today,
-                selectedDay = state.selectedDay,
-                isCurrentWeek = state.isCurrentWeek,
-                hasEvents = { date -> state.itemsFor(date).isNotEmpty() },
-                onSelectDay = { date ->
-                    viewModel.selectDay(date)
-                    val index = state.weekDates.indexOf(date)
-                    if (index >= 0) {
-                        scope.launch { listState.animateScrollToItem(index) }
-                    }
-                    if (state.itemsFor(date).isNotEmpty()) {
-                        shelfFocusDay = date
-                        shelfFocusRequest += 1
-                    }
-                },
-                onPrevWeek = viewModel::prevWeek,
-                onNextWeek = viewModel::nextWeek,
-                onToday = viewModel::goToToday,
-            )
+    val tintState = rememberAmbientBackdropTintState()
+    val initialTintItem = state.weekDates
+        .asSequence()
+        .mapNotNull { date ->
+            state.itemsFor(date).firstOrNull { !it.posterUrl.isNullOrBlank() }
         }
+        .firstOrNull()
+    LaunchedEffect(initialTintItem?.contentId, initialTintItem?.posterUrl) {
+        tintState.set(null, initialTintItem?.posterUrl)
+    }
 
-        when {
-            // Unconditional (phone parity): the shared VM keeps the old week's
-            // days during a new week/filter load, so gating these on
-            // !hasAnyItems would show stale content + suppress errors on a
-            // week change.
-            state.isLoading -> TvLoadingScreen()
-            state.error != null -> CalendarMessage(
-                title = state.error ?: "Failed to load calendar",
-                subtitle = "Press the week arrows to try another week.",
-                action = CalendarAction("Refresh", viewModel::refresh),
+    CompositionLocalProvider(LocalAmbientBackdropTint provides tintState) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            TvRootHeroBackdrop(
+                content = null,
+                emptyWashColor = Color(0xFF14365A),
+                modifier = Modifier.fillMaxSize(),
             )
-            !state.hasAnyItems -> CalendarMessage(
-                title = emptyTitle(state.filter),
-                subtitle = emptyCopy(state.filter),
-                action = if (state.filter != CalendarFilter.All) {
-                    CalendarAction("Show Everything") { viewModel.setFilter(CalendarFilter.All) }
-                } else {
-                    CalendarAction("Refresh", viewModel::refresh)
-                },
-            )
-            else -> DayList(
-                state = state,
-                listState = listState,
-                shelfFocusDay = shelfFocusDay,
-                shelfFocusRequest = shelfFocusRequest,
-                onOpenItemDetail = onOpenItemDetail,
-            )
+
+            Column(
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(
+                        start = Spacing.safeArea,
+                        end = Spacing.safeArea,
+                        top = TvTopMenuLayout.contentTopInset,
+                        bottom = Spacing.sm,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.lg),
+                ) {
+                    CalendarControlRow(
+                        selectedFilter = state.filter,
+                        onSelectFilter = viewModel::setFilter,
+                        firstSegmentFocusRequester = filterFocusRequester,
+                    )
+
+                    WeekStrip(
+                        weekDates = state.weekDates,
+                        today = state.today,
+                        selectedDay = state.selectedDay,
+                        isCurrentWeek = state.isCurrentWeek,
+                        hasEvents = { date -> state.itemsFor(date).isNotEmpty() },
+                        onSelectDay = { date ->
+                            viewModel.selectDay(date)
+                            val index = state.weekDates.indexOf(date)
+                            if (index >= 0) {
+                                scope.launch { listState.animateScrollToItem(index) }
+                            }
+                            if (state.itemsFor(date).isNotEmpty()) {
+                                shelfFocusDay = date
+                                shelfFocusRequest += 1
+                            }
+                        },
+                        onPrevWeek = viewModel::prevWeek,
+                        onNextWeek = viewModel::nextWeek,
+                        onToday = viewModel::goToToday,
+                    )
+                }
+
+                when {
+                    // Unconditional (phone parity): the shared VM keeps the old week's
+                    // days during a new week/filter load, so gating these on
+                    // !hasAnyItems would show stale content + suppress errors on a
+                    // week change.
+                    state.isLoading -> TvLoadingScreen()
+                    state.error != null -> CalendarMessage(
+                        title = state.error ?: "Failed to load calendar",
+                        subtitle = "Press the week arrows to try another week.",
+                        action = CalendarAction("Refresh", viewModel::refresh),
+                    )
+                    !state.hasAnyItems -> CalendarMessage(
+                        title = emptyTitle(state.filter),
+                        subtitle = emptyCopy(state.filter),
+                        action = if (state.filter != CalendarFilter.All) {
+                            CalendarAction("Show Everything") { viewModel.setFilter(CalendarFilter.All) }
+                        } else {
+                            CalendarAction("Refresh", viewModel::refresh)
+                        },
+                    )
+                    else -> DayList(
+                        state = state,
+                        listState = listState,
+                        shelfFocusDay = shelfFocusDay,
+                        shelfFocusRequest = shelfFocusRequest,
+                        onItemFocused = { item -> tintState.set(null, item.posterUrl) },
+                        onOpenItemDetail = onOpenItemDetail,
+                    )
+                }
+            }
         }
     }
 }
 
 // MARK: - Filter bar (segmented capsule)
+
+@Composable
+private fun CalendarControlRow(
+    selectedFilter: String,
+    onSelectFilter: (String) -> Unit,
+    firstSegmentFocusRequester: FocusRequester,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusGroup(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FilterBar(
+            selected = selectedFilter,
+            onSelect = onSelectFilter,
+            firstSegmentFocusRequester = firstSegmentFocusRequester,
+        )
+
+        Spacer(modifier = Modifier.weight(1f))
+    }
+}
 
 /**
  * Single segmented Following / Trending / All capsule — one container wrapping
@@ -280,7 +303,7 @@ private fun FilterSegment(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(shape = shape),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (selected) ContinuumBlue.copy(alpha = 0.88f) else Color.Transparent,
+            containerColor = if (selected) Color.White.copy(alpha = 0.88f) else Color.Transparent,
             contentColor = if (selected) DarkOnPrimary else Color.White.copy(alpha = 0.70f),
             focusedContainerColor = FocusedContainer,
             focusedContentColor = FocusedContent,
@@ -302,48 +325,6 @@ private fun FilterSegment(
                 text = label,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-            )
-        }
-    }
-}
-
-/**
- * Per-library filter rail — an "All libraries" segment plus one per library,
- * shown only when the user has more than one library. Same segmented-capsule
- * grammar as [FilterBar], but as a horizontally scrolling LazyRow so a long
- * library list doesn't dead-end the D-pad. This is Android-only (the phone
- * Calendar's library dropdown has no tvOS equivalent).
- */
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun LibraryRail(
-    libraries: List<UserLibrary>,
-    selectedLibraryId: Int?,
-    onSelect: (Int?) -> Unit,
-) {
-    LazyRow(
-        modifier = Modifier
-            .clip(RoundedCornerShape(100.dp))
-            .background(Color.White.copy(alpha = 0.06f))
-            .focusGroup(),
-        contentPadding = PaddingValues(6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        item(key = "all-libraries") {
-            FilterSegment(
-                label = "All libraries",
-                selected = selectedLibraryId == null,
-                onClick = { onSelect(null) },
-                focusRequester = null,
-            )
-        }
-        items(libraries, key = { it.id }) { library ->
-            FilterSegment(
-                label = library.name,
-                selected = selectedLibraryId == library.id,
-                onClick = { onSelect(library.id) },
-                focusRequester = null,
             )
         }
     }
@@ -485,7 +466,7 @@ private fun DayCell(
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = shape),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) ContinuumBlue.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.05f),
+            containerColor = if (isSelected) Color.White.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.05f),
             contentColor = if (isSelected) DarkOnPrimary else Color.White,
             focusedContainerColor = FocusedContainer,
             focusedContentColor = FocusedContent,
@@ -562,6 +543,7 @@ private fun DayList(
     listState: LazyListState,
     shelfFocusDay: String?,
     shelfFocusRequest: Int,
+    onItemFocused: (CalendarItem) -> Unit,
     onOpenItemDetail: (contentId: String) -> Unit,
 ) {
     LazyColumn(
@@ -583,6 +565,7 @@ private fun DayList(
                 isToday = date == state.today,
                 items = state.itemsFor(date),
                 focusRequest = if (date == shelfFocusDay) shelfFocusRequest else 0,
+                onItemFocused = onItemFocused,
                 onOpenItemDetail = onOpenItemDetail,
             )
         }
@@ -595,6 +578,7 @@ private fun DayShelf(
     isToday: Boolean,
     items: List<CalendarItem>,
     focusRequest: Int,
+    onItemFocused: (CalendarItem) -> Unit,
     onOpenItemDetail: (contentId: String) -> Unit,
 ) {
     val firstCardFocusRequester = remember { FocusRequester() }
@@ -633,7 +617,7 @@ private fun DayShelf(
                     top = 12.dp,
                     bottom = 12.dp,
                 ),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(CalendarCardSpacing),
             ) {
                 items(items, key = { "$date-${it.contentId}" }) { item ->
                     CalendarEventCard(
@@ -641,6 +625,7 @@ private fun DayShelf(
                         // First card holds the focus requester so a week-strip
                         // day selection can hand focus down to this shelf.
                         focusRequester = if (item == items.first()) firstCardFocusRequester else null,
+                        onFocused = { onItemFocused(item) },
                         onClick = { onOpenItemDetail(item.detailContentId) },
                     )
                 }
@@ -689,8 +674,9 @@ private fun NothingScheduledRow() {
 
 // MARK: - Event card
 
-private val cardWidth = 200.dp
-private val cardHeight = cardWidth * 3f / 2f
+private val cardWidth = RowDimens.PosterWidth
+private val cardHeight = RowDimens.PosterHeight
+private val CalendarCardSpacing = 20.dp
 private val posterShape = RoundedCornerShape(12.dp)
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -698,10 +684,15 @@ private val posterShape = RoundedCornerShape(12.dp)
 private fun CalendarEventCard(
     item: CalendarItem,
     focusRequester: FocusRequester?,
+    onFocused: () -> Unit,
     onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
+
+    LaunchedEffect(isFocused, item.contentId) {
+        if (isFocused) onFocused()
+    }
 
     Column(
         modifier = Modifier

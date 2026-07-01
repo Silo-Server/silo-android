@@ -8,6 +8,7 @@ class VideoPlaybackSessionCoordinator(
             is VideoPlaybackStartResult.Ready -> VideoPlayerUiState.Ready(
                 contentId = result.contentId,
                 fileId = result.fileId,
+                fileResolution = result.fileResolution,
                 streamUrl = result.streamUrl,
                 playMethod = result.playMethod,
                 playbackPlan = result.playbackPlan,
@@ -26,6 +27,8 @@ class VideoPlaybackSessionCoordinator(
                 subtitleUrls = result.subtitleUrls,
                 preferredAudioLanguage = result.preferredAudioLanguage,
                 preferredTextLanguage = result.preferredTextLanguage,
+                preferredSubtitleMode = result.preferredSubtitleMode,
+                showForcedSubtitles = result.showForcedSubtitles,
                 intro = result.intro,
                 credits = result.credits,
                 chapters = result.chapters,

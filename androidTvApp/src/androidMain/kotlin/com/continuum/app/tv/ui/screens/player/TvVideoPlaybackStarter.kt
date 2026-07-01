@@ -50,7 +50,8 @@ class TvVideoPlaybackStarter(
             }
 
             val serverUrl = playbackSessionManager.getServerUrl()
-            val preferredQuality = playerSettingsStore.preferredQualityFlow.first()
+            val preferredQuality = request.preferredQualityOverride
+                ?: playerSettingsStore.preferredQualityFlow.first()
             val version = request.preferredFileId
                 ?.let { id -> watchDetail.versions.firstOrNull { it.fileId == id } }
                 ?: selectPlaybackVersion(
@@ -211,6 +212,7 @@ class TvVideoPlaybackStarter(
             VideoPlaybackStartResult.Ready(
                 contentId = request.contentId,
                 fileId = version.fileId,
+                fileResolution = version.resolution,
                 sessionId = resolved.sessionId,
                 streamUrl = resolvedStreamUrl,
                 playMethod = resolved.playMethod,
@@ -229,7 +231,13 @@ class TvVideoPlaybackStarter(
                 durationSeconds = resolved.durationSeconds ?: version.duration,
                 subtitleUrls = resolved.subtitleUrls ?: emptyList(),
                 preferredAudioLanguage = preferredAudioLanguage ?: activeProfile?.language,
-                preferredTextLanguage = activeProfile?.subtitleLanguage,
+                preferredTextLanguage = watchDetail.effectiveSubtitleLanguage
+                    ?: activeProfile?.subtitleLanguage,
+                preferredSubtitleMode = watchDetail.effectiveSubtitleMode
+                    ?: activeProfile?.subtitleMode,
+                showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
+                    ?: activeProfile?.showForcedSubtitles
+                    ?: true,
                 intro = watchDetail.intro,
                 credits = watchDetail.credits,
                 chapters = version.chapters.orEmpty(),

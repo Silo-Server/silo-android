@@ -13,20 +13,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
 import androidx.tv.material3.Card
@@ -35,7 +33,8 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.continuum.app.tv.ui.components.TvFilterChip
-import com.continuum.app.tv.ui.components.tvOutlinedTextFieldColors
+import com.continuum.app.tv.ui.components.TvTextInputDialog
+import com.continuum.app.tv.ui.screens.auth.CredentialDisplayField
 import com.continuum.app.viewmodel.ADMIN_USER_ROLES
 import com.continuum.app.viewmodel.AdminUserEditViewModel
 import com.continuum.app.viewmodel.roleDisplayName
@@ -106,7 +105,7 @@ fun TvAdminUserEditScreen(
                     onChange = viewModel::onUsernameChange,
                     enabled = !isEdit,
                     // Only the focus anchor when this field is editable (create).
-                    modifier = if (isEdit) Modifier else Modifier.focusRequester(firstFieldFocus),
+                    focusRequester = firstFieldFocus.takeIf { !isEdit },
                 )
             }
             item {
@@ -126,7 +125,7 @@ fun TvAdminUserEditScreen(
                     isPassword = true,
                     keyboardType = KeyboardType.Password,
                     // First editable control in edit mode.
-                    modifier = if (isEdit) Modifier.focusRequester(firstFieldFocus) else Modifier,
+                    focusRequester = firstFieldFocus.takeIf { isEdit },
                 )
             }
 
@@ -253,21 +252,42 @@ private fun FormField(
     enabled: Boolean = true,
     isPassword: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
+    focusRequester: FocusRequester? = null,
 ) {
-    OutlinedTextField(
+    var isEditorOpen by remember { mutableStateOf(false) }
+    val displayFocusRequester = focusRequester ?: remember { FocusRequester() }
+
+    CredentialDisplayField(
         value = value,
-        onValueChange = onChange,
-        label = { androidx.compose.material3.Text(label) },
-        singleLine = true,
+        hint = label,
         enabled = enabled,
-        visualTransformation = if (isPassword) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-        colors = tvOutlinedTextFieldColors(),
-        shape = RoundedCornerShape(12.dp),
+        isActive = isEditorOpen,
+        isPassword = isPassword,
+        passwordVisible = false,
+        focusRequester = displayFocusRequester,
+        onFocused = {},
+        onOpenKeyboard = { if (enabled) isEditorOpen = true },
         modifier = modifier
             .fillMaxWidth()
-            .widthIn(max = 960.dp),
+            .widthIn(max = 960.dp)
+            .height(48.dp),
     )
+
+    if (isEditorOpen) {
+        TvTextInputDialog(
+            title = label,
+            label = label,
+            confirmLabel = "Done",
+            initialValue = value,
+            allowBlank = true,
+            keyboardType = keyboardType,
+            onConfirm = { updated ->
+                onChange(updated)
+                isEditorOpen = false
+            },
+            onDismiss = { isEditorOpen = false },
+        )
+    }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

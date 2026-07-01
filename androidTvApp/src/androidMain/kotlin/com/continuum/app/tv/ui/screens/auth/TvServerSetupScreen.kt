@@ -13,15 +13,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
@@ -37,32 +34,27 @@ import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Smartphone
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.CircleShape
@@ -83,7 +75,6 @@ import com.continuum.app.tv.ui.components.AuroraGhostButton
 import com.continuum.app.tv.ui.components.AuroraPrimaryButton
 import com.continuum.app.tv.ui.components.TvAuroraBackdrop
 import com.continuum.app.tv.ui.components.TvAuroraVariant
-import com.continuum.app.tv.ui.components.tvOutlinedTextFieldColors
 import com.continuum.app.tv.ui.theme.Spacing
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
@@ -114,10 +105,12 @@ fun TvServerSetupScreen(
     val state by viewModel.uiState.collectAsState()
     val pairingStatus by pairingReceiver.status.collectAsState()
     val focusRequester = remember { FocusRequester() }
+    val keyboardFirstKeyFocusRequester = remember { FocusRequester() }
     val urlBringIntoView = remember { BringIntoViewRequester() }
     val connectBringIntoView = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
     val isActivePairing = pairingStatus.isActivePairing
+    var isUrlKeyboardVisible by remember { mutableStateOf(false) }
 
     // Companion LAN pairing: advertise `_silopair._tcp` while this screen is on
     // so a phone running Silo can push the server URL + drive device-login,
@@ -129,6 +122,12 @@ fun TvServerSetupScreen(
     }
     LaunchedEffect(isActivePairing) {
         if (!isActivePairing) runCatching { focusRequester.requestFocus() }
+    }
+    LaunchedEffect(isUrlKeyboardVisible) {
+        if (isUrlKeyboardVisible) {
+            delay(120)
+            runCatching { keyboardFirstKeyFocusRequester.requestFocus() }
+        }
     }
     LaunchedEffect(pairingStatus) {
         if (pairingStatus is PairingReceiverStatus.Completed) {
@@ -152,13 +151,8 @@ fun TvServerSetupScreen(
         }
     }
 
-    // imePadding keeps the focused field / Connect pill reachable once the
-    // viewer explicitly opens the soft IME (the manual field only raises the
-    // keyboard on an explicit center-press, see ManualEntryCard).
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .imePadding(),
+        modifier = Modifier.fillMaxSize(),
     ) {
         TvAuroraBackdrop(variant = TvAuroraVariant.Server)
 
@@ -240,6 +234,7 @@ fun TvServerSetupScreen(
                             urlBringIntoView = urlBringIntoView,
                             connectBringIntoView = connectBringIntoView,
                             scope = scope,
+                            onKeyboardVisibilityChange = { isUrlKeyboardVisible = it },
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight(),
@@ -247,6 +242,29 @@ fun TvServerSetupScreen(
                     }
                 }
             }
+        }
+
+        if (!isActivePairing && isUrlKeyboardVisible) {
+            SiloServerUrlKeyboard(
+                value = state.serverUrl,
+                enabled = !state.isLoading,
+                firstKeyFocusRequester = keyboardFirstKeyFocusRequester,
+                onAction = { action ->
+                    viewModel.onServerUrlChanged(applyTvServerUrlKeyboardAction(state.serverUrl, action))
+                },
+                onConnect = {
+                    if (canSubmitTvServerUrl(state.serverUrl, state.isLoading)) {
+                        viewModel.onConnectClick()
+                    }
+                },
+                onDismiss = {
+                    isUrlKeyboardVisible = false
+                    runCatching { focusRequester.requestFocus() }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 48.dp, end = 48.dp, bottom = 8.dp),
+            )
         }
     }
 }
@@ -261,31 +279,58 @@ private fun PhoneSetupCard(modifier: Modifier = Modifier) {
             .padding(24.dp),
     ) {
         Text(
-            text = "SET UP WITH PHONE",
+            text = "SETUP WITH PHONE",
             style = TvServerSetupTextStyles.Pill,
             color = Color.White.copy(alpha = 0.70f),
             modifier = Modifier
+                .align(Alignment.CenterHorizontally)
                 .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(50))
                 .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(50))
                 .padding(horizontal = 14.dp, vertical = 7.dp),
         )
 
-        Spacer(modifier = Modifier.weight(1f))
-        SearchingBeacon(modifier = Modifier.align(Alignment.CenterHorizontally))
-        Spacer(modifier = Modifier.weight(1f))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            PhoneSetupBody()
+        }
+    }
+}
+
+@Composable
+private fun PhoneSetupBody(modifier: Modifier = Modifier) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        SearchingBeacon(
+            modifier = Modifier.size(PHONE_SETUP_BEACON_SIZE),
+        )
 
         Text(
             text = "Looking for your phone…",
             style = TvServerSetupTextStyles.Headline,
             color = Color.White,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            text = "Open Silo on a phone on this Wi-Fi. It can set up this TV without typing the server address.",
+            text = "Open Silo on your phone on this Wi-Fi to set up this TV without typing.",
             style = TvServerSetupTextStyles.PairingDetail,
             color = Color.White.copy(alpha = 0.72f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
+
+private val PHONE_SETUP_BEACON_SIZE = 96.dp
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -297,9 +342,9 @@ private fun ManualEntryCard(
     urlBringIntoView: BringIntoViewRequester,
     connectBringIntoView: BringIntoViewRequester,
     scope: CoroutineScope,
+    onKeyboardVisibilityChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val keyboardController = LocalSoftwareKeyboardController.current
     Column(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         modifier = modifier
@@ -318,49 +363,19 @@ private fun ManualEntryCard(
             color = Color.White.copy(alpha = 0.52f),
         )
 
-        OutlinedTextField(
+        ServerUrlDisplayField(
             value = state.serverUrl,
-            onValueChange = onServerUrlChanged,
-            placeholder = {
-                Text(
-                    text = "media.example.com",
-                    style = TvServerSetupTextStyles.FieldText,
-                )
-            },
-            singleLine = true,
-            textStyle = TvServerSetupTextStyles.FieldText,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Uri,
-                imeAction = ImeAction.Go,
-                showKeyboardOnFocus = false,
-            ),
-            keyboardActions = KeyboardActions(
-                onGo = {
-                    if (!state.isLoading && state.serverUrl.isNotBlank()) {
-                        onConnectClick()
-                    }
-                },
-            ),
+            hint = "media.example.com",
             enabled = !state.isLoading,
+            focusRequester = focusRequester,
+            onFocused = {
+                scope.launch { urlBringIntoView.bringIntoView() }
+            },
+            onOpenKeyboard = { onKeyboardVisibilityChange(true) },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(60.dp)
-                .bringIntoViewRequester(urlBringIntoView)
-                .onFocusEvent { fs ->
-                    if (fs.isFocused) scope.launch { urlBringIntoView.bringIntoView() }
-                }
-                .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyUp &&
-                        (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)
-                    ) {
-                        keyboardController?.show()
-                        true
-                    } else {
-                        false
-                    }
-                }
-                .focusRequester(focusRequester),
-            colors = tvOutlinedTextFieldColors(),
+                .bringIntoViewRequester(urlBringIntoView),
         )
 
         if (state.error != null) {
@@ -383,7 +398,11 @@ private fun ManualEntryCard(
             AuroraPrimaryButton(
                 label = if (state.isLoading) "Connecting…" else "Connect",
                 icon = null,
-                onClick = onConnectClick,
+                onClick = {
+                    if (canSubmitTvServerUrl(state.serverUrl, state.isLoading)) {
+                        onConnectClick()
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(58.dp),
@@ -422,9 +441,7 @@ private fun OrDivider(modifier: Modifier = Modifier) {
 
 /**
  * Pulsing "searching for a phone" beacon — three gold rings expanding outward
- * behind a phone glyph. Mirrors tvOS `SearchingBeacon`: each ring scales
- * 0.6 → 1.7 while fading 0.55 → 0 over 2.4s, staggered 0.8s apart so a new
- * pulse leaves the center as the previous one dissolves.
+ * behind a phone glyph. Mirrors tvOS `SearchingBeacon`, scaled by the caller.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -432,7 +449,7 @@ private fun SearchingBeacon(modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "phoneBeacon")
     Box(
         contentAlignment = Alignment.Center,
-        modifier = modifier.size(128.dp),
+        modifier = modifier,
     ) {
         repeat(3) { index ->
             val progress by transition.animateFloat(
@@ -449,7 +466,7 @@ private fun SearchingBeacon(modifier: Modifier = Modifier) {
             val ringAlpha = (1f - progress) * 0.55f
             Box(
                 modifier = Modifier
-                    .size(66.dp)
+                    .size(54.dp)
                     .graphicsLayer {
                         scaleX = ringScale
                         scaleY = ringScale
@@ -462,7 +479,7 @@ private fun SearchingBeacon(modifier: Modifier = Modifier) {
             imageVector = Icons.Default.Smartphone,
             contentDescription = null,
             tint = AuroraInk,
-            modifier = Modifier.size(44.dp),
+            modifier = Modifier.size(36.dp),
         )
     }
 }

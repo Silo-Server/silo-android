@@ -29,10 +29,10 @@ object TvSubtitleAppearanceOptions {
     )
 
     val BACKGROUND_STYLES: List<Pair<SubtitleBackgroundStylePreset, String>> = listOf(
+        SubtitleBackgroundStylePreset.None to "No background",
         SubtitleBackgroundStylePreset.Box to "Box",
         SubtitleBackgroundStylePreset.Shadow to "Drop Shadow",
         SubtitleBackgroundStylePreset.Outline to "Outline",
-        SubtitleBackgroundStylePreset.None to "None",
     )
 
     val POSITIONS: List<Pair<SubtitlePositionPreset, String>> = listOf(

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -60,6 +61,7 @@ fun TvPlayerTransportCluster(
     onSkipBack: () -> Unit,
     onPlayPause: () -> Unit,
     onSkipForward: () -> Unit,
+    onOpenQuickSubtitles: () -> Unit,
     onOpenHUD: () -> Unit,
     onClose: () -> Unit,
     playPauseFocus: FocusRequester,
@@ -99,6 +101,13 @@ fun TvPlayerTransportCluster(
 
         // Secondary group — pushed right.
         Row(verticalAlignment = Alignment.CenterVertically) {
+            TransportIconButton(
+                icon = Icons.Filled.ClosedCaption,
+                description = "Subtitles",
+                onClick = onOpenQuickSubtitles,
+                onMoveUp = onMoveUpToScrubber,
+            )
+            DockGap()
             TransportIconButton(
                 icon = Icons.Filled.Tune,
                 description = "Info and options",

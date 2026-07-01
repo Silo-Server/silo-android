@@ -29,7 +29,9 @@ import com.continuum.app.model.playback.HdrCapabilities
 object TrackSelectionPresets {
 
     /**
-     * TV: prioritize passthrough, keep tunneling on, disable audio offload.
+     * TV: prioritize passthrough, keep tunneling off, disable audio offload.
+     * Google TV Streamer can report plenty of buffered media while its tunneled
+     * AV sync path stalls around startup, so we avoid forcing Media3 tunneling.
      *
      * [ffmpegAvailable] defaults to probing the runtime classpath via
      * [FfmpegAudioSupport.isAvailable]; tests override it directly. When
@@ -54,7 +56,7 @@ object TrackSelectionPresets {
         val videoMimes = buildTvVideoMimePreferences(displayHdr, allowHdr)
 
         val builder = base.toDefaultBuilder(context)
-            .setTunnelingEnabled(true)
+            .setTunnelingEnabled(false)
             .setAudioOffloadPreferences(
                 TrackSelectionParameters.AudioOffloadPreferences.Builder()
                     .setAudioOffloadMode(

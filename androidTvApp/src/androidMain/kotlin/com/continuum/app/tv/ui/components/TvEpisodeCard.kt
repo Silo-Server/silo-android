@@ -155,7 +155,7 @@ fun TvEpisodeCard(
                 if (episodeBadge != null) {
                     Text(
                         text = episodeBadge,
-                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.sp),
                         color = Color.White,
                         modifier = Modifier
                             .align(Alignment.BottomStart)

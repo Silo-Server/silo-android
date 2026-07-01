@@ -159,7 +159,7 @@ fun TvMediaInfoDialog(
             if (versions.isEmpty()) {
                 Text(
                     text = "No media details available.",
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                 )
             }
@@ -216,8 +216,8 @@ private fun SectionLabel(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium.copy(
-            fontSize = 12.sp,
-            lineHeight = 15.sp,
+            fontSize = 14.sp,
+            lineHeight = 17.sp,
             fontWeight = FontWeight.SemiBold,
         ),
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
@@ -230,13 +230,13 @@ private fun InfoRow(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 17.sp),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             modifier = Modifier.fillMaxWidth(0.4f),
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 17.sp),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -252,7 +252,7 @@ private fun TrackSummaryRow(summary: TvMediaInfoTrackSummary) {
     ) {
         Text(
             text = "• ${summary.primary}",
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 17.sp),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -260,7 +260,7 @@ private fun TrackSummaryRow(summary: TvMediaInfoTrackSummary) {
         summary.secondary?.takeIf { it.isNotBlank() }?.let { secondary ->
             Text(
                 text = secondary,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 16.sp),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

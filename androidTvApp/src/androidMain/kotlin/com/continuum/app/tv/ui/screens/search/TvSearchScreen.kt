@@ -17,17 +17,16 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon as M3Icon
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,27 +34,22 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.continuum.app.model.catalog.BrowseItem
+import com.continuum.app.tv.ui.components.applyTvAnsiKeyboardAction
 import com.continuum.app.tv.ui.components.TvCatalogGrid
 import com.continuum.app.tv.ui.components.TvFilterChip
-import com.continuum.app.tv.ui.components.tvOutlinedTextFieldColors
 import com.continuum.app.tv.ui.shell.TvTopMenuLayout
 import com.continuum.app.tv.ui.theme.ContinuumBlue
-import com.continuum.app.tv.ui.theme.ContinuumBlueBorderIdle
 import com.continuum.app.tv.ui.theme.ElevatedSurface
 import com.continuum.app.tv.ui.theme.Spacing
 import com.continuum.app.tv.ui.theme.sectionEyebrow
 import com.continuum.app.tv.ui.theme.tvPageContentPadding
 import com.continuum.app.tv.ui.theme.tvPageStartPadding
+import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -70,18 +64,26 @@ fun TvSearchScreen(
     val firstFilterChipFocusRequester = remember { FocusRequester() }
     val internalSearchFieldFocusRequester = remember { FocusRequester() }
     val activeSearchFieldFocusRequester = searchFieldFocusRequester ?: internalSearchFieldFocusRequester
+    val searchKeyboardFirstKeyFocusRequester = remember { FocusRequester() }
+    var isSearchKeyboardVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(activeSearchFieldFocusRequester) {
         runCatching { activeSearchFieldFocusRequester.requestFocus() }
     }
+    LaunchedEffect(isSearchKeyboardVisible) {
+        if (isSearchKeyboardVisible) {
+            delay(120)
+            runCatching { searchKeyboardFirstKeyFocusRequester.requestFocus() }
+        }
+    }
     // Note: we deliberately do NOT auto-jump focus to the first result when
     // it appears. Doing so during the debounced as-you-type search yanks
-    // focus out of the IME mid-keystroke. Instead, the explicit
+    // focus out of text entry mid-keystroke. Instead, the explicit
     // focusProperties wired below give the user three reliable handoffs:
     //   • search field —DOWN→ first chip
     //   • first chip   —DOWN→ first card (when results exist)
     //   • first card   —UP→   first chip
-    // and the IME's Search action still snaps focus straight into the grid.
+    // and the custom keyboard's Search action still snaps focus into the grid.
 
     Box(
         modifier = Modifier
@@ -107,8 +109,8 @@ fun TvSearchScreen(
             verticalSpacing = 20.dp,
             firstItemFocusRequester = firstResultFocusRequester,
             // UP from the first card always lands back on the filter chip rail.
-            // Without this Compose's spatial focus search prefers the wider
-            // OutlinedTextField above and skips over the smaller chip row.
+            // Without this Compose's spatial focus search can prefer the wider
+            // search field above and skip over the smaller chip row.
             firstItemCardModifier = Modifier.focusProperties {
                 up = firstFilterChipFocusRequester
             },
@@ -127,12 +129,8 @@ fun TvSearchScreen(
                     searchFieldFocusRequester = activeSearchFieldFocusRequester,
                     firstFilterChipFocusRequester = firstFilterChipFocusRequester,
                     firstResultFocusRequester = firstResultFocusRequester,
-                    onQueryChanged = viewModel::onQueryChanged,
-                    onSearchSubmitted = viewModel::submitSearch,
+                    onOpenKeyboard = { isSearchKeyboardVisible = true },
                     onMediaTypeChanged = viewModel::onMediaTypeChanged,
-                    onResultsFocusRequested = {
-                        runCatching { firstResultFocusRequester.requestFocus() }
-                    },
                 )
             },
             emptyState = {
@@ -152,6 +150,39 @@ fun TvSearchScreen(
                 }
             },
         )
+
+        if (isSearchKeyboardVisible) {
+            SiloSearchKeyboard(
+                value = state.query,
+                enabled = !state.isLoading,
+                firstKeyFocusRequester = searchKeyboardFirstKeyFocusRequester,
+                onAction = { action ->
+                    viewModel.onQueryChanged(
+                        applyTvAnsiKeyboardAction(
+                            value = state.query,
+                            action = action,
+                            maxLength = TV_SEARCH_QUERY_MAX_LENGTH,
+                        ),
+                    )
+                },
+                onSearch = {
+                    isSearchKeyboardVisible = false
+                    viewModel.submitSearch()
+                    if (state.items.isNotEmpty()) {
+                        runCatching { firstResultFocusRequester.requestFocus() }
+                    } else {
+                        runCatching { firstFilterChipFocusRequester.requestFocus() }
+                    }
+                },
+                onDismiss = {
+                    isSearchKeyboardVisible = false
+                    runCatching { activeSearchFieldFocusRequester.requestFocus() }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 48.dp, end = 48.dp, bottom = 8.dp),
+            )
+        }
     }
 }
 
@@ -166,14 +197,10 @@ private fun SearchStage(
     searchFieldFocusRequester: FocusRequester,
     firstFilterChipFocusRequester: FocusRequester,
     firstResultFocusRequester: FocusRequester,
-    onQueryChanged: (String) -> Unit,
-    onSearchSubmitted: () -> Unit,
+    onOpenKeyboard: () -> Unit,
     onMediaTypeChanged: (TvSearchMediaType) -> Unit,
-    onResultsFocusRequested: () -> Unit,
 ) {
     val startPadding = tvPageStartPadding(expandedGap = Spacing.md)
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
     val mediaTypes = availableMediaTypes
 
     Column(
@@ -204,61 +231,15 @@ private fun SearchStage(
             }
         }
 
-        OutlinedTextField(
+        SearchDisplayField(
             value = query,
-            onValueChange = onQueryChanged,
-            leadingIcon = {
-                M3Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.72f),
-                )
-            },
-            placeholder = {
-                androidx.compose.material3.Text(
-                    text = "Search titles, movies, series, and audiobooks",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 16.sp,
-                        lineHeight = 16.sp,
-                        letterSpacing = 0.sp,
-                    ),
-                    color = Color.White.copy(alpha = 0.56f),
-                )
-            },
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 16.sp,
-                lineHeight = 16.sp,
-                letterSpacing = 0.sp,
-                color = Color.White,
-            ),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Text,
-                imeAction = ImeAction.Search,
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    onSearchSubmitted()
-                    focusManager.clearFocus(force = true)
-                    keyboardController?.hide()
-                    if (hasResults) {
-                        runCatching { onResultsFocusRequested() }
-                    } else {
-                        runCatching { firstFilterChipFocusRequester.requestFocus() }
-                    }
-                },
-            ),
-            colors = tvOutlinedTextFieldColors(
-                focusedContainerColor = ElevatedSurface,
-                unfocusedContainerColor = ElevatedSurface,
-                focusedBorderColor = Color.White.copy(alpha = 0.34f),
-                unfocusedBorderColor = ContinuumBlueBorderIdle,
-            ),
-            shape = RoundedCornerShape(9.dp),
+            hint = "Search titles, movies, series, and audiobooks",
+            enabled = true,
+            focusRequester = searchFieldFocusRequester,
+            onOpenKeyboard = onOpenKeyboard,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(31.dp)
-                .focusRequester(searchFieldFocusRequester)
+                .height(34.dp)
                 // Pin DOWN to the chip rail so the user can always step from
                 // the search field onto the All/Movies/Series filters,
                 // regardless of whether result cards are also rendered below.

@@ -151,7 +151,7 @@ private fun TvPersonDetailContent(
         state.pagingError?.let { error ->
             Text(
                 text = error,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                 color = Color.White.copy(alpha = 0.62f),
             )
         }
@@ -217,7 +217,7 @@ private fun PersonHeader(person: Person) {
             if (bio != null) {
                 Text(
                     text = bio,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 20.sp),
                     color = Color.White.copy(alpha = 0.78f),
                     maxLines = 4,
                     overflow = TextOverflow.Ellipsis,
@@ -225,7 +225,7 @@ private fun PersonHeader(person: Person) {
             } else {
                 Text(
                     text = "No biography or personal details are available yet.",
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 16.sp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
                     color = Color.White.copy(alpha = 0.48f),
                 )
             }

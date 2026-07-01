@@ -182,8 +182,8 @@ fun TvProfileForm(
                     )
                     Text(
                         text = state.subtitle,
-                        fontSize = 15.sp,
-                        lineHeight = 18.sp,
+                        fontSize = 16.sp,
+                        lineHeight = 20.sp,
                         color = Color.White.copy(alpha = 0.55f),
                     )
                 }
@@ -431,8 +431,8 @@ private fun TvProfileFormSection(
         ) {
             Text(
                 text = title.uppercase(),
-                fontSize = 13.sp,
-                lineHeight = 16.sp,
+                fontSize = 14.sp,
+                lineHeight = 17.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 1.6.sp,
                 color = Color.White.copy(alpha = 0.50f),
@@ -640,8 +640,8 @@ private fun TvAvatarStyleChip(
     ) {
         Text(
             text = style.label,
-            fontSize = 12.sp,
-            lineHeight = 15.sp,
+            fontSize = 13.5.sp,
+            lineHeight = 16.sp,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
         )
@@ -729,15 +729,15 @@ private fun TvInitialsHint() {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = "Uses your profile name",
-                fontSize = 15.sp,
-                lineHeight = 19.sp,
+                fontSize = 16.sp,
+                lineHeight = 20.sp,
                 fontWeight = FontWeight.Medium,
                 color = Color.White.copy(alpha = 0.85f),
             )
             Text(
                 text = "The first letters of the name below appear on your tile.",
-                fontSize = 13.sp,
-                lineHeight = 17.sp,
+                fontSize = 14.sp,
+                lineHeight = 18.sp,
                 color = Color.White.copy(alpha = 0.50f),
             )
         }

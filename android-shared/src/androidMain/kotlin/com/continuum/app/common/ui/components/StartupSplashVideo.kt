@@ -1,6 +1,7 @@
 package com.continuum.app.common.ui.components
 
 import android.graphics.Color as AndroidColor
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -10,8 +11,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -25,6 +30,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.continuum.app.common.R
+import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -36,11 +42,15 @@ fun StartupSplashVideo(
     modifier: Modifier = Modifier,
     resizeMode: StartupSplashResizeMode = StartupSplashResizeMode.Fit,
     backgroundColor: Color = Color(0xFF050505),
+    minVisibleMillis: Long = 0L,
     onPlaybackComplete: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val currentOnPlaybackComplete = rememberUpdatedState(onPlaybackComplete)
     val completionDispatched = remember { AtomicBoolean(false) }
+    val playbackStarted = remember { AtomicBoolean(false) }
+    var playbackFinished by remember { mutableStateOf(false) }
+    var playbackVisibleStartedAt by remember { mutableStateOf(0L) }
     val player = remember(context) {
         ExoPlayer.Builder(context).build().apply {
             repeatMode = Player.REPEAT_MODE_OFF
@@ -51,20 +61,28 @@ fun StartupSplashVideo(
                 ),
             )
             prepare()
-            playWhenReady = true
+            playWhenReady = false
         }
+    }
+
+    LaunchedEffect(playbackFinished, minVisibleMillis) {
+        if (!playbackFinished) return@LaunchedEffect
+        val elapsed = (SystemClock.elapsedRealtime() - playbackVisibleStartedAt).coerceAtLeast(0L)
+        val remaining = (minVisibleMillis - elapsed).coerceAtLeast(0L)
+        if (remaining > 0L) delay(remaining)
+        completionDispatched.dispatchOnce(currentOnPlaybackComplete.value)
     }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
-                    completionDispatched.dispatchOnce(currentOnPlaybackComplete.value)
+                    playbackFinished = true
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                completionDispatched.dispatchOnce(currentOnPlaybackComplete.value)
+                playbackFinished = true
             }
         }
         player.addListener(listener)
@@ -92,6 +110,14 @@ fun StartupSplashVideo(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     )
                     this.player = player
+                    post {
+                        if (playbackStarted.compareAndSet(false, true)) {
+                            playbackVisibleStartedAt = SystemClock.elapsedRealtime()
+                            player.seekTo(0)
+                            player.playWhenReady = true
+                            player.play()
+                        }
+                    }
                 }
             },
             update = { view ->

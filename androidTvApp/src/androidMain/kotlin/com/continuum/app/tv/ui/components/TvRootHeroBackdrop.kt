@@ -1,8 +1,10 @@
 package com.continuum.app.tv.ui.components
 
+import android.graphics.Bitmap
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,6 +23,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -44,9 +48,11 @@ import com.continuum.app.model.section.SectionItem
 fun TvRootHeroBackdrop(
     content: TvMarqueeContent?,
     modifier: Modifier = Modifier,
+    emptyWashColor: Color? = null,
 ) {
     val tintState = LocalAmbientBackdropTint.current
-    val targetAccent = tintState.accent ?: MaterialTheme.colorScheme.background
+    val ambientAccent = tintState.accent
+    val targetAccent = ambientAccent ?: emptyWashColor ?: MaterialTheme.colorScheme.background
     val animatedTint by animateColorAsState(
         targetValue = targetAccent,
         animationSpec = tween(durationMillis = 600),
@@ -54,6 +60,26 @@ fun TvRootHeroBackdrop(
     )
 
     val isVisible = content != null
+    val hasTintOnlyWash = !isVisible && ambientAccent != null
+    val hasEmptyWash = !isVisible && ambientAccent == null && emptyWashColor != null
+    val leadingWashAlpha = when {
+        isVisible -> 1.0f
+        hasTintOnlyWash -> 0.34f
+        hasEmptyWash -> 0.30f
+        else -> 0.0f
+    }
+    val midWashAlpha = when {
+        isVisible -> 0.5f
+        hasTintOnlyWash -> 0.18f
+        hasEmptyWash -> 0.15f
+        else -> 0.0f
+    }
+    val trailingWashAlpha = when {
+        isVisible -> 0.18f
+        hasTintOnlyWash -> 0.08f
+        hasEmptyWash -> 0.07f
+        else -> 0.0f
+    }
 
     Box(
         modifier = modifier
@@ -62,24 +88,27 @@ fun TvRootHeroBackdrop(
     ) {
         // Diagonal sampled-tint wash: richest in the top-right behind the art,
         // carried dimmed to the bottom-left (tvOS stops 1.0 / 0.5 / 0.18).
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.linearGradient(
-                        colorStops = arrayOf(
-                            0.0f to animatedTint.copy(alpha = if (isVisible) 1.0f else 0.0f),
-                            0.45f to animatedTint.copy(alpha = if (isVisible) 0.5f else 0.0f),
-                            1.0f to animatedTint.copy(alpha = if (isVisible) 0.18f else 0.0f),
-                        ),
-                        // topEnd → bottomStart (mirrors SwiftUI .topTrailing →
-                        // .bottomLeading); Offset.Infinite lets Compose resolve
-                        // the gradient to the layout bounds' corners.
-                        start = Offset(Float.POSITIVE_INFINITY, 0f),
-                        end = Offset(0f, Float.POSITIVE_INFINITY),
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawRect(
+                brush = Brush.linearGradient(
+                    colorStops = smoothedWashStops(
+                        tint = animatedTint,
+                        leadingAlpha = leadingWashAlpha,
+                        midAlpha = midWashAlpha,
+                        trailingAlpha = trailingWashAlpha,
                     ),
+                    start = Offset(size.width, 0f),
+                    end = Offset(0f, size.height),
                 ),
-        )
+            )
+        }
+
+        if (hasTintOnlyWash || hasEmptyWash) {
+            DitheredWashOverlay(
+                alpha = if (hasEmptyWash) EmptyWashDitherAlpha else TintOnlyDitherAlpha,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         Crossfade(
             targetState = content?.heroBackdropUrl,
@@ -196,3 +225,69 @@ fun TvRootHeroBackdrop(
 private const val ArtWidthFraction = 0.64f
 private const val ArtHeightFraction = 0.70f
 private val TopScrimHeight = 190.dp
+private const val TintOnlyDitherAlpha = 0.28f
+private const val EmptyWashDitherAlpha = 0.34f
+
+private fun smoothedWashStops(
+    tint: Color,
+    leadingAlpha: Float,
+    midAlpha: Float,
+    trailingAlpha: Float,
+): Array<Pair<Float, Color>> = arrayOf(
+    0.00f to tint.copy(alpha = leadingAlpha),
+    0.12f to tint.copy(alpha = lerpAlpha(leadingAlpha, midAlpha, 0.18f)),
+    0.26f to tint.copy(alpha = lerpAlpha(leadingAlpha, midAlpha, 0.48f)),
+    0.45f to tint.copy(alpha = midAlpha),
+    0.62f to tint.copy(alpha = lerpAlpha(midAlpha, trailingAlpha, 0.36f)),
+    0.80f to tint.copy(alpha = lerpAlpha(midAlpha, trailingAlpha, 0.68f)),
+    1.00f to tint.copy(alpha = trailingAlpha),
+)
+
+private fun lerpAlpha(start: Float, end: Float, fraction: Float): Float =
+    start + (end - start) * fraction
+
+@Composable
+private fun DitheredWashOverlay(
+    alpha: Float,
+    modifier: Modifier = Modifier,
+) {
+    val noise = remember { createBackdropNoiseBitmap() }
+    Canvas(modifier = modifier) {
+        val tileWidth = noise.width.toFloat()
+        val tileHeight = noise.height.toFloat()
+        var y = 0f
+        while (y < size.height) {
+            var x = 0f
+            while (x < size.width) {
+                drawImage(
+                    image = noise,
+                    topLeft = Offset(x, y),
+                    alpha = alpha,
+                )
+                x += tileWidth
+            }
+            y += tileHeight
+        }
+    }
+}
+
+private fun createBackdropNoiseBitmap(): ImageBitmap {
+    val dimension = 96
+    val bitmap = Bitmap.createBitmap(dimension, dimension, Bitmap.Config.ARGB_8888)
+    val pixels = IntArray(dimension * dimension)
+    var state = 0x4F1BBCDC
+
+    for (index in pixels.indices) {
+        state = state * 1664525 + 1013904223
+        val sample = state ushr 24
+        val pixelAlpha = when {
+            sample < 16 -> 14
+            sample < 42 -> 8
+            else -> 0
+        }
+        pixels[index] = (pixelAlpha shl 24) or 0x00FFFFFF
+    }
+
+    bitmap.setPixels(pixels, 0, dimension, 0, 0, dimension, dimension)
+    return bitmap.asImageBitmap()
+}

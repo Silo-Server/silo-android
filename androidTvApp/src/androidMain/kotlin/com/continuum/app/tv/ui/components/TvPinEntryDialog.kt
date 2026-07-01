@@ -84,13 +84,13 @@ fun TvPinEntryDialog(
                 ) {
                     Text(
                         text = "Enter PIN",
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 19.sp),
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 19.sp, lineHeight = 22.sp),
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = profileName,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
 
@@ -105,14 +105,14 @@ fun TvPinEntryDialog(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = latestError,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                             color = MaterialTheme.colorScheme.error,
                         )
                     } else if (isVerifying) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "Verifying...",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -206,7 +206,7 @@ private fun PinKey(
             if (label != null) {
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, lineHeight = 22.sp),
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp, lineHeight = 25.sp),
                     color = MaterialTheme.colorScheme.onBackground,
                 )
             } else if (icon != null) {

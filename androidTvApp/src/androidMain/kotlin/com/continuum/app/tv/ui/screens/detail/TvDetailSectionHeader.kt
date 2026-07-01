@@ -13,8 +13,8 @@ import androidx.tv.material3.Text
 
 /**
  * Editorial section header used below the detail hero. Mirrors the tvOS
- * `TVSectionHeader` — a 20sp bold tracked all-caps eyebrow over a 42sp
- * semibold display title, tightly stacked with no chrome.
+ * `TVSectionHeader` at Android TV canvas scale, with text lifted above raw
+ * tvOS÷2 sizing so lower detail sections still read as premium 10-foot UI.
  *
  * Sizes are scoped locally (rather than via the shared `sectionEyebrow` /
  * `displaySmall` tokens) so the larger detail-page treatment doesn't shift the
@@ -34,8 +34,8 @@ internal fun TvDetailSectionHeader(
             text = eyebrow.uppercase(),
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.Bold,
-                fontSize = 10.sp,
-                lineHeight = 10.sp,
+                fontSize = 13.sp,
+                lineHeight = 15.sp,
                 letterSpacing = 1.5.sp,
             ),
             color = Color.White.copy(alpha = 0.55f),
@@ -44,8 +44,8 @@ internal fun TvDetailSectionHeader(
             text = title,
             style = MaterialTheme.typography.displaySmall.copy(
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 21.sp,
-                lineHeight = 23.sp,
+                fontSize = 24.sp,
+                lineHeight = 27.sp,
             ),
             color = Color.White,
         )

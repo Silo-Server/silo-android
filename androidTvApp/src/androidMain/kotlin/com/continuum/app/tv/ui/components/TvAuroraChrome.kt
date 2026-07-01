@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
@@ -109,6 +110,18 @@ fun Modifier.auroraGlass(cornerRadius: Dp = 28.dp, emphasized: Boolean = false):
         )
 }
 
+fun Modifier.auroraPanel(cornerRadius: Dp = 20.dp): Modifier {
+    val shape = RoundedCornerShape(cornerRadius)
+    return this
+        .clip(shape)
+        .background(AuroraGlassTint.copy(alpha = 0.42f))
+        .border(
+            width = 1.dp,
+            color = Color.White.copy(alpha = 0.22f),
+            shape = shape,
+        )
+}
+
 /** Warm cream pill with a gold focus glow — the Aurora primary action. */
 @Composable
 fun AuroraPrimaryButton(
@@ -117,11 +130,34 @@ fun AuroraPrimaryButton(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     focusRequester: FocusRequester? = null,
+    focusHalo: Boolean = true,
+    filledAtRest: Boolean = true,
+    neutralFocusFill: Boolean = false,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(14.dp)
-    val scale by animateFloatAsState(if (isFocused) 1.05f else 1f, label = "auroraPrimaryScale")
-    val glow by animateDpAsState(if (isFocused) 26.dp else 14.dp, label = "auroraPrimaryGlow")
+    val scale by animateFloatAsState(
+        if (isFocused && focusHalo) 1.05f else 1f,
+        label = "auroraPrimaryScale",
+    )
+    val glow by animateDpAsState(
+        if (!focusHalo) 0.dp else if (isFocused) 26.dp else 14.dp,
+        label = "auroraPrimaryGlow",
+    )
+    val fillBrush = if (isFocused && neutralFocusFill) {
+        Brush.verticalGradient(listOf(Color.White, Color.White))
+    } else if (isFocused || filledAtRest) {
+        Brush.verticalGradient(listOf(AuroraCreamTop, AuroraCreamBottom))
+    } else {
+        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.06f), Color.White.copy(alpha = 0.06f)))
+    }
+    val contentColor = if (isFocused && neutralFocusFill) {
+        Color.Black.copy(alpha = 0.88f)
+    } else if (isFocused || filledAtRest) {
+        AuroraCreamInk
+    } else {
+        AuroraInk.copy(alpha = 0.68f)
+    }
 
     Box(
         modifier = modifier
@@ -130,14 +166,14 @@ fun AuroraPrimaryButton(
                 elevation = glow,
                 shape = shape,
                 clip = false,
-                ambientColor = if (isFocused) AuroraAccent else Color.Black,
-                spotColor = if (isFocused) AuroraAccent else Color.Black,
+                ambientColor = if (isFocused && focusHalo) AuroraAccent else Color.Black,
+                spotColor = if (isFocused && focusHalo) AuroraAccent else Color.Black,
             )
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(AuroraCreamTop, AuroraCreamBottom)))
+            .background(fillBrush)
             .border(
-                width = if (isFocused) 3.dp else 0.dp,
-                color = if (isFocused) Color.White else Color.Transparent,
+                width = if (isFocused) 3.dp else 1.dp,
+                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.14f),
                 shape = shape,
             )
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
@@ -148,9 +184,9 @@ fun AuroraPrimaryButton(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (icon != null) {
-                Icon(imageVector = icon, contentDescription = null, tint = AuroraCreamInk, modifier = Modifier.size(24.dp))
+                Icon(imageVector = icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(24.dp))
             }
-            Text(text = label, color = AuroraCreamInk, fontWeight = FontWeight.SemiBold, fontSize = 24.sp)
+            Text(text = label, color = contentColor, fontWeight = FontWeight.SemiBold, fontSize = 24.sp)
         }
     }
 }
@@ -194,11 +230,17 @@ fun AuroraGhostButton(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    fontSize: TextUnit = 22.sp,
+    horizontalPadding: Dp = 22.dp,
+    verticalPadding: Dp = 12.dp,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
     val fill by animateColorAsState(if (isFocused) AuroraInk else Color.White.copy(alpha = 0.06f), label = "auroraGhostFill")
-    val content = if (isFocused) AuroraNightBottom else AuroraInk.copy(alpha = 0.62f)
+    val content by animateColorAsState(
+        if (isFocused) AuroraNightBottom else AuroraInk.copy(alpha = 0.62f),
+        label = "auroraGhostContent",
+    )
 
     Box(
         modifier = modifier
@@ -211,9 +253,9 @@ fun AuroraGhostButton(
             )
             .onFocusChanged { isFocused = it.isFocused }
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
-            .padding(horizontal = 22.dp, vertical = 12.dp),
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = label, color = content, fontWeight = FontWeight.Medium, fontSize = 22.sp)
+        Text(text = label, color = content, fontWeight = FontWeight.Medium, fontSize = fontSize)
     }
 }

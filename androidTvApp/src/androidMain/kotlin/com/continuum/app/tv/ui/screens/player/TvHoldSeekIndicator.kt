@@ -110,7 +110,7 @@ fun TvHoldSeekIndicator(
             Text(
                 text = "← → speed  ·  ◉ play  ·  ↩ cancel",
                 color = Color.White.copy(alpha = 0.55f),
-                fontSize = 10.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
             )
         }

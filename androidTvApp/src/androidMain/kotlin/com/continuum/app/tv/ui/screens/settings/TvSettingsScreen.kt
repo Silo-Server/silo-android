@@ -847,7 +847,7 @@ fun TvSettingsPickerSheet(
             ) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.displaySmall.copy(fontSize = 14.sp, lineHeight = 16.sp),
+                    style = MaterialTheme.typography.displaySmall.copy(fontSize = 18.sp, lineHeight = 21.sp),
                     color = Color.White,
                     modifier = Modifier.padding(bottom = 28.dp),
                 )
@@ -913,7 +913,7 @@ private fun TvSettingsPickerOptionRow(
         ) {
             Text(
                 text = option.label,
-                style = MaterialTheme.typography.headlineSmall.copy(fontSize = 15.sp, lineHeight = 17.sp),
+                style = MaterialTheme.typography.headlineSmall.copy(fontSize = 17.sp, lineHeight = 20.sp),
                 color = if (isFocused) FocusedContent else Color.White,
                 modifier = Modifier.weight(1f),
             )
@@ -922,7 +922,7 @@ private fun TvSettingsPickerOptionRow(
                     imageVector = Icons.Default.Check,
                     contentDescription = null,
                     tint = if (isFocused) FocusedContent else Color.White,
-                    modifier = Modifier.size(12.dp),
+                    modifier = Modifier.size(14.dp),
                 )
             }
         }
@@ -967,12 +967,12 @@ private fun TvSettingsConfirmDialog(
             ) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 19.sp),
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 19.sp, lineHeight = 22.sp),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     text = message,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
@@ -1021,7 +1021,7 @@ private fun DialogButton(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.titleMedium.copy(fontSize = 12.sp, lineHeight = 14.sp),
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
             color = if (isFocused) FocusedContent else if (destructive) MaterialTheme.colorScheme.error else Color.White,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )

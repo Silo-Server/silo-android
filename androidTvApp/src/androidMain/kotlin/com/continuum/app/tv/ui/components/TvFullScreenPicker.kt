@@ -86,7 +86,7 @@ fun TvFullScreenPicker(
             ) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.displaySmall.copy(fontSize = 14.sp, lineHeight = 16.sp),
+                    style = MaterialTheme.typography.displaySmall.copy(fontSize = 18.sp, lineHeight = 21.sp),
                     color = Color.White,
                     modifier = Modifier.padding(top = 64.dp, bottom = 16.dp),
                 )
@@ -171,13 +171,13 @@ private fun TvFullScreenPickerRow(
             ) {
                 Text(
                     text = option.title,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontSize = 15.sp, lineHeight = 17.sp),
+                    style = MaterialTheme.typography.headlineSmall.copy(fontSize = 17.sp, lineHeight = 20.sp),
                     color = if (isFocused) DarkOnPrimary else Color.White,
                 )
                 option.subtitle?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         text = it,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp, lineHeight = 13.sp),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp),
                         color = if (isFocused) {
                             DarkOnPrimary.copy(alpha = 0.68f)
                         } else {
@@ -192,7 +192,7 @@ private fun TvFullScreenPickerRow(
                     imageVector = Icons.Default.Check,
                     contentDescription = null,
                     tint = if (isFocused) DarkOnPrimary else Color.White,
-                    modifier = Modifier.size(12.dp),
+                    modifier = Modifier.size(14.dp),
                 )
             }
         }

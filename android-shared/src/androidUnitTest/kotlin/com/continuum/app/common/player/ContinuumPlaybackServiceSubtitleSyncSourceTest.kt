@@ -23,6 +23,13 @@ class ContinuumPlaybackServiceSubtitleSyncSourceTest {
     }
 
     @Test
+    fun syncOffsetsAreForwardedToMpvInsteadOfMedia3OnlyProcessors() {
+        assertTrue(source.contains("import com.continuum.app.common.player.mpv.MpvPlayer"))
+        assertTrue(source.contains("(p as? MpvPlayer)?.setAudioDelayMs(delayMs)"))
+        assertTrue(source.contains("(p as? MpvPlayer)?.setSubtitleDelayMs(offsetMs)"))
+    }
+
+    @Test
     fun subtitleSyncReparseIsLimitedToItemsWithTextTracks() {
         assertTrue(source.contains("val hasConfiguredSubtitles ="))
         assertTrue(source.contains("val hasTextTracks ="))

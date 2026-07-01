@@ -15,30 +15,25 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Login
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
@@ -48,8 +43,11 @@ import com.continuum.app.tv.ui.components.TvAuroraBackdrop
 import com.continuum.app.tv.ui.components.TvAuroraVariant
 import com.continuum.app.tv.ui.components.TvHeroActionPill
 import com.continuum.app.tv.ui.components.TvPillVariant
-import com.continuum.app.tv.ui.components.tvOutlinedTextFieldColors
+import com.continuum.app.tv.ui.components.TvAnsiKeyboard
+import com.continuum.app.tv.ui.components.TvAnsiKeyboardAction
+import com.continuum.app.tv.ui.components.applyTvAnsiKeyboardAction
 import com.continuum.app.tv.ui.theme.Spacing
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -72,12 +70,20 @@ fun TvSignupScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val usernameFocus = remember { FocusRequester() }
+    val emailFocus = remember { FocusRequester() }
+    val passwordFocus = remember { FocusRequester() }
+    val inviteFocus = remember { FocusRequester() }
+    val keyboardFirstKeyFocus = remember { FocusRequester() }
     val usernameBringIntoView = remember { BringIntoViewRequester() }
     val emailBringIntoView = remember { BringIntoViewRequester() }
     val passwordBringIntoView = remember { BringIntoViewRequester() }
     val inviteBringIntoView = remember { BringIntoViewRequester() }
     val submitBringIntoView = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
+    var activeField by remember { mutableStateOf(TvSignupFormField.Username) }
+    var isKeyboardVisible by remember { mutableStateOf(false) }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var keyboardFocusPulse by remember { mutableStateOf(0) }
 
     LaunchedEffect(state.signupSuccess) {
         if (state.signupSuccess) {
@@ -86,6 +92,12 @@ fun TvSignupScreen(
         }
     }
     LaunchedEffect(Unit) { runCatching { usernameFocus.requestFocus() } }
+    LaunchedEffect(isKeyboardVisible, keyboardFocusPulse) {
+        if (isKeyboardVisible) {
+            delay(120)
+            runCatching { keyboardFirstKeyFocus.requestFocus() }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -118,81 +130,96 @@ fun TvSignupScreen(
                 color = Color.White.copy(alpha = 0.72f),
             )
 
-            OutlinedTextField(
+            CredentialDisplayField(
                 value = state.username,
-                onValueChange = viewModel::onUsernameChanged,
-                label = { Text("Username", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Next,
-                ),
+                hint = "Username",
                 enabled = !state.isLoading,
+                isActive = activeField == TvSignupFormField.Username,
+                isPassword = false,
+                passwordVisible = true,
+                focusRequester = usernameFocus,
+                onFocused = {
+                    activeField = TvSignupFormField.Username
+                    scope.launch { usernameBringIntoView.bringIntoView() }
+                },
+                onOpenKeyboard = {
+                    activeField = TvSignupFormField.Username
+                    isKeyboardVisible = true
+                    keyboardFocusPulse++
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .bringIntoViewRequester(usernameBringIntoView)
-                    .onFocusEvent { fs -> if (fs.isFocused) scope.launch { usernameBringIntoView.bringIntoView() } }
-                    .focusRequester(usernameFocus),
-                colors = tvOutlinedTextFieldColors(),
+                    .height(48.dp)
+                    .bringIntoViewRequester(usernameBringIntoView),
             )
 
-            OutlinedTextField(
+            CredentialDisplayField(
                 value = state.email,
-                onValueChange = viewModel::onEmailChanged,
-                label = { Text("Email", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Email,
-                    imeAction = ImeAction.Next,
-                ),
+                hint = "Email",
                 enabled = !state.isLoading,
+                isActive = activeField == TvSignupFormField.Email,
+                isPassword = false,
+                passwordVisible = true,
+                focusRequester = emailFocus,
+                onFocused = {
+                    activeField = TvSignupFormField.Email
+                    scope.launch { emailBringIntoView.bringIntoView() }
+                },
+                onOpenKeyboard = {
+                    activeField = TvSignupFormField.Email
+                    isKeyboardVisible = true
+                    keyboardFocusPulse++
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .bringIntoViewRequester(emailBringIntoView)
-                    .onFocusEvent { fs -> if (fs.isFocused) scope.launch { emailBringIntoView.bringIntoView() } },
-                colors = tvOutlinedTextFieldColors(),
+                    .height(48.dp)
+                    .bringIntoViewRequester(emailBringIntoView),
             )
 
-            OutlinedTextField(
+            CredentialDisplayField(
                 value = state.password,
-                onValueChange = viewModel::onPasswordChanged,
-                label = { Text("Password", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Next,
-                ),
+                hint = "Password",
                 enabled = !state.isLoading,
+                isActive = activeField == TvSignupFormField.Password,
+                isPassword = true,
+                passwordVisible = passwordVisible,
+                focusRequester = passwordFocus,
+                onFocused = {
+                    activeField = TvSignupFormField.Password
+                    scope.launch { passwordBringIntoView.bringIntoView() }
+                },
+                onOpenKeyboard = {
+                    activeField = TvSignupFormField.Password
+                    isKeyboardVisible = true
+                    keyboardFocusPulse++
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .bringIntoViewRequester(passwordBringIntoView)
-                    .onFocusEvent { fs -> if (fs.isFocused) scope.launch { passwordBringIntoView.bringIntoView() } },
-                colors = tvOutlinedTextFieldColors(),
+                    .height(48.dp)
+                    .bringIntoViewRequester(passwordBringIntoView),
             )
 
-            OutlinedTextField(
+            CredentialDisplayField(
                 value = state.inviteCode,
-                onValueChange = viewModel::onInviteCodeChanged,
-                label = { Text("Invite Code", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = { if (!state.isLoading) viewModel.onSignupClick() },
-                ),
+                hint = "Invite Code",
                 enabled = !state.isLoading,
+                isActive = activeField == TvSignupFormField.InviteCode,
+                isPassword = false,
+                passwordVisible = true,
+                focusRequester = inviteFocus,
+                onFocused = {
+                    activeField = TvSignupFormField.InviteCode
+                    scope.launch { inviteBringIntoView.bringIntoView() }
+                },
+                onOpenKeyboard = {
+                    activeField = TvSignupFormField.InviteCode
+                    isKeyboardVisible = true
+                    keyboardFocusPulse++
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .bringIntoViewRequester(inviteBringIntoView)
-                    .onFocusEvent { fs -> if (fs.isFocused) scope.launch { inviteBringIntoView.bringIntoView() } },
-                colors = tvOutlinedTextFieldColors(),
+                    .height(48.dp)
+                    .bringIntoViewRequester(inviteBringIntoView),
             )
 
             if (state.error != null) {
@@ -234,8 +261,94 @@ fun TvSignupScreen(
                 )
             }
         }
+
+        if (isKeyboardVisible) {
+            TvSignupAnsiKeyboard(
+                activeField = activeField,
+                enabled = !state.isLoading,
+                passwordVisible = passwordVisible,
+                firstKeyFocusRequester = keyboardFirstKeyFocus,
+                onTogglePasswordVisibility = { passwordVisible = !passwordVisible },
+                onAction = { field, action ->
+                    when (field) {
+                        TvSignupFormField.Username -> viewModel.onUsernameChanged(
+                            applyTvAnsiKeyboardAction(state.username, action, TV_SIGNUP_FORM_MAX_LENGTH),
+                        )
+                        TvSignupFormField.Email -> viewModel.onEmailChanged(
+                            applyTvAnsiKeyboardAction(state.email, action, TV_SIGNUP_FORM_MAX_LENGTH),
+                        )
+                        TvSignupFormField.Password -> viewModel.onPasswordChanged(
+                            applyTvAnsiKeyboardAction(state.password, action, TV_SIGNUP_FORM_MAX_LENGTH),
+                        )
+                        TvSignupFormField.InviteCode -> viewModel.onInviteCodeChanged(
+                            applyTvAnsiKeyboardAction(state.inviteCode, action, TV_SIGNUP_FORM_MAX_LENGTH),
+                        )
+                    }
+                },
+                onNext = {
+                    when (activeField) {
+                        TvSignupFormField.Username -> activeField = TvSignupFormField.Email
+                        TvSignupFormField.Email -> activeField = TvSignupFormField.Password
+                        TvSignupFormField.Password -> activeField = TvSignupFormField.InviteCode
+                        TvSignupFormField.InviteCode -> {
+                            isKeyboardVisible = false
+                            viewModel.onSignupClick()
+                        }
+                    }
+                    keyboardFocusPulse++
+                },
+                onDismiss = {
+                    isKeyboardVisible = false
+                    when (activeField) {
+                        TvSignupFormField.Username -> runCatching { usernameFocus.requestFocus() }
+                        TvSignupFormField.Email -> runCatching { emailFocus.requestFocus() }
+                        TvSignupFormField.Password -> runCatching { passwordFocus.requestFocus() }
+                        TvSignupFormField.InviteCode -> runCatching { inviteFocus.requestFocus() }
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 48.dp, end = 48.dp, bottom = 28.dp),
+            )
+        }
     }
 }
+
+@Composable
+private fun TvSignupAnsiKeyboard(
+    activeField: TvSignupFormField,
+    enabled: Boolean,
+    passwordVisible: Boolean,
+    firstKeyFocusRequester: FocusRequester,
+    onTogglePasswordVisibility: () -> Unit,
+    onAction: (TvSignupFormField, TvAnsiKeyboardAction) -> Unit,
+    onNext: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    TvAnsiKeyboard(
+        primaryLabel = if (activeField == TvSignupFormField.InviteCode) "Sign Up" else "Next",
+        primaryEnabled = enabled,
+        enabled = enabled,
+        firstKeyFocusRequester = firstKeyFocusRequester,
+        onAction = { action -> onAction(activeField, action) },
+        onPrimary = onNext,
+        onDismiss = onDismiss,
+        modifier = modifier,
+        showPasswordVisibilityKey = activeField == TvSignupFormField.Password,
+        passwordVisible = passwordVisible,
+        onTogglePasswordVisibility = onTogglePasswordVisibility,
+    )
+}
+
+private enum class TvSignupFormField {
+    Username,
+    Email,
+    Password,
+    InviteCode,
+}
+
+private const val TV_SIGNUP_FORM_MAX_LENGTH = 200
 
 /** Compact horizontal brand row, matching the other auth screens. */
 @OptIn(ExperimentalTvMaterial3Api::class)

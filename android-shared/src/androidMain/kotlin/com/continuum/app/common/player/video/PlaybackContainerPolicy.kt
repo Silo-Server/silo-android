@@ -33,10 +33,12 @@ fun isMpvOriginalPlaybackContainer(container: String?): Boolean =
 /**
  * Original containers that should prefer MPV at playback time because Media3 is
  * more likely to stumble on container semantics, timestamping, or attachments.
+ * Matroska stays MPV-capable, but Media3 is the faster default on modern TV
+ * devices and gives us staged buffering + auth refresh instead of a blind MPV
+ * startup stall.
  */
 fun isMpvPreferredOriginalPlaybackContainer(container: String?): Boolean =
     when (normalizedPlaybackContainer(container)) {
-        "mkv", "matroska",
         "avi",
         "mov", "qt",
         "ts", "mpegts", "mpeg-ts", "m2ts", "mts" -> true

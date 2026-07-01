@@ -26,7 +26,8 @@ import com.continuum.app.model.catalog.ItemDetail
 /**
  * Key/value grid that lists directors, writers, studios, networks, countries
  * and dates beneath the detail page hero. Mirrors `TVDetailFactsSection` with
- * tvOS geometry mapped to Android TV's half-scale canvas.
+ * tvOS geometry mapped to Android TV's half-scale canvas and text lifted to a
+ * 10-foot readability floor.
  */
 @Composable
 internal fun TvDetailFactsTable(
@@ -61,7 +62,8 @@ internal fun TvDetailFactsTable(
                     style = MaterialTheme.typography.titleSmall.copy(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.0.sp,
-                        fontSize = 9.sp,
+                        fontSize = 13.sp,
+                        lineHeight = 15.sp,
                     ),
                     color = Color.White.copy(alpha = 0.5f),
                     modifier = Modifier.width(130.dp),
@@ -70,7 +72,8 @@ internal fun TvDetailFactsTable(
                     text = fact.value,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Normal,
-                        fontSize = 11.sp,
+                        fontSize = 13.sp,
+                        lineHeight = 16.sp,
                     ),
                     color = Color.White,
                     modifier = Modifier.fillMaxWidth(),

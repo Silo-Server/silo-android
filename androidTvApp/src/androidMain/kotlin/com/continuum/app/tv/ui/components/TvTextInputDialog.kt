@@ -1,17 +1,12 @@
 package com.continuum.app.tv.ui.components
 
-import android.content.Context
-import android.graphics.Color as AndroidColor
-import android.graphics.drawable.GradientDrawable
-import android.text.Editable
-import android.text.InputType
-import android.text.TextWatcher
-import android.util.TypedValue
-import android.view.Gravity
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,32 +18,44 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.nativeKeyCode
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
 
 /**
- * Generic single-field text-input dialog for TV. Android TV/Shield needs a
- * platform EditText here: Compose TextField can leave the IME attached to the
- * AndroidComposeView with inputType=0, which makes profile name/PIN entry fail.
+ * Generic single-field text-input dialog for TV. It uses Silo's own ANSI-style
+ * remote keyboard so profile names, PINs, server labels, and one-off dialogs
+ * all avoid Android TV's inconsistent platform IME behavior.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -65,17 +72,33 @@ fun TvTextInputDialog(
     keyboardType: KeyboardType = KeyboardType.Text,
 ) {
     var text by remember { mutableStateOf(initialValue) }
+    var isKeyboardVisible by remember { mutableStateOf(true) }
+    val fieldFocusRequester = remember { FocusRequester() }
+    val firstKeyFocusRequester = remember { FocusRequester() }
+    val canConfirm = !isBusy && (allowBlank || text.isNotBlank())
+    val submit = {
+        if (canConfirm) onConfirm(text)
+    }
+
+    LaunchedEffect(isKeyboardVisible) {
+        delay(120)
+        if (isKeyboardVisible) {
+            runCatching { firstKeyFocusRequester.requestFocus() }
+        } else {
+            runCatching { fieldFocusRequester.requestFocus() }
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.85f)),
-            contentAlignment = Alignment.Center,
         ) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.align(Alignment.Center),
             ) {
                 Column(
                     modifier = Modifier
@@ -86,19 +109,20 @@ fun TvTextInputDialog(
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleMedium.copy(
-                            fontSize = 17.sp,
-                            lineHeight = 19.sp,
+                            fontSize = 19.sp,
+                            lineHeight = 22.sp,
                             fontWeight = FontWeight.SemiBold,
                         ),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    TvPlatformEditText(
+                    TvDialogTextDisplayField(
                         value = text,
                         hint = label,
                         enabled = !isBusy,
-                        keyboardType = keyboardType,
-                        onValueChange = { text = it },
-                        onDone = { if (!isBusy && (allowBlank || text.isNotBlank())) onConfirm(text) },
+                        isPassword = keyboardType == KeyboardType.Password ||
+                            keyboardType == KeyboardType.NumberPassword,
+                        focusRequester = fieldFocusRequester,
+                        onOpenKeyboard = { isKeyboardVisible = true },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp),
@@ -107,8 +131,8 @@ fun TvTextInputDialog(
                         Text(
                             text = errorMessage,
                             color = MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp,
-                            lineHeight = 15.sp,
+                            fontSize = 14.sp,
+                            lineHeight = 17.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
@@ -121,114 +145,149 @@ fun TvTextInputDialog(
                             onClick = onDismiss,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         ) {
-                            Text(text = "Cancel", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(text = "Cancel", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Button(
-                            onClick = { if (!isBusy && (allowBlank || text.isNotBlank())) onConfirm(text) },
-                            enabled = !isBusy,
+                            onClick = submit,
+                            enabled = canConfirm,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         ) {
                             Text(
                                 text = if (isBusy) "..." else confirmLabel,
-                                fontSize = 12.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                             )
                         }
                     }
                 }
             }
+
+            if (isKeyboardVisible) {
+                TvAnsiKeyboard(
+                    primaryLabel = confirmLabel,
+                    primaryEnabled = canConfirm,
+                    enabled = !isBusy,
+                    firstKeyFocusRequester = firstKeyFocusRequester,
+                    onAction = { action ->
+                        text = applyTvDialogKeyboardAction(
+                            value = text,
+                            action = action,
+                            keyboardType = keyboardType,
+                        )
+                    },
+                    onPrimary = submit,
+                    onDismiss = { isKeyboardVisible = false },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 48.dp, end = 48.dp, bottom = 28.dp),
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun TvPlatformEditText(
+private fun TvDialogTextDisplayField(
     value: String,
     hint: String,
     enabled: Boolean,
-    keyboardType: KeyboardType,
-    onValueChange: (String) -> Unit,
-    onDone: () -> Unit,
+    isPassword: Boolean,
+    focusRequester: FocusRequester,
+    onOpenKeyboard: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val currentOnValueChange by rememberUpdatedState(onValueChange)
-    val currentOnDone by rememberUpdatedState(onDone)
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(8.dp)
+    val display = if (value.isBlank()) {
+        hint
+    } else if (isPassword) {
+        "*".repeat(value.length)
+    } else {
+        value
+    }
 
-    AndroidView(
-        modifier = modifier,
-        factory = { context ->
-            val editText = EditText(context)
-            editText.setSingleLine(true)
-            editText.setText(value)
-            editText.hint = hint
-            editText.isEnabled = enabled
-            editText.inputType = tvInputTypeFor(keyboardType)
-            editText.imeOptions = EditorInfo.IME_ACTION_DONE
-            editText.gravity = Gravity.CENTER_VERTICAL or Gravity.START
-            editText.setTextColor(AndroidColor.WHITE)
-            editText.setHintTextColor(AndroidColor.argb(115, 255, 255, 255))
-            editText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            editText.includeFontPadding = false
-            editText.setPadding(16.dpToPx(context), 0, 16.dpToPx(context), 0)
-            editText.background = tvEditTextBackground()
-            editText.setSelectAllOnFocus(false)
-            editText.addTextChangedListener(
-                object : TextWatcher {
-                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-
-                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                        currentOnValueChange(s?.toString().orEmpty())
-                    }
-
-                    override fun afterTextChanged(s: Editable?) = Unit
-                },
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(Color.White.copy(alpha = if (isFocused) 0.07f else 0.045f))
+            .border(
+                width = if (isFocused) 2.dp else 1.dp,
+                color = Color.White.copy(alpha = if (isFocused) 0.92f else 0.26f),
+                shape = shape,
             )
-            editText.setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_DONE) {
-                    currentOnDone()
+            .focusRequester(focusRequester)
+            .onPreviewKeyEvent { event ->
+                if (shouldOpenTvDialogKeyboard(event)) {
+                    onOpenKeyboard()
                     true
                 } else {
                     false
                 }
             }
-            editText.post {
-                editText.requestFocus()
-                val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                inputMethodManager.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
+            .focusable(enabled = enabled, interactionSource = interactionSource)
+            .onKeyEvent { event ->
+                if (shouldOpenTvDialogKeyboard(event)) {
+                    onOpenKeyboard()
+                    true
+                } else {
+                    false
+                }
             }
-            editText
-        },
-        update = { editText ->
-            editText.isEnabled = enabled
-            editText.inputType = tvInputTypeFor(keyboardType)
-            if (editText.text.toString() != value) {
-                editText.setText(value)
-                editText.setSelection(value.length)
-            }
-        },
-    )
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onOpenKeyboard,
+            )
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text = display,
+            color = Color.White.copy(alpha = if (value.isBlank()) 0.56f else 0.96f),
+            fontSize = 18.sp,
+            lineHeight = 22.sp,
+            fontWeight = FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 260.dp),
+        )
+    }
 }
 
-private fun tvInputTypeFor(keyboardType: KeyboardType): Int =
-    if (keyboardType == KeyboardType.Number || keyboardType == KeyboardType.NumberPassword) {
-        InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-    } else {
-        InputType.TYPE_CLASS_TEXT or
-            InputType.TYPE_TEXT_FLAG_CAP_WORDS or
-            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+private fun shouldOpenTvDialogKeyboard(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+    val isActivationPress = event.type == KeyEventType.KeyDown || event.type == KeyEventType.KeyUp
+    if (!isActivationPress) return false
+    return when (event.key) {
+        Key.DirectionCenter,
+        Key.Enter,
+        Key.NumPadEnter,
+        -> true
+        else -> event.key.nativeKeyCode in TvDialogActivationKeyCodes
     }
+}
 
-private fun tvEditTextBackground(): GradientDrawable =
-    GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = 6f
-        setColor(AndroidColor.BLACK)
-        setStroke(1, AndroidColor.argb(120, 255, 255, 255))
+private val TvDialogActivationKeyCodes = setOf(
+    AndroidKeyEvent.KEYCODE_DPAD_CENTER,
+    AndroidKeyEvent.KEYCODE_ENTER,
+    AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
+)
+
+private fun applyTvDialogKeyboardAction(
+    value: String,
+    action: TvAnsiKeyboardAction,
+    keyboardType: KeyboardType,
+): String {
+    val numericOnly = keyboardType == KeyboardType.Number || keyboardType == KeyboardType.NumberPassword
+    return when (action) {
+        is TvAnsiKeyboardAction.Insert -> {
+            val inserted = if (numericOnly) action.text.filter { it.isDigit() } else action.text
+            (value + inserted).take(TV_DIALOG_TEXT_MAX_LENGTH)
+        }
+        TvAnsiKeyboardAction.Backspace -> value.dropLast(1)
+        TvAnsiKeyboardAction.Clear -> ""
     }
+}
 
-private fun Int.dpToPx(context: Context): Int =
-    TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP,
-        toFloat(),
-        context.resources.displayMetrics,
-    ).toInt()
+private const val TV_DIALOG_TEXT_MAX_LENGTH = 200

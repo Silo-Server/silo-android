@@ -21,6 +21,12 @@ class TvPlayerControlsUsabilityTest {
     private val activitySource = File(
         "src/androidMain/kotlin/com/continuum/app/tv/MainTvActivity.kt",
     ).readText()
+    private val routeSource = File(
+        "src/androidMain/kotlin/com/continuum/app/tv/ui/navigation/TvRoute.kt",
+    ).readText()
+    private val navigationSource = File(
+        "src/androidMain/kotlin/com/continuum/app/tv/ui/navigation/TvAppNavigation.kt",
+    ).readText()
     private val remoteKeyBridgeSource = File(
         "src/androidMain/kotlin/com/continuum/app/tv/ui/screens/player/TvPlayerRemoteKeyBridge.kt",
     ).takeIf { it.exists() }?.readText().orEmpty()
@@ -32,35 +38,74 @@ class TvPlayerControlsUsabilityTest {
         assertTrue(clusterSource.contains("Arrangement.SpaceBetween"))
         assertTrue(clusterSource.contains("Icons.Filled.Replay10"))
         assertTrue(clusterSource.contains("Icons.Filled.Forward30"))
+        assertTrue(clusterSource.contains("Icons.Filled.ClosedCaption"))
         assertTrue(clusterSource.contains("Icons.Filled.Tune"))
         assertTrue(clusterSource.contains("Icons.Filled.Close"))
     }
 
     @Test
-    fun transportDropsBackAndSubtitlesButtons() {
-        // No Back button, no separate subtitles button — close uses xmark and
-        // options (Tune) opens the floating HUD whose Subtitles tab owns tracks.
+    fun transportDropsBackButKeepsFastSubtitlePicker() {
+        // No Back button and no generic More button. Subtitles are a primary
+        // playback action, so the transport keeps a dedicated CC quick picker;
+        // options (Tune) still opens the full HUD for style/search/AI.
         assertFalse(clusterSource.contains("Icons.AutoMirrored.Filled.ArrowBack"))
-        assertFalse(clusterSource.contains("Icons.Filled.Subtitles"))
         assertFalse(clusterSource.contains("Icons.Filled.MoreHoriz"))
         assertFalse(clusterSource.contains("Icons.Filled.Forward10"))
+        assertTrue(clusterSource.contains("Icons.Filled.ClosedCaption"))
+        assertTrue(screenSource.contains("fun TvQuickSubtitlePicker("))
+        assertTrue(screenSource.contains("onOpenQuickSubtitles"))
+        assertTrue(screenSource.contains("showQuickSubtitlePicker"))
     }
 
     @Test
-    fun hudIsFloatingTopCenterCardInsteadOfRightDrawer() {
+    fun hudIsAdaptiveTopCenterCardInsteadOfRightDrawer() {
         assertTrue(screenSource.contains("Alignment.TopCenter"))
-        assertTrue(hudSource.contains(".widthIn(max = 550.dp)"))
-        assertTrue(hudSource.contains(".height(190.dp)"))
+        assertTrue(hudSource.contains("private val HudMaxWidth = 600.dp"))
+        assertTrue(hudSource.contains("private val HudMinHeight = 250.dp"))
+        assertTrue(hudSource.contains("private val HudMaxHeight = 310.dp"))
+        assertTrue(hudSource.contains(".fillMaxWidth(0.66f)"))
+        assertTrue(hudSource.contains(".heightIn(min = HudMinHeight, max = HudMaxHeight)"))
+        assertFalse(hudSource.contains(".height(190.dp)"))
+        assertFalse(hudSource.contains("private val HudMaxWidth = 720.dp"))
+        assertFalse(hudSource.contains("private val HudMaxWidth = 640.dp"))
+        assertFalse(hudSource.contains(".fillMaxWidth(0.8f)"))
+        assertFalse(hudSource.contains(".fillMaxWidth(0.72f)"))
         assertFalse(hudSource.contains("PlayerSidePanel"))
         assertFalse(hudSource.contains(".width(560.dp)"))
     }
 
     @Test
-    fun subtitleStyleSwatchesFitInsideCompactHud() {
-        assertTrue(hudSource.contains(".size(28.dp)"))
+    fun subtitleStyleSwatchesFitInsideReadableHud() {
+        val styleSectionBlock = hudSource
+            .substringAfter("private fun StyleSection")
+            .substringBefore("private fun StyleColorSwatch")
+
+        assertTrue(hudSource.contains(".size(24.dp)"))
+        assertTrue(styleSectionBlock.contains("FlowRow("))
+        assertTrue(styleSectionBlock.contains("horizontalArrangement = Arrangement.spacedBy(5.dp)"))
+        assertTrue(styleSectionBlock.contains("verticalArrangement = Arrangement.spacedBy(5.dp)"))
         assertFalse(hudSource.contains(".size(36.dp)"))
-        assertTrue(hudSource.contains("horizontalArrangement = Arrangement.spacedBy(6.dp)"))
+        assertFalse(hudSource.contains(".size(28.dp)"))
+        assertFalse(styleSectionBlock.contains(".horizontalScroll(rememberScrollState())"))
         assertTrue(hudSource.contains("modifier = Modifier.padding(top = 5.dp)"))
+    }
+
+    @Test
+    fun hudTabsUseScrollSafePaneViewports() {
+        assertTrue(hudSource.contains("private fun HudPaneViewport("))
+        assertTrue(hudSource.contains("private fun HudTwoColumnPane("))
+        assertTrue(hudSource.contains(".padding(bottom = HudPaneBottomPadding)"))
+        assertTrue(hudSource.contains("HudTab.Info -> HudPaneViewport"))
+        assertTrue(hudSource.contains("HudTab.Stats -> HudPaneViewport"))
+        assertTrue(hudSource.contains("HudTab.Chapters -> HudPaneViewport"))
+    }
+
+    @Test
+    fun videoTabUsesSettingRowsForSleepTimer() {
+        assertTrue(hudSource.contains("label = \"Sleep timer\""))
+        assertTrue(hudSource.contains("title = \"Sleep Timer\""))
+        assertTrue(hudSource.contains("HudPickerOption(\"cancel\", \"Cancel timer\")"))
+        assertFalse(hudSource.contains("SLEEP_TIMER_PRESETS.forEach { minutes ->"))
     }
 
     @Test
@@ -72,13 +117,25 @@ class TvPlayerControlsUsabilityTest {
     }
 
     @Test
-    fun chapterRowsUseCompactHudTypography() {
+    fun chapterRowsUseReadableHudTypography() {
         assertTrue(hudSource.contains(".padding(horizontal = 12.dp, vertical = 7.dp)"))
-        assertTrue(hudSource.contains("fontSize = 10.sp"))
-        assertTrue(hudSource.contains("lineHeight = 12.sp"))
-        assertTrue(hudSource.contains("fontSize = 11.sp"))
-        assertTrue(hudSource.contains("lineHeight = 13.sp"))
+        assertTrue(hudSource.contains("fontSize = 13.sp"))
+        assertTrue(hudSource.contains("lineHeight = 16.sp"))
+        assertFalse(hudSource.contains("fontSize = 10.sp"))
+        assertFalse(hudSource.contains("lineHeight = 12.sp"))
         assertFalse(hudSource.contains(".padding(horizontal = 16.dp, vertical = 10.dp)"))
+    }
+
+    @Test
+    fun statsPaneUsesHudTypographyInsteadOfDefaultBodyMedium() {
+        val statsBlock = hudSource
+            .substringAfter("private fun HudStatsPane")
+            .substringBefore("private val PLAYBACK_SPEED_OPTIONS")
+
+        assertTrue(statsBlock.contains("fontSize = 13.sp"))
+        assertTrue(statsBlock.contains("lineHeight = 16.sp"))
+        assertTrue(statsBlock.contains("verticalArrangement = Arrangement.spacedBy(2.dp)"))
+        assertFalse(statsBlock.contains("style = MaterialTheme.typography.bodyMedium,"))
     }
 
     @Test
@@ -107,6 +164,21 @@ class TvPlayerControlsUsabilityTest {
         assertTrue(hudSource.contains("presentation.onSelect(option.id)"))
         assertTrue(hudSource.contains(".clickable(interactionSource = interactionSource, indication = null)"))
         assertFalse(hudSource.contains("option = opt,\n                onFocused"))
+    }
+
+    @Test
+    fun quickSubtitlePickerUsesHudPickerModalForDpadNavigation() {
+        val quickPickerBlock = screenSource
+            .substringAfter("private fun TvQuickSubtitlePicker(")
+            .substringBefore("/**\n * Top-end Watch Together status pill")
+
+        assertTrue(quickPickerBlock.contains("HudPickerDialog("))
+        assertTrue(quickPickerBlock.contains("HudPickerPresentation("))
+        assertTrue(quickPickerBlock.contains("selectedId ="))
+        assertTrue(quickPickerBlock.contains("Dialog("))
+        assertTrue(quickPickerBlock.contains("DialogProperties(usePlatformDefaultWidth = false)"))
+        assertFalse(quickPickerBlock.contains(".verticalScroll(rememberScrollState())"))
+        assertFalse(quickPickerBlock.contains("TvDialogActionRow("))
     }
 
     @Test
@@ -147,6 +219,30 @@ class TvPlayerControlsUsabilityTest {
     }
 
     @Test
+    fun subtitlePaneShowsAppearanceExampleAndColumnFocusAnchors() {
+        assertTrue(hudSource.contains("private fun HudSubtitlePreview("))
+        assertTrue(hudSource.contains("HudSubtitlePreview(appearance = appearance)"))
+        assertTrue(hudSource.contains("Subtitle example"))
+        assertTrue(hudSource.contains("val subtitleTrackFocus = remember { FocusRequester() }"))
+        assertTrue(hudSource.contains("val subtitleTextColorFocus = remember { FocusRequester() }"))
+        assertTrue(hudSource.contains("val subtitleBackgroundColorFocus = remember { FocusRequester() }"))
+        assertTrue(hudSource.contains("rightFocusRequester = subtitleTextColorFocus"))
+        assertTrue(hudSource.contains("rightFocusRequester = subtitleBackgroundColorFocus"))
+        assertTrue(hudSource.contains("leftFocusRequester = subtitleTrackFocus"))
+        assertTrue(hudSource.contains("focusRequester = if (index == 0) subtitleTextColorFocus else null"))
+        assertTrue(hudSource.contains("focusRequester = if (index == 0) subtitleBackgroundColorFocus else null"))
+    }
+
+    @Test
+    fun subtitlePaneShowsDirectNoBackgroundControlAndReadableWhiteSelection() {
+        assertTrue(hudSource.contains("label = \"No background\""))
+        assertTrue(hudSource.contains("appearance.copy(backgroundStyle = SubtitleBackgroundStylePreset.None)"))
+        assertTrue(hudSource.contains("val isLightSwatch ="))
+        assertTrue(hudSource.contains("Icons.Filled.Check"))
+        assertTrue(hudSource.contains("checkTint"))
+    }
+
+    @Test
     fun videoPaneUsesRowDialogModelWithQualityPicker() {
         // The Video pane drives Quality / Speed / Aspect through the row→dialog
         // model; Quality is new and derived from the available video variants.
@@ -157,6 +253,19 @@ class TvPlayerControlsUsabilityTest {
         assertTrue(hudSource.contains("listOf(0.75, 1.0, 1.25, 1.5, 2.0)"))
         // The old inline "Fill mode" label is renamed to "Aspect".
         assertFalse(hudSource.contains("text = \"Fill mode\""))
+    }
+
+    @Test
+    fun aspectSelectionAppliesToPlayerSurfaceAndMpvBackend() {
+        assertTrue(screenSource.contains("applyPlayerViewVideoFillMode(view, state.videoFillMode)"))
+        assertTrue(screenSource.contains("applyMpvVideoScaleMode(sessionPlayer, state.videoFillMode)"))
+        assertTrue(screenSource.contains("view.getVideoSurfaceView()"))
+        assertTrue(screenSource.contains("CropLetterboxSurfaceScale"))
+        assertTrue(screenSource.contains("fun resizeModeForVideoFillMode(mode: VideoFillMode): Int"))
+        assertTrue(screenSource.contains("fun applyPlayerViewVideoFillMode(view: PlayerView, mode: VideoFillMode)"))
+        assertTrue(screenSource.contains("fun applyMpvVideoScaleMode(player: Player?, mode: VideoFillMode)"))
+        assertTrue(screenSource.contains("MpvVideoScaleMode.Zoom"))
+        assertTrue(screenSource.contains("MpvVideoScaleMode.Stretch"))
     }
 
     @Test
@@ -324,6 +433,18 @@ class TvPlayerControlsUsabilityTest {
             resolveBody.contains("commitApproachingEnd(nextState"),
             "nextEpisode resolution must re-arm a pending end-of-playback overlay",
         )
+    }
+
+    @Test
+    fun playNextCarriesCurrentQualityToNextEpisodeRoute() {
+        assertTrue(viewModelSource.contains("val preferredQuality: String? = null"))
+        assertTrue(viewModelSource.contains("PlayNextRequest(next.contentId, nextAutoAdvanceCount, selectedQuality)"))
+        assertTrue(screenSource.contains("onPlayNext(req.contentId, req.autoAdvanceCount, req.preferredQuality)"))
+        assertTrue(routeSource.contains("val quality: String? = null"))
+        assertTrue(routeSource.contains("if (quality != null) add(\"quality=\${quality.routeEncode()}\")"))
+        assertTrue(navigationSource.contains("TvRoute.Player(contentId = nextContentId, quality = nextQuality"))
+        assertTrue(navigationSource.contains("preferredQuality = preferredQuality"))
+        assertTrue(viewModelSource.contains("preferredQualityOverride = preferredQuality"))
     }
 
     @Test

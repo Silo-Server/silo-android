@@ -58,8 +58,8 @@ object TvSkyline {
     /** Gap between tab capsules in the bar's center cluster — tvOS `tabSpacing` (8pt). */
     val tabSpacing = 4.dp
 
-    /** Tab label size — tvOS `tabLabelSize` (23pt). */
-    val tabLabelSize = 12.sp
+    /** Tab label size — tvOS `tabLabelSize` (23pt), lifted above pure half-scale for 10-foot readability. */
+    val tabLabelSize = 13.sp
 
     /** Tab capsule horizontal padding — tvOS `tabPaddingHorizontal` (26pt). */
     val tabPaddingHorizontal = 13.dp
@@ -104,13 +104,13 @@ object TvSkyline {
     /** Profile dropdown avatar size, mapped from a 64pt tvOS avatar. */
     val profileMenuAvatarSize = 32.dp
 
-    /** Profile header typography, mapped from 28pt / 34pt tvOS title text. */
-    val profileMenuHeaderTitleSize = 14.sp
-    val profileMenuHeaderTitleLineHeight = 17.sp
+    /** Profile header typography, mapped from 28pt / 34pt tvOS title text with a readability floor. */
+    val profileMenuHeaderTitleSize = 15.sp
+    val profileMenuHeaderTitleLineHeight = 18.sp
 
-    /** Profile subtitle typography, mapped from 20pt / 24pt tvOS metadata text. */
-    val profileMenuHeaderSubtitleSize = 10.sp
-    val profileMenuHeaderSubtitleLineHeight = 12.sp
+    /** Profile subtitle typography, mapped from 20pt / 24pt tvOS metadata text with a readability floor. */
+    val profileMenuHeaderSubtitleSize = 13.sp
+    val profileMenuHeaderSubtitleLineHeight = 16.sp
 
     /** Divider inset, mapped from 24pt x 8pt tvOS padding. */
     val profileMenuDividerHorizontalPadding = 12.dp
@@ -132,9 +132,9 @@ object TvSkyline {
     /** Profile row capsule radius, mapped from a 16pt tvOS radius. */
     val profileMenuRowCornerRadius = 8.dp
 
-    /** Profile row typography, mapped from 28pt / 34pt tvOS row text. */
-    val profileMenuRowTextSize = 14.sp
-    val profileMenuRowLineHeight = 17.sp
+    /** Profile row typography, mapped from 28pt / 34pt tvOS row text with a readability floor. */
+    val profileMenuRowTextSize = 15.sp
+    val profileMenuRowLineHeight = 18.sp
 }
 
 object HeroDimens {

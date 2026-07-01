@@ -15,10 +15,12 @@ class PlaybackContainerPolicyTest {
 
     @Test
     fun mpvPreferredContainersExcludePlainMedia3FriendlyFormats() {
-        listOf("mkv", "matroska", "avi", "mov", "qt", "ts", "mpegts", "mpeg-ts", "m2ts", "mts")
+        listOf("avi", "mov", "qt", "ts", "mpegts", "mpeg-ts", "m2ts", "mts")
             .forEach { container ->
                 assertTrue(isMpvPreferredOriginalPlaybackContainer(container), "container=$container")
             }
+        assertFalse(isMpvPreferredOriginalPlaybackContainer("mkv"))
+        assertFalse(isMpvPreferredOriginalPlaybackContainer("matroska"))
         assertFalse(isMpvPreferredOriginalPlaybackContainer("mp4"))
         assertFalse(isMpvPreferredOriginalPlaybackContainer("webm"))
     }

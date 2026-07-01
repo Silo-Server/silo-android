@@ -80,14 +80,7 @@ class PlaybackCapabilityDetector(
                     val codecProbe = MediaCodecCapabilitiesProbe.probe()
                     val displayHdr = DisplayHdrProbe.probe(context)
                     val supportedHdr = DisplayHdrProbe.intersect(codecProbe.hdr, displayHdr)
-                    val supported = when (profile) {
-                        // Launch policy: do not claim Profile 7 direct playback.
-                        7 -> false
-                        8 -> supportedHdr.dolbyVisionProfiles.contains(8) ||
-                            supportedHdr.hdr10 ||
-                            supportedHdr.hlg
-                        else -> supportedHdr.dolbyVisionProfiles.contains(profile)
-                    }
+                    val supported = isDirectPlayableDolbyVisionProfile(profile, supportedHdr)
                     if (!supported) return Playability.UnsupportedDvProfile(profile)
                 }
             }
@@ -331,6 +324,21 @@ private fun Tracks.Group.selectedFormat() =
         .firstOrNull { isTrackSelected(it) }
         ?.let { getTrackFormat(it) }
         ?: if (mediaTrackGroup.length > 0) mediaTrackGroup.getFormat(0) else null
+
+internal fun isDirectPlayableDolbyVisionProfile(
+    profile: Int,
+    supportedHdr: com.continuum.app.model.playback.HdrCapabilities,
+): Boolean = when (profile) {
+    // Launch policy: do not claim Profile 7 direct playback until that route is
+    // validated separately. It commonly needs dual-layer handling that the
+    // current Media3 path has not proven.
+    7 -> false
+    // Profile 8 carries a renderable base layer. Do not force a server fallback
+    // merely because the display probe lacks native Dolby Vision/HDR; let the
+    // player-error path recover if the actual decoder route fails.
+    8 -> true
+    else -> supportedHdr.dolbyVisionProfiles.contains(profile)
+}
 
 internal fun isSoftwareDecodableAudioMime(
     mime: String,

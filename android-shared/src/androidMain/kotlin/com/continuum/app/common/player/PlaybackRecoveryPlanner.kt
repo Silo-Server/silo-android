@@ -28,7 +28,12 @@ class PlaybackRecoveryPlanner {
                 allowRemux = false,
             )
             is Playability.StartupStalled,
-            -> serverFallbackFromPlan(currentPlan, "direct_play_failed", attemptedEngines)
+            -> currentPlan?.let {
+                serverFallbackFromPlan(it, "direct_play_failed", attemptedEngines)
+            } ?: PlaybackRecoveryAction.ServerRemux(
+                errorClass = "direct_play_failed",
+                delivery = PlaybackDelivery.SERVER_REMUX_HLS,
+            )
             Playability.Supported -> PlaybackRecoveryAction.None
         }
 

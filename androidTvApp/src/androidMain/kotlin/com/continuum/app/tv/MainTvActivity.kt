@@ -9,11 +9,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,11 +22,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.continuum.app.common.settings.PlayerSettingsStore
 import com.continuum.app.common.startup.warmAuthenticatedStartup
 import com.continuum.app.common.ui.components.StartupSplashVideo
+import com.continuum.app.common.ui.components.StartupSplashResizeMode
 import com.continuum.app.network.ServerRegistry
 import com.continuum.app.network.TokenManager
 import com.continuum.app.repository.AuthRepository
@@ -85,11 +82,12 @@ class MainTvActivity : ComponentActivity() {
                 val resolvedRoute = startRoute
                 if (resolvedRoute == null || !splashPlaybackComplete) {
                     val splashFocus = remember { FocusRequester() }
+                    val splashBackground = Color(0xFF070509)
                     LaunchedEffect(Unit) { runCatching { splashFocus.requestFocus() } }
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0xFF050505))
+                            .background(splashBackground)
                             .focusRequester(splashFocus)
                             .focusable()
                             .onPreviewKeyEvent {
@@ -98,14 +96,14 @@ class MainTvActivity : ComponentActivity() {
                                 true
                             },
                     ) {
-                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                            val videoWidth = (maxWidth * 0.25f).coerceAtMost(440.dp)
+                        if (!splashPlaybackComplete) {
                             StartupSplashVideo(
                                 modifier = Modifier
                                     .align(Alignment.Center)
-                                    .width(videoWidth)
-                                    .aspectRatio(16f / 9f),
-                                backgroundColor = Color.Transparent,
+                                    .fillMaxSize(),
+                                resizeMode = StartupSplashResizeMode.Crop,
+                                backgroundColor = splashBackground,
+                                minVisibleMillis = 5_200L,
                                 onPlaybackComplete = {
                                     splashPlaybackComplete = true
                                     hasShownColdSplash = true

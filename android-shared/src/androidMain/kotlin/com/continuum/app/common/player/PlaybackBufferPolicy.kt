@@ -27,7 +27,7 @@ data class PlaybackBufferPolicy(
                 maxBufferMs = 60_000,
                 bufferForPlaybackMs = 3_000,
                 bufferForPlaybackAfterRebufferMs = 6_000,
-                targetBufferBytes = 32 * MIB,
+                targetBufferBytes = 160 * MIB,
                 prioritizeTimeOverSizeThresholds = false,
             )
             PlaybackBufferMode.Balanced -> PlaybackBufferPolicy(
@@ -35,7 +35,7 @@ data class PlaybackBufferPolicy(
                 maxBufferMs = 120_000,
                 bufferForPlaybackMs = 7_000,
                 bufferForPlaybackAfterRebufferMs = 12_000,
-                targetBufferBytes = 64 * MIB,
+                targetBufferBytes = 192 * MIB,
                 prioritizeTimeOverSizeThresholds = false,
             )
             PlaybackBufferMode.SmoothPlayback -> PlaybackBufferPolicy(
@@ -43,7 +43,7 @@ data class PlaybackBufferPolicy(
                 maxBufferMs = 90_000,
                 bufferForPlaybackMs = 5_000,
                 bufferForPlaybackAfterRebufferMs = 15_000,
-                targetBufferBytes = 96 * MIB,
+                targetBufferBytes = 256 * MIB,
                 prioritizeTimeOverSizeThresholds = false,
             )
         }

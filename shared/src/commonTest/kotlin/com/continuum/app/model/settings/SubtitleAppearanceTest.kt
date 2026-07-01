@@ -19,4 +19,9 @@ class SubtitleAppearanceTest {
         assertEquals(SubtitleFontSizePreset.Large, SubtitleAppearance.DEFAULT.fontSize)
         assertEquals(56.0, SubtitleAppearance.DEFAULT.fontSize.pointSize)
     }
+
+    @Test
+    fun defaultSubtitleAppearanceUsesNoBackground() {
+        assertEquals(SubtitleBackgroundStylePreset.None, SubtitleAppearance.DEFAULT.backgroundStyle)
+    }
 }
