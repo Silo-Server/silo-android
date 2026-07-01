@@ -30,7 +30,7 @@ class TvServerSetupReadabilityTest {
     fun setupTextUsesTenFootReadableSizes() {
         assertTrue(keyboardSource.contains("fontSize = 17.sp"))
         assertTrue(ansiKeyboardSource.contains("fontSize = when"))
-        assertTrue(ansiKeyboardSource.contains("else -> 17.sp"))
+        assertTrue(ansiKeyboardSource.contains("else -> 16.sp"))
         assertTrue(source.contains("fontSize = 16.sp"))
     }
 

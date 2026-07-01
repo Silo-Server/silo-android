@@ -1578,11 +1578,17 @@ private fun HudChaptersPane(
         HudEmptyStatePane("No chapters in this title", modifier)
         return
     }
-    Column(
-        modifier = modifier.fillMaxWidth(),
+    LazyColumn(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(max = 170.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        chapters.forEachIndexed { idx, ch ->
+        itemsIndexed(
+            chapters,
+            key = { _, chapter -> "${chapter.index}:${chapter.startSeconds}:${chapter.title}" },
+            contentType = { _, _ -> "hud-chapter" },
+        ) { idx, ch ->
             HudChapterRow(
                 chapter = ch,
                 onSelect = { onSelectChapter(idx) },

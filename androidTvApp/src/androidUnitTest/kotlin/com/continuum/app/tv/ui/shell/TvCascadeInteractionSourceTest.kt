@@ -63,8 +63,8 @@ class TvCascadeInteractionSourceTest {
 
     @Test
     fun cascadeFooterDescriptionUsesReadableTvCaptionToken() {
-        assertTrue(cascadeSource.contains("internal val CascadeFooterTextSize = 9.5.sp"))
-        assertTrue(cascadeSource.contains("private val CascadeFooterLineHeight = 12.sp"))
+        assertTrue(cascadeSource.contains("internal val CascadeFooterTextSize = 13.sp"))
+        assertTrue(cascadeSource.contains("private val CascadeFooterLineHeight = 16.sp"))
         assertTrue(cascadeSource.contains("fontSize = CascadeFooterTextSize"))
         assertTrue(cascadeSource.contains("lineHeight = CascadeFooterLineHeight"))
         assertTrue(cascadeSource.contains("ContinuumOnSurface.copy(alpha = 0.52f)"))

@@ -30,8 +30,8 @@ class TvAnsiKeyboardSourceTest {
         assertTrue(source.contains("TvAnsiHomeRow"))
         assertTrue(source.contains("TvAnsiBottomLetterRow"))
         assertTrue(source.contains("buildTvAnsiShortcutRow(shortcuts)"))
-        assertTrue(source.contains("private val TvAnsiKeyboardKeyHeight = 30.dp"))
-        assertTrue(source.contains("private val TvAnsiKeyboardMaxWidth = 620.dp"))
+        assertTrue(source.contains("private val TvAnsiKeyboardKeyHeight = 28.dp"))
+        assertTrue(source.contains("private val TvAnsiKeyboardMaxWidth = 600.dp"))
         assertFalse(source.contains("Symbols"))
         assertFalse(source.contains("#+="))
     }

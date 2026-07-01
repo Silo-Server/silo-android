@@ -80,8 +80,8 @@ class TvAuthFocusSourceTest {
         assertTrue(credentialKeyboardSource.contains("TvAnsiKeyboard("))
         assertTrue(credentialKeyboardSource.contains("primaryLabel = if (field == TvCredentialField.Username) \"Next\" else \"Sign In\""))
         assertTrue(credentialKeyboardSource.contains("showPasswordVisibilityKey = field == TvCredentialField.Password"))
-        assertTrue(ansiKeyboardSource.contains("private val TvAnsiKeyboardKeyHeight = 30.dp"))
-        assertTrue(ansiKeyboardSource.contains("vertical = 10.dp"))
+        assertTrue(ansiKeyboardSource.contains("private val TvAnsiKeyboardKeyHeight = 28.dp"))
+        assertTrue(ansiKeyboardSource.contains("private val TvAnsiKeyboardVerticalPadding = 8.dp"))
         assertTrue(ansiKeyboardSource.contains(".height(TvAnsiKeyboardKeyHeight)"))
     }
 

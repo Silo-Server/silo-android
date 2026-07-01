@@ -12,7 +12,8 @@ class TvDetailPlaybackSelectionSourceTest {
 
     @Test
     fun playActionKeepsAutoUnpinnedUnlessTrackOverrideIsSelected() {
-        assertTrue(source.contains("val selectedFileId = selectorSelectedFileId ?: selectorVersions.firstOrNull()?.fileId"))
+        assertTrue(source.contains("val selectedVersion = remember(selectorVersions, selectorSelectedFileId, selectorLastFileId)"))
+        assertTrue(source.contains("val selectedFileId = selectedVersion?.fileId"))
         assertTrue(source.contains("val hasTrackOverride = selectorAudioIndex != null || selectorSubtitleIndex != null"))
         assertTrue(source.contains("val playFileId = selectorSelectedFileId ?: selectedFileId.takeIf { hasTrackOverride }"))
         assertTrue(
