@@ -148,6 +148,46 @@ class PlayerTrackEntriesTest {
     }
 
     @Test
+    fun autoSubtitleResolverSelectsForcedTrackWhenAudioAlreadyMatchesPreferredLanguage() {
+        val audio = listOf(
+            PlayerTrackEntry(
+                index = 0,
+                label = "English EAC3",
+                language = "eng",
+                isSelected = true,
+            ),
+        )
+        val subtitles = listOf(
+            PlayerTrackEntry(
+                index = 1,
+                label = "English VTT",
+                language = "en",
+                isSelected = false,
+                codecOrMime = MimeTypes.TEXT_VTT,
+            ),
+            PlayerTrackEntry(
+                index = 2,
+                label = "English Forced VTT",
+                language = "en",
+                isSelected = false,
+                isForced = true,
+                codecOrMime = MimeTypes.TEXT_VTT,
+            ),
+        )
+
+        assertEquals(
+            SubtitleAutoSelection.Select(2),
+            resolveAutoSubtitleSelection(
+                audioTracks = audio,
+                subtitleTracks = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForced = true,
+            ),
+        )
+    }
+
+    @Test
     fun initialSubtitleOrdinalResolvesThroughMountedSubtitleMetadata() {
         val tracks = listOf(
             PlayerTrackEntry(

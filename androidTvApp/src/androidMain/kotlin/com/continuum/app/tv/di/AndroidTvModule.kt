@@ -371,6 +371,7 @@ val androidTvModule = module {
         TvItemDetailViewModel(
             catalogRepository = get(),
             personalDataRepository = get(),
+            playerSettingsStore = get(),
             contentId = params.get(),
         )
     }

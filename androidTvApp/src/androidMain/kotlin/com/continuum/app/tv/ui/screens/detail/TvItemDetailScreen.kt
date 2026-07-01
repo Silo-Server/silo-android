@@ -240,7 +240,7 @@ private fun TvDetailContent(
                             ratingChip = TvDetailMetadata.ratingChip(detail),
                             overview = detail.overview,
                             tagline = detail.tagline,
-                            factsLine = TvDetailMetadata.factsLine(detail),
+                            factsLine = TvDetailMetadata.factsLine(detail, state.preferredQuality),
                             starringText = TvDetailMetadata.starringText(detail),
                             actions = {
                                 HeroActionRow(
@@ -502,12 +502,17 @@ private fun HeroActionRow(
     } else {
         detail.userData?.lastFileId
     }
-    val selectedVersion = remember(selectorVersions, selectorSelectedFileId, selectorLastFileId) {
+    val selectedVersion = remember(
+        selectorVersions,
+        selectorSelectedFileId,
+        selectorLastFileId,
+        state.preferredQuality,
+    ) {
         selectTvDetailDisplayVersion(
             versions = selectorVersions,
             selectedFileId = selectorSelectedFileId,
             lastFileId = selectorLastFileId,
-            preferredQuality = null,
+            preferredQuality = state.preferredQuality,
         )
     }
     val selectedFileId = selectedVersion?.fileId

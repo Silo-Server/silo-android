@@ -131,6 +131,19 @@ internal fun resolveAutoSubtitleSelection(
         ?.language
         ?.let(::normalizedSubtitleLanguage)
     if (mode == "auto" && selectedAudioLanguage != null && selectedAudioLanguage == targetLanguage) {
+        if (showForced) {
+            val forcedTarget = bestForcedAutoSubtitleTrack(
+                subtitleTracks = subtitleTracks,
+                targetLanguage = targetLanguage,
+            )
+            if (forcedTarget != null) {
+                return if (forcedTarget.isSelected) {
+                    SubtitleAutoSelection.NoChange
+                } else {
+                    SubtitleAutoSelection.Select(forcedTarget.index)
+                }
+            }
+        }
         return SubtitleAutoSelection.Disable
     }
 
@@ -191,6 +204,24 @@ private fun bestAutoSubtitleTrack(
     pool.firstOrNull { !it.isForced && !isBitmapSubtitleCodecOrMime(it.codecOrMime) }
         ?.let { return it }
     pool.firstOrNull { !isBitmapSubtitleCodecOrMime(it.codecOrMime) }
+        ?.let { return it }
+    return pool.first()
+}
+
+private fun bestForcedAutoSubtitleTrack(
+    subtitleTracks: List<PlayerTrackEntry>,
+    targetLanguage: String?,
+): PlayerTrackEntry? {
+    val pool = if (targetLanguage == null) {
+        subtitleTracks
+    } else {
+        subtitleTracks.filter { normalizedSubtitleLanguage(it.language) == targetLanguage }
+    }.filter { it.isForced }
+    if (pool.isEmpty()) return null
+
+    pool.firstOrNull { !it.isHearingImpaired && !isBitmapSubtitleCodecOrMime(it.codecOrMime) }
+        ?.let { return it }
+    pool.firstOrNull { !it.isHearingImpaired }
         ?.let { return it }
     return pool.first()
 }

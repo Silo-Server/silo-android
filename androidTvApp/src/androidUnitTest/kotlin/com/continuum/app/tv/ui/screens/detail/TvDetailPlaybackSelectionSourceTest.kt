@@ -12,7 +12,14 @@ class TvDetailPlaybackSelectionSourceTest {
 
     @Test
     fun playActionKeepsAutoUnpinnedUnlessTrackOverrideIsSelected() {
-        assertTrue(source.contains("val selectedVersion = remember(selectorVersions, selectorSelectedFileId, selectorLastFileId)"))
+        assertTrue(
+            source.contains("state.preferredQuality,"),
+            "Auto display resolution must observe the same preferred quality used by playback startup.",
+        )
+        assertTrue(
+            source.contains("preferredQuality = state.preferredQuality"),
+            "Auto display resolution must pass the user's preferred quality into version selection.",
+        )
         assertTrue(source.contains("val selectedFileId = selectedVersion?.fileId"))
         assertTrue(source.contains("val hasTrackOverride = selectorAudioIndex != null || selectorSubtitleIndex != null"))
         assertTrue(source.contains("val playFileId = selectorSelectedFileId ?: selectedFileId.takeIf { hasTrackOverride }"))
