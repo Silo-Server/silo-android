@@ -12,7 +12,7 @@ plugins {
 val siloVersionName = providers
     .gradleProperty("siloVersionName")
     .orElse(providers.environmentVariable("SILO_VERSION_NAME"))
-    .orElse("0.1.0")
+    .orElse("1.0.0")
 
 val siloVersionCode = providers
     .gradleProperty("siloVersionCode")
@@ -20,9 +20,26 @@ val siloVersionCode = providers
     .map { value ->
         val code = value.toIntOrNull() ?: error("siloVersionCode must be an integer.")
         require(code > 0) { "siloVersionCode must be positive." }
+        // The *2 (+1 for TV) form-factor multiplier applied at versionCode
+        // assignment must stay under Google Play's 2_100_000_000 ceiling.
+        require(code <= 1_049_999_999) {
+            "siloVersionCode must be <= 1_049_999_999 so the form-factor multiplier " +
+                "keeps both artifacts under Google Play's 2_100_000_000 versionCode limit."
+        }
         code
     }
-    .orElse(1)
+    // Bump this per release. base -> phone = base*2, TV = base*2+1. base 5 was
+    // the 10/11 build; base 6 -> phone 12, TV 13.
+    .orElse(6)
+
+// APK ABI splits (below) are incompatible with the App Bundle build:
+// PerModuleBundleTask.getResourcesFile() expects a single processed-resources
+// file and throws "Sequence contains more than one matching element" when the
+// splits produce one per ABI. The bundle does its own ABI splitting via the
+// `bundle { abi }` block, so disable APK splits whenever a bundle task is run.
+val isBuildingBundle = gradle.startParameter.taskNames.any {
+    it.contains("bundle", ignoreCase = true)
+}
 
 kotlin {
     androidTarget {
@@ -113,7 +130,10 @@ android {
         applicationId = "org.siloserver.silo"
         minSdk = 24
         targetSdk = 35
-        versionCode = siloVersionCode.get()
+        // Shares one Play listing with the TV app (same applicationId). Two
+        // artifacts under one listing need distinct versionCodes: phone =
+        // base*2, TV = base*2+1, so each release bumps both by 2 with no reuse.
+        versionCode = siloVersionCode.get() * 2
         versionName = siloVersionName.get()
         // Shadow the android-shared BuildConfig field so per-app flavors
         // (e.g., a "no-FFmpeg" sideload build for size-constrained QA) can
@@ -161,7 +181,9 @@ android {
     // keeps the all-ABIs APK around for dev convenience.
     splits {
         abi {
-            isEnable = true
+            // Off for bundle builds (see isBuildingBundle) — the AAB handles
+            // per-ABI delivery itself and APK splits break its resource step.
+            isEnable = !isBuildingBundle
             reset()
             include("arm64-v8a", "armeabi-v7a", "x86_64")
             isUniversalApk = true

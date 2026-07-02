@@ -2,7 +2,7 @@
 
 Android **phone** and **Android TV** clients for the [Silo](https://github.com/Silo-Server/silo-server) self-hosted media server — stream and download your movies, shows, music, audiobooks, and ebooks, with quality-aware playback and multi-server/multi-profile support.
 
-Built as a Kotlin Multiplatform project: one shared business-logic core, two Jetpack Compose apps (touch + 10-foot TV). This branch uses the full Silo namespace cut: Kotlin packages live under `org.siloserver.silo`, with phone application ID `org.siloserver.silo` and TV application ID `org.siloserver.silo.tv`. Installs under legacy IDs do not upgrade in place; users should expect a fresh app install, sign-in, and offline media download.
+Built as a Kotlin Multiplatform project: one shared business-logic core, two Jetpack Compose apps (touch + 10-foot TV). This branch uses the full Silo namespace cut: Kotlin packages live under `org.siloserver.silo`, and both apps share a single application ID `org.siloserver.silo` so they publish as one Google Play listing (Play routes each build by manifest feature filtering). Installs under legacy IDs do not upgrade in place; users should expect a fresh app install, sign-in, and offline media download.
 
 > **Status:** Early WIP (`v0.1.0`). The architecture is solid and the feature surface is broad; some areas are intentionally "bones-level" and under active redesign (see [Roadmap](#roadmap)).
 >
@@ -30,7 +30,7 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 | | |
 |---|---|
 | **Apps** | Android phone · Android TV |
-| **Application IDs** | Phone `org.siloserver.silo` · Android TV `org.siloserver.silo.tv` |
+| **Application ID** | `org.siloserver.silo` (shared by phone + TV — one Play listing) |
 | **Language / UI** | Kotlin 2.1.20 · Jetpack Compose (Material 3) · Compose for TV (`androidx.tv`) |
 | **Playback** | AndroidX **Media3 / ExoPlayer** 1.10.0 (+ optional FFmpeg audio extension, optional MPV backend path) |
 | **Networking** | **Ktor** 3.1.2 client · kotlinx.serialization · WebSockets for realtime |
@@ -229,7 +229,7 @@ Known gaps the docs track: TV has no reader/ebooks and no downloads management b
 
 ## Notes
 
-- Android phone and TV app IDs remain `org.siloserver.silo` and `org.siloserver.silo.tv` in this migration.
+- The Android phone and TV apps share one application ID, `org.siloserver.silo`, and publish as a single Google Play listing; Play delivers the right build per device via manifest feature filtering (phone requires a touchscreen, TV requires leanback).
 - The Android modules target Java 21.
 - The server repo lives at [`Silo-Server/silo-server`](https://github.com/Silo-Server/silo-server).
 

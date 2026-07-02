@@ -6,6 +6,13 @@
          to API 26+ and uses Media3 on Android 7/API 24-25. -->
     <uses-sdk tools:overrideLibrary="dev.jdtech.mpv" />
 
+    <!-- Phone and TV share one Play listing under the same applicationId.
+         Requiring a touchscreen excludes this build from Android TV devices
+         (which have none), so TVs only ever receive the leanback TV build. -->
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="true" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
