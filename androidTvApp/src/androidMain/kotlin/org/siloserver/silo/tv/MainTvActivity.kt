@@ -34,6 +34,7 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
+import org.siloserver.silo.tv.control.TvControlReceiver
 import org.siloserver.silo.tv.ui.navigation.TvAppNavigation
 import org.siloserver.silo.tv.ui.navigation.TvRoute
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerRemoteKeyBridge
@@ -67,6 +68,16 @@ class MainTvActivity : ComponentActivity() {
         // Capture the launching intent's Uri (if any) before Compose starts so
         // the navigation collector observes it as soon as it subscribes.
         handleIntent(intent)
+
+        // SiloControl receiver: advertise `_silocast._tcp` while a server is
+        // active so a phone can remote-control TV playback. The receiver
+        // observes ServerRegistry.activeEntry itself (no-op until a server is
+        // configured). Guarded — a networking accelerator, never load-bearing.
+        runCatching {
+            get<TvControlReceiver>(TvControlReceiver::class.java).start()
+        }.onFailure {
+            android.util.Log.w("MainTvActivity", "SiloControl receiver start failed", it)
+        }
 
         setContent {
             var startRoute by remember { mutableStateOf<String?>(null) }
@@ -163,6 +174,11 @@ class MainTvActivity : ComponentActivity() {
         super.onStop()
         val store = get<PlayerSettingsStore>(PlayerSettingsStore::class.java)
         lifecycleScope.launch { store.flushPendingDeviceSettings() }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        runCatching { get<TvControlReceiver>(TvControlReceiver::class.java).stop() }
     }
 
     /**

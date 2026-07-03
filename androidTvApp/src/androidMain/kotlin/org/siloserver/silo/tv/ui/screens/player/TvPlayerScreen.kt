@@ -253,6 +253,16 @@ fun TvPlayerScreen(
         .collectAsState()
     var showLeaveDialog by remember { mutableStateOf(false) }
 
+    // SiloControl (phone remote) registration. The receiver runs app-wide; the
+    // player registers here so remote commands and the 500 ms state push target
+    // this playback, and the NSD TXT `playing` flag flips while mounted.
+    // Mirrors Apple's PlayerView register/unregisterPlayer.
+    val controlReceiver: org.siloserver.silo.tv.control.TvControlReceiver = koinInject()
+    DisposableEffect(viewModel, contentId) {
+        controlReceiver.registerPlayer(viewModel, contentId)
+        onDispose { controlReceiver.unregisterPlayer(viewModel) }
+    }
+
     // Per-session playback control socket (admin remote control). Bound for the
     // lifetime of a sessionId; reconnects on its own and never interrupts
     // playback. Separate from the Watch Together socket above.

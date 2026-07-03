@@ -290,6 +290,21 @@ val androidTvModule = module {
         )
     }
 
+    // LAN remote-control receiver (SiloControl, TV side). The advertiser owns
+    // the `_silocast._tcp` NSD + TLS-PSK listener lifecycle; the receiver is
+    // the session state machine driving the TV player. Started/stopped by
+    // MainTvActivity; the player screen registers/unregisters its ViewModel.
+    single { org.siloserver.silo.common.control.TvControlAdvertiser(androidContext()) }
+    single {
+        org.siloserver.silo.tv.control.TvControlReceiver(
+            context = androidContext(),
+            serverRegistry = get(),
+            activePlayerHolder = get(),
+            playerSettingsStore = get(),
+            advertiser = get(),
+        )
+    }
+
     // Auth ViewModels
     viewModel { TvServerSetupViewModel(get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.auth.TvSetupViewModel(get()) }

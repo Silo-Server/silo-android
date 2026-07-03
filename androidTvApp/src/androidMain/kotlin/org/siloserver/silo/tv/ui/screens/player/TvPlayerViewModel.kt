@@ -5,6 +5,12 @@ package org.siloserver.silo.tv.ui.screens.player
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.Player
+import org.siloserver.silo.control.SiloControlCommand
+import org.siloserver.silo.control.SiloControlCommandName
+import org.siloserver.silo.control.SiloControlOption
+import org.siloserver.silo.control.SiloControlPlaybackState
+import org.siloserver.silo.control.SiloControlTrack
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackRecoveryAction
@@ -2184,4 +2190,177 @@ class TvPlayerViewModel(
         }
     }
 
+    // ---- SiloControl adapter (TvControlReceiver calls these) --------------------
+
+    /**
+     * Apply one SiloControl command from the phone remote, dispatching to the
+     * existing remote-control surface. Throws [SiloControlPlayerException] on
+     * missing/invalid arguments (mirrors the tvOS `applySiloControlCommand`
+     * guards); the receiver reports it as a `command_failed` error. [player] is
+     * the live session player from
+     * [org.siloserver.silo.common.player.ActivePlayerHolder] — required only
+     * for the quality/volume/mute commands that act on the player directly.
+     */
+    fun applySiloControlCommand(command: SiloControlCommand, player: Player?) {
+        when (command.name) {
+            SiloControlCommandName.Play -> remoteUnpause()
+            SiloControlCommandName.Pause -> remotePause()
+            SiloControlCommandName.PlayPause -> remoteTogglePlayPause()
+            SiloControlCommandName.Seek -> {
+                val seconds = command.seconds
+                    ?: throw SiloControlPlayerException("Missing seek position.")
+                remoteSeek(seconds)
+            }
+            SiloControlCommandName.Stop -> remoteStop()
+            SiloControlCommandName.SelectAudioTrack -> {
+                val trackId = command.trackId
+                    ?: throw SiloControlPlayerException("Missing track id.")
+                if (_uiState.value.audioTracks.none { it.index.toLong() == trackId }) {
+                    throw SiloControlPlayerException("Track not found.")
+                }
+                remoteSelectAudio(trackId.toInt())
+            }
+            SiloControlCommandName.SelectSubtitleTrack -> {
+                val trackId = command.trackId
+                if (trackId == null) {
+                    // Null trackId disables subtitles (explicit -1 for the screen).
+                    remoteSelectSubtitle(-1)
+                    return
+                }
+                if (_uiState.value.subtitleTracks.none { it.index.toLong() == trackId }) {
+                    throw SiloControlPlayerException("Track not found.")
+                }
+                remoteSelectSubtitle(trackId.toInt())
+            }
+            SiloControlCommandName.SetPlaybackSpeed -> {
+                val speed = command.speed?.takeIf { it.isFinite() && it > 0 }
+                    ?: throw SiloControlPlayerException("Missing playback speed.")
+                onSetPlaybackSpeed(speed)
+            }
+            SiloControlCommandName.SetQuality -> {
+                val value = command.value
+                    ?: throw SiloControlPlayerException("Missing setting value.")
+                val livePlayer = player
+                    ?: throw SiloControlPlayerException("The TV player is not ready yet.")
+                if (!selectVideoQuality(livePlayer, value)) {
+                    throw SiloControlPlayerException("Unknown quality option.")
+                }
+            }
+            SiloControlCommandName.SetVideoGravity -> {
+                val value = command.value
+                    ?: throw SiloControlPlayerException("Missing setting value.")
+                val mode = videoFillModeFromSiloControlWire(value)
+                    ?: throw SiloControlPlayerException("Invalid aspect setting.")
+                onVideoFillModeChanged(mode)
+            }
+            SiloControlCommandName.SetHdrEnabled -> {
+                val enabled = command.enabled
+                    ?: throw SiloControlPlayerException("Missing enabled value.")
+                onSetHdrEnabled(enabled)
+            }
+            SiloControlCommandName.SetSubtitleSyncMs -> {
+                val milliseconds = command.milliseconds
+                    ?: throw SiloControlPlayerException("Missing millisecond value.")
+                onSubtitleDelayChanged(milliseconds)
+            }
+            SiloControlCommandName.SetSubtitlePosition ->
+                // TV has no subtitle-position control; state advertises
+                // supportsSubtitlePosition=false.
+                throw SiloControlPlayerException("Subtitle position is not supported on this TV.")
+            SiloControlCommandName.SetVolume -> {
+                val volume = command.volume?.takeIf { it.isFinite() }
+                    ?: throw SiloControlPlayerException("Missing setting value.")
+                val livePlayer = player
+                    ?: throw SiloControlPlayerException("The TV player is not ready yet.")
+                livePlayer.volume = volume.coerceIn(0.0, 1.0).toFloat()
+            }
+            SiloControlCommandName.SetMuted -> {
+                val muted = command.enabled
+                    ?: throw SiloControlPlayerException("Missing enabled value.")
+                val livePlayer = player
+                    ?: throw SiloControlPlayerException("The TV player is not ready yet.")
+                livePlayer.setDeviceMuted(muted, 0)
+            }
+            SiloControlCommandName.PlayNext -> playNextEpisodeNow()
+        }
+    }
+
+    /**
+     * Snapshot the current playback state for a SiloControl state push. Mirrors
+     * the tvOS `makeSiloControlPlaybackState`. [contentId] is the id the
+     * receiver registered the player with; [player] supplies volume/mute.
+     */
+    fun makeSiloControlPlaybackState(contentId: String?, player: Player?): SiloControlPlaybackState {
+        val s = _uiState.value
+        val episodeTag = if (s.seasonNumber != null && s.episodeNumber != null) {
+            "S${s.seasonNumber} · E${s.episodeNumber}"
+        } else {
+            null
+        }
+        return SiloControlPlaybackState(
+            contentId = contentId ?: this.contentId.takeIf { it.isNotBlank() },
+            sessionId = s.sessionId,
+            title = s.title.ifBlank { "Loading" },
+            subtitle = episodeTag,
+            isPlaying = s.isPlaying,
+            isLoading = s.isLoading,
+            isBuffering = s.isBuffering,
+            currentTime = s.position,
+            duration = s.duration,
+            audioTracks = s.audioTracks.map { it.toSiloControlTrack(kind = "audio") },
+            subtitleTracks = s.subtitleTracks.map { it.toSiloControlTrack(kind = "subtitle") },
+            selectedAudioTrackId = s.audioTracks.firstOrNull { it.isSelected }?.index?.toLong(),
+            selectedSubtitleTrackId = s.subtitleTracks.firstOrNull { it.isSelected }?.index?.toLong(),
+            qualityOptions = s.videoQualities.map {
+                SiloControlOption(id = it.id, label = it.label, detail = it.resolution)
+            },
+            activeQualityId = s.videoQualities.firstOrNull { it.isSelected }?.id
+                ?: VIDEO_QUALITY_AUTO_ID,
+            isQualitySwitching = false,
+            playbackSpeed = playbackSpeed.value,
+            videoGravity = s.videoFillMode.toSiloControlWire(),
+            hdrEnabled = hdrEnabled.value,
+            supportsVideoGravity = true,
+            supportsHDRToggle = true,
+            subtitleSyncMs = subtitleDelayMs.value,
+            subtitlePosition = null,
+            supportsSubtitleDelay = true,
+            supportsSubtitlePosition = false,
+            volume = (player?.volume ?: 1f).toDouble(),
+            isMuted = player?.isDeviceMuted ?: false,
+            hasNextEpisode = s.nextEpisode != null,
+            nextEpisodeTitle = s.nextEpisode?.title,
+            error = s.error,
+        )
+    }
+
+}
+
+/** Thrown by [TvPlayerViewModel.applySiloControlCommand] on bad/missing arguments. */
+class SiloControlPlayerException(message: String) : Exception(message)
+
+private fun PlayerTrackEntry.toSiloControlTrack(kind: String): SiloControlTrack =
+    SiloControlTrack(
+        kind = kind,
+        trackId = index.toLong(),
+        title = displayLabel,
+        detail = language,
+    )
+
+/**
+ * SiloControl `videoGravity` wire values are the Apple `VideoGravity` raw
+ * values ("fit" / "fill" / "stretch"); the TV's aspect-fill equivalent is
+ * [VideoFillMode.Zoom].
+ */
+internal fun VideoFillMode.toSiloControlWire(): String = when (this) {
+    VideoFillMode.Fit -> "fit"
+    VideoFillMode.Zoom -> "fill"
+    VideoFillMode.Stretch -> "stretch"
+}
+
+internal fun videoFillModeFromSiloControlWire(value: String): VideoFillMode? = when (value) {
+    "fit" -> VideoFillMode.Fit
+    "fill" -> VideoFillMode.Zoom
+    "stretch" -> VideoFillMode.Stretch
+    else -> null
 }
