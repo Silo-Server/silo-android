@@ -79,7 +79,7 @@ fun DownloadItemRow(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = formatBytes(item.fileSizeBytes),
+                text = formatBytes(item.fileSizeBytes) + downloadQualitySuffix(item.quality),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

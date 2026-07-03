@@ -183,6 +183,11 @@ class AndroidPlayerSettingsStore(
     override val preferredQualityFlow: Flow<String> =
         profileScopedFlow("auto") { p, s -> p.stringFor(s, PlaybackSettingsKeys.PreferredQuality, "auto") }
 
+    override val downloadsPreferredQualityFlow: Flow<String> =
+        profileScopedFlow("original") { p, s ->
+            p.stringFor(s, PlaybackSettingsKeys.DownloadsPreferredQuality, "original")
+        }
+
     override val audioLanguageFlow: Flow<String> =
         profileScopedFlow("") { p, s -> p.stringFor(s, PlaybackSettingsKeys.AudioLanguage, "") }
 
@@ -244,6 +249,9 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun setPreferredQuality(value: String) =
         writeString(PlaybackSettingsKeys.PreferredQuality, value)
+
+    override suspend fun setDownloadsPreferredQuality(value: String) =
+        writeStringLocal(PlaybackSettingsKeys.DownloadsPreferredQuality, value)
 
     override suspend fun setAudioLanguage(value: String) =
         writeString(PlaybackSettingsKeys.AudioLanguage, value)
@@ -391,6 +399,14 @@ class AndroidPlayerSettingsStore(
     private suspend fun writeIntLocal(key: String, value: Int) {
         withScope { scope, store ->
             store.edit { it[intPreferencesKey(scope.keyPrefix + key)] = value }
+        }
+    }
+
+    /** String twin of [writeIntLocal]: scoped DataStore write only, no server
+     *  flush — for keys absent from [PlaybackSettingsKeys.DeviceSettings]. */
+    private suspend fun writeStringLocal(key: String, value: String) {
+        withScope { scope, store ->
+            store.edit { it[stringPreferencesKey(scope.keyPrefix + key)] = value }
         }
     }
 

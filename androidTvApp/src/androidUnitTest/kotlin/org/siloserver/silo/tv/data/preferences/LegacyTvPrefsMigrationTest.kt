@@ -244,6 +244,7 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override val resumeRewindSecondsFlow = MutableStateFlow(7)
     override val passOutThresholdFlow = MutableStateFlow(3)
     override val preferredQualityFlow = MutableStateFlow("auto")
+    override val downloadsPreferredQualityFlow = MutableStateFlow("original")
     override val audioLanguageFlow = MutableStateFlow("")
     override val videoGravityFlow = MutableStateFlow("fit")
     override val orientationModeFlow = MutableStateFlow("auto")
@@ -267,6 +268,9 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     }
     override suspend fun setDownloadsWifiOnly(value: Boolean) {
         setterCalls += "setDownloadsWifiOnly"; downloadsWifiOnlyFlow.value = value
+    }
+    override suspend fun setDownloadsPreferredQuality(value: String) {
+        setterCalls += "setDownloadsPreferredQuality"; downloadsPreferredQualityFlow.value = value
     }
     override suspend fun setPlaybackSpeed(value: Double) {
         setterCalls += "setPlaybackSpeed"; playbackSpeedFlow.value = value

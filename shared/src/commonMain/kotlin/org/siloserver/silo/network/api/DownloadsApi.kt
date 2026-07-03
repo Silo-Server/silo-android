@@ -1,5 +1,6 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.model.download.DownloadCapability
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadRequest
 import org.siloserver.silo.model.download.DownloadsListResponse
@@ -52,6 +53,13 @@ open class DownloadsApi(protected val client: HttpClient) {
             contentType(ContentType.Application.Json)
             setBody(request)
         }
+    }
+
+    /** GET /api/v1/downloads/capability — no trailing slash (single route,
+     *  unlike the list/create pair). 404 on older servers → callers treat a
+     *  missing capability as original-only. */
+    open suspend fun capability(): ApiResult<DownloadCapability> = safeApiCall {
+        client.get("/api/v1/downloads/capability")
     }
 
     open suspend fun delete(id: String): ApiResult<Unit> = safeApiCall {

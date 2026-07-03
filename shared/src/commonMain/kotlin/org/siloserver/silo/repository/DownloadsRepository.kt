@@ -1,5 +1,6 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.model.download.DownloadCapability
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadRequest
 import org.siloserver.silo.network.ApiResult
@@ -39,6 +40,20 @@ class DownloadsRepository(
 
     private val _records = MutableStateFlow<List<DownloadRecord>>(emptyList())
     val records: StateFlow<List<DownloadRecord>> = _records.asStateFlow()
+
+    /** Server-advertised download capability. Null until [refreshCapability]
+     *  succeeds — callers treat null as original-only (older server / offline). */
+    private val _capability = MutableStateFlow<DownloadCapability?>(null)
+    val capability: StateFlow<DownloadCapability?> = _capability.asStateFlow()
+
+    /** Fetch GET /downloads/capability into [capability]. Failures (404 on
+     *  older servers, offline) leave the previous value in place. */
+    suspend fun refreshCapability() {
+        when (val r = api.capability()) {
+            is ApiResult.Success -> _capability.value = r.data
+            else -> { /* original-only fallback (older server / offline) */ }
+        }
+    }
 
     /** Ids the user has asked to delete but which the server still returns
      *  (active records that the server only marks cancelled on first DELETE).

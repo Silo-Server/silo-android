@@ -18,6 +18,8 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import org.siloserver.silo.model.download.DownloadStatus
+import org.siloserver.silo.model.download.statusEnum
+import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.DownloadsRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeoutConfig
@@ -32,6 +34,7 @@ import io.ktor.http.isSuccess
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -80,6 +83,33 @@ class DownloadWorker(
         }.onFailure { Log.w(TAG, "setForeground initial failed", it) }
 
         var activeUri: String? = null
+
+        try {
+            // Transcoded downloads: the server answers create with
+            // status=preparing while it produces the artifact; the file GET
+            // only serves once the row flips to ready. Poll the list until
+            // then (original-quality rows come back ready/queued immediately
+            // and skip the loop entirely).
+            awaitServerPreparation(downloadId, fileId, displayTitle)
+        } catch (e: CancellationException) {
+            Log.i(TAG, "doWork cancelled during preparation id=$downloadId")
+            throw e
+        } catch (e: IOException) {
+            Log.w(TAG, "doWork preparation poll IO error id=$downloadId → retry", e)
+            return@withContext Result.retry()
+        } catch (e: Throwable) {
+            Log.e(TAG, "doWork preparation failed id=$downloadId", e)
+            repository.recordForFile(fileId)?.let { record ->
+                repository.upsertLocal(record.copy(status = DownloadStatus.Failed.wire))
+            }
+            updateSidecarStatus(
+                serverId, profileId, fileId,
+                status = DownloadStatus.Failed.wire,
+                bytesSent = 0,
+                fileSize = 0,
+            )
+            return@withContext Result.failure()
+        }
 
         // Resume state (survives process death + WorkManager retries): the partial's
         // uri + the validator captured at download start. Resume offset is the REAL
@@ -263,6 +293,58 @@ class DownloadWorker(
     }
 
     /**
+     * Block until the server finishes preparing a transcoded artifact for
+     * [downloadId] (record status "preparing" → "ready"/"queued"). Mirrors the
+     * Apple client's 15s reconcile poll. No-op when the record is already past
+     * preparation (every original-quality download). Throws:
+     *  - [IOException] on poll network errors / preparation timeout → retry,
+     *  - [IllegalStateException] when the server reports the record failed,
+     *    was cancelled, or was revoked → permanent failure.
+     */
+    private suspend fun awaitServerPreparation(
+        downloadId: String,
+        fileId: Int,
+        displayTitle: String,
+    ) {
+        // Cheap fast path: nothing known locally, or already past preparing.
+        if (repository.recordForFile(fileId)?.statusEnum() != DownloadStatus.Preparing) {
+            // After process death the repo cache may be empty while the server
+            // is still preparing — one refresh re-learns the real status.
+            if (repository.recordForFile(fileId) != null) return
+            if (repository.refresh() is ApiResult.NetworkError) {
+                throw IOException("could not learn download status before streaming")
+            }
+        }
+        val deadline = System.currentTimeMillis() + PREPARING_TIMEOUT_MS
+        var announced = false
+        while (true) {
+            val record = repository.recordForFile(fileId) ?: return
+            when {
+                record.status.lowercase() == "revoked" ->
+                    throw IllegalStateException("download was revoked by the server")
+                record.statusEnum() == DownloadStatus.Failed ||
+                    record.statusEnum() == DownloadStatus.Cancelled ->
+                    throw IllegalStateException("server reports download ${record.status}")
+                record.statusEnum() != DownloadStatus.Preparing -> return
+            }
+            if (!announced) {
+                announced = true
+                Log.i(TAG, "doWork waiting on server preparation id=$downloadId")
+                runCatching {
+                    setForeground(buildForegroundInfo(downloadId, displayTitle, progress = 0, indeterminate = true, statusText = "Preparing…"))
+                }.onFailure { Log.w(TAG, "setForeground preparing failed", it) }
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                throw IOException("server preparation timed out")
+            }
+            delay(PREPARING_POLL_INTERVAL_MS)
+            if (repository.refresh() is ApiResult.NetworkError) {
+                throw IOException("network error while polling preparation status")
+            }
+        }
+    }
+
+    /**
      * Read-modify-write the sidecar on disk so its status / bytesSent /
      * fileSize match the worker's current view. No-op if the sidecar
      * doesn't exist yet (Enqueuer always writes it at download start, so
@@ -330,13 +412,14 @@ class DownloadWorker(
         title: String,
         progress: Int,
         indeterminate: Boolean,
+        statusText: String? = null,
     ): ForegroundInfo {
         val cancelIntent = WorkManager.getInstance(appContext)
             .createCancelPendingIntent(id)
         val notification = NotificationCompat.Builder(appContext, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
-            .setContentText(if (indeterminate) "Starting…" else "$progress%")
+            .setContentText(statusText ?: if (indeterminate) "Starting…" else "$progress%")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, progress, indeterminate)
@@ -370,6 +453,12 @@ class DownloadWorker(
         /** Idle (socket) timeout for the streaming download. The total-request
          *  timeout is disabled per-request; this still fails a stalled connection. */
         private const val IDLE_TIMEOUT_MS = 60_000L
+
+        /** Poll cadence while the server transcodes (matches Apple's 15s). */
+        private const val PREPARING_POLL_INTERVAL_MS = 15_000L
+
+        /** Generous cap on server-side preparation; past this → retry. */
+        private const val PREPARING_TIMEOUT_MS = 30L * 60_000L
 
         fun tagFor(downloadId: String): String = "download_$downloadId"
         private fun notificationIdFor(downloadId: String): Int =

@@ -61,6 +61,41 @@ class DownloadRecordSerializationTest {
         assertNull(r.batchId)
         assertNull(r.completedAt)
         assertEquals(DownloadStatus.Queued, r.statusEnum())
+        // Quality fields are absent on older servers / pre-quality sidecars.
+        assertNull(r.quality)
+        assertNull(r.effectiveQuality)
+        assertNull(r.deliveryFormat)
+        assertNull(r.targetBitrateKbps)
+    }
+
+    @Test
+    fun `DownloadRecord round-trips quality fields`() {
+        val source = """
+            {
+              "id": "dl_q",
+              "content_id": "tt1",
+              "media_file_id": 9,
+              "file_size": 1024,
+              "bytes_sent": 0,
+              "kind": "queued",
+              "status": "preparing",
+              "created_at": "2026-07-01T00:00:00Z",
+              "quality": "5mbps",
+              "effective_quality": "2mbps",
+              "delivery_format": "mp4",
+              "target_bitrate_kbps": 2000
+            }
+        """.trimIndent()
+
+        val r = json.decodeFromString<DownloadRecord>(source)
+        assertEquals("5mbps", r.quality)
+        assertEquals("2mbps", r.effectiveQuality)
+        assertEquals("mp4", r.deliveryFormat)
+        assertEquals(2000, r.targetBitrateKbps)
+        assertEquals(DownloadStatus.Preparing, r.statusEnum())
+
+        val reencoded = json.decodeFromString<DownloadRecord>(json.encodeToString(DownloadRecord.serializer(), r))
+        assertEquals(r, reencoded)
     }
 
     @Test

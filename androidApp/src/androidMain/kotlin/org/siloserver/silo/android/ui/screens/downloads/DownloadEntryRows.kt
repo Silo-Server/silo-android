@@ -293,7 +293,7 @@ private fun SingleRow(
             Spacer(modifier = Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = formatBytes(item.fileSizeBytes),
+                    text = formatBytes(item.fileSizeBytes) + downloadQualitySuffix(item.quality),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -496,6 +496,13 @@ private fun AggregateRow(
     }
 }
 
+/** " · 5 Mbps"-style suffix for the size line; empty for original / unset. */
+internal fun downloadQualitySuffix(quality: String?): String =
+    quality
+        ?.takeIf { it.isNotBlank() && it != org.siloserver.silo.model.download.DownloadQuality.Original.wire }
+        ?.let { " · " + (org.siloserver.silo.model.download.DownloadQuality.fromWire(it)?.displayName ?: it) }
+        .orEmpty()
+
 internal fun downloadStatusLabel(
     status: DownloadStatus,
     progress: Float,
@@ -505,6 +512,11 @@ internal fun downloadStatusLabel(
         "Missing file"
     } else when (status) {
         DownloadStatus.Queued -> "Queued"
+        DownloadStatus.Preparing -> "Preparing"
+        // Server-side "ready" = artifact serveable, device GET not started —
+        // still queued from the user's perspective ("Ready" is reserved for
+        // Completed rows with local bytes).
+        DownloadStatus.Ready -> "Queued"
         DownloadStatus.Downloading -> {
             val percent = (progress.coerceIn(0f, 1f) * 100).toInt()
             if (percent > 0) "Downloading · $percent%" else "Downloading"

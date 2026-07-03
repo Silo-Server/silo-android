@@ -39,7 +39,9 @@ internal fun detailDownloadStateForFile(
     val progress = record
         ?.takeIf {
             status == DownloadStatus.Downloading ||
-                status == DownloadStatus.Queued
+                status == DownloadStatus.Queued ||
+                status == DownloadStatus.Preparing ||
+                status == DownloadStatus.Ready
         }
         ?.let { rec ->
             if (rec.fileSize > 0) {
@@ -62,6 +64,10 @@ internal fun detailDownloadTapAction(
     forceRedownloadMissingLocal: Boolean,
 ): DetailDownloadTapAction = when (status) {
     DownloadStatus.Queued,
+    // Preparing (server transcoding) and Ready (artifact serveable, GET not
+    // started) are in-flight: cancellable like Queued.
+    DownloadStatus.Preparing,
+    DownloadStatus.Ready,
     DownloadStatus.Downloading,
     -> DetailDownloadTapAction.Cancel
     DownloadStatus.Completed -> {

@@ -50,6 +50,9 @@ data class DownloadItem(
     val localUri: String? = null,
     val displayName: String? = null,
     val container: String? = null,
+    /** Quality preset wire string (effective when the server reports one,
+     *  else requested). Null for original-only servers / older sidecars. */
+    val quality: String? = null,
 )
 
 internal data class DownloadItemFileState(
@@ -491,6 +494,8 @@ class DownloadsViewModel(
             localUri = located?.uriString,
             displayName = located?.displayName ?: fileName,
             container = container,
+            quality = rec.effectiveQuality ?: rec.quality
+                ?: record.effectiveQuality ?: record.quality,
         )
     }
 

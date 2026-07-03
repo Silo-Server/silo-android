@@ -30,6 +30,10 @@ interface PlayerSettingsStore {
 
     // Strings
     val preferredQualityFlow: Flow<String>
+    /** Per-profile preferred download quality preset (DownloadQuality wire
+     *  string). Default "original". Consumed when resolving the quality for a
+     *  new download; presets the server doesn't advertise fall back to original. */
+    val downloadsPreferredQualityFlow: Flow<String>
     val audioLanguageFlow: Flow<String>
     val videoGravityFlow: Flow<String>
     val orientationModeFlow: Flow<String>
@@ -65,6 +69,7 @@ interface PlayerSettingsStore {
     suspend fun setPassOutThreshold(value: Int)
 
     suspend fun setPreferredQuality(value: String)
+    suspend fun setDownloadsPreferredQuality(value: String)
     suspend fun setAudioLanguage(value: String)
     suspend fun setVideoGravity(value: String)
     suspend fun setOrientationMode(value: String)

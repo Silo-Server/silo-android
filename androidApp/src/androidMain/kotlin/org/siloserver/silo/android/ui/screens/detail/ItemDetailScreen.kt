@@ -445,6 +445,18 @@ fun ItemDetailScreen(
             }
         }
 
+        // Quality picker for new downloads — shown when the server offers
+        // more than one preset. Movie/version, audiobook, book, and episode
+        // download taps all funnel into the same pending-request state.
+        val pendingDownload by viewModel.pendingDownloadRequest.collectAsState()
+        pendingDownload?.let { request ->
+            DownloadQualitySheet(
+                request = request,
+                onQualitySelected = { viewModel.confirmPendingDownload(it) },
+                onDismiss = { viewModel.dismissPendingDownload() },
+            )
+        }
+
         // Floating back button — sits on the hero artwork without
         // pushing content down, mirroring iOS's transparent nav bar.
         IconButton(

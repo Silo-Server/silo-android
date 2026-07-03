@@ -9,6 +9,7 @@ import org.siloserver.silo.model.admin.shouldShowClientAdminSurface
 import org.siloserver.silo.model.auth.AuthSession
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.auth.isActingAdmin
+import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.profile.UpdateProfileRequest
 import org.siloserver.silo.network.ApiResult
@@ -57,6 +58,8 @@ data class SettingsUiState(
 
     // Downloads
     val downloadsWifiOnly: Boolean = true,
+    /** Display label of the preferred download quality preset. */
+    val downloadsPreferredQuality: String = "Original",
 
     // Subtitles
     val subtitleLanguage: String = "Off",
@@ -165,15 +168,29 @@ class SettingsViewModel(
         viewModelScope.launch { playerSettingsStore.setDownloadsWifiOnly(value) }
     }
 
+    fun setDownloadsPreferredQuality(label: String) {
+        val wire = DownloadQuality.entries.firstOrNull { it.displayName == label }?.wire
+            ?: DownloadQuality.Original.wire
+        viewModelScope.launch { playerSettingsStore.setDownloadsPreferredQuality(wire) }
+    }
+
     // Separate from observePlayerSettings() because combine() has no typed
-    // overload past 5 flows — these two local-only Int settings get their own.
+    // overload past 5 flows — these local-only settings get their own.
     private fun observePlaybackBehaviorSettings() {
         combine(
             playerSettingsStore.resumeRewindSecondsFlow,
             playerSettingsStore.passOutThresholdFlow,
-        ) { rewind, threshold -> rewind to threshold }
-            .onEach { (rewind, threshold) ->
-                _uiState.update { it.copy(resumeRewindSeconds = rewind, passOutThreshold = threshold) }
+            playerSettingsStore.downloadsPreferredQualityFlow,
+        ) { rewind, threshold, downloadQuality -> Triple(rewind, threshold, downloadQuality) }
+            .onEach { (rewind, threshold, downloadQuality) ->
+                _uiState.update {
+                    it.copy(
+                        resumeRewindSeconds = rewind,
+                        passOutThreshold = threshold,
+                        downloadsPreferredQuality = DownloadQuality.fromWire(downloadQuality)?.displayName
+                            ?: DownloadQuality.Original.displayName,
+                    )
+                }
             }
             .launchIn(viewModelScope)
     }

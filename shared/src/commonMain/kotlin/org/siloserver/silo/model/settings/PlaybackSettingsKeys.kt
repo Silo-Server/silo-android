@@ -42,6 +42,14 @@ object PlaybackSettingsKeys {
     const val DownloadsWifiOnly = "downloads.wifi_only"
 
     /**
+     * Local-only per-profile preferred download quality preset (wire string of
+     * `DownloadQuality`, default "original"). Applied when the server's
+     * capability advertises the preset; otherwise resolution falls back to
+     * original. Never synced to the server cascade.
+     */
+    const val DownloadsPreferredQuality = "downloads.preferred_quality"
+
+    /**
      * Local-only per-profile setting: seconds to skip back when RESUMING a
      * partially-watched item, so context is re-established. Default 7; 0 = off.
      * Not server-registered, so it stays out of [DeviceSettings] (never pulled

@@ -4,13 +4,16 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
+import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.sortedForDisplay
+import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.download.DownloadRecord
+import org.siloserver.silo.model.download.resolveDownloadQuality
 import org.siloserver.silo.model.download.statusEnum
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.model.catalog.isBookLikeItemType
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -62,6 +66,29 @@ data class ItemDetailUiState(
 )
 
 /**
+ * Snapshot backing the download quality-picker sheet. Non-null only while
+ * the sheet is up: the user tapped download on [target] while the server
+ * advertises more than one quality preset.
+ */
+data class PendingDownloadRequest(
+    val options: List<DownloadQuality>,
+    /** Preselected entry — stored preference when allowed, else original. */
+    val defaultQuality: DownloadQuality,
+    val target: PendingDownloadTarget,
+)
+
+sealed interface PendingDownloadTarget {
+    data class Version(
+        val version: FileVersion,
+        val displayTitle: String,
+        /** Completed-but-missing-local record to delete before restarting. */
+        val staleRecordId: String? = null,
+    ) : PendingDownloadTarget
+
+    data class Episode(val episode: EpisodeListItem) : PendingDownloadTarget
+}
+
+/**
  * ViewModel for the item detail screen.
  *
  * Fetches item metadata, user state (favorite/watchlist), and for series,
@@ -73,6 +100,7 @@ class ItemDetailViewModel(
     private val downloadsRepository: DownloadsRepository,
     private val downloadEnqueuer: DownloadEnqueuer,
     private val ebookReaderRepository: EbookReaderRepository,
+    private val playerSettingsStore: PlayerSettingsStore,
     savedStateHandle: SavedStateHandle,
     private val userItemState: org.siloserver.silo.repository.port.UserItemStatePort =
         org.siloserver.silo.repository.port.NoOpUserItemStatePort,
@@ -92,13 +120,91 @@ class ItemDetailViewModel(
     val downloads: StateFlow<List<DownloadRecord>> = downloadsRepository.records
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Non-null while the quality-picker sheet is up (see [PendingDownloadRequest]). */
+    private val _pendingDownloadRequest = MutableStateFlow<PendingDownloadRequest?>(null)
+    val pendingDownloadRequest: StateFlow<PendingDownloadRequest?> = _pendingDownloadRequest.asStateFlow()
+
     private var watchedMutationGeneration = 0
 
     init {
         // Refresh once so server-side records are visible when the user
         // lands on the detail screen (e.g., to show 'Downloaded' on a file
-        // that was downloaded in a previous app session).
+        // that was downloaded in a previous app session). Capability drives
+        // the quality picker; a failed fetch (older server) leaves it null
+        // → original-only, no picker.
         viewModelScope.launch { downloadsRepository.refresh() }
+        viewModelScope.launch { downloadsRepository.refreshCapability() }
+    }
+
+    /**
+     * Quality presets the server currently offers, mapped to the typed enum
+     * (unknown wire values from a newer server are dropped — we can't label
+     * them). Null capability (older server / offline) → original-only.
+     */
+    private fun availableDownloadQualities(): List<DownloadQuality> {
+        val capability = downloadsRepository.capability.value
+            ?: return listOf(DownloadQuality.Original)
+        return capability.effectivePresets
+            .mapNotNull { DownloadQuality.fromWire(it) }
+            .ifEmpty { listOf(DownloadQuality.Original) }
+    }
+
+    /** requested-if-allowed → stored-default-if-allowed → original. */
+    private suspend fun resolvedQuality(requested: String?): String =
+        resolveDownloadQuality(
+            requested = requested,
+            allowedPresets = availableDownloadQualities().map { it.wire },
+            storedDefault = playerSettingsStore.downloadsPreferredQualityFlow.first(),
+        )
+
+    /**
+     * Route a download tap through the quality picker when the server offers
+     * more than one preset; start immediately (original) otherwise.
+     */
+    private fun startOrAskQuality(target: PendingDownloadTarget) {
+        viewModelScope.launch {
+            val options = availableDownloadQualities()
+            if (options.size <= 1) {
+                startPendingTarget(target, quality = resolvedQuality(requested = null))
+                return@launch
+            }
+            val default = DownloadQuality.fromWire(resolvedQuality(requested = null))
+                ?: DownloadQuality.Original
+            _pendingDownloadRequest.value = PendingDownloadRequest(
+                options = options,
+                defaultQuality = default,
+                target = target,
+            )
+        }
+    }
+
+    /** Sheet confirm: start the stashed download at [quality]. */
+    fun confirmPendingDownload(quality: DownloadQuality) {
+        val pending = _pendingDownloadRequest.value ?: return
+        _pendingDownloadRequest.value = null
+        viewModelScope.launch {
+            startPendingTarget(pending.target, quality = resolvedQuality(requested = quality.wire))
+        }
+    }
+
+    /** Sheet dismissed without choosing — drop the stashed request. */
+    fun dismissPendingDownload() {
+        _pendingDownloadRequest.value = null
+    }
+
+    private suspend fun startPendingTarget(target: PendingDownloadTarget, quality: String) {
+        when (target) {
+            is PendingDownloadTarget.Version -> {
+                val staleRecordId = target.staleRecordId
+                if (staleRecordId != null &&
+                    downloadsRepository.delete(staleRecordId) !is ApiResult.Success
+                ) {
+                    return
+                }
+                startDownload(target.version, target.displayTitle, quality)
+            }
+            is PendingDownloadTarget.Episode -> startEpisodeDownload(target.episode, quality)
+        }
     }
 
     /**
@@ -134,25 +240,23 @@ class ItemDetailViewModel(
                 }
             }
             DetailDownloadTapAction.Ignore -> Unit  // Manage via Downloads tab.
-            DetailDownloadTapAction.ReplaceAndStart -> viewModelScope.launch {
-                val staleRecord = existing
-                if (staleRecord == null || downloadsRepository.delete(staleRecord.id) is ApiResult.Success) {
-                    startDownload(version, displayTitle)
-                }
-            }
-            DetailDownloadTapAction.Start -> viewModelScope.launch {
-                startDownload(version, displayTitle)
-            }
+            DetailDownloadTapAction.ReplaceAndStart -> startOrAskQuality(
+                PendingDownloadTarget.Version(version, displayTitle, staleRecordId = existing?.id),
+            )
+            DetailDownloadTapAction.Start -> startOrAskQuality(
+                PendingDownloadTarget.Version(version, displayTitle),
+            )
         }
     }
 
-    private suspend fun startDownload(version: FileVersion, displayTitle: String) {
+    private suspend fun startDownload(version: FileVersion, displayTitle: String, quality: String) {
         // wifiOnly read from per-profile PlayerSettingsStore inside
         // DownloadEnqueuer.start; default true.
         downloadEnqueuer.start(
             contentId = contentId,
             fileId = version.fileId,
             displayTitle = displayTitle,
+            quality = quality,
         )
     }
 
@@ -174,19 +278,25 @@ class ItemDetailViewModel(
                 downloadEnqueuer.cancel(record.id)
                 viewModelScope.launch { downloadsRepository.delete(record.id) }
             }
-            DetailDownloadTapAction.Start, DetailDownloadTapAction.ReplaceAndStart -> viewModelScope.launch {
-                downloadEnqueuer.startEpisode(
-                    seriesContentId = detail.contentId,
-                    episodeContentId = episode.contentId,
-                    fileId = fileId,
-                    seriesTitle = detail.title,
-                    seasonNumber = episode.seasonNumber,
-                    episodeNumber = episode.episodeNumber,
-                    episodeTitle = episode.title,
-                    posterUrl = detail.posterUrl,
-                )
-            }
+            DetailDownloadTapAction.Start, DetailDownloadTapAction.ReplaceAndStart ->
+                startOrAskQuality(PendingDownloadTarget.Episode(episode))
         }
+    }
+
+    private suspend fun startEpisodeDownload(episode: EpisodeListItem, quality: String) {
+        val fileId = episode.files.firstOrNull()?.fileId ?: return
+        val detail = _uiState.value.detail ?: return
+        downloadEnqueuer.startEpisode(
+            seriesContentId = detail.contentId,
+            episodeContentId = episode.contentId,
+            fileId = fileId,
+            seriesTitle = detail.title,
+            seasonNumber = episode.seasonNumber,
+            episodeNumber = episode.episodeNumber,
+            episodeTitle = episode.title,
+            quality = quality,
+            posterUrl = detail.posterUrl,
+        )
     }
 
     /** Series-level "Download series" — uses the server's batch endpoint

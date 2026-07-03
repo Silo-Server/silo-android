@@ -128,6 +128,9 @@ class MobileDetailActionsSourceTest {
             downloadsRepository = DownloadsRepository(EmptyDownloadsApi()),
             downloadEnqueuer = unsafeInstance(),
             ebookReaderRepository = EbookReaderRepository(EbookReaderApi(dummyHttpClient())),
+            // Interface — Unsafe can't allocate it; the concrete store works
+            // because these tests never touch a settings flow.
+            playerSettingsStore = unsafeInstance<org.siloserver.silo.common.settings.AndroidPlayerSettingsStore>(),
             savedStateHandle = SavedStateHandle(),
         )
 
