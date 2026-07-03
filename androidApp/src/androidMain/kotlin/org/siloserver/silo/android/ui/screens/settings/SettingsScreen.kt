@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,9 +38,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -141,17 +145,26 @@ fun SettingsScreen(
             }
 
             item {
+                val settingsContext = LocalContext.current
+                val pipAvailable = remember(settingsContext) {
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                        settingsContext.packageManager
+                            .hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+                }
                 PlaybackSettings(
                     defaultQuality = state.defaultQuality,
                     audioLanguage = state.audioLanguage,
                     autoSkipIntro = state.autoSkipIntro,
                     autoSkipCredits = state.autoSkipCredits,
+                    pipEnabled = state.pipEnabled,
+                    pipAvailable = pipAvailable,
                     resumeRewindSeconds = state.resumeRewindSeconds,
                     passOutThreshold = state.passOutThreshold,
                     onQualityChanged = viewModel::setDefaultQuality,
                     onAudioLanguageChanged = viewModel::setAudioLanguage,
                     onAutoSkipIntroChanged = viewModel::setAutoSkipIntro,
                     onAutoSkipCreditsChanged = viewModel::setAutoSkipCredits,
+                    onPipEnabledChanged = viewModel::setPipEnabled,
                     onResumeRewindSecondsChanged = viewModel::setResumeRewindSeconds,
                     onPassOutThresholdChanged = viewModel::setPassOutThreshold,
                     onResetPlaybackOverrides = viewModel::resetPlaybackOverrides,

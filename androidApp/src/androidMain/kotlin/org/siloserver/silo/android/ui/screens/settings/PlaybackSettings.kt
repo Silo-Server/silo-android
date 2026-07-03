@@ -36,12 +36,16 @@ fun PlaybackSettings(
     audioLanguage: String,
     autoSkipIntro: Boolean,
     autoSkipCredits: Boolean,
+    pipEnabled: Boolean,
+    // Row is hidden entirely on devices without PiP (API < 26 / no feature).
+    pipAvailable: Boolean,
     resumeRewindSeconds: Int,
     passOutThreshold: Int,
     onQualityChanged: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoSkipIntroChanged: (Boolean) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
+    onPipEnabledChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
@@ -75,6 +79,14 @@ fun PlaybackSettings(
             checked = autoSkipCredits,
             onCheckedChange = onAutoSkipCreditsChanged,
         )
+
+        if (pipAvailable) {
+            SettingsSwitchRow(
+                label = "Picture-in-Picture",
+                checked = pipEnabled,
+                onCheckedChange = onPipEnabledChanged,
+            )
+        }
 
         SettingsDropdownRow(
             label = "Resume Skip-Back",

@@ -54,6 +54,8 @@ data class SettingsUiState(
     // before the "Still watching?" prompt (0 = off).
     val resumeRewindSeconds: Int = 7,
     val passOutThreshold: Int = 3,
+    // Whether the video player may enter Picture-in-Picture on user-leave.
+    val pipEnabled: Boolean = true,
 
     // Downloads
     val downloadsWifiOnly: Boolean = true,
@@ -166,16 +168,23 @@ class SettingsViewModel(
     }
 
     // Separate from observePlayerSettings() because combine() has no typed
-    // overload past 5 flows — these two local-only Int settings get their own.
+    // overload past 5 flows — these local-only settings get their own.
     private fun observePlaybackBehaviorSettings() {
         combine(
             playerSettingsStore.resumeRewindSecondsFlow,
             playerSettingsStore.passOutThresholdFlow,
-        ) { rewind, threshold -> rewind to threshold }
-            .onEach { (rewind, threshold) ->
-                _uiState.update { it.copy(resumeRewindSeconds = rewind, passOutThreshold = threshold) }
+            playerSettingsStore.pipEnabledFlow,
+        ) { rewind, threshold, pip -> Triple(rewind, threshold, pip) }
+            .onEach { (rewind, threshold, pip) ->
+                _uiState.update {
+                    it.copy(resumeRewindSeconds = rewind, passOutThreshold = threshold, pipEnabled = pip)
+                }
             }
             .launchIn(viewModelScope)
+    }
+
+    fun setPipEnabled(value: Boolean) {
+        viewModelScope.launch { playerSettingsStore.setPipEnabled(value) }
     }
 
     fun setResumeRewindSeconds(value: Int) {

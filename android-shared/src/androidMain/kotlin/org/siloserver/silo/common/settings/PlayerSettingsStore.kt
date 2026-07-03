@@ -14,6 +14,10 @@ interface PlayerSettingsStore {
      *  networks. Default true. Consumed by [DownloadEnqueuer] at enqueue
      *  time to set the WorkManager NetworkType constraint. */
     val downloadsWifiOnlyFlow: Flow<Boolean>
+    /** Whether the phone video player may enter Picture-in-Picture on
+     *  user-leave. Phone-only, device/profile-local (never synced to the
+     *  server). Default true. */
+    val pipEnabledFlow: Flow<Boolean>
 
     // Doubles
     val playbackSpeedFlow: Flow<Double>
@@ -52,6 +56,7 @@ interface PlayerSettingsStore {
     suspend fun setHdrEnabled(value: Boolean)
     suspend fun setDvProfile7HDR10Fallback(value: Boolean)
     suspend fun setDownloadsWifiOnly(value: Boolean)
+    suspend fun setPipEnabled(value: Boolean)
 
     suspend fun setPlaybackSpeed(value: Double)
 

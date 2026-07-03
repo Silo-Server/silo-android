@@ -57,6 +57,14 @@ object PlaybackSettingsKeys {
      */
     const val PassOutThreshold = "player.passout_threshold"
 
+    /**
+     * Local-only per-profile setting: whether the phone video player may
+     * enter Picture-in-Picture when the user leaves the app. Default true.
+     * Phone-only (never TV). Not server-registered → excluded from
+     * [DeviceSettings] so a flush can't be rejected.
+     */
+    const val PipEnabled = "player.pip_enabled"
+
     val DeviceSettings = listOf(
         PreferredQuality,
         AudioLanguage,

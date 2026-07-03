@@ -145,6 +145,9 @@ class AndroidPlayerSettingsStore(
     override val downloadsWifiOnlyFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.DownloadsWifiOnly, true) }
 
+    override val pipEnabledFlow: Flow<Boolean> =
+        profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.PipEnabled, true) }
+
     override val subtitleUsesDeviceOverrideFlow: Flow<Boolean> =
         profileScopedFlow(false) { p, s ->
             p.boolFor(s, PlaybackSettingsKeys.SubtitleUsesDeviceOverride, false)
@@ -215,6 +218,9 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun setDownloadsWifiOnly(value: Boolean) =
         writeBool(PlaybackSettingsKeys.DownloadsWifiOnly, value)
+
+    override suspend fun setPipEnabled(value: Boolean) =
+        writeBoolLocal(PlaybackSettingsKeys.PipEnabled, value)
 
     override suspend fun setPlaybackSpeed(value: Double) {
         val clamped = value.coerceIn(0.25, 4.0)
@@ -391,6 +397,18 @@ class AndroidPlayerSettingsStore(
     private suspend fun writeIntLocal(key: String, value: Int) {
         withScope { scope, store ->
             store.edit { it[intPreferencesKey(scope.keyPrefix + key)] = value }
+        }
+    }
+
+    /**
+     * Persist a Boolean that the server does not know about: write the
+     * scoped DataStore slot only, with NO server flush. Used for keys absent
+     * from [PlaybackSettingsKeys.DeviceSettings] so an unknown-key flush
+     * can't be rejected or poison a batch.
+     */
+    private suspend fun writeBoolLocal(key: String, value: Boolean) {
+        withScope { scope, store ->
+            store.edit { it[booleanPreferencesKey(scope.keyPrefix + key)] = value }
         }
     }
 

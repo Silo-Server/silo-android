@@ -25,6 +25,7 @@ import org.siloserver.silo.android.ui.navigation.AppNavigation
 import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.android.ui.navigation.deviceLoginPairRouteOrNull
 import org.siloserver.silo.android.ui.navigation.hasLocalDownloadsForScope
+import org.siloserver.silo.android.ui.screens.player.PipOnUserLeave
 import org.siloserver.silo.android.ui.theme.SiloTheme
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.startup.warmAuthenticatedStartup
@@ -121,6 +122,16 @@ class MainActivity : ComponentActivity() {
      * this, a process death within the 750ms debounce window would lose
      * the write.
      */
+    /**
+     * Pre-API-31 Picture-in-Picture entry: PlayerScreen installs a callback
+     * while video playback is PiP-eligible (API 26–30 only — on 31+ the
+     * auto-enter params handle user-leave) and clears it on dispose.
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        PipOnUserLeave.enterPip?.invoke()
+    }
+
     override fun onStop() {
         super.onStop()
         val store = get<PlayerSettingsStore>(PlayerSettingsStore::class.java)

@@ -1,8 +1,13 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
@@ -31,6 +36,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.activity.ComponentActivity
+import androidx.core.app.PictureInPictureModeChangedInfo
+import androidx.core.content.ContextCompat
+import androidx.core.util.Consumer
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -288,6 +297,153 @@ fun PlayerScreen(
     }
 
     val hdrEnabled by viewModel.hdrEnabled.collectAsState()
+
+    // ---- Picture-in-Picture (video only — audiobooks use a separate screen,
+    // so gating PiP to this composition's lifetime already excludes audio) ----
+    val pipEnabled by viewModel.pipEnabled.collectAsState()
+    val isInPip = rememberIsInPipMode()
+    var videoSizeForPip by remember { mutableStateOf<VideoSize?>(null) }
+    // DRM streams skip PiP entirely (safe fallback — some OEM pipelines
+    // black-frame or crash on protected surfaces in a PiP window). Defaults
+    // to eligible until tracks resolve.
+    var drmProtected by remember { mutableStateOf(false) }
+    val pipSupported = remember(context) {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
+    val pipEligible = pipSupported && pipEnabled && !uiState.isLoading &&
+        uiState.error == null && mediaController != null && !exitRequested && !drmProtected
+
+    // Push autoEnter=false (API 31+) and drop the user-leave hook. Runs on
+    // explicit exits before popBackStack and again from onDispose as a
+    // backstop — otherwise leaving the player could still auto-PiP.
+    val disablePip: () -> Unit = {
+        PipOnUserLeave.enterPip = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && pipSupported && activity != null) {
+            runCatching {
+                activity.setPictureInPictureParams(
+                    buildPipParams(
+                        videoSize = videoSizeForPip,
+                        isPlaying = false,
+                        context = context,
+                        shouldAutoEnter = false,
+                    ),
+                )
+            }
+        }
+    }
+
+    // Keep the activity's PiP params fresh: aspect ratio follows the decoded
+    // video size, the play/pause remote action mirrors isPaused, and on API
+    // 31+ auto-enter tracks eligibility. Every params call is runCatching —
+    // DRM/HDR/OEM quirks must skip PiP, never crash.
+    LaunchedEffect(pipEligible, videoSizeForPip, uiState.isPaused) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !pipSupported || activity == null) {
+            return@LaunchedEffect
+        }
+        runCatching {
+            activity.setPictureInPictureParams(
+                buildPipParams(
+                    videoSize = videoSizeForPip,
+                    isPlaying = !uiState.isPaused,
+                    context = context,
+                    shouldAutoEnter = pipEligible,
+                ),
+            )
+        }
+    }
+
+    // Pre-31 user-leave path: no setAutoEnterEnabled exists, so MainActivity's
+    // onUserLeaveHint invokes this while the screen is PiP-eligible. On 31+
+    // the auto-enter params above handle user-leave and this stays null.
+    DisposableEffect(pipEligible) {
+        if (pipEligible && activity != null &&
+            Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S
+        ) {
+            PipOnUserLeave.enterPip = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    runCatching {
+                        activity.enterPictureInPictureMode(
+                            buildPipParams(
+                                videoSize = videoSizeForPip,
+                                isPlaying = !viewModel.uiState.value.isPaused,
+                                context = context,
+                            ),
+                        )
+                    }
+                }
+            }
+        } else {
+            PipOnUserLeave.enterPip = null
+        }
+        onDispose { PipOnUserLeave.enterPip = null }
+    }
+
+    // PiP remote actions route through the same VM/controller as the overlay,
+    // so the MediaSession (notification, lock screen) stays in sync for free.
+    DisposableEffect(mediaController) {
+        val controller = mediaController
+        if (controller == null) {
+            onDispose { }
+        } else {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(receiverContext: android.content.Context?, intent: Intent?) {
+                    if (intent?.action != ACTION_PIP_CONTROL) return
+                    when (intent.getIntExtra(EXTRA_PIP_CONTROL, -1)) {
+                        // VM isPaused stays the source of truth; the
+                        // playWhenReady sync effect mirrors it to the
+                        // controller, and the params effect above refreshes
+                        // the play/pause icon.
+                        PIP_CONTROL_PLAY_PAUSE -> viewModel.onPlayPause()
+                        PIP_CONTROL_REWIND -> controller.seekTo(
+                            (controller.currentPosition - PIP_SEEK_DELTA_MS).coerceAtLeast(0L),
+                        )
+                        PIP_CONTROL_FORWARD -> {
+                            val target = controller.currentPosition + PIP_SEEK_DELTA_MS
+                            val duration = controller.duration
+                            controller.seekTo(if (duration > 0) target.coerceAtMost(duration) else target)
+                        }
+                    }
+                }
+            }
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                IntentFilter(ACTION_PIP_CONTROL),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            onDispose { context.unregisterReceiver(receiver) }
+        }
+    }
+
+    // Closing the PiP window (X) must stop the session cleanly. Dismissal
+    // leaves the activity stopped when the mode-change fires (expanding back
+    // to fullscreen resumes it instead), so a not-in-PiP transition with the
+    // lifecycle at most CREATED means the user dismissed the window: tear
+    // down like a back press — screen disposal then stops/clears/releases the
+    // MediaController, which ends the session and its notification.
+    DisposableEffect(activity, lifecycleOwner) {
+        val componentActivity = activity as? ComponentActivity
+        if (componentActivity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            onDispose { }
+        } else {
+            var wasInPip = componentActivity.isInPictureInPictureMode
+            val listener = Consumer<PictureInPictureModeChangedInfo> { info ->
+                val nowInPip = info.isInPictureInPictureMode
+                if (wasInPip && !nowInPip && !exitRequested &&
+                    !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                ) {
+                    exitRequested = true
+                    disablePip()
+                    viewModel.onExit()
+                    navController.popBackStack()
+                }
+                wasInPip = nowInPip
+            }
+            componentActivity.addOnPictureInPictureModeChangedListener(listener)
+            onDispose { componentActivity.removeOnPictureInPictureModeChangedListener(listener) }
+        }
+    }
 
     // Apply capability-aware track selection presets. Re-runs on capability
     // or profile-language change so a mid-session HDMI hot-plug / Bluetooth
@@ -589,6 +745,7 @@ fun PlayerScreen(
 
                 override fun onVideoSizeChanged(size: VideoSize) {
                     if (size.width > 0 && size.height > 0) {
+                        videoSizeForPip = size
                         // Pull frame rate off the selected video track; phone
                         // panels with multiple refresh rates switch to
                         // content-matching (seamless only — see ExoPlayer's
@@ -608,6 +765,15 @@ fun PlayerScreen(
                 }
 
                 override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                    // PiP eligibility: a DRM-protected video track disables PiP.
+                    drmProtected = tracks.groups
+                        .firstOrNull {
+                            it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO && it.isSelected
+                        }
+                        ?.mediaTrackGroup
+                        ?.takeIf { it.length > 0 }
+                        ?.getFormat(0)
+                        ?.drmInitData != null
                     // Re-apply the subtitle selection once track groups resolve:
                     // after the subtitle-refresh rebuild the selection effect has
                     // already fired (against the OLD tracks), so without this the
@@ -696,9 +862,13 @@ fun PlayerScreen(
         )
     }
 
-    // Notify the ViewModel we're leaving the screen.
+    // Notify the ViewModel we're leaving the screen; make sure the activity
+    // can't auto-enter PiP once the player is gone.
     DisposableEffect(Unit) {
-        onDispose { viewModel.onExit() }
+        onDispose {
+            disablePip()
+            viewModel.onExit()
+        }
     }
 
     // UI
@@ -773,41 +943,47 @@ fun PlayerScreen(
                 )
             }
 
-            PlayerOverlay(
-                state = uiState,
-                viewModel = viewModel,
-                roomSnapshot = roomSnapshot,
-                onBack = {
-                    // In-room exit: leave the room (host close confirm is handled
-                    // by the overlay before this fires). The controller resets the
-                    // repo + engine; solo playback just pops.
-                    exitRequested = true
-                    roomController?.leave(closeRoom = roomSnapshot?.isHost == true)
-                    viewModel.onExit()
-                    navController.popBackStack()
-                },
-                onPlayPause = {
-                    // In a room, route through transport_request (gated to
-                    // controllers); solo playback toggles locally.
-                    if (roomController != null) roomController.onUserPlayPause()
-                    else viewModel.onPlayPause()
-                },
-                onSeek = { position ->
-                    if (roomController != null) {
-                        // Guest seeks are no-ops in the controller; host seeks
-                        // round-trip through the room and re-apply via a command.
-                        roomController.onUserSeek(position)
-                    } else {
-                        viewModel.onSeek(position)
-                        mediaController?.seekTo((position * 1000).toLong())
-                    }
-                },
-                onToggleControls = { viewModel.onToggleControls() },
-                onNextEpisode = { viewModel.onNextEpisode() },
-                onSelectSubtitle = { viewModel.onSelectSubtitle(it) },
-                onSelectAudio = { viewModel.onSelectAudio(it) },
-                onSelectVersion = { viewModel.onSelectVersion(it) },
-            )
+            // In the PiP window, render only the video surface — the overlay
+            // chrome is unusable at PiP size and the system draws the remote
+            // actions. Expanding flips isInPip back and the overlay returns.
+            if (!isInPip) {
+                PlayerOverlay(
+                    state = uiState,
+                    viewModel = viewModel,
+                    roomSnapshot = roomSnapshot,
+                    onBack = {
+                        // In-room exit: leave the room (host close confirm is handled
+                        // by the overlay before this fires). The controller resets the
+                        // repo + engine; solo playback just pops.
+                        exitRequested = true
+                        disablePip()
+                        roomController?.leave(closeRoom = roomSnapshot?.isHost == true)
+                        viewModel.onExit()
+                        navController.popBackStack()
+                    },
+                    onPlayPause = {
+                        // In a room, route through transport_request (gated to
+                        // controllers); solo playback toggles locally.
+                        if (roomController != null) roomController.onUserPlayPause()
+                        else viewModel.onPlayPause()
+                    },
+                    onSeek = { position ->
+                        if (roomController != null) {
+                            // Guest seeks are no-ops in the controller; host seeks
+                            // round-trip through the room and re-apply via a command.
+                            roomController.onUserSeek(position)
+                        } else {
+                            viewModel.onSeek(position)
+                            mediaController?.seekTo((position * 1000).toLong())
+                        }
+                    },
+                    onToggleControls = { viewModel.onToggleControls() },
+                    onNextEpisode = { viewModel.onNextEpisode() },
+                    onSelectSubtitle = { viewModel.onSelectSubtitle(it) },
+                    onSelectAudio = { viewModel.onSelectAudio(it) },
+                    onSelectVersion = { viewModel.onSelectVersion(it) },
+                )
+            }
         }
     }
 }

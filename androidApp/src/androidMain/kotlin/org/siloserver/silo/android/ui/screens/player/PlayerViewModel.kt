@@ -277,6 +277,8 @@ class PlayerViewModel(
     private var engineSwitchFallbackAttempted = false
     val hdrEnabled: StateFlow<Boolean> = playerSettingsStore.hdrEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val pipEnabled: StateFlow<Boolean> = playerSettingsStore.pipEnabledFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val subtitleAppearance: StateFlow<SubtitleAppearance> = playerSettingsStore.subtitleAppearanceFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, SubtitleAppearance.DEFAULT)
     /**

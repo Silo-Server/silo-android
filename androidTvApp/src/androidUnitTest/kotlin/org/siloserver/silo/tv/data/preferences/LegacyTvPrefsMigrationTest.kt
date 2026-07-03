@@ -236,6 +236,7 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override val hdrEnabledFlow = MutableStateFlow(true)
     override val dvProfile7HDR10FallbackFlow = MutableStateFlow(false)
     override val downloadsWifiOnlyFlow = MutableStateFlow(true)
+    override val pipEnabledFlow = MutableStateFlow(true)
     override val playbackSpeedFlow = MutableStateFlow(1.0)
     override val audioSyncMsFlow = MutableStateFlow(0)
     override val subtitleSyncMsFlow = MutableStateFlow(0)
@@ -267,6 +268,9 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     }
     override suspend fun setDownloadsWifiOnly(value: Boolean) {
         setterCalls += "setDownloadsWifiOnly"; downloadsWifiOnlyFlow.value = value
+    }
+    override suspend fun setPipEnabled(value: Boolean) {
+        setterCalls += "setPipEnabled"; pipEnabledFlow.value = value
     }
     override suspend fun setPlaybackSpeed(value: Double) {
         setterCalls += "setPlaybackSpeed"; playbackSpeedFlow.value = value

@@ -44,7 +44,7 @@ File pointers are repository-relative.
 | Lock-screen / notification / headset / Assistant controls | ✅ | ✅ | Via `MediaSession` |
 | D-pad transport, info HUD, chapter scrubber | ➖ | ✅ | `TvPlayerHud`, `TvPlayerScrubber` |
 | Landscape-on-play (auto-rotate aware) | 🚧 | ➖ | Implemented then reverted; pending re-apply |
-| Picture-in-Picture | 🚧 | ➖ | Not yet implemented |
+| Picture-in-Picture | ✅ | ➖ | Phone video player: auto-enter on home (API 31+), user-leave enter on 26–30, play/pause + ±10s actions, settings toggle |
 
 ## Watch Together (not exposed)
 
