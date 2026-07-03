@@ -313,13 +313,19 @@ fun PlayerScreen(
         )
     }
 
+    // Hold-to-2x fast-forward: true while the user is press-holding the
+    // gesture layer. The 2x rate is transient — never written to the
+    // settings store — and the mirror below is gated on it so a settings
+    // emission mid-hold can't fight the temporary rate.
+    var holdSpeedActive by remember { mutableStateOf(false) }
+
     // Mirror the user's preferred playback speed onto the live MediaController.
     // Re-runs whenever the controller binds (so the value is applied after
     // service rebind) or the user picks a new speed in PlayerSettingsSheet.
     LaunchedEffect(mediaController) {
         val controller = mediaController ?: return@LaunchedEffect
         viewModel.playbackSpeed.collect { speed ->
-            controller.setPlaybackSpeed(speed.toFloat())
+            if (!holdSpeedActive) controller.setPlaybackSpeed(speed.toFloat())
         }
     }
 
@@ -807,6 +813,20 @@ fun PlayerScreen(
                 onSelectSubtitle = { viewModel.onSelectSubtitle(it) },
                 onSelectAudio = { viewModel.onSelectAudio(it) },
                 onSelectVersion = { viewModel.onSelectVersion(it) },
+                onHoldSpeedStart = {
+                    // No hold-speed before duration resolves or during a stall.
+                    if (uiState.duration > 0 && !uiState.isBuffering) {
+                        holdSpeedActive = true
+                        mediaController?.setPlaybackSpeed(2f)
+                    }
+                },
+                onHoldSpeedEnd = {
+                    if (holdSpeedActive) {
+                        holdSpeedActive = false
+                        mediaController?.setPlaybackSpeed(viewModel.playbackSpeed.value.toFloat())
+                    }
+                },
+                holdSpeedActive = holdSpeedActive,
             )
         }
     }

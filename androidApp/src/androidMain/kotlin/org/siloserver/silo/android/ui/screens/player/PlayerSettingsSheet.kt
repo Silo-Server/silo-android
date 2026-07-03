@@ -71,6 +71,7 @@ fun PlayerSettingsSheet(
     subtitleDelayMs: Int = 0,
     onSetSubtitleDelay: (Int) -> Unit = {},
     sleepTimerState: SleepTimerState = SleepTimerState.Idle,
+    onOpenStats: () -> Unit = {},
 ) {
     if (!isVisible) return
 
@@ -220,6 +221,18 @@ fun PlayerSettingsSheet(
                         scope.launch { sheetState.hide() }
                         onDismiss()
                         onOpenSleepTimer()
+                    },
+                )
+
+                SectionHeader(text = "Diagnostics")
+
+                TapRow(
+                    label = "Playback Stats",
+                    subtitle = "Live route, format, and buffer statistics",
+                    onClick = {
+                        scope.launch { sheetState.hide() }
+                        onDismiss()
+                        onOpenStats()
                     },
                 )
 

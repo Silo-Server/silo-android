@@ -6,6 +6,8 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
+import org.siloserver.silo.common.player.PlayerStatsSnapshot
+import org.siloserver.silo.common.player.reducePlayerStats
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackRecoveryAction
 import org.siloserver.silo.common.player.PlaybackRecoveryPlanner
@@ -44,7 +46,9 @@ import org.siloserver.silo.model.subtitles.SubtitleResult
 import org.siloserver.silo.model.subtitles.SubtitleSearchRequest
 import org.siloserver.silo.model.subtitles.SubtitleTranslateRequest
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.api.TrackPrefsApi
 import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.playback.TrackSelectionPersistence
 import org.siloserver.silo.playback.nextEpisodeAfter
 import org.siloserver.silo.repository.SubtitlesRepository
 import kotlinx.coroutines.Dispatchers
@@ -353,91 +357,6 @@ data class TvPlayerLaunchArgs(
 data class PlayNextRequest(val contentId: String, val autoAdvanceCount: Int, val preferredQuality: String?)
 
 /**
- * Snapshot of player statistics surfaced in the HUD's Stats pane.
- * Built by [reducePlayerStats] from a stream of [PlaybackAnalyticsListener.Event]s.
- *
- * All fields nullable — fields populate as events arrive; rendering should
- * tolerate any subset being null. `droppedFrames` and `audioUnderruns` are
- * cumulative counters since the snapshot was created.
- */
-data class PlayerStatsSnapshot(
-    val backendKind: String? = null,
-    val backendDisplayName: String? = null,
-    val backendRoute: String? = null,
-    val subtitleRendering: String? = null,
-    val hardContainers: String? = null,
-    val videoDecoderName: String? = null,
-    val audioDecoderName: String? = null,
-    val videoCodec: String? = null,
-    val audioCodec: String? = null,
-    val resolution: String? = null,            // e.g. "1920x1080"
-    val frameRate: Float? = null,
-    val hdrMode: String? = null,               // e.g. "Dolby Vision", "HDR10", "SDR"
-    val bitrateBps: Long? = null,
-    val droppedFrames: Int = 0,                // cumulative since session start
-    val audioUnderruns: Int = 0,               // cumulative
-)
-
-/**
- * Pure event-to-snapshot reducer. Used by the ViewModel; tested in isolation.
- * Does NOT clear state on unrelated events (e.g. a DroppedFrames event leaves
- * format/decoder fields untouched).
- */
-internal fun reducePlayerStats(
-    current: PlayerStatsSnapshot,
-    event: PlaybackAnalyticsListener.Event,
-): PlayerStatsSnapshot = when (event) {
-    is PlaybackAnalyticsListener.Event.VideoDecoderInitialized ->
-        current.copy(videoDecoderName = event.decoderName)
-    is PlaybackAnalyticsListener.Event.AudioDecoderInitialized ->
-        current.copy(audioDecoderName = event.decoderName)
-    is PlaybackAnalyticsListener.Event.VideoFormatChanged -> current.copy(
-        videoCodec = event.format.codecs ?: event.format.sampleMimeType,
-        resolution = if (event.format.width > 0 && event.format.height > 0) {
-            "${event.format.width}x${event.format.height}"
-        } else current.resolution,
-        frameRate = if (event.format.frameRate > 0f) event.format.frameRate else current.frameRate,
-        hdrMode = describeHdrMode(event.format) ?: current.hdrMode,
-    )
-    is PlaybackAnalyticsListener.Event.AudioFormatChanged ->
-        current.copy(audioCodec = event.format.codecs ?: event.format.sampleMimeType)
-    is PlaybackAnalyticsListener.Event.DroppedFrames ->
-        current.copy(droppedFrames = current.droppedFrames + event.count)
-    is PlaybackAnalyticsListener.Event.AudioUnderrun ->
-        current.copy(audioUnderruns = current.audioUnderruns + 1)
-    is PlaybackAnalyticsListener.Event.BandwidthEstimate ->
-        current.copy(bitrateBps = event.bitrateBps)
-    is PlaybackAnalyticsListener.Event.LoadError ->
-        current // load errors don't mutate the stats snapshot
-    is PlaybackAnalyticsListener.Event.PlayerError ->
-        current // player errors are logged separately and don't mutate the stats snapshot
-    is PlaybackAnalyticsListener.Event.TrackSnapshot ->
-        current // diagnostic-only; keep on-screen stats stable
-}
-
-/**
- * Describe the HDR mode of a video [androidx.media3.common.Format].
- *
- * Dolby Vision detection is by codec string (`dvh1`, `dvhe`) and runs BEFORE
- * the `colorTransfer` switch because DV bitstreams can carry varying color
- * transfers and Apple's reference treats DV as its own mode. Returns `null`
- * if no HDR signal is present (caller keeps the prior value).
- */
-private fun describeHdrMode(format: androidx.media3.common.Format): String? {
-    val codecs = format.codecs.orEmpty()
-    if (codecs.contains("dvh", ignoreCase = true) || codecs.contains("dvhe", ignoreCase = true)) {
-        return "Dolby Vision"
-    }
-    val colorInfo = format.colorInfo ?: return null
-    return when (colorInfo.colorTransfer) {
-        androidx.media3.common.C.COLOR_TRANSFER_ST2084 -> "HDR10"
-        androidx.media3.common.C.COLOR_TRANSFER_HLG -> "HLG"
-        androidx.media3.common.C.COLOR_TRANSFER_SDR -> "SDR"
-        else -> null
-    }
-}
-
-/**
  * Subtitle provider search/download state backing the TV subtitle search
  * dialog. `completedNonce` increments when a download lands and the track
  * list has been refreshed — the dialog observes it and dismisses itself.
@@ -503,6 +422,8 @@ class TvPlayerViewModel(
     private val sleepTimer: SleepTimerController,
     // Subtitle suite (provider search/download + AI translate).
     private val subtitlesRepository: SubtitlesRepository,
+    // Best-effort per-series track pref writes (explicit user picks only).
+    private val trackPrefsApi: TrackPrefsApi,
     // Track B: durable offline-safe position (resume + outbox sync).
     private val userItemStatePort: org.siloserver.silo.repository.port.UserItemStatePort,
     private val outboxSyncScheduler: org.siloserver.silo.common.data.sync.OutboxSyncScheduler,
@@ -1601,6 +1522,73 @@ class TvPlayerViewModel(
 
     fun onManualSubtitleSelectionIntent() {
         manualSubtitleSelectionApplied = true
+    }
+
+    // ---- Track pref persistence (Apple TrackSelectionPersistence parity) -----
+    // Best-effort fire-and-forget writes of EXPLICIT user picks only — never
+    // called from remoteSelectAudio/remoteSelectSubtitle or the automatic
+    // initial-track resolution. Reads need no client work: the server folds
+    // saved prefs back into WatchDetail.effective_*.
+
+    private fun trackPrefKey(): String? {
+        val state = _uiState.value
+        if (state.sessionId == null) return null // offline/local — nothing to remember
+        return TrackSelectionPersistence.prefKey(state.seriesId, contentId)
+    }
+
+    /** Persist an explicit audio pick. [index] is the HUD's audio-track ordinal. */
+    fun persistAudioSelection(index: Int) {
+        val key = trackPrefKey() ?: return
+        val entry = _uiState.value.audioTracks.firstOrNull { it.index == index } ?: return
+        val request = TrackSelectionPersistence.audioRequest(
+            ordinal = index,
+            language = entry.language,
+            title = entry.displayLabel.takeIf { it.isNotBlank() },
+            codec = entry.codecOrMime,
+        )
+        viewModelScope.launch {
+            when (val r = trackPrefsApi.setAudioPref(key, request)) {
+                is ApiResult.Success -> Unit
+                else -> Log.w(TAG, "audio pref save failed key=$key: ${r.errorMessage("write failed")}")
+            }
+        }
+    }
+
+    /** Persist an explicit subtitle pick ([index] == -1 is explicit "Off"). */
+    fun persistSubtitleSelection(index: Int) {
+        val key = trackPrefKey() ?: return
+        val state = _uiState.value
+        val request = if (index < 0) {
+            TrackSelectionPersistence.subtitleOffRequest(state.showForcedSubtitles)
+        } else {
+            // Prefer the session's sidecar metadata (same index space the
+            // subtitle-apply helper uses); fall back to the live track entry.
+            val info = state.subtitleUrls.firstOrNull { it.index == index }
+            if (info != null) {
+                if (info.source == "ai") return // live AI tracks are session-scoped
+                TrackSelectionPersistence.subtitleRequest(info, state.showForcedSubtitles)
+            } else {
+                val entry = state.subtitleTracks.firstOrNull { it.index == index } ?: return
+                TrackSelectionPersistence.subtitleRequest(
+                    track = PlayerSubtitleInfo(
+                        index = index,
+                        language = entry.language,
+                        codec = entry.codecOrMime,
+                        label = entry.displayLabel,
+                        source = "embedded",
+                        forced = entry.isForced,
+                        url = "",
+                    ),
+                    showForced = state.showForcedSubtitles,
+                )
+            }
+        }
+        viewModelScope.launch {
+            when (val r = trackPrefsApi.setSubtitlePref(key, request)) {
+                is ApiResult.Success -> Unit
+                else -> Log.w(TAG, "subtitle pref save failed key=$key: ${r.errorMessage("write failed")}")
+            }
+        }
     }
 
     /**

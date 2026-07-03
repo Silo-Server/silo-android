@@ -1,4 +1,4 @@
-package org.siloserver.silo.tv.ui.screens.player
+package org.siloserver.silo.common.player
 
 import androidx.annotation.OptIn
 import androidx.media3.common.C
@@ -6,7 +6,6 @@ import androidx.media3.common.ColorInfo
 import androidx.media3.common.Format
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
-import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

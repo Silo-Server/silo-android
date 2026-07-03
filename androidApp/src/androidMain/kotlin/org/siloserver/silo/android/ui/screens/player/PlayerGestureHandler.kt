@@ -4,6 +4,9 @@ import android.content.Context
 import android.media.AudioManager
 import android.view.Window
 import android.view.WindowManager
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -19,6 +22,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** Press must be held this long before the 2x hold-speed engages. */
+private const val HOLD_SPEED_THRESHOLD_MS = 500L
 
 /**
  * Gesture handler overlay for the video player.
@@ -27,9 +34,11 @@ import androidx.compose.ui.platform.LocalContext
  * - Single tap center: toggle controls visibility
  * - Double-tap left third: skip back 10 seconds
  * - Double-tap right third: skip forward 10 seconds
+ * - Press-and-hold (≥0.5s): temporary 2x playback speed until release
  * - Vertical swipe on left half: brightness adjustment
  * - Vertical swipe on right half: volume adjustment
  * - Horizontal swipe: seek through the video
+ * - Two-finger pinch: cycle video gravity (fit / fill / stretch)
  */
 @Composable
 fun PlayerGestureHandler(
@@ -39,6 +48,9 @@ fun PlayerGestureHandler(
     onSeek: (Double) -> Unit,
     onSkipForward: () -> Unit,
     onSkipBackward: () -> Unit,
+    onHoldSpeedStart: () -> Unit,
+    onHoldSpeedEnd: () -> Unit,
+    onPinchVideoGravity: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -49,6 +61,9 @@ fun PlayerGestureHandler(
     // tears down the coroutine and drops in-flight taps and double-taps).
     val currentPosition by rememberUpdatedState(position)
     val currentDuration by rememberUpdatedState(duration)
+    val currentOnHoldSpeedStart by rememberUpdatedState(onHoldSpeedStart)
+    val currentOnHoldSpeedEnd by rememberUpdatedState(onHoldSpeedEnd)
+    val currentOnPinchVideoGravity by rememberUpdatedState(onPinchVideoGravity)
 
     var seekDragStartPosition by remember { mutableDoubleStateOf(0.0) }
     var seekDragAccumulator by remember { mutableFloatStateOf(0f) }
@@ -65,6 +80,23 @@ fun PlayerGestureHandler(
                             offset.x < thirdWidth -> onSkipBackward()
                             offset.x > thirdWidth * 2 -> onSkipForward()
                             else -> onToggleControls()
+                        }
+                    },
+                    // Hold-to-2x: a press that outlives the threshold (without
+                    // being cancelled by a drag) engages temporary 2x playback
+                    // until the finger lifts. onPress doesn't consume, so taps,
+                    // double-taps, and the drag detectors are unaffected.
+                    onPress = {
+                        val released = withTimeoutOrNull(HOLD_SPEED_THRESHOLD_MS) { tryAwaitRelease() }
+                        if (released == null) {
+                            currentOnHoldSpeedStart()
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                // Runs on release AND on cancellation (a drag
+                                // stealing the press), so speed always restores.
+                                currentOnHoldSpeedEnd()
+                            }
                         }
                     },
                 )
@@ -100,6 +132,31 @@ fun PlayerGestureHandler(
                         seekDragAccumulator += dragAmount
                     },
                 )
+            }
+            .pointerInput(Unit) {
+                // Pinch to cycle video gravity. Only multi-touch frames are
+                // consumed, so single-finger taps/double-taps/swipes pass
+                // through to the detectors above untouched.
+                awaitEachGesture {
+                    var zoom = 1f
+                    var sawPinch = false
+                    awaitFirstDown(requireUnconsumed = false)
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.changes.count { it.pressed } >= 2) {
+                            sawPinch = true
+                            zoom *= event.calculateZoom()
+                            event.changes.forEach { it.consume() }
+                        }
+                        if (event.changes.none { it.pressed }) break
+                    }
+                    if (sawPinch) {
+                        when {
+                            zoom > 1.25f -> currentOnPinchVideoGravity(1)
+                            zoom < 0.8f -> currentOnPinchVideoGravity(-1)
+                        }
+                    }
+                }
             }
     )
 }

@@ -350,6 +350,9 @@ fun TvPlayerScreen(
             ?.toVideoTrackEntry()
         viewModel.onManualSubtitleSelectionIntent()
         viewModel.onSubtitleSelectionApplied(idx)
+        // Explicit user pick (HUD / quick picker only — the remote and
+        // initial auto-selection paths never route through this helper).
+        viewModel.persistSubtitleSelection(idx)
         if (dismiss) viewModel.closeSubtitleMenu()
         if (videoBackend?.selectSubtitle(selectedTrack) != true) {
             Log.w(TAG, "Subtitle selection deferred or failed for index=$idx")
@@ -1147,6 +1150,8 @@ fun TvPlayerScreen(
                                     ?.toVideoTrackEntry()
                                 if (selectedTrack != null) {
                                     videoBackend?.selectAudioTrack(selectedTrack)
+                                    // Explicit user pick — remember it server-side.
+                                    viewModel.persistAudioSelection(idx)
                                 }
                             },
                             onSelectVideoQuality = { id ->

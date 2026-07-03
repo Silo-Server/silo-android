@@ -23,6 +23,7 @@ val networkModule = module {
     single { HealthApi(get()) }
     single { SettingsApi(get()) }
     single { LibraryPlaybackPrefsApi(get()) }
+    single { TrackPrefsApi(get()) }
     single { DownloadsApi(get()) }
     single { EbookReaderApi(get()) }
     single<SubtitlesApi> { DefaultSubtitlesApi(get()) }

@@ -1,3 +1,5 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package org.siloserver.silo.android.ui.screens.player
 
 import android.util.Log
@@ -6,7 +8,10 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.android.BuildConfig
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.OfflineMediaResolver
+import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
+import org.siloserver.silo.common.player.PlayerStatsSnapshot
+import org.siloserver.silo.common.player.reducePlayerStats
 import org.siloserver.silo.common.player.Playability
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
@@ -45,6 +50,9 @@ import org.siloserver.silo.model.subtitles.SubtitleResult
 import org.siloserver.silo.model.subtitles.SubtitleSearchRequest
 import org.siloserver.silo.model.subtitles.SubtitleTranslateRequest
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.api.TrackPrefsApi
+import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.playback.TrackSelectionPersistence
 import org.siloserver.silo.common.player.AutoPlayGuard
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.errorMessage
@@ -109,6 +117,10 @@ class PlayerViewModel(
     // Track B: durable offline-safe position (resume + outbox sync).
     private val userItemStatePort: org.siloserver.silo.repository.port.UserItemStatePort,
     private val outboxSyncScheduler: org.siloserver.silo.common.data.sync.OutboxSyncScheduler,
+    // Best-effort per-series track pref writes (explicit user picks only).
+    private val trackPrefsApi: TrackPrefsApi,
+    // Process-wide analytics listener feeding the Playback Stats overlay.
+    private val playbackAnalytics: PlaybackAnalyticsListener,
 ) : ViewModel() {
 
     companion object {
@@ -181,6 +193,13 @@ class PlayerViewModel(
          * current position.
          */
         val subtitleRefreshNonce: Int = 0,
+        /**
+         * Live player statistics — reduced from [PlaybackAnalyticsListener.Event]s
+         * by [reducePlayerStats]. Rendered by the Playback Stats overlay
+         * (Diagnostics row in PlayerSettingsSheet). Always non-null; populates
+         * field-by-field as events arrive.
+         */
+        val stats: PlayerStatsSnapshot = PlayerStatsSnapshot(),
     ) {
         /**
          * Media file id of the active version — the id the subtitle
@@ -346,6 +365,15 @@ class PlayerViewModel(
                         if (current.error == null) current.copy(error = state.message) else current
                     }
                 }
+            }
+        }
+
+        // Reduce the analytics listener's event stream into the stats overlay
+        // snapshot. The listener is a process-wide singleton shared with
+        // SiloPlaybackService; we just subscribe — no extra registration.
+        viewModelScope.launch {
+            playbackAnalytics.events.collect { event ->
+                _uiState.update { it.copy(stats = reducePlayerStats(it.stats, event)) }
             }
         }
 
@@ -865,6 +893,7 @@ class PlayerViewModel(
     /** Select a subtitle track (-1 to disable). */
     fun onSelectSubtitle(index: Int) {
         _uiState.update { it.copy(selectedSubtitleIndex = index) }
+        persistSubtitleSelection(index)
     }
 
     /** Select an audio track (may require server-side switch). */
@@ -873,6 +902,7 @@ class PlayerViewModel(
         val sessionId = currentState.sessionId ?: return
 
         _uiState.update { it.copy(selectedAudioIndex = index) }
+        persistAudioSelection(index)
 
         viewModelScope.launch {
             val result = playbackSessionManager.changeAudio(sessionId, index, currentState.position)
@@ -898,6 +928,53 @@ class PlayerViewModel(
                 is ApiResult.NetworkError -> {
                     Log.e(TAG, "Network error changing audio", result.exception)
                 }
+            }
+        }
+    }
+
+    // ---- Track pref persistence (Apple TrackSelectionPersistence parity) -----
+    // Best-effort fire-and-forget writes of EXPLICIT user picks so they stick
+    // across player exits. Reads need no client work: the server folds saved
+    // prefs back into WatchDetail.effective_*, which loadContent consumes.
+
+    private fun trackPrefKey(): String? {
+        val state = _uiState.value
+        if (state.sessionId == null) return null // offline/local — nothing to remember
+        return TrackSelectionPersistence.prefKey(state.seriesId, state.contentId)
+    }
+
+    /**
+     * Persist an explicit audio pick. [index] ordinals `state.audioTracks`,
+     * which IS the active version's `audioTracks` — the same space the
+     * server's `audio_track_index` uses.
+     */
+    private fun persistAudioSelection(index: Int) {
+        val key = trackPrefKey() ?: return
+        val version = _uiState.value.versions.getOrNull(_uiState.value.selectedVersionIndex) ?: return
+        val request = TrackSelectionPersistence.audioRequest(version, index) ?: return
+        viewModelScope.launch {
+            when (val r = trackPrefsApi.setAudioPref(key, request)) {
+                is ApiResult.Success -> Unit
+                else -> Log.w(TAG, "audio pref save failed key=$key: ${r.errorMessage("write failed")}")
+            }
+        }
+    }
+
+    /** Persist an explicit subtitle pick ([index] == -1 is explicit "Off"). */
+    private fun persistSubtitleSelection(index: Int) {
+        val key = trackPrefKey() ?: return
+        val request = if (index < 0) {
+            TrackSelectionPersistence.subtitleOffRequest(null)
+        } else {
+            val track = _uiState.value.subtitleTracks.getOrNull(index) ?: return
+            // Live AI-translate tracks are session-scoped — never persisted.
+            if (track.source == "ai") return
+            TrackSelectionPersistence.subtitleRequest(track, showForced = null)
+        }
+        viewModelScope.launch {
+            when (val r = trackPrefsApi.setSubtitlePref(key, request)) {
+                is ApiResult.Success -> Unit
+                else -> Log.w(TAG, "subtitle pref save failed key=$key: ${r.errorMessage("write failed")}")
             }
         }
     }

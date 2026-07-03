@@ -234,6 +234,8 @@ val androidModule = module {
             subtitlesRepository = get(),
             userItemStatePort = get(),
             outboxSyncScheduler = get(),
+            trackPrefsApi = get(),
+            playbackAnalytics = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get()) }

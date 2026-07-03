@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.player.PlayerStatsSnapshot
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan

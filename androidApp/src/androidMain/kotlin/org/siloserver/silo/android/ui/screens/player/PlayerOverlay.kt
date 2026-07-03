@@ -71,6 +71,9 @@ fun PlayerOverlay(
     onSelectSubtitle: (Int) -> Unit,
     onSelectAudio: (Int) -> Unit,
     onSelectVersion: (Int) -> Unit,
+    onHoldSpeedStart: () -> Unit = {},
+    onHoldSpeedEnd: () -> Unit = {},
+    holdSpeedActive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // Sheet visibility — one bool per sheet. iOS uses a sealed `activeSheet`
@@ -85,6 +88,11 @@ fun PlayerOverlay(
     var chaptersSheetVisible by remember { mutableStateOf(false) }
     var subtitleSearchVisible by remember { mutableStateOf(false) }
     var aiTranslateVisible by remember { mutableStateOf(false) }
+    // Playback Stats diagnostics card — opened from the settings sheet,
+    // rendered above everything and independent of controls visibility.
+    var statsVisible by remember { mutableStateOf(false) }
+    // Transient "Aspect: …" chip after a pinch gravity change.
+    var gravityToast by remember { mutableStateOf<String?>(null) }
     // Host close-room confirm dialog (Watch Together): the host backing out of
     // the player tears the room down for everyone, so confirm first.
     var showCloseConfirm by remember { mutableStateOf(false) }
@@ -149,8 +157,80 @@ fun PlayerOverlay(
                 onSeek = gatedSeek,
                 onSkipForward = { gatedSeek((state.position + 10.0).coerceAtMost(state.duration)) },
                 onSkipBackward = { gatedSeek((state.position - 10.0).coerceAtLeast(0.0)) },
+                onHoldSpeedStart = onHoldSpeedStart,
+                onHoldSpeedEnd = onHoldSpeedEnd,
+                onPinchVideoGravity = { direction ->
+                    val order = listOf("fit", "fill", "stretch")
+                    val current = order.indexOf(viewModel.videoGravity.value).coerceAtLeast(0)
+                    val next = order[(current + direction + order.size) % order.size]
+                    viewModel.onSetVideoGravity(next)
+                    gravityToast = "Aspect: " + next.replaceFirstChar { it.uppercase() }
+                },
                 modifier = Modifier.zIndex(0f),
             )
+        }
+
+        // Hold-to-2x rate chip (top-center) while the press is held.
+        if (holdSpeedActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 24.dp)
+                    .zIndex(12f),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Surface(color = Color.White, shape = RoundedCornerShape(50)) {
+                    Text(
+                        text = "2x",
+                        color = Color.Black,
+                        fontSize = 14.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+
+        // Pinch video-gravity chip (top-center), shown ~1.5s after each cycle.
+        gravityToast?.let { label ->
+            LaunchedEffect(label) {
+                kotlinx.coroutines.delay(1_500)
+                gravityToast = null
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 24.dp)
+                    .zIndex(12f),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Surface(color = Color.White, shape = RoundedCornerShape(50)) {
+                    Text(
+                        text = label,
+                        color = Color.Black,
+                        fontSize = 14.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+
+        // Playback Stats diagnostics card — top-leading, above everything,
+        // visible regardless of controls, with its own close button.
+        if (statsVisible) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 16.dp, start = 16.dp)
+                    .zIndex(13f),
+                contentAlignment = Alignment.TopStart,
+            ) {
+                PlaybackStatsOverlay(
+                    state = state,
+                    onClose = { statsVisible = false },
+                )
+            }
         }
 
         // Buffering indicator. Shown during ExoPlayer buffering AND during outage
@@ -475,6 +555,10 @@ fun PlayerOverlay(
         subtitleDelayMs = viewModel.subtitleDelayMs.collectAsState().value,
         onSetSubtitleDelay = viewModel::onSetSubtitleDelay,
         sleepTimerState = sleepTimerState,
+        onOpenStats = {
+            settingsSheetVisible = false
+            statsVisible = true
+        },
     )
 
     // Chapters picker — opened from the "Chapters" row in PlayerSettingsSheet.

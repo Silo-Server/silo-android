@@ -401,6 +401,7 @@ val androidTvModule = module {
             sessionLifecycle = get(),
             sleepTimer = get(),
             subtitlesRepository = get(),
+            trackPrefsApi = get(),
             userItemStatePort = get(),
             outboxSyncScheduler = get(),
             catalogRepository = get(),

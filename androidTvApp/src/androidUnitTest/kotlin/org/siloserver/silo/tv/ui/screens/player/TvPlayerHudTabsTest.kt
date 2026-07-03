@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.player.PlayerStatsSnapshot
 import org.siloserver.silo.model.catalog.VersionChapter
 import kotlin.test.Test
 import kotlin.test.assertEquals

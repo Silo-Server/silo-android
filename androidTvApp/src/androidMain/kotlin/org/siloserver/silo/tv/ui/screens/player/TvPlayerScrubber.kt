@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -27,12 +28,14 @@ import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
@@ -44,7 +47,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -451,6 +456,42 @@ fun TvPlayerScrubber(
                         .clip(CircleShape)
                         .background(Color.White),
                 )
+            }
+
+            // Floating time bubble — mirrors tvOS TVPlayerScrubber's preview
+            // capsule: white pill with the scrub target time, riding above the
+            // puck while a scrub preview is in flight. X follows the playhead,
+            // clamped so the pill never leaves the bar.
+            var bubbleWidthPx by remember { mutableIntStateOf(0) }
+            val bubbleVisible = isScrubbing || isTimelineScrubbing
+            val bubbleAlpha by animateFloatAsState(
+                targetValue = if (bubbleVisible) 1f else 0f,
+                animationSpec = tween(120),
+                label = "scrubberBubbleAlpha",
+            )
+            if (bubbleAlpha > 0.01f) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .offset {
+                            val x = (barWidthPx * totalProgress - bubbleWidthPx / 2f)
+                                .coerceIn(0f, (barWidthPx - bubbleWidthPx).coerceAtLeast(0f))
+                            IntOffset(x.roundToInt(), (-36).dp.roundToPx())
+                        }
+                        .zIndex(2f)
+                        .alpha(bubbleAlpha)
+                        .onSizeChanged { bubbleWidthPx = it.width }
+                        .shadow(6.dp, RoundedCornerShape(percent = 50), clip = false)
+                        .clip(RoundedCornerShape(percent = 50))
+                        .background(Color.White)
+                        .padding(horizontal = 10.dp, vertical = 3.dp),
+                ) {
+                    Text(
+                        text = formatScrubberTime(scrubPreviewSec),
+                        color = Color.Black,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    )
+                }
             }
         }
     }
