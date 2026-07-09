@@ -43,6 +43,14 @@ class EditProfileViewModel(
     private var existingProfiles: List<Profile> = emptyList()
 
     /**
+     * Whether the loaded profile already had a PIN. Needed to distinguish
+     * "remove the existing PIN" (send an explicit empty string) from "there was
+     * never a PIN" (omit the field). The shared Json uses explicitNulls=false,
+     * so a null pin is dropped from the PUT and the server keeps the old value.
+     */
+    private var loadedHasPin: Boolean = false
+
+    /**
      * Loads the profile by ID. Called once from the composable via LaunchedEffect.
      * We fetch the full list and find the matching profile because the repository
      * API does not expose a getProfile(id) method.
@@ -56,6 +64,7 @@ class EditProfileViewModel(
                     existingProfiles = result.data
                     val profile = result.data.find { it.id == profileId }
                     if (profile != null) {
+                        loadedHasPin = profile.hasPin
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
@@ -138,7 +147,10 @@ class EditProfileViewModel(
 
     fun onSubtitleModeSelected(mode: String) {
         _uiState.update {
-            it.copy(subtitleMode = if (mode == "Off") null else mode.lowercase().replace(" ", "_"))
+            // "Off" must go over the wire as the explicit "off" value, not null:
+            // explicitNulls=false drops a null subtitle_mode so the server would
+            // keep the previous mode instead of switching subtitles off.
+            it.copy(subtitleMode = if (mode == "Off") "off" else mode.lowercase().replace(" ", "_"))
         }
     }
 
@@ -158,13 +170,24 @@ class EditProfileViewModel(
             return
         }
 
+        // Map the PIN state onto the wire value the server expects:
+        //  - a freshly entered 4-digit PIN sets/replaces the PIN;
+        //  - turning a PIN off on a profile that had one sends an explicit ""
+        //    so the server clears it (a null would be omitted and ignored);
+        //  - otherwise omit the field (null) to leave the PIN unchanged.
+        val pinValue = when {
+            current.pinEnabled && current.pin.isNotEmpty() -> current.pin
+            !current.pinEnabled && loadedHasPin -> ""
+            else -> null
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true, error = null) }
 
             val request = UpdateProfileRequest(
                 name = current.name,
                 avatar = current.selectedAvatar,
-                pin = if (current.pinEnabled && current.pin.isNotEmpty()) current.pin else null,
+                pin = pinValue,
                 isChild = current.isChild,
                 maxContentRating = current.maxContentRating,
                 qualityPreference = current.qualityPreference,
