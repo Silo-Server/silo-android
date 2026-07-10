@@ -178,6 +178,9 @@ val androidModule = module {
         SiloCastController(
             browser = get(),
             serverRegistry = get(),
+            tokenManager = get(),
+            deviceLoginApi = get(),
+            profileRepository = get(),
             deviceNameProvider = {
                 android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android Phone"
             },

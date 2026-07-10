@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.cast.SiloCastError
 import org.siloserver.silo.cast.SiloCastHello
+import org.siloserver.silo.cast.SiloCastHandoffCancel
 import org.siloserver.silo.cast.SiloCastLaunchRequest
 import org.siloserver.silo.cast.SiloCastMessage
 import org.siloserver.silo.cast.SiloCastPeerRole
@@ -32,6 +33,7 @@ import org.siloserver.silo.common.cast.SiloCastNsdAdvertiser
 import org.siloserver.silo.common.lan.SiloCastTls
 import org.siloserver.silo.common.lan.SiloCastTlsSession
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.TokenManager
 
 /**
  * TV-side SiloCast receiver, session-semantics-compatible with silo-apple's
@@ -57,6 +59,8 @@ import org.siloserver.silo.network.ServerRegistry
 class TvSiloCastReceiver(
     private val advertiser: SiloCastNsdAdvertiser,
     private val serverRegistry: ServerRegistry,
+    private val tokenManager: TokenManager,
+    private val identityManager: RemotePlaybackIdentityManager,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
 ) {
@@ -74,6 +78,7 @@ class TvSiloCastReceiver(
      *  register — they belong to the previous epoch. */
     private var sessionEpoch: Long = 0
     private var activePlayer: ActivePlayer? = null
+    private var pendingPlayerGeneration: String? = null
     private var launchHandler: ((SiloCastLaunchRequest) -> Unit)? = null
 
     @Synchronized
@@ -83,11 +88,10 @@ class TvSiloCastReceiver(
         scope = newScope
         newScope.launch {
             val socket = ServerSocket(0).also { serverSocket = it }
-            val server = serverRegistry.activeEntry.value
             advertiser.start(
                 port = socket.localPort,
-                serverId = server?.id,
-                serverName = server?.displayName,
+                serverId = identityManager.effectiveServerId,
+                serverName = identityManager.effectiveServerName,
                 playing = activePlayer != null,
             )
             Log.i(TAG, "SiloCast listening on ${socket.localPort} for ${SiloCastProtocol.serviceType}")
@@ -100,6 +104,7 @@ class TvSiloCastReceiver(
         // drive playback on the new one.
         newScope.launch {
             serverRegistry.activeEntry.drop(1).collect { entry ->
+                if (identityManager.activeIdentity != null) return@collect
                 closePreviousController()
                 val port = synchronized(this@TvSiloCastReceiver) { serverSocket?.localPort }
                 if (port != null) {
@@ -110,6 +115,11 @@ class TvSiloCastReceiver(
                         playing = activePlayer != null,
                     )
                 }
+            }
+        }
+        newScope.launch {
+            tokenManager.temporarySessionExpired.collect {
+                handleTemporarySessionExpired()
             }
         }
     }
@@ -141,14 +151,29 @@ class TvSiloCastReceiver(
         adapter: TvSiloCastPlayerAdapter,
         stateProvider: () -> SiloCastPlaybackState,
     ): Closeable {
-        val player = ActivePlayer(adapter = adapter, stateProvider = stateProvider)
+        val player = ActivePlayer(
+            adapter = adapter,
+            stateProvider = stateProvider,
+            handoffGeneration = pendingPlayerGeneration,
+        )
+        pendingPlayerGeneration = null
         activePlayer = player
+        activeSession?.readyTimeoutJob?.cancel()
+        activeSession?.readyTimeoutJob = null
         advertiser.updatePlaying(true)
         return Closeable {
             synchronized(this) {
                 if (activePlayer === player) {
                     activePlayer = null
                     advertiser.updatePlaying(false)
+                    if (player.handoffGeneration != null &&
+                        identityManager.activeIdentity?.generationId == player.handoffGeneration
+                    ) {
+                        scope?.launch {
+                            identityManager.end()
+                            refreshAdvertisement()
+                        }
+                    }
                 }
             }
         }
@@ -225,13 +250,15 @@ class TvSiloCastReceiver(
             coroutineScope {
                 session.job = coroutineContext[Job]
 
-                // TV speaks first: hello + current state, like tvOS.
+                // TV speaks first. State is withheld until the controller is
+                // authorized; a cross-server v2 peer gets only the handoff lane.
                 session.send(SiloCastMessage.Hello(makeHello()))
-                session.send(SiloCastMessage.State(currentState()))
 
                 val stateJob = launch {
                     while (isActive) {
-                        session.send(SiloCastMessage.State(currentState()))
+                        if (session.isAuthorized) {
+                            session.send(SiloCastMessage.State(currentState()))
+                        }
                         delay(STATE_INTERVAL_MS)
                     }
                 }
@@ -249,8 +276,8 @@ class TvSiloCastReceiver(
                 }
                 val authWatchdog = launch {
                     delay(AUTH_GRACE_MS)
-                    if (!session.isAuthorized) {
-                        Log.i(TAG, "SiloCast controller never authorized; closing")
+                    if (!session.didReceiveHello) {
+                        Log.i(TAG, "SiloCast controller never completed hello; closing")
                         session.goodbyeAndClose()
                     }
                 }
@@ -280,9 +307,30 @@ class TvSiloCastReceiver(
     private suspend fun handleMessage(session: ControllerSession, message: SiloCastMessage): Boolean {
         when (message) {
             is SiloCastMessage.Hello -> {
-                val activeServerId = serverRegistry.activeServerId.value
+                val version = SiloCastProtocol.negotiatedVersion(message.hello.supportedVersions)
+                if (message.hello.role != SiloCastPeerRole.Phone || version == null) {
+                    session.send(
+                        SiloCastMessage.Error(
+                            SiloCastError(
+                                code = "version_unsupported",
+                                message = "Update Silo on both devices to continue.",
+                            ),
+                        ),
+                    )
+                    session.goodbyeAndClose()
+                    return false
+                }
+                session.didReceiveHello = true
+                session.negotiatedVersion = version
+                session.controllerDeviceId = message.hello.deviceId
+                session.controllerDeviceName = message.hello.deviceName
+                session.controllerServerId = message.hello.serverId
+                val activeServerId = identityManager.effectiveServerId
                 val offered = message.hello.serverId
-                if (offered.isNullOrEmpty() || activeServerId == null || offered != activeServerId) {
+                if (!offered.isNullOrEmpty() && activeServerId != null && offered == activeServerId) {
+                    session.isAuthorized = true
+                    session.send(SiloCastMessage.State(currentState()))
+                } else if (version < 2) {
                     session.send(
                         SiloCastMessage.Error(
                             SiloCastError(
@@ -294,11 +342,46 @@ class TvSiloCastReceiver(
                     session.goodbyeAndClose()
                     return false
                 }
-                session.isAuthorized = true
+            }
+            is SiloCastMessage.HandoffOffer -> {
+                val controllerDeviceId = session.controllerDeviceId
+                if (session.negotiatedVersion != 2 || controllerDeviceId.isNullOrBlank()) {
+                    session.send(
+                        SiloCastMessage.HandoffCancel(
+                            SiloCastHandoffCancel(
+                                requestId = message.handoffOffer.requestId,
+                                reason = "version_unsupported",
+                                message = "Update Silo on both devices to continue.",
+                            ),
+                        ),
+                    )
+                    return true
+                }
+                beginHandoff(session, message.handoffOffer, controllerDeviceId)
+            }
+            is SiloCastMessage.HandoffCancel -> {
+                if (message.handoffCancel.requestId == session.pendingHandoffRequestId) {
+                    session.handoffJob?.cancel()
+                    session.handoffJob = null
+                    session.pendingHandoffRequestId = null
+                }
             }
             is SiloCastMessage.Launch -> {
                 if (!requireAuthorized(session)) return true
-                if (message.launch.serverId != serverRegistry.activeServerId.value) {
+                if (session.negotiatedVersion == 2 &&
+                    (!session.remoteIdentityReady || identityManager.activeIdentity == null)
+                ) {
+                    session.send(
+                        SiloCastMessage.Error(
+                            SiloCastError(
+                                code = "handoff_required",
+                                message = "Prepare the phone profile before playing.",
+                            ),
+                        ),
+                    )
+                    return true
+                }
+                if (message.launch.serverId != identityManager.effectiveServerId) {
                     session.send(
                         SiloCastMessage.Error(
                             SiloCastError(
@@ -311,6 +394,7 @@ class TvSiloCastReceiver(
                 }
                 val handler = launchHandler
                 if (handler != null) {
+                    pendingPlayerGeneration = identityManager.activeIdentity?.generationId
                     handler.invoke(message.launch)
                 } else {
                     // No launch handler is wired (setLaunchHandler is never
@@ -345,9 +429,119 @@ class TvSiloCastReceiver(
             is SiloCastMessage.Ping -> session.send(SiloCastMessage.Pong())
             is SiloCastMessage.Pong -> session.missedHeartbeats = 0
             is SiloCastMessage.Close -> return false
-            is SiloCastMessage.State, is SiloCastMessage.Error -> Unit
+            is SiloCastMessage.State,
+            is SiloCastMessage.Error,
+            is SiloCastMessage.HandoffChallenge,
+            is SiloCastMessage.HandoffReady,
+            -> Unit
         }
         return true
+    }
+
+    private fun beginHandoff(
+        session: ControllerSession,
+        offer: org.siloserver.silo.cast.SiloCastHandoffOffer,
+        controllerDeviceId: String,
+    ) {
+        session.handoffJob?.cancel()
+        session.pendingHandoffRequestId = offer.requestId
+        session.remoteIdentityReady = false
+        val owner = scope ?: return
+        session.handoffJob = owner.launch {
+            runCatching {
+                val ready = identityManager.prepare(
+                    offer,
+                    controllerDeviceId,
+                    session.controllerDeviceName,
+                ) { challenge ->
+                    if (activeSession !== session || session.pendingHandoffRequestId != offer.requestId) {
+                        throw CancellationException("Stale handoff")
+                    }
+                    session.send(SiloCastMessage.HandoffChallenge(challenge))
+                }
+                if (activeSession !== session || session.pendingHandoffRequestId != offer.requestId) {
+                    if (!ready.reused) identityManager.end()
+                    return@launch
+                }
+                session.pendingHandoffRequestId = null
+                session.handoffJob = null
+                session.isAuthorized = true
+                session.remoteIdentityReady = true
+                refreshAdvertisement()
+                session.send(SiloCastMessage.HandoffReady(ready))
+                armReadyTimeout(session)
+            }.onFailure { error ->
+                if (error is CancellationException || activeSession !== session) return@onFailure
+                runCatching {
+                    session.send(
+                        SiloCastMessage.HandoffCancel(
+                            SiloCastHandoffCancel(
+                                requestId = offer.requestId,
+                                reason = "handoff_failed",
+                                message = error.message ?: "Profile handoff failed.",
+                            ),
+                        ),
+                    )
+                }
+                session.pendingHandoffRequestId = null
+                session.handoffJob = null
+            }
+        }
+    }
+
+    private fun armReadyTimeout(session: ControllerSession) {
+        session.readyTimeoutJob?.cancel()
+        session.readyTimeoutJob = scope?.launch {
+            delay(READY_TIMEOUT_MS)
+            if (activeSession === session && session.remoteIdentityReady && activePlayer == null) {
+                identityManager.end()
+                session.remoteIdentityReady = false
+                pendingPlayerGeneration = null
+                session.isAuthorized = session.controllerServerId == identityManager.effectiveServerId
+                refreshAdvertisement()
+                runCatching {
+                    session.send(
+                        SiloCastMessage.Error(
+                            SiloCastError(
+                                code = "launch_timeout",
+                                message = "No content was launched, so the TV profile was restored.",
+                            ),
+                        ),
+                    )
+                }
+                session.goodbyeAndClose()
+            }
+        }
+    }
+
+    private fun refreshAdvertisement() {
+        val port = synchronized(this) { serverSocket?.localPort } ?: return
+        advertiser.start(
+            port = port,
+            serverId = identityManager.effectiveServerId,
+            serverName = identityManager.effectiveServerName,
+            playing = activePlayer != null,
+        )
+    }
+
+    private suspend fun handleTemporarySessionExpired() {
+        synchronized(this) { activePlayer?.adapter }?.handle(
+            org.siloserver.silo.cast.SiloCastControlCommand.stop(),
+        )
+        identityManager.end()
+        refreshAdvertisement()
+        activeSession?.let { session ->
+            runCatching {
+                session.send(
+                    SiloCastMessage.Error(
+                        SiloCastError(
+                            code = "temporary_session_expired",
+                            message = "The phone profile session expired.",
+                        ),
+                    ),
+                )
+            }
+        }
     }
 
     private suspend fun requireAuthorized(session: ControllerSession): Boolean {
@@ -379,14 +573,13 @@ class TvSiloCastReceiver(
     }
 
     private fun makeHello(): SiloCastHello {
-        val server = serverRegistry.activeEntry.value
         return SiloCastHello(
             role = SiloCastPeerRole.Tv,
             deviceName = deviceNameProvider(),
             deviceId = deviceIdProvider(),
-            serverId = server?.id,
-            serverName = server?.displayName,
-            supportedVersions = listOf(SiloCastProtocol.version),
+            serverId = identityManager.effectiveServerId,
+            serverName = identityManager.effectiveServerName,
+            supportedVersions = SiloCastProtocol.supportedVersions,
         )
     }
 
@@ -433,8 +626,31 @@ class TvSiloCastReceiver(
         var isAuthorized: Boolean = false
 
         @Volatile
+        var didReceiveHello: Boolean = false
+
+        @Volatile
+        var negotiatedVersion: Int? = null
+
+        @Volatile
+        var controllerDeviceId: String? = null
+
+        @Volatile
+        var controllerDeviceName: String? = null
+
+        @Volatile
+        var controllerServerId: String? = null
+
+        @Volatile
+        var pendingHandoffRequestId: String? = null
+
+        @Volatile
+        var remoteIdentityReady: Boolean = false
+
+        @Volatile
         var missedHeartbeats: Int = 0
         var job: Job? = null
+        var handoffJob: Job? = null
+        var readyTimeoutJob: Job? = null
 
         suspend fun send(message: SiloCastMessage) {
             val payload = json.encodeToString(SiloCastMessage.serializer(), message).encodeToByteArray()
@@ -466,6 +682,8 @@ class TvSiloCastReceiver(
         }
 
         fun close() {
+            handoffJob?.cancel()
+            readyTimeoutJob?.cancel()
             tls.close()
             runCatching { socket.close() }
             job?.cancel()
@@ -475,6 +693,7 @@ class TvSiloCastReceiver(
     private data class ActivePlayer(
         val adapter: TvSiloCastPlayerAdapter,
         val stateProvider: () -> SiloCastPlaybackState,
+        val handoffGeneration: String?,
     )
 
     private companion object {
@@ -486,5 +705,6 @@ class TvSiloCastReceiver(
         const val MAX_MISSED_HEARTBEATS = 3
         const val AUTH_GRACE_MS = 5_000L
         const val GOODBYE_TIMEOUT_MS = 1_000L
+        const val READY_TIMEOUT_MS = 60_000L
     }
 }

@@ -147,13 +147,25 @@ fun TvAppNavigation(
                     // and falls through to [TvRoute.Player], preserving today's
                     // behavior for movie/episode tiles.
                     val itemType = uri.getQueryParameter("type")
-                    navController.navigate(
-                        tvPlayDestinationFor(
-                            itemType = itemType,
-                            contentId = contentId,
-                            fileId = null,
-                        ),
-                    )
+                    if (itemType.equals("audiobook", ignoreCase = true)) {
+                        navController.navigate(
+                            TvRoute.AudiobookPlayer(
+                                contentId = contentId,
+                                fileId = uri.getQueryParameter("fileId")?.toIntOrNull(),
+                                startPositionSeconds = uri.getQueryParameter("resumePosition")?.toDoubleOrNull(),
+                            ).route,
+                        )
+                    } else {
+                        navController.navigate(
+                            TvRoute.Player(
+                                contentId = contentId,
+                                fileId = uri.getQueryParameter("fileId")?.toIntOrNull(),
+                                resumePositionSeconds = uri.getQueryParameter("resumePosition")?.toDoubleOrNull(),
+                                audioTrackIndex = uri.getQueryParameter("audioTrackIndex")?.toIntOrNull(),
+                                subtitleTrackIndex = uri.getQueryParameter("subtitleTrackIndex")?.toIntOrNull(),
+                            ).route,
+                        )
+                    }
                 }
             }
             pendingDeepLink.value = null

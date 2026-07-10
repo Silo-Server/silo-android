@@ -2,7 +2,9 @@ package org.siloserver.silo.android.cast
 
 import android.util.Log
 import java.io.OutputStream
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -15,10 +17,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.cast.SiloCastControlCommand
 import org.siloserver.silo.cast.SiloCastHello
+import org.siloserver.silo.cast.SiloCastHandoffCancel
+import org.siloserver.silo.cast.SiloCastHandoffChallenge
+import org.siloserver.silo.cast.SiloCastHandoffOffer
+import org.siloserver.silo.cast.SiloCastHandoffReady
 import org.siloserver.silo.cast.SiloCastLaunchRequest
 import org.siloserver.silo.cast.SiloCastMessage
 import org.siloserver.silo.cast.SiloCastPeerRole
@@ -32,12 +39,17 @@ import org.siloserver.silo.common.cast.SiloCastTarget
 import org.siloserver.silo.common.lan.SiloCastTls
 import org.siloserver.silo.common.lan.SiloCastTlsClientSession
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.getOrThrow
+import org.siloserver.silo.network.api.DeviceLoginApi
+import org.siloserver.silo.repository.ProfileRepository
 
 data class SiloCastControllerState(
     val targets: List<SiloCastTarget> = emptyList(),
     val connectedTarget: SiloCastTarget? = null,
     val playbackState: SiloCastPlaybackState? = null,
     val isConnecting: Boolean = false,
+    val isPreparingIdentity: Boolean = false,
     val error: String? = null,
 ) {
     val isConnected: Boolean get() = connectedTarget != null
@@ -54,6 +66,9 @@ data class SiloCastControllerState(
 class SiloCastController(
     private val browser: SiloCastNsdBrowser,
     private val serverRegistry: ServerRegistry,
+    private val tokenManager: TokenManager,
+    private val deviceLoginApi: DeviceLoginApi,
+    private val profileRepository: ProfileRepository,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
 ) {
@@ -68,6 +83,7 @@ class SiloCastController(
     // targets otherwise interleave connect/teardown across IO coroutines and
     // tear the session vars.
     private val connectionMutex = Mutex()
+    private val launchMutex = Mutex()
     private val clock = SiloCastPlaybackClock()
 
     private val _state = MutableStateFlow(SiloCastControllerState())
@@ -76,6 +92,11 @@ class SiloCastController(
     private var session: SiloCastTlsClientSession? = null
     private var output: OutputStream? = null
     private var readJob: Job? = null
+    private var negotiatedVersion: Int? = null
+    private var helloDeferred: CompletableDeferred<Int>? = null
+    private var pendingHandoffRequestId: String? = null
+    private var challengeDeferred: CompletableDeferred<SiloCastHandoffChallenge>? = null
+    private var readyDeferred: CompletableDeferred<SiloCastHandoffReady>? = null
 
     init {
         scope.launch {
@@ -96,13 +117,115 @@ class SiloCastController(
     fun launchOnTarget(target: SiloCastTarget, request: SiloCastLaunchRequest) {
         scope.launch {
             runCatching {
-                ensureConnected(target)
-                send(SiloCastMessage.Launch(request))
+                launchMutex.withLock {
+                    launchWithPhoneIdentity(target, request)
+                }
             }.onFailure { error ->
                 if (error !is CancellationException) {
-                    _state.update { it.copy(isConnecting = false, error = error.message ?: "Unable to cast.") }
+                    _state.update {
+                        it.copy(
+                            isConnecting = false,
+                            isPreparingIdentity = false,
+                            error = error.message ?: "Unable to cast.",
+                        )
+                    }
                 }
             }
+        }
+    }
+
+    private suspend fun launchWithPhoneIdentity(
+        target: SiloCastTarget,
+        request: SiloCastLaunchRequest,
+    ) {
+        require(target.version >= 2) { "Update Silo on this TV to use your profile." }
+        val captured = tokenManager.snapshotCurrentScope()
+            ?: error("Choose a signed-in Silo server before playing on TV.")
+        val profileId = captured.profileId
+            ?.takeIf { it.isNotBlank() }
+            ?: error("Choose a profile before playing on TV.")
+        val profileName = profileRepository.getActiveProfile()?.name
+        require(request.serverId == captured.serverId) { "The active server changed. Try again." }
+
+        val version = ensureConnected(target)
+        require(version >= 2) { "Update Silo on this TV to use your profile." }
+
+        val requestId = UUID.randomUUID().toString()
+        pendingHandoffRequestId = requestId
+        challengeDeferred = CompletableDeferred()
+        readyDeferred = CompletableDeferred()
+        _state.update { it.copy(isPreparingIdentity = true, error = null) }
+        var userCode: String? = null
+
+        try {
+            send(
+                SiloCastMessage.HandoffOffer(
+                    SiloCastHandoffOffer(
+                        requestId = requestId,
+                        serverId = captured.serverId,
+                        serverURL = captured.serverUrl,
+                        serverName = serverRegistry.activeEntry.value?.displayName,
+                        profileId = profileId,
+                        profileName = profileName,
+                    ),
+                ),
+            )
+            val challenge = withTimeout(HANDOFF_TIMEOUT_MS) {
+                challengeDeferred?.await() ?: error("Profile handoff was cancelled.")
+            }
+            userCode = challenge.userCode
+            val lookup = deviceLoginApi.lookupRemotePlayback(challenge.userCode, captured).getOrThrow()
+            require(lookup.clientPurpose == "remote_playback" && lookup.temporary == true) {
+                "The TV requested an unsupported sign-in."
+            }
+            require(lookup.matchCode == challenge.matchCode) {
+                "The TV profile verification code did not match."
+            }
+            requireCurrentScope(captured.serverId, profileId)
+            deviceLoginApi.approveRemotePlayback(
+                token = null,
+                code = challenge.userCode,
+                scope = captured,
+            ).getOrThrow()
+
+            val ready = withTimeout(HANDOFF_TIMEOUT_MS) {
+                readyDeferred?.await() ?: error("Profile handoff was cancelled.")
+            }
+            require(
+                ready.requestId == requestId &&
+                    ready.serverId == captured.serverId &&
+                    ready.profileId == profileId,
+            ) { "The TV activated a different profile." }
+            requireCurrentScope(captured.serverId, profileId)
+            send(SiloCastMessage.Launch(request))
+            _state.update { it.copy(isPreparingIdentity = false, error = null) }
+        } catch (t: Throwable) {
+            userCode?.let { code ->
+                runCatching { deviceLoginApi.denyRemotePlayback(code, captured) }
+            }
+            runCatching {
+                send(
+                    SiloCastMessage.HandoffCancel(
+                        SiloCastHandoffCancel(
+                            requestId = requestId,
+                            reason = "controller_cancelled",
+                            message = null,
+                        ),
+                    ),
+                )
+            }
+            throw t
+        } finally {
+            pendingHandoffRequestId = null
+            challengeDeferred = null
+            readyDeferred = null
+        }
+    }
+
+    private suspend fun requireCurrentScope(serverId: String, profileId: String) {
+        val current = tokenManager.snapshotCurrentScope()
+        require(current?.serverId == serverId && current.profileId == profileId) {
+            "The active server or profile changed. Try again."
         }
     }
 
@@ -154,8 +277,10 @@ class SiloCastController(
         }
     }
 
-    private suspend fun ensureConnected(target: SiloCastTarget) = connectionMutex.withLock {
-        if (_state.value.connectedTarget?.deviceId == target.deviceId && session?.isConnected == true) return@withLock
+    private suspend fun ensureConnected(target: SiloCastTarget): Int = connectionMutex.withLock {
+        if (_state.value.connectedTarget?.deviceId == target.deviceId && session?.isConnected == true) {
+            return@withLock negotiatedVersion ?: error("The TV has not finished connecting.")
+        }
         closeConnectionLocked()
         _state.update { it.copy(isConnecting = true, error = null) }
         val newSession = withContext(Dispatchers.IO) {
@@ -163,10 +288,12 @@ class SiloCastController(
         }
         session = newSession
         output = newSession.output
+        val hello = CompletableDeferred<Int>()
+        helloDeferred = hello
         _state.update { it.copy(connectedTarget = target, isConnecting = false, error = null) }
-        send(SiloCastMessage.Hello(makeHello()))
         readJob = scope.launch { readLoop(newSession) }
-        Unit
+        send(SiloCastMessage.Hello(makeHello()))
+        withTimeout(HELLO_TIMEOUT_MS) { hello.await() }
     }
 
     private fun makeHello(): SiloCastHello {
@@ -177,7 +304,7 @@ class SiloCastController(
             deviceId = deviceIdProvider(),
             serverId = server?.id,
             serverName = server?.displayName,
-            supportedVersions = listOf(SiloCastProtocol.version),
+            supportedVersions = SiloCastProtocol.supportedVersions,
         )
     }
 
@@ -212,7 +339,31 @@ class SiloCastController(
 
     private suspend fun handleMessage(message: SiloCastMessage) {
         when (message) {
-            is SiloCastMessage.Hello -> Unit // receiver identity; nothing to act on
+            is SiloCastMessage.Hello -> {
+                val version = SiloCastProtocol.negotiatedVersion(message.hello.supportedVersions)
+                    ?: error("Update Silo on both devices to continue.")
+                negotiatedVersion = version
+                helloDeferred?.complete(version)
+            }
+            is SiloCastMessage.HandoffChallenge -> {
+                if (message.handoffChallenge.requestId == pendingHandoffRequestId) {
+                    challengeDeferred?.complete(message.handoffChallenge)
+                }
+            }
+            is SiloCastMessage.HandoffReady -> {
+                if (message.handoffReady.requestId == pendingHandoffRequestId) {
+                    readyDeferred?.complete(message.handoffReady)
+                }
+            }
+            is SiloCastMessage.HandoffCancel -> {
+                if (message.handoffCancel.requestId == pendingHandoffRequestId) {
+                    val error = IllegalStateException(
+                        message.handoffCancel.message ?: "Profile handoff was cancelled.",
+                    )
+                    challengeDeferred?.completeExceptionally(error)
+                    readyDeferred?.completeExceptionally(error)
+                }
+            }
             is SiloCastMessage.State -> {
                 clock.ingest(message.state, nowMs())
                 _state.update { it.copy(playbackState = message.state, error = null) }
@@ -242,9 +393,22 @@ class SiloCastController(
         runCatching { session?.close() }
         session = null
         output = null
+        val closed = IllegalStateException("The TV disconnected during profile handoff.")
+        helloDeferred?.completeExceptionally(closed)
+        challengeDeferred?.completeExceptionally(closed)
+        readyDeferred?.completeExceptionally(closed)
+        helloDeferred = null
+        negotiatedVersion = null
         readJob?.cancel()
         readJob = null
-        _state.update { it.copy(connectedTarget = null, playbackState = null, isConnecting = false) }
+        _state.update {
+            it.copy(
+                connectedTarget = null,
+                playbackState = null,
+                isConnecting = false,
+                isPreparingIdentity = false,
+            )
+        }
     }
 
     fun close() {
@@ -258,5 +422,7 @@ class SiloCastController(
     private companion object {
         const val TAG = "SiloCastController"
         const val CONNECT_TIMEOUT_MS = 5_000
+        const val HELLO_TIMEOUT_MS = 5_000L
+        const val HANDOFF_TIMEOUT_MS = 90_000L
     }
 }

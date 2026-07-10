@@ -1,6 +1,20 @@
 package org.siloserver.silo.network
 
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+
+/** Process-only auth used by a TV for one phone-owned playback session. */
+data class TemporaryAuthScope(
+    val serverId: String,
+    val serverUrl: String,
+    val accessToken: String? = null,
+    val refreshToken: String? = null,
+    val profileId: String? = null,
+    val profileToken: String? = null,
+    val controllerDeviceId: String,
+    val expiresAtEpochMs: Long? = null,
+)
 
 /**
  * Manages JWT access and refresh tokens.
@@ -38,6 +52,9 @@ interface TokenManager {
      */
     val sessionExpired: SharedFlow<Unit>
 
+    /** Emits when only a temporary remote-playback identity expires. */
+    val temporarySessionExpired: Flow<Unit> get() = emptyFlow()
+
     suspend fun getProfileId(): String?
     suspend fun setProfileId(profileId: String?)
     suspend fun getProfileToken(): String?
@@ -72,6 +89,16 @@ interface TokenManager {
 
     /** Wipe just the active server's tokens + profile state, keeping the registry entry. */
     suspend fun signOutCurrentServer()
+
+    // ----- Temporary remote-playback identity -----
+
+    /** Installs or replaces a process-only scope without touching persistent slots. */
+    suspend fun beginTemporaryScope(scope: TemporaryAuthScope) {}
+
+    /** Removes the process-only scope and exposes the saved TV identity again. */
+    suspend fun endTemporaryScope(): TemporaryAuthScope? = null
+
+    suspend fun getTemporaryScope(): TemporaryAuthScope? = null
 
     // ----- Scoped auth (Track B outbox replay; see [AuthScopeSnapshot]) -----
 

@@ -17,6 +17,9 @@ data class SiloCastTarget(
     val host: String,
     val port: Int,
     val version: Int,
+    val serverId: String? = null,
+    val serverName: String? = null,
+    val playing: Boolean = false,
     /** The mDNS instance name (may carry conflict decorations like " (2)").
      *  onServiceLost only reports this, so removal must match on it — the
      *  display name comes from the TXT record and can collide/diverge. */
@@ -104,7 +107,10 @@ class SiloCastNsdBrowser(context: Context) {
         val name = attributes.string("name") ?: serviceName
         val mdnsName = serviceName
         val deviceId = attributes.string("deviceId") ?: attributes.string("id") ?: "$host:$port"
-        val version = attributes.string("v")?.toIntOrNull() ?: SiloCastProtocol.version
+        val version = attributes.string("v")?.toIntOrNull() ?: 1
+        val serverId = attributes.string("server")
+        val serverName = attributes.string("serverName")
+        val playing = attributes.string("playing") == "1"
         return SiloCastTarget(
             serviceName = mdnsName,
             deviceId = deviceId,
@@ -112,6 +118,9 @@ class SiloCastNsdBrowser(context: Context) {
             host = host,
             port = port,
             version = version,
+            serverId = serverId,
+            serverName = serverName,
+            playing = playing,
         )
     }
 

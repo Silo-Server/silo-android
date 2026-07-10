@@ -123,6 +123,7 @@ import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.cast.TvSiloCastPlayerAdapter
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
+import org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import com.google.common.util.concurrent.MoreExecutors
@@ -207,8 +208,18 @@ fun TvPlayerScreen(
     pictureInPictureCoordinator: SiloPictureInPictureCoordinator = koinInject(),
     playerSettingsStore: org.siloserver.silo.common.settings.PlayerSettingsStore = koinInject(),
     siloCastReceiver: TvSiloCastReceiver = koinInject(),
+    remotePlaybackIdentityManager: RemotePlaybackIdentityManager = koinInject(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    var remoteIdentityNotice by remember(contentId) {
+        mutableStateOf(remotePlaybackIdentityManager.activeIdentity)
+    }
+    LaunchedEffect(remoteIdentityNotice?.generationId) {
+        if (remoteIdentityNotice != null) {
+            delay(REMOTE_IDENTITY_NOTICE_MS)
+            remoteIdentityNotice = null
+        }
+    }
     val pictureInPictureEnabled by playerSettingsStore.pictureInPictureEnabledFlow.collectAsState(initial = true)
     val isInPictureInPictureMode by pictureInPictureCoordinator.isInPictureInPictureMode.collectAsState()
     // The real session player (ExoPlayer/MpvPlayer) the service publishes. The
@@ -1673,7 +1684,7 @@ fun TvPlayerScreen(
 
         // Remote-control "display_message" toast (top-center), shown a few
         // seconds regardless of controls visibility.
-        if (!isInPictureInPictureMode) remoteMessage?.let { message ->
+        if (!isInPictureInPictureMode && remoteIdentityNotice == null) remoteMessage?.let { message ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1694,6 +1705,20 @@ fun TvPlayerScreen(
                         color = Color.White,
                         style = MaterialTheme.typography.titleMedium,
                     )
+                }
+            }
+        }
+
+        if (!isInPictureInPictureMode) {
+            remoteIdentityNotice?.let { identity ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = 48.dp)
+                        .zIndex(9f),
+                    contentAlignment = Alignment.TopCenter,
+                ) {
+                    RemotePlaybackIdentityNotice(identity)
                 }
             }
         }
@@ -1795,6 +1820,8 @@ fun TvPlayerScreen(
         }
     }
 }
+
+private const val REMOTE_IDENTITY_NOTICE_MS = 6_000L
 
 /**
  * Idle controls overlay — bottom-anchored gradient scrim with title + time +

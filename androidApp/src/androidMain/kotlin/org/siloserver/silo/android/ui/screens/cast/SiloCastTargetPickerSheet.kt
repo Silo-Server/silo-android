@@ -75,9 +75,20 @@ fun SiloCastTargetPickerSheet(
                 )
             } else {
                 state.targets.forEach { target ->
+                    val supportsIdentityHandoff = target.version >= 2
                     ListItem(
                         headlineContent = { Text(target.name) },
-                        supportingContent = { Text("${target.host}:${target.port}") },
+                        supportingContent = {
+                            Text(
+                                when {
+                                    !supportsIdentityHandoff ->
+                                        "Update Silo on this TV to use your profile."
+                                    target.serverId != launchRequest.serverId ->
+                                        "Temporarily use your phone's server and profile"
+                                    else -> "Use your phone profile"
+                                },
+                            )
+                        },
                         leadingContent = { Icon(Icons.Outlined.Cast, contentDescription = null) },
                         trailingContent = {
                             TextButton(
@@ -85,6 +96,7 @@ fun SiloCastTargetPickerSheet(
                                     controller.launchOnTarget(target, launchRequest)
                                     onDismiss()
                                 },
+                                enabled = supportsIdentityHandoff,
                             ) {
                                 Text("Play")
                             }

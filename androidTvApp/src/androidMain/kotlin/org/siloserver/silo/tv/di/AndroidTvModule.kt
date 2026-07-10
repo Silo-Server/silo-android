@@ -27,6 +27,7 @@ import org.siloserver.silo.common.cast.SiloCastNsdAdvertiser
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
+import org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerLaunchArgs
 import org.siloserver.silo.tv.ui.screens.auth.TvLoginViewModel
 import org.siloserver.silo.tv.ui.screens.auth.TvServerSetupViewModel
@@ -293,16 +294,55 @@ val androidTvModule = module {
     }
     single { SiloCastNsdAdvertiser(androidContext()) }
     single {
+        RemotePlaybackIdentityManager(
+            tokenManager = get(),
+            serverRegistry = get(),
+            authenticatedClient = get(),
+            overlayPrefsStore = get(),
+            libraryPlaybackPrefsStore = get(),
+            watchNextSeeder = get(),
+            deviceNameProvider = {
+                android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android TV"
+            },
+        )
+    }
+    single {
         TvSiloCastReceiver(
             advertiser = get(),
             serverRegistry = get(),
+            tokenManager = get(),
+            identityManager = get(),
             deviceNameProvider = {
                 android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android TV"
             },
             deviceIdProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceId.stable(androidContext())
             },
-        )
+        ).also { receiver ->
+            receiver.setLaunchHandler { request ->
+                val uri = android.net.Uri.Builder()
+                    .scheme("silo")
+                    .authority("play")
+                    .appendPath(request.playback.contentId)
+                    .apply {
+                        request.playback.fileId?.let { appendQueryParameter("fileId", it.toString()) }
+                        request.playback.audioTrackIndex?.let {
+                            appendQueryParameter("audioTrackIndex", it.toString())
+                        }
+                        request.playback.subtitleTrackIndex?.let {
+                            appendQueryParameter("subtitleTrackIndex", it.toString())
+                        }
+                        val resume = if (request.playback.startFromBeginning) {
+                            0.0
+                        } else {
+                            request.playback.resumePosition
+                        }
+                        resume?.let { appendQueryParameter("resumePosition", it.toString()) }
+                    }
+                    .build()
+                get<MutableStateFlow<Uri?>>(named("pendingDeepLink")).value = uri
+            }
+        }
     }
 
     // Auth ViewModels
