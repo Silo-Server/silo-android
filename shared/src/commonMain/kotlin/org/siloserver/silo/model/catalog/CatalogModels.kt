@@ -288,6 +288,8 @@ data class VersionChapter(
 data class VideoTrack(
     val index: Int = 0,
     val codec: String? = null,
+    @SerialName("dolby_vision") val dolbyVision: String? = null,
+    @SerialName("dv_profile") val dolbyVisionProfile: Int? = null,
     val resolution: String? = null,
     val width: Int? = null,
     val height: Int? = null,

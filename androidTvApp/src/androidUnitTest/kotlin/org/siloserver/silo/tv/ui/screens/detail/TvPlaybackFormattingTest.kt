@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.screens.detail
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.catalog.VideoTrack
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -15,6 +16,15 @@ class TvPlaybackFormattingTest {
     @Test fun versionShortLabel_4kHdr() {
         val v = fileVersion(resolution = "2160p", hdr = true)
         assertEquals("4K · HDR", TvPlaybackFormatting.versionShortLabel(v))
+    }
+
+    @Test fun versionShortLabel_4kDolbyVision() {
+        val v = fileVersion(
+            resolution = "2160p",
+            hdr = true,
+            video = listOf(VideoTrack(codec = "hevc", dolbyVision = "Profile 7")),
+        )
+        assertEquals("4K · DV", TvPlaybackFormatting.versionShortLabel(v))
     }
 
     @Test fun versionShortLabel_1080() {
@@ -30,6 +40,43 @@ class TvPlaybackFormattingTest {
 
     @Test fun versionShortLabel_blankResolutionNoHdrIsAuto() {
         assertEquals("Auto", TvPlaybackFormatting.versionShortLabel(fileVersion(resolution = null, hdr = false)))
+    }
+
+    @Test fun versionValueLabel_matchesTvOsDolbyVisionSummary() {
+        val v = fileVersion(
+            resolution = "2160p",
+            codecVideo = "hevc",
+            hdr = true,
+            video = listOf(
+                VideoTrack(
+                    codec = "hevc",
+                    dolbyVision = "Profile 8",
+                    dolbyVisionProfile = 8,
+                    hdr = true,
+                ),
+            ),
+            audio = listOf(audioTrack(codec = "truehd", layout = "7.1", default = true)),
+        )
+
+        assertEquals(
+            "Auto: 2160p · HEVC · DV · TrueHD",
+            TvPlaybackFormatting.versionValueLabel(v, selectedVersionFileId = null),
+        )
+        assertTrue(TvPlaybackFormatting.isDolbyVision(v))
+    }
+
+    @Test fun versionValueLabel_fallsBackToHdrAndVersionAudioCodec() {
+        val v = fileVersion(
+            resolution = "1080p",
+            codecVideo = "h264",
+            codecAudio = "eac3",
+            hdr = true,
+        )
+
+        assertEquals(
+            "1080p · H.264 · HDR · EAC3",
+            TvPlaybackFormatting.versionValueLabel(v, selectedVersionFileId = 1),
+        )
     }
 
     // --- versionDetailLabel ---
@@ -367,20 +414,24 @@ class TvPlaybackFormattingTest {
         fileId: Int = 1,
         resolution: String? = null,
         codecVideo: String? = null,
+        codecAudio: String? = null,
         hdr: Boolean = false,
         container: String? = null,
         fileSize: Long = 0,
         audio: List<AudioTrack>? = null,
+        video: List<VideoTrack>? = null,
         effectiveAudioIndex: Int? = null,
         subtitles: List<SubtitleTrack>? = null,
     ): FileVersion = FileVersion(
         fileId = fileId,
         resolution = resolution,
         codecVideo = codecVideo,
+        codecAudio = codecAudio,
         hdr = hdr,
         container = container,
         fileSize = fileSize,
         audioTracks = audio,
+        videoTracks = video,
         effectiveAudioTrackIndex = effectiveAudioIndex,
         subtitleTracks = subtitles,
     )

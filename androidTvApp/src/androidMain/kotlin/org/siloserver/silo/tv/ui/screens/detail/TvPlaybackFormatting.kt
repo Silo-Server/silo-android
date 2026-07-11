@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.screens.detail
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.player.DolbyVisionDetection
 import java.util.Locale
 
 /**
@@ -55,18 +56,29 @@ object TvPlaybackFormatting {
 
     // --- Version ---------------------------------------------------------
 
-    /**
-     * Selector VALUE label (QA 2026-07-08 / Apple parity): while Auto is
-     * selected the row reads "Auto - <resolved version>" so the viewer sees
-     * what Auto resolved to; a manual pick shows just the version name.
-     */
+    /** Selector value mirrors tvOS's resolved stream summary. */
     fun versionValueLabel(version: FileVersion?, selectedVersionFileId: Int?): String {
-        val short = versionShortLabel(version)
+        val detail = versionResolvedLabel(version)
         return if (selectedVersionFileId == null) {
-            if (version == null) "Auto" else "Auto - $short"
+            if (version == null) "Auto" else "Auto: $detail"
         } else {
-            short
+            detail
         }
+    }
+
+    /** "2160p · HEVC · DV · TrueHD" — the same facts tvOS exposes inline. */
+    fun versionResolvedLabel(version: FileVersion?): String {
+        if (version == null) return "Auto"
+        val tokens = buildList {
+            resolvedResolution(version)?.let { add(it) }
+            resolvedVideoCodec(version)?.let { add(it) }
+            when {
+                isDolbyVision(version) -> add("DV")
+                isHdr(version) -> add("HDR")
+            }
+            resolvedAudioCodec(version)?.let { add(it) }
+        }
+        return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
     }
 
     /** "4K · HDR" / "1080P" / "Auto" (null or no usable tokens → "Auto"). */
@@ -74,9 +86,55 @@ object TvPlaybackFormatting {
         if (version == null) return "Auto"
         val tokens = buildList {
             displayResolution(version.resolution)?.let { add(it) }
-            if (version.hdr) add("HDR")
+            when {
+                isDolbyVision(version) -> add("DV")
+                isHdr(version) -> add("HDR")
+            }
         }
         return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
+    }
+
+    fun isDolbyVision(version: FileVersion): Boolean =
+        DolbyVisionDetection.isDolbyVision(videoCodec = version.codecVideo) ||
+            version.videoTracks.orEmpty().any { track ->
+                !track.dolbyVision.isNullOrBlank() ||
+                    DolbyVisionDetection.isDolbyVision(
+                        dolbyVisionProfile = track.dolbyVisionProfile,
+                        hdrFormat = track.hdrFormat,
+                        videoCodec = track.codec,
+                    )
+            }
+
+    fun isHdr(version: FileVersion): Boolean =
+        version.hdr || version.videoTracks.orEmpty().any { track ->
+            track.hdr || !track.hdrFormat.isNullOrBlank()
+        }
+
+    private fun resolvedResolution(version: FileVersion): String? {
+        val raw = nonEmpty(version.resolution)
+            ?: version.videoTracks.orEmpty().firstNotNullOfOrNull { nonEmpty(it.resolution) }
+            ?: return null
+        val lowered = raw.lowercase(Locale.US)
+        return when {
+            lowered.contains("4320") -> "4320p"
+            lowered.contains("2160") -> "2160p"
+            lowered.contains("1080") -> "1080p"
+            lowered.contains("720") -> "720p"
+            lowered == "8k" || lowered == "4k" -> raw.uppercase(Locale.US)
+            else -> raw
+        }
+    }
+
+    private fun resolvedVideoCodec(version: FileVersion): String? =
+        normalizedVideoCodec(
+            nonEmpty(version.codecVideo)
+                ?: version.videoTracks.orEmpty().firstNotNullOfOrNull { nonEmpty(it.codec) },
+        )
+
+    private fun resolvedAudioCodec(version: FileVersion): String? {
+        val resolvedTrackCodec = resolvedAudioOrdinal(version, selectedAudioTrackIndex = null)
+            ?.let { version.audioTracks?.getOrNull(it)?.codec }
+        return normalizedAudioCodec(resolvedTrackCodec ?: version.codecAudio)
     }
 
     /** resolution · codec · container · size detail line. */

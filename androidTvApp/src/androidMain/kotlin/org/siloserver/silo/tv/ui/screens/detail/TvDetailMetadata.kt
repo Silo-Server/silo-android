@@ -160,7 +160,12 @@ internal object TvDetailMetadata {
         val version = preferredVersion(detail, preferredQuality, selectedFileId) ?: return emptyList()
         val tokens = mutableListOf<TvHeroFactToken>()
         resolutionLabel(version.resolution)?.let { tokens += TvHeroFactToken.Chip(it) }
-        if (version.hdr) tokens += TvHeroFactToken.Chip(dolbyVisionLabel(version) ?: "HDR")
+        when {
+            TvPlaybackFormatting.isDolbyVision(version) ->
+                tokens += TvHeroFactToken.Chip("DOLBY VISION")
+            TvPlaybackFormatting.isHdr(version) ->
+                tokens += TvHeroFactToken.Chip("HDR")
+        }
         primaryAudioLabel(version)?.let { tokens += TvHeroFactToken.Chip(it) }
         if (hasSubtitles(version, detail)) tokens += TvHeroFactToken.Chip("CC")
         return tokens
@@ -188,12 +193,6 @@ internal object TvDetailMetadata {
             "480" in v -> "SD"
             else -> null
         }
-    }
-
-    private fun dolbyVisionLabel(version: FileVersion): String? {
-        // FileVersion's video tracks don't carry a Dolby Vision flag in the
-        // shared model. The chip falls back to "HDR" for any HDR encode.
-        return null
     }
 
     private fun primaryAudioLabel(version: FileVersion): String? {
