@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.height
@@ -118,6 +117,7 @@ import org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore
 import org.siloserver.silo.tv.ui.components.TvCascadeSelector
 import org.siloserver.silo.tv.ui.components.CascadeLibraryColumnWidth
 import org.siloserver.silo.tv.ui.components.TvCascadeSelectorMaxPanelWidth
+import org.siloserver.silo.tv.ui.components.TvForYouSelector
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
 import org.siloserver.silo.tv.ui.navigation.TvMainRoute
@@ -934,32 +934,8 @@ fun TvMainShell(
             }
         }
 
-        // Shell-owned top scrim: with the bar permanently visible (tvOS
-        // parity), scrolled content passes beneath it — this fixed gradient
-        // keeps the wordmark/tabs readable regardless of the bar's own
-        // focus dim (which previously weakened its readability exactly when
-        // content scrolled under it — QA 2026-07-08).
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(TvSkyline.barTopInset + TvSkyline.barHeight + 40.dp)
-                .align(Alignment.TopStart)
-                .background(
-                    Brush.verticalGradient(
-                        // Near-opaque through the bar strip itself, then a quick
-                        // fade: the first weaker gradient let bright posters
-                        // dominate the strip and it read as content scrolling
-                        // OVER the locked menu (QA 2026-07-08).
-                        0.00f to Color.Black.copy(alpha = 0.98f),
-                        0.60f to Color.Black.copy(alpha = 0.94f),
-                        0.80f to Color.Black.copy(alpha = 0.55f),
-                        1.00f to Color.Transparent,
-                    ),
-                )
-                .zIndex(0.9f),
-        )
-
-        // Menu overlay — sits on top, gradient scrim fades into content.
+        // Menu overlay — content remains visible behind the transparent bar,
+        // matching tvOS without a heavy top-edge shadow.
         TvTopMenuBar(
             selectedRoot = selectedRoot,
             destinations = visibleRoots,
@@ -1025,10 +1001,7 @@ fun TvMainShell(
         visibleRoots.forEach { dest ->
             if (dest is TvRootDestination.ForYou) {
                 val panel = TvTopMenuPanel.Root(dest)
-                // Entered-only (unlike cascades, which support dwell PREVIEW):
-                // this dropdown focus-traps, so it must never become visible or
-                // focusable without a deliberate enter.
-                val active = focusState.openPanel == panel && focusState.panelEntersFocus
+                val active = focusState.openPanel == panel
                 val anchor = tabAnchors[panel]
                 val panelAlpha by animateFloatAsState(
                     targetValue = if (active) 1f else 0f,
@@ -1040,8 +1013,8 @@ fun TvMainShell(
                         .absoluteOffset {
                             cascadePanelOffset(
                                 anchor = anchor,
-                                level1WidthPx = with(density) { TvSkyline.profileMenuWidth.toPx() },
-                                totalPanelWidthPx = with(density) { TvSkyline.profileMenuWidth.toPx() },
+                                level1WidthPx = with(density) { CascadeLibraryColumnWidth.toPx() },
+                                totalPanelWidthPx = with(density) { CascadeLibraryColumnWidth.toPx() },
                                 safeAreaXPx = with(density) { TvSkyline.safeAreaX.toPx() },
                                 panelTopPx = with(density) { TvSkyline.dropdownTopInset.toPx() },
                             )
@@ -1050,7 +1023,7 @@ fun TvMainShell(
                         .focusProperties { canFocus = active }
                         .zIndex(2f),
                 ) {
-                    TvForYouDropdown(
+                    TvForYouSelector(
                         entersPanel = active && focusState.panelEntersFocus,
                         focusEntryToken = focusState.panelFocusEntryToken,
                         onWatchlist = {
@@ -1324,48 +1297,6 @@ private fun cascadePanelOffset(
  * History · Requests (feature-gated) · Settings · Switch Server · Sign Out.
  * Calendar is a top-level tab.
  */
-@OptIn(ExperimentalComposeUiApi::class)
-@Composable
-private fun TvForYouDropdown(
-    entersPanel: Boolean,
-    focusEntryToken: Int,
-    onWatchlist: () -> Unit,
-    onFavorites: () -> Unit,
-    onRecommendations: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(entersPanel, focusEntryToken) {
-        if (entersPanel) runCatching { firstFocus.requestFocus() }
-    }
-    Column(
-        modifier = modifier
-            .width(TvSkyline.profileMenuWidth)
-            .tvSkylinePanelChrome()
-            .padding(vertical = TvSkyline.profileMenuPanelVerticalPadding)
-            .focusGroup()
-            // Trap directional focus like the profile dropdown — only Back
-            // (handled by the shell's panel routing) closes it.
-            .focusProperties { exit = { FocusRequester.Cancel } },
-        verticalArrangement = Arrangement.spacedBy(TvSkyline.profileMenuItemSpacing),
-    ) {
-        ProfileDropdownRow(
-            label = "Watchlist",
-            icon = Icons.Filled.Bookmark,
-            focusRequester = firstFocus,
-            onClick = onWatchlist,
-        )
-        ProfileDropdownRow(label = "Favorites", icon = Icons.Filled.Favorite, onClick = onFavorites)
-        // tvOS parity: the For You dropdown's third row (sparkles) returns to the
-        // recommendations feed (Jim TV QA 2026-07-10).
-        ProfileDropdownRow(
-            label = "Recommendations",
-            icon = Icons.Filled.AutoAwesome,
-            onClick = onRecommendations,
-        )
-    }
-}
-
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun TvProfileDropdown(

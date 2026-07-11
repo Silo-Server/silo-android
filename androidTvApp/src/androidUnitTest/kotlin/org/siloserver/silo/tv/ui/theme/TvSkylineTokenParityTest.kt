@@ -113,10 +113,10 @@ class TvSkylineTokenParityTest {
         assertToken("val barHeight = 32.dp")
         assertToken("val dropdownTopInset = 66.dp")
         assertToken("val tabSpacing = 4.dp")
-        assertToken("val tabLabelSize = 13.sp")
+        assertToken("val tabLabelSize = 14.sp")
         assertToken("val tabPaddingHorizontal = 13.dp")
         assertToken("val tabPaddingVertical = 5.5.dp")
-        assertToken("val barIconSize = 26.dp")
+        assertToken("val barIconSize = 28.dp")
         assertToken("val barTrailingSpacing = 11.dp")
         assertToken("val wordmarkSize = 13.sp")
     }

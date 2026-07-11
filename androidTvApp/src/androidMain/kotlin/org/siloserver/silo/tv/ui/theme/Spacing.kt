@@ -58,8 +58,8 @@ object TvSkyline {
     /** Gap between tab capsules in the bar's center cluster — tvOS `tabSpacing` (8pt). */
     val tabSpacing = 4.dp
 
-    /** Tab label size — tvOS `tabLabelSize` (23pt), lifted above pure half-scale for 10-foot readability. */
-    val tabLabelSize = 13.sp
+    /** Tab label size — tuned 8% above the original Android scale for 10-foot readability. */
+    val tabLabelSize = 14.sp
 
     /** Tab capsule horizontal padding — tvOS `tabPaddingHorizontal` (26pt). */
     val tabPaddingHorizontal = 13.dp
@@ -67,8 +67,8 @@ object TvSkyline {
     /** Tab capsule vertical padding — tvOS `tabPaddingVertical` (11pt). */
     val tabPaddingVertical = 5.5.dp
 
-    /** Square hit target of the search button and the avatar — tvOS `barIconSize` (52pt). */
-    val barIconSize = 26.dp
+    /** Square hit target of the search button and the avatar — tuned 8% larger for TV readability. */
+    val barIconSize = 28.dp
 
     /** Panel top offset — tvOS `dropdownTopInset` (132pt). */
     val dropdownTopInset = 66.dp

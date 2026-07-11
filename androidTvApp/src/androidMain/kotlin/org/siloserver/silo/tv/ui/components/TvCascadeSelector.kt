@@ -25,6 +25,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -93,6 +96,64 @@ private val CascadeFlyoutHeaderTracking = 1.45.sp
 private val CascadeFooterTracking = 0.6.sp
 private val CascadeFooterLineHeight = 16.sp
 private const val CascadeFlyoutFollowDelayMillis = 80L
+
+/**
+ * Personal-library selector using the same panel, rows, and focus behavior as
+ * the library cascades. It can be shown as a dwell preview while focus remains
+ * on the top bar; [entersPanel] only becomes true after Down explicitly hands
+ * focus into the selector.
+ */
+@Composable
+fun TvForYouSelector(
+    entersPanel: Boolean,
+    focusEntryToken: Int,
+    onWatchlist: () -> Unit,
+    onFavorites: () -> Unit,
+    onRecommendations: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val watchlistFocus = remember { FocusRequester() }
+    val favoritesFocus = remember { FocusRequester() }
+    val recommendationsFocus = remember { FocusRequester() }
+
+    LaunchedEffect(entersPanel, focusEntryToken) {
+        if (entersPanel && focusEntryToken > 0) {
+            runCatching { watchlistFocus.requestFocus() }
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .width(CascadeLibraryColumnWidth)
+            .tvSkylinePanelChrome()
+            .padding(CascadePanelPadding)
+            .focusGroup(),
+    ) {
+        CascadePanelHeader("FOR YOU")
+        CascadeActionRow(
+            title = "Watchlist",
+            icon = Icons.Filled.Bookmark,
+            entersPanel = entersPanel,
+            focusRequester = watchlistFocus,
+            onSelect = onWatchlist,
+        )
+        CascadeActionRow(
+            title = "Favorites",
+            icon = Icons.Filled.Favorite,
+            entersPanel = entersPanel,
+            focusRequester = favoritesFocus,
+            onSelect = onFavorites,
+        )
+        CascadeActionRow(
+            title = "Recommendations",
+            icon = Icons.Filled.AutoAwesome,
+            entersPanel = entersPanel,
+            focusRequester = recommendationsFocus,
+            onSelect = onRecommendations,
+        )
+        CascadePanelFooter(isSingleLibrary = true)
+    }
+}
 
 /**
  * The Skyline cascading library selector — a faithful Compose-for-TV port of
@@ -574,6 +635,47 @@ private fun CascadeSectionRow(
                 }
                 Key.DirectionLeft ->
                     if (event.type == KeyEventType.KeyDown) onMoveLeft() else false
+                else -> false
+            }
+        },
+    )
+}
+
+@Composable
+private fun CascadeActionRow(
+    title: String,
+    icon: ImageVector,
+    entersPanel: Boolean,
+    focusRequester: FocusRequester,
+    onSelect: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
+    CascadeRowChrome(
+        icon = icon,
+        title = title,
+        trailingIcon = null,
+        isFocused = isFocused,
+        interactionSource = interactionSource,
+        focusRequester = focusRequester,
+        focusable = entersPanel,
+        onTopChanged = null,
+        textSize = CascadeRowTextSize,
+        iconSize = CascadeRowIconSize,
+        trailingIconSize = CascadeRowTrailingIconSize,
+        rowSpacing = CascadeRowSpacing,
+        horizontalPadding = CascadeRowPaddingHorizontal,
+        verticalPadding = CascadeRowPaddingVertical,
+        cornerRadius = CascadeRowCornerRadius,
+        onKey = { event ->
+            when (event.key) {
+                Key.DirectionCenter, Key.Enter -> {
+                    if (event.type == KeyEventType.KeyUp) {
+                        onSelect()
+                    }
+                    true
+                }
                 else -> false
             }
         },

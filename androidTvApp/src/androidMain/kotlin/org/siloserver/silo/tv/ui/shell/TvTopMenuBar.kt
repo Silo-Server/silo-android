@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -215,20 +216,20 @@ fun TvTopMenuBar(
     // re-keys this effect (auto-cancelling the pending delay). The first open
     // waits briefly to avoid flashing panels during casual bar traversal, but
     // once a panel is already visible tab-to-tab switching should feel direct.
-    // Landing on any non-panel button (or losing focus) closes the preview
-    // immediately so a stale panel never lingers under the wrong tab.
+    // Landing on any non-panel button closes the preview immediately; losing
+    // bar focus may mean the user is entering that panel, so the shell owns it.
     LaunchedEffect(focusedButton) {
         val focus = focusedButton
         if (focus is TvTopMenuFocus.Tab) {
             delay(if (openPanel == null) TopMenuInitialPreviewDelayMillis else TopMenuPanelSwitchDelayMillis)
             onDwell(TvTopMenuPanel.Root(TvRootDestination.LibraryType(focus.type)))
-        } else {
-            // Deliberately NO dwell for the For You dropdown: after a cascade
-            // commit, focus can transiently fall back to the bar and land on
-            // this tab while the content composes — a dwell-preview then
-            // opened the focus-trapping dropdown over everything (QA
-            // 2026-07-08: "movies → browse lands in For You → Favorites").
-            // It opens only on an explicit d-pad-down / OK (enterPanel).
+        } else if (focus is TvTopMenuFocus.ForYou) {
+            delay(if (openPanel == null) TopMenuInitialPreviewDelayMillis else TopMenuPanelSwitchDelayMillis)
+            onDwell(TvTopMenuPanel.Root(TvRootDestination.ForYou))
+        } else if (focus != null) {
+            // Moving to a non-panel bar item closes any dwell preview. A null
+            // focus can mean focus is entering the open panel, so leave panel
+            // ownership to the shell instead of racing its entry transition.
             onDwell(null)
         }
     }
@@ -602,7 +603,7 @@ private fun TvTopMenuIconButton(
                 imageVector = icon,
                 contentDescription = contentDescription,
                 tint = iconColor,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(17.dp),
             )
         }
     }
@@ -697,6 +698,7 @@ private fun TvTopMenuAvatar(
                     color = SiloOnSurface,
                     fontWeight = FontWeight.Bold,
                     style = navRailLabel,
+                    fontSize = 12.sp,
                 )
             }
         }
