@@ -161,7 +161,7 @@ fun TvSearchScreen(
             onBrowseItemClick = onResultClick,
             onLoadMore = viewModel::loadMore,
             modifier = Modifier.fillMaxSize(),
-            minCellWidth = 152.dp,
+            minCellWidth = 132.dp,
             contentPadding = tvPageContentPadding(
                 top = TvTopMenuLayout.contentTopInset - 16.dp,
                 bottom = Spacing.xxxl,
