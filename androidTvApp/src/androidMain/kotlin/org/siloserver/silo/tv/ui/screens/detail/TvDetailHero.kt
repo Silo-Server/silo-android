@@ -65,8 +65,8 @@ internal sealed class TvHeroFactToken {
  * Layout = a `ZStack(bottomLeading)`: a near-full-viewport backdrop, a
  * 4-stop horizontal darkening on the left, a soft vertical fade into the
  * rail body at the bottom, then the bottom-anchored editorial + action
- * column on the left, with a quiet right-side "Starring …" overlay floated
- * at mid-height.
+ * column on the left, including a single-line "Starring …" credit directly
+ * below the synopsis.
  *
  * Apple sizes the hero relative to the viewport (`heroHeight = 980` of a
  * 1080-pt canvas ≈ 0.907×), so we compute the height as a fraction of the
@@ -159,49 +159,6 @@ internal fun TvDetailHero(
                 ),
         )
 
-        // Right-side "Starring …" overlay, floated at mid-height.
-        // Apple anchors it via `.padding(.bottom, heroHeight * 0.45)` on a
-        // trailing overlay — we anchor to the bottom edge and lift it by the
-        // same fraction.
-        starringText?.takeIf { it.isNotBlank() }?.let { line ->
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(bottom = heroHeight * 0.45f, end = Spacing.safeArea)
-                    .widthIn(max = 250.dp)
-                    .background(
-                        brush = Brush.horizontalGradient(
-                            0f to Color.Transparent,
-                            0.42f to Color.Black.copy(alpha = 0.30f),
-                            1f to Color.Black.copy(alpha = 0.62f),
-                        ),
-                        shape = RoundedCornerShape(6.dp),
-                    )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                Text(
-                    text = line,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    lineHeight = 17.sp,
-                    color = Color.White.copy(alpha = 0.92f),
-                    textAlign = TextAlign.End,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    // Keep a soft text shadow in addition to the localized
-                    // trailing scrim so names remain legible over highlights.
-                    style = TextStyle(
-                        shadow = Shadow(
-                            color = Color.Black.copy(alpha = 0.72f),
-                            offset = Offset(0f, 2f),
-                            blurRadius = 7f,
-                        ),
-                    ),
-                )
-            }
-        }
-
         // Bottom-anchored editorial column + action cluster. Bottom inset +
         // inter-row gaps kept tight so the full stack (tagline → title →
         // synopsis → facts → actions → selector) fits within heroHeight on a
@@ -222,6 +179,7 @@ internal fun TvDetailHero(
                 ratingChip = ratingChip,
                 overview = overview,
                 tagline = tagline,
+                starringText = starringText,
                 factsLine = factsLine,
                 contentMaxWidth = contentMaxWidth,
                 translation = translation,
@@ -252,6 +210,7 @@ private fun EditorialColumn(
     ratingChip: String?,
     overview: String?,
     tagline: String?,
+    starringText: String?,
     factsLine: List<TvHeroFactToken>,
     contentMaxWidth: androidx.compose.ui.unit.Dp,
     translation: (@Composable () -> Unit)? = null,
@@ -282,6 +241,25 @@ private fun EditorialColumn(
         // the full overview with the tagline revealed above it.
         overview?.takeIf { it.isNotBlank() }?.let { line ->
             TvExpandableSynopsis(overview = line, tagline = tagline)
+        }
+        starringText?.takeIf { it.isNotBlank() }?.let { line ->
+            Text(
+                text = line,
+                fontWeight = FontWeight.Medium,
+                fontSize = 14.sp,
+                lineHeight = 17.sp,
+                color = Color.White.copy(alpha = 0.82f),
+                textAlign = TextAlign.Start,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(
+                    shadow = Shadow(
+                        color = Color.Black.copy(alpha = 0.72f),
+                        offset = Offset(0f, 2f),
+                        blurRadius = 7f,
+                    ),
+                ),
+            )
         }
         translation?.invoke()
 
