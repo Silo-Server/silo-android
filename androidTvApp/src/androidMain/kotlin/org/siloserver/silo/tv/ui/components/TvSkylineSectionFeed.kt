@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -36,8 +37,11 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
@@ -47,6 +51,9 @@ import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
@@ -74,6 +81,7 @@ fun TvSkylineSectionFeed(
 ) {
     val rows = remember(sections) { sections.filter { it.items.isNotEmpty() } }
     val tintState = rememberAmbientBackdropTintState()
+    val context = LocalContext.current
 
     val catalogRepository: CatalogRepository = koinInject()
     val fetchDetail: suspend (String) -> ItemDetail? = remember(catalogRepository) {
@@ -94,6 +102,44 @@ fun TvSkylineSectionFeed(
         val seed = initialMarqueeSeed ?: return@LaunchedEffect
         if (marquee.content == null) {
             marquee.seedInitialPreview(seed.item, seed.rowTitle)
+        }
+    }
+
+    // Warm the hero-sized backdrop/logo variants for the cards the user can
+    // reach first. This is intentionally opportunistic: focus transitions
+    // never wait on the network, but the shared Crossfade usually receives a
+    // memory-cached image instead of a late ThumbHash replacement.
+    LaunchedEffect(rows) {
+        val requests = rows
+            .take(HeroPreloadRowCount)
+            .flatMap { it.items.take(HeroPreloadItemsPerRow) }
+            .flatMap { item ->
+                buildList {
+                    item.backdropUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                        add(
+                            ImageRequest.Builder(context)
+                                .data(url)
+                                .size(HeroBackdropPreloadWidthPx, HeroBackdropPreloadHeightPx)
+                                .build(),
+                        )
+                    }
+                    item.logoUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                        add(
+                            ImageRequest.Builder(context)
+                                .data(url)
+                                .size(HeroLogoPreloadWidthPx, HeroLogoPreloadHeightPx)
+                                .build(),
+                        )
+                    }
+                }
+            }
+            .distinctBy { it.data.toString() }
+
+        val loader = SingletonImageLoader.get(context)
+        coroutineScope {
+            requests.map { request ->
+                async { runCatching { loader.execute(request) } }
+            }.awaitAll()
         }
     }
 
@@ -219,13 +265,35 @@ fun TvSkylineSectionFeed(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background),
         ) {
-            TvRootHeroBackdrop(
-                content = marquee.content,
-                modifier = Modifier.fillMaxSize(),
-            )
-
             val bandHeight = maxHeight * TvSkylineRowBandHeightFraction
             val trailingPreviewPadding = (bandHeight - TvSkylineRowBandBottomInset).coerceAtLeast(0.dp)
+
+            // Artwork and every piece of marquee copy are one transition unit.
+            // The child composables render static frames here; this single
+            // Crossfade owns their shared 240 ms alpha curve, preventing the
+            // backdrop, logo, metadata, and synopsis from drifting apart.
+            Crossfade(
+                targetState = marquee.content,
+                animationSpec = tween(TvMarqueeCrossfadeMs),
+                label = "tvSkylineHeroUnit",
+                modifier = Modifier.fillMaxSize(),
+            ) { heroContent ->
+                Box(modifier = Modifier.fillMaxSize()) {
+                    TvRootHeroBackdrop(
+                        content = heroContent,
+                        animateTransition = false,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    TvFocusMarquee(
+                        content = heroContent,
+                        startPadding = Spacing.safeArea,
+                        bottomPadding = bandHeight + TvSkylineMarqueeBottomGap,
+                        animateTransition = false,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -273,12 +341,6 @@ fun TvSkylineSectionFeed(
                 }
             }
 
-            TvFocusMarquee(
-                content = marquee.content,
-                startPadding = Spacing.safeArea,
-                bottomPadding = bandHeight + TvSkylineMarqueeBottomGap,
-                modifier = Modifier.fillMaxSize(),
-            )
         }
     }
 }
@@ -295,6 +357,14 @@ private data class TvSkylineMarqueeSeed(
     val item: SectionItem,
     val rowTitle: String,
 )
+
+// 0.64 × 1920 by 0.70 × 1080, and the 440×100dp logo cap at 2× density.
+private const val HeroBackdropPreloadWidthPx = 1229
+private const val HeroBackdropPreloadHeightPx = 756
+private const val HeroLogoPreloadWidthPx = 880
+private const val HeroLogoPreloadHeightPx = 200
+private const val HeroPreloadRowCount = 2
+private const val HeroPreloadItemsPerRow = 8
 
 /** tvOS MediaRow cardSpacing 40pt maps to 20dp. */
 private val TvSkylineItemSpacing = 20.dp

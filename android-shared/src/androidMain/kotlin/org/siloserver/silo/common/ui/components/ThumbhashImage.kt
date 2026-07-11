@@ -51,6 +51,8 @@ private fun decodeThumbhashPainter(hash: String): BitmapPainter? =
  * @param decodeSizePx Optional max decode size (px). Caps bitmap memory where
  *   full resolution would be wasted — e.g. a heavily-blurred full-screen
  *   backdrop. Null lets Coil size to the layout bounds.
+ * @param crossfadeMillis Duration of the ThumbHash-to-image fade. Surfaces
+ *   with a coordinated transition can supply their shared timing token.
  */
 @Composable
 fun ThumbhashImage(
@@ -61,6 +63,7 @@ fun ThumbhashImage(
     contentScale: ContentScale = ContentScale.Crop,
     transparent: Boolean = false,
     decodeSizePx: Int? = null,
+    crossfadeMillis: Int = 300,
 ) {
     val context = LocalContext.current
 
@@ -95,10 +98,12 @@ fun ThumbhashImage(
         return
     }
 
-    val model = remember(url, decodeSizePx) {
+    val model = remember(url, decodeSizePx, crossfadeMillis) {
         ImageRequest.Builder(context)
             .data(url)
-            .crossfade(300)
+            .apply {
+                if (crossfadeMillis > 0) crossfade(crossfadeMillis) else crossfade(false)
+            }
             .apply { decodeSizePx?.let { size(it) } }
             .build()
     }

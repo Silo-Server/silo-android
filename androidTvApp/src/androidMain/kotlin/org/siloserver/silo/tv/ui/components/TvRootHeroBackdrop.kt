@@ -49,6 +49,7 @@ fun TvRootHeroBackdrop(
     content: TvMarqueeContent?,
     modifier: Modifier = Modifier,
     emptyWashColor: Color? = null,
+    animateTransition: Boolean = true,
 ) {
     val tintState = LocalAmbientBackdropTint.current
     val ambientAccent = tintState.accent
@@ -58,6 +59,7 @@ fun TvRootHeroBackdrop(
         animationSpec = tween(durationMillis = TvMarqueeCrossfadeMs),
         label = "tvRootHeroBackdropTint",
     )
+    val displayedTint = if (animateTransition) animatedTint else targetAccent
 
     val isVisible = content != null
     val hasTintOnlyWash = !isVisible && ambientAccent != null
@@ -92,7 +94,7 @@ fun TvRootHeroBackdrop(
             drawRect(
                 brush = Brush.linearGradient(
                     colorStops = smoothedWashStops(
-                        tint = animatedTint,
+                        tint = displayedTint,
                         leadingAlpha = leadingWashAlpha,
                         midAlpha = midWashAlpha,
                         trailingAlpha = trailingWashAlpha,
@@ -110,19 +112,26 @@ fun TvRootHeroBackdrop(
             )
         }
 
-        Crossfade(
-            targetState = content?.heroBackdropUrl,
-            animationSpec = tween(TvMarqueeCrossfadeMs),
-            label = "tvRootHeroBackdropArt",
-        ) { url ->
-            if (url != null) {
-                CornerAnchoredArt(
-                    url = url,
-                    thumbhash = content?.heroBackdropThumbhash,
-                )
-            } else {
-                Box(modifier = Modifier.fillMaxSize())
+        if (animateTransition) {
+            Crossfade(
+                targetState = content,
+                animationSpec = tween(TvMarqueeCrossfadeMs),
+                label = "tvRootHeroBackdropArt",
+            ) { value ->
+                if (value?.heroBackdropUrl != null) {
+                    CornerAnchoredArt(
+                        url = value.heroBackdropUrl,
+                        thumbhash = value.heroBackdropThumbhash,
+                    )
+                } else {
+                    Box(modifier = Modifier.fillMaxSize())
+                }
             }
+        } else if (content?.heroBackdropUrl != null) {
+            CornerAnchoredArt(
+                url = content.heroBackdropUrl,
+                thumbhash = content.heroBackdropThumbhash,
+            )
         }
 
         // Full-width top scrim so the menu bar stays legible over bright art.
@@ -198,6 +207,10 @@ private fun CornerAnchoredArt(
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     transparent = true,
+                    // The Skyline feed preloads this frame and owns the one
+                    // shared art + copy crossfade. A second Coil fade would
+                    // make the image visibly lag behind the text.
+                    crossfadeMillis = 0,
                     modifier = Modifier.fillMaxSize(),
                 )
             }

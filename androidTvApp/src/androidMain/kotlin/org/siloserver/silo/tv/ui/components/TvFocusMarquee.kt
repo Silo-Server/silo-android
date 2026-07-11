@@ -46,6 +46,7 @@ fun TvFocusMarquee(
     modifier: Modifier = Modifier,
     startPadding: androidx.compose.ui.unit.Dp = 44.dp,
     bottomPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    animateTransition: Boolean = true,
 ) {
     Box(
         modifier = modifier
@@ -53,16 +54,20 @@ fun TvFocusMarquee(
             .padding(start = startPadding, bottom = bottomPadding),
         contentAlignment = Alignment.BottomStart,
     ) {
-        Crossfade(
-            targetState = content,
-            animationSpec = tween(TvMarqueeCrossfadeMs),
-            label = "tvFocusMarquee",
-        ) { value ->
-            if (value != null) {
-                TvMarqueeBlock(content = value)
-            } else {
-                Box(modifier = Modifier)
+        if (animateTransition) {
+            Crossfade(
+                targetState = content,
+                animationSpec = tween(TvMarqueeCrossfadeMs),
+                label = "tvFocusMarquee",
+            ) { value ->
+                if (value != null) {
+                    TvMarqueeBlock(content = value)
+                } else {
+                    Box(modifier = Modifier)
+                }
             }
+        } else if (content != null) {
+            TvMarqueeBlock(content = content)
         }
     }
 }
@@ -81,6 +86,7 @@ private fun TvMarqueeBlock(content: TvMarqueeContent) {
                 contentDescription = content.title,
                 contentScale = ContentScale.Fit,
                 transparent = true,
+                crossfadeMillis = 0,
                 modifier = Modifier
                     .height(MarqueeLogoMaxHeight)
                     .widthIn(max = MarqueeLogoMaxWidth),
