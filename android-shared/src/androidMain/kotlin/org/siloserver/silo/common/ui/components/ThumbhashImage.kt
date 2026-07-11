@@ -53,6 +53,8 @@ private fun decodeThumbhashPainter(hash: String): BitmapPainter? =
  *   backdrop. Null lets Coil size to the layout bounds.
  * @param crossfadeMillis Duration of the ThumbHash-to-image fade. Surfaces
  *   with a coordinated transition can supply their shared timing token.
+ * @param onSuccess Optional signal that the full image has decoded. Useful for
+ *   keeping a semantic fallback visible until transparent artwork is ready.
  */
 @Composable
 fun ThumbhashImage(
@@ -64,6 +66,7 @@ fun ThumbhashImage(
     transparent: Boolean = false,
     decodeSizePx: Int? = null,
     crossfadeMillis: Int = 300,
+    onSuccess: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -113,6 +116,7 @@ fun ThumbhashImage(
         contentDescription = contentDescription,
         contentScale = contentScale,
         placeholder = placeholder,
+        onSuccess = { onSuccess?.invoke() },
         modifier = when {
             transparent || placeholder != null -> modifier
             else -> modifier.background(DefaultPlaceholderColor)

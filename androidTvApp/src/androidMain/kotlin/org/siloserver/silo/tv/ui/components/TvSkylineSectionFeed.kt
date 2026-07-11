@@ -1,6 +1,5 @@
 package org.siloserver.silo.tv.ui.components
 
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -143,6 +142,54 @@ fun TvSkylineSectionFeed(
         }
     }
 
+    // Section payloads intentionally stay lightweight and omit the aired/cast
+    // line. Warm detail for the same near-viewport cards whose hero artwork is
+    // preloaded so normal D-pad navigation presents a complete marquee on its
+    // first rested frame. The shared request guard prevents this from racing or
+    // duplicating the focus-driven fetch for the currently displayed card.
+    LaunchedEffect(rows, fetchDetail) {
+        val loader = SingletonImageLoader.get(context)
+        rows
+            .take(HeroPreloadRowCount)
+            .forEach { row ->
+                coroutineScope {
+                    row.items
+                        .take(HeroPreloadItemsPerRow)
+                        .map { item ->
+                            async {
+                                val contentId = item.contentId
+                                if (!marquee.beginEnrichmentRequest(contentId)) return@async
+                                try {
+                                    val detail = runCatching { fetchDetail(contentId) }.getOrNull()
+                                        ?: return@async
+                                    val enrichment = TvMarqueeEnrichment.from(detail)
+                                    marquee.applyEnrichment(contentId, enrichment)
+
+                                    // Warm a possible episode-series art upgrade
+                                    // at the exact hero decode size as well.
+                                    enrichment.backdropUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                                        runCatching {
+                                            loader.execute(
+                                                ImageRequest.Builder(context)
+                                                    .data(url)
+                                                    .size(
+                                                        HeroBackdropPreloadWidthPx,
+                                                        HeroBackdropPreloadHeightPx,
+                                                    )
+                                                    .build(),
+                                            )
+                                        }
+                                    }
+                                } finally {
+                                    marquee.finishEnrichmentRequest(contentId)
+                                }
+                            }
+                        }
+                        .awaitAll()
+                }
+            }
+    }
+
     val rowBandState = rememberLazyListState()
     // NOT keyed on `rows`: a quiet realtime/on-resume refetch emits a new
     // sections list, and resetting the focused-row index to -1 made the next
@@ -215,8 +262,8 @@ fun TvSkylineSectionFeed(
         }
     }
 
-    LaunchedEffect(marquee.content?.heroBackdropUrl) {
-        marquee.content?.let { tintState.set(it.source, it.heroBackdropUrl) }
+    LaunchedEffect(marquee.backdropContent?.heroBackdropUrl) {
+        marquee.backdropContent?.let { tintState.set(it.source, it.heroBackdropUrl) }
     }
 
     val firstRowFocusRequester = remember { FocusRequester() }
@@ -268,31 +315,21 @@ fun TvSkylineSectionFeed(
             val bandHeight = maxHeight * TvSkylineRowBandHeightFraction
             val trailingPreviewPadding = (bandHeight - TvSkylineRowBandBottomInset).coerceAtLeast(0.dp)
 
-            // Artwork and every piece of marquee copy are one transition unit.
-            // The child composables render static frames here; this single
-            // Crossfade owns their shared 240 ms alpha curve, preventing the
-            // backdrop, logo, metadata, and synopsis from drifting apart.
-            Crossfade(
-                targetState = marquee.content,
-                animationSpec = tween(TvMarqueeCrossfadeMs),
-                label = "tvSkylineHeroUnit",
+            // Base content changes drive matching 240 ms backdrop and copy
+            // crossfades. Detail enrichment stays independent, mirroring tvOS:
+            // its line fades into reserved space and episode art may upgrade,
+            // but neither event replays/reflows the whole marquee.
+            TvRootHeroBackdrop(
+                content = marquee.backdropContent,
                 modifier = Modifier.fillMaxSize(),
-            ) { heroContent ->
-                Box(modifier = Modifier.fillMaxSize()) {
-                    TvRootHeroBackdrop(
-                        content = heroContent,
-                        animateTransition = false,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    TvFocusMarquee(
-                        content = heroContent,
-                        startPadding = Spacing.safeArea,
-                        bottomPadding = bandHeight + TvSkylineMarqueeBottomGap,
-                        animateTransition = false,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            }
+            )
+            TvFocusMarquee(
+                content = marquee.content,
+                detailLine = marquee.enrichment?.detailLine,
+                startPadding = Spacing.safeArea,
+                bottomPadding = bandHeight + TvSkylineMarqueeBottomGap,
+                modifier = Modifier.fillMaxSize(),
+            )
 
             Box(
                 modifier = Modifier

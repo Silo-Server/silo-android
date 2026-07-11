@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -9,16 +10,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +50,7 @@ import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 @Composable
 fun TvFocusMarquee(
     content: TvMarqueeContent?,
+    detailLine: String? = content?.detailLine,
     modifier: Modifier = Modifier,
     startPadding: androidx.compose.ui.unit.Dp = 44.dp,
     bottomPadding: androidx.compose.ui.unit.Dp = 0.dp,
@@ -62,36 +69,69 @@ fun TvFocusMarquee(
                 label = "tvFocusMarquee",
             ) { value ->
                 if (value != null) {
-                    TvMarqueeBlock(content = value)
+                    TvMarqueeBlock(
+                        content = value,
+                        detailLine = detailLine.takeIf { value.id == content?.id },
+                    )
                 } else {
                     Box(modifier = Modifier)
                 }
             }
         } else if (content != null) {
-            TvMarqueeBlock(content = content)
+            TvMarqueeBlock(content = content, detailLine = detailLine)
         }
     }
 }
 
 @Composable
-private fun TvMarqueeBlock(content: TvMarqueeContent) {
+private fun TvMarqueeBlock(
+    content: TvMarqueeContent,
+    detailLine: String?,
+) {
     Column(
         modifier = Modifier.widthIn(max = MarqueeContentWidth),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Title slot — logo art when available, else heavy text title.
+        // Title slot — keep the title visible immediately while uncached logo
+        // art decodes, then fade the logo over the same fixed-height slot. This
+        // mirrors tvOS and prevents a cold logo request from leaving the first
+        // focused hero visibly incomplete.
         if (!content.logoUrl.isNullOrBlank()) {
-            ThumbhashImage(
-                url = content.logoUrl,
-                thumbhash = null,
-                contentDescription = content.title,
-                contentScale = ContentScale.Fit,
-                transparent = true,
-                crossfadeMillis = 0,
+            var logoLoaded by remember(content.id, content.logoUrl) { mutableStateOf(false) }
+            val logoAlpha by animateFloatAsState(
+                targetValue = if (logoLoaded) 1f else 0f,
+                animationSpec = tween(LogoRevealMillis),
+                label = "tvMarqueeLogoReveal",
+            )
+            Box(
                 modifier = Modifier
                     .height(MarqueeLogoMaxHeight)
-                    .widthIn(max = MarqueeLogoMaxWidth),
-            )
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(
+                    text = content.title,
+                    color = Color.White,
+                    fontWeight = FontWeight.Black,
+                    fontSize = MarqueeTitleSize,
+                    lineHeight = MarqueeTitleSize,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.alpha(1f - logoAlpha),
+                )
+                ThumbhashImage(
+                    url = content.logoUrl,
+                    thumbhash = null,
+                    contentDescription = content.title,
+                    contentScale = ContentScale.Fit,
+                    transparent = true,
+                    crossfadeMillis = 0,
+                    onSuccess = { logoLoaded = true },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .alpha(logoAlpha),
+                )
+            }
         } else {
             Text(
                 text = content.title,
@@ -138,19 +178,34 @@ private fun TvMarqueeBlock(content: TvMarqueeContent) {
             )
         }
 
-        // Quieter detail line (cast / air-date) when carried by the payload.
-        content.detailLine?.takeIf { it.isNotBlank() }?.let { line ->
-            Text(
-                text = line,
-                color = SiloOnSurface.copy(alpha = 0.5f),
-                fontSize = MarqueeDetailSize,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .offset(y = (-4).dp)
-                    .widthIn(max = MarqueeSynopsisMaxWidth),
-            )
+        // Reserve the detail row before the async item-detail response lands.
+        // The real line fades over this fixed slot, so the bottom-anchored
+        // title/meta/synopsis never jump upward on a cold first focus.
+        Box(
+            modifier = Modifier
+                .height(MarqueeDetailLineHeight)
+                .widthIn(max = MarqueeSynopsisMaxWidth),
+            contentAlignment = Alignment.TopStart,
+        ) {
+            Crossfade(
+                targetState = detailLine?.takeIf { it.isNotBlank() },
+                animationSpec = tween(TvMarqueeCrossfadeMs),
+                label = "tvMarqueeDetailLine",
+            ) { line ->
+                if (line != null) {
+                    Text(
+                        text = line,
+                        color = SiloOnSurface.copy(alpha = 0.5f),
+                        fontSize = MarqueeDetailSize,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .offset(y = (-4).dp)
+                            .widthIn(max = MarqueeSynopsisMaxWidth),
+                    )
+                }
+            }
         }
     }
 }
@@ -181,8 +236,10 @@ private val MarqueeContentWidth = 440.dp
 private val MarqueeSynopsisMaxWidth = 390.dp
 private val MarqueeLogoMaxWidth = 440.dp
 private val MarqueeLogoMaxHeight = 100.dp
+private val MarqueeDetailLineHeight = 14.dp
 private val MarqueeTitleSize = 42.sp
 private val MarqueeMetaSize = 11.5.sp
 private val MarqueeDetailSize = 11.sp
 private val MarqueeSynopsisSize = 12.sp
 private val MarqueeBadgeSize = 8.sp
+private const val LogoRevealMillis = 200
