@@ -934,13 +934,17 @@ private fun BadgePill(text: String) {
         modifier = Modifier
             .clip(RoundedCornerShape(100.dp))
             .background(Color.White.copy(alpha = 0.92f))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 3.dp),
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 10.sp,
+                lineHeight = 12.sp,
+            ),
             fontWeight = FontWeight.Bold,
             color = Color.Black,
+            maxLines = 1,
         )
     }
 }
