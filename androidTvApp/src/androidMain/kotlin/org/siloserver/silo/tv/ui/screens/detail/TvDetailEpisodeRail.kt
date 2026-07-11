@@ -278,16 +278,17 @@ private fun TvDetailEpisodeCard(
             }
         }
 
-        // Text block mirrors tvOS vertical rhythm at Android canvas scale, with
-        // a readability floor for episode metadata and descriptions.
-        Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        // Keep the hierarchy scannable at TV distance: episode number, title,
+        // air date/runtime, then synopsis. Each kind of information owns a
+        // stable line instead of competing in one dense eyebrow.
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 Text(
-                    text = episodeEyebrow(episode),
-                    fontSize = 13.sp,
+                    text = "EPISODE ${episode.episodeNumber}",
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.0.sp,
                     color = SiloOnSurface.copy(alpha = 0.55f),
@@ -307,9 +308,20 @@ private fun TvDetailEpisodeCard(
                     isFocused -> SiloOnSurface
                     else -> SiloOnSurface.copy(alpha = 0.92f)
                 },
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+
+            episodeMetadataLine(episode)?.let { metadata ->
+                Text(
+                    text = metadata,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = SiloOnSurface.copy(alpha = 0.58f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
 
             episode.overview?.takeIf { it.isNotBlank() }?.let { overview ->
                 // tvOS uses lineLimit(3, reservesSpace: true). Reserve a fixed
@@ -339,29 +351,49 @@ private fun NowViewingTag() {
         modifier = Modifier
             .clip(RoundedCornerShape(50.dp))
             .background(Color.White)
-            .padding(horizontal = 4.dp, vertical = 1.5.dp),
+            .padding(horizontal = 7.dp, vertical = 3.dp),
     ) {
         Text(
             text = "NOW VIEWING",
             style = capsuleCaps.copy(
-                fontSize = 13.sp,
-                lineHeight = 15.sp,
-                letterSpacing = 0.8.sp,
+                fontSize = 10.sp,
+                lineHeight = 12.sp,
+                letterSpacing = 0.7.sp,
             ),
             color = Color.Black,
         )
     }
 }
 
-private fun episodeEyebrow(episode: EpisodeListItem): String {
-    val base = "EPISODE ${episode.episodeNumber}"
-    if (episode.runtime <= 0) return base
-    val runtime = if (episode.runtime >= 60) {
-        "${episode.runtime / 60}h ${episode.runtime % 60}m"
-    } else {
-        "${episode.runtime}m"
+private fun episodeMetadataLine(episode: EpisodeListItem): String? {
+    val parts = buildList {
+        abbreviatedEpisodeDate(episode.airDate)?.let(::add)
+        episodeRuntime(episode.runtime)?.let(::add)
     }
-    return "$base  ·  $runtime"
+    return parts.takeIf { it.isNotEmpty() }?.joinToString("  ·  ")
+}
+
+private fun episodeRuntime(runtimeMinutes: Int): String? {
+    if (runtimeMinutes <= 0) return null
+    return if (runtimeMinutes >= 60) {
+        "${runtimeMinutes / 60}h ${runtimeMinutes % 60}m"
+    } else {
+        "${runtimeMinutes}m"
+    }
+}
+
+private fun abbreviatedEpisodeDate(raw: String?): String? {
+    val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val parts = trimmed.take(10).split("-")
+    if (parts.size != 3) return trimmed
+    val year = parts[0].toIntOrNull() ?: return trimmed
+    val month = parts[1].toIntOrNull() ?: return trimmed
+    val day = parts[2].toIntOrNull() ?: return trimmed
+    val monthName = listOf(
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ).getOrNull(month - 1) ?: return trimmed
+    return "$monthName $day, $year"
 }
 
 private fun EpisodeListItem.progressFraction(): Float? {
