@@ -218,10 +218,8 @@ private fun PersonHeader(person: Person) {
                 text = person.name,
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
-                // Matches the detail hero title scale — the person page was
-                // noticeably larger than the rest of the UI (QA 2026-07-08).
-                fontSize = 25.sp,
-                lineHeight = 29.sp,
+                fontSize = 30.sp,
+                lineHeight = 34.sp,
                 letterSpacing = 0.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
