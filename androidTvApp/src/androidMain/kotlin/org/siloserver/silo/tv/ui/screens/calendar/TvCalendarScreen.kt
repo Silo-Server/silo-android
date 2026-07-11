@@ -500,7 +500,7 @@ private fun DayCell(
             ),
             focusedBorder = Border.None,
         ),
-        modifier = Modifier.size(width = 39.dp, height = 46.dp),
+        modifier = Modifier.size(width = 44.dp, height = 50.dp),
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -509,7 +509,10 @@ private fun DayCell(
         ) {
             Text(
                 text = localDate.format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault())),
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 11.sp,
+                    lineHeight = 13.sp,
+                ),
                 color = if (inverted) {
                     (if (isFocused) FocusedContent else DarkOnPrimary).copy(alpha = 0.7f)
                 } else {
@@ -519,7 +522,10 @@ private fun DayCell(
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = localDate.dayOfMonth.toString(),
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = 18.sp,
+                    lineHeight = 21.sp,
+                ),
                 fontWeight = FontWeight.Bold,
             )
             Spacer(modifier = Modifier.height(6.dp))
