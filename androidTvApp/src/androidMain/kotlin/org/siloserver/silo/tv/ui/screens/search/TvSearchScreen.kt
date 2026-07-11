@@ -162,7 +162,7 @@ fun TvSearchScreen(
             modifier = Modifier.fillMaxSize(),
             minCellWidth = 152.dp,
             contentPadding = tvPageContentPadding(
-                top = TvTopMenuLayout.contentTopInset,
+                top = TvTopMenuLayout.contentTopInset - 16.dp,
                 bottom = Spacing.xxxl,
                 end = 24.dp,
                 expandedGap = Spacing.md,
