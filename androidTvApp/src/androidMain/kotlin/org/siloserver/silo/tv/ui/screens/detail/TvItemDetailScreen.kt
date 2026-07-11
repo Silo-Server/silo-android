@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -443,7 +444,21 @@ private fun TvDetailContent(
                                     val nowFocused = focusState.hasFocus
                                     if (nowFocused && !episodesSectionHasFocus) {
                                         coroutineScope.launch {
-                                            listState.animateScrollToItem(1)
+                                            // Episode-card focus naturally anchors
+                                            // the body item at the viewport top. A
+                                            // short season chip does not request enough
+                                            // movement on its own, so explicitly use
+                                            // that same body-item anchor.
+                                            // Let the focus system enqueue its
+                                            // automatic bring-into-view first,
+                                            // then cancel/replace that scroll with
+                                            // our shared season/episode anchor.
+                                            withFrameNanos { }
+                                            if (!episodesSectionHasFocus) return@launch
+                                            listState.animateScrollToItem(
+                                                index = 1,
+                                                scrollOffset = 0,
+                                            )
                                         }
                                     }
                                     episodesSectionHasFocus = nowFocused
