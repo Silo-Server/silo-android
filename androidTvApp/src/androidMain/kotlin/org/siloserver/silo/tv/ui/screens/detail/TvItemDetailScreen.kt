@@ -318,7 +318,6 @@ private fun TvDetailContent(
                             logoUrl = detail.logoUrl,
                             backdropUrl = detail.backdropUrl,
                             backdropThumbhash = detail.backdropThumbhash,
-                            eyebrow = if (detail.type == "episode") null else TvDetailMetadata.eyebrow(detail),
                             sourceTokens = TvDetailMetadata.sourceTokens(detail),
                             ratingChip = TvDetailMetadata.ratingChip(detail),
                             overview = detail.overview,

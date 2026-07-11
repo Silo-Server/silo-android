@@ -71,28 +71,6 @@ internal object TvDetailMetadata {
         return tokens
     }
 
-    fun eyebrow(detail: ItemDetail): String? {
-        if (detail.type.equals("episode", ignoreCase = true)) {
-            return detail.seriesTitle?.trim()?.takeIf { it.isNotEmpty() }
-        }
-        if (detail.type.equals("season", ignoreCase = true)) {
-            // tvOS `TVSeasonDetailView`: the season hero eyebrow carries the
-            // parent-series title.
-            return detail.seriesTitle?.trim()?.takeIf { it.isNotEmpty() }
-        }
-        if (detail.type.equals("series", ignoreCase = true)) {
-            when (detail.status?.trim()?.lowercase()) {
-                "continuing", "returning series", "returning" -> return "Continuing Series"
-                "ended" -> return "Complete Series"
-                "in production" -> return "New Season Coming"
-                else -> Unit
-            }
-        }
-        val tagline = detail.tagline?.trim()?.takeIf { it.isNotEmpty() }
-        if (tagline != null && tagline.length <= 44) return tagline
-        return null
-    }
-
     fun starringText(detail: ItemDetail): String? {
         val names = detail.cast.take(3).map { it.name.trim() }.filter { it.isNotEmpty() }
         if (names.isEmpty()) return null

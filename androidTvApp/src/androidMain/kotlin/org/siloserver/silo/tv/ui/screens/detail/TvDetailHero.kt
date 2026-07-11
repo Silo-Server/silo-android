@@ -84,7 +84,6 @@ internal fun TvDetailHero(
     logoUrl: String?,
     backdropUrl: String?,
     backdropThumbhash: String?,
-    eyebrow: String?,
     sourceTokens: List<String>,
     ratingChip: String?,
     overview: String?,
@@ -174,7 +173,6 @@ internal fun TvDetailHero(
                 title = title,
                 seriesTitle = seriesTitle,
                 logoUrl = logoUrl,
-                eyebrow = eyebrow,
                 sourceTokens = sourceTokens,
                 ratingChip = ratingChip,
                 overview = overview,
@@ -205,7 +203,6 @@ private fun EditorialColumn(
     title: String,
     seriesTitle: String?,
     logoUrl: String?,
-    eyebrow: String?,
     sourceTokens: List<String>,
     ratingChip: String?,
     overview: String?,
@@ -220,17 +217,11 @@ private fun EditorialColumn(
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (!eyebrow.isNullOrBlank()) {
-            HeroEyebrowPill(text = eyebrow)
-        }
-
-        Box(modifier = Modifier.padding(top = if (eyebrow.isNullOrBlank()) 0.dp else 2.dp)) {
-            TitleBlock(
-                title = title,
-                seriesTitle = seriesTitle,
-                logoUrl = logoUrl,
-            )
-        }
+        TitleBlock(
+            title = title,
+            seriesTitle = seriesTitle,
+            logoUrl = logoUrl,
+        )
 
         if (sourceTokens.isNotEmpty() || !ratingChip.isNullOrBlank()) {
             SourceRow(tokens = sourceTokens, ratingChip = ratingChip)
@@ -365,34 +356,6 @@ private fun EpisodeHierarchyTitle(seriesTitle: String, episodeTitle: String) {
                 maxLines = 2,
             )
         }
-    }
-}
-
-@Composable
-private fun HeroEyebrowPill(text: String) {
-    Box(
-        modifier = Modifier
-            .background(
-                color = Color.Black.copy(alpha = 0.55f),
-                shape = RoundedCornerShape(100.dp),
-            )
-            .border(
-                width = 0.5.dp,
-                color = Color.White.copy(alpha = 0.18f),
-                shape = RoundedCornerShape(100.dp),
-            )
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-    ) {
-        Text(
-            text = text,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 13.sp,
-            lineHeight = 15.sp,
-            letterSpacing = 0.sp,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
