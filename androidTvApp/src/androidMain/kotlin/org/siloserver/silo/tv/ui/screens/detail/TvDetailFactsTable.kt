@@ -110,9 +110,13 @@ private fun ItemDetail.assembleFacts(): List<FactRow> {
     genres.filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.let {
         out += FactRow("Genres", it.joinToString(", "))
     }
-    formattedDate(releaseDate)?.let { out += FactRow("Released", it) }
-    formattedDate(firstAirDate)?.let { out += FactRow("First Aired", it) }
-    formattedDate(lastAirDate)?.let { out += FactRow("Last Aired", it) }
+    if (type.equals("episode", ignoreCase = true)) {
+        formattedDate(airDate ?: releaseDate)?.let { out += FactRow("Aired", it) }
+    } else {
+        formattedDate(releaseDate)?.let { out += FactRow("Released", it) }
+        formattedDate(firstAirDate)?.let { out += FactRow("First Aired", it) }
+        formattedDate(lastAirDate)?.let { out += FactRow("Last Aired", it) }
+    }
     return out
 }
 
