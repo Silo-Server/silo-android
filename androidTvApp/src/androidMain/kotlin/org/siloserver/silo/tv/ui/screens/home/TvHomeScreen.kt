@@ -8,6 +8,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.tv.material3.MaterialTheme
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
@@ -31,6 +32,7 @@ fun TvHomeScreen(
     onInitialContentFocus: () -> Unit = {},
     focusRequest: Int = 0,
     detailReturnFocusRequest: Int = 0,
+    firstRowFocusRequester: FocusRequester? = null,
     shouldRefreshOnResume: () -> Boolean = { true },
     onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
     viewModel: HomeViewModel = koinViewModel(),
@@ -71,6 +73,7 @@ fun TvHomeScreen(
             onInitialContentFocus = onInitialContentFocus,
             focusRequest = focusRequest,
             detailReturnFocusRequest = detailReturnFocusRequest,
+            firstRowFocusRequester = firstRowFocusRequester,
             onContentUpFallbackChanged = onContentUpFallbackChanged,
             onSetWatched = viewModel::setWatched,
             onToggleFavorite = viewModel::toggleFavorite,
@@ -89,6 +92,7 @@ private fun TvHomeContent(
     onInitialContentFocus: () -> Unit,
     focusRequest: Int,
     detailReturnFocusRequest: Int,
+    firstRowFocusRequester: FocusRequester?,
     onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)?,
     onSetWatched: (String, Boolean) -> Unit = { _, _ -> },
     onToggleFavorite: (String, Boolean) -> Unit = { _, _ -> },
@@ -100,6 +104,7 @@ private fun TvHomeContent(
         onItemClick = onItemClick,
         focusRequest = focusRequest,
         detailReturnFocusRequest = detailReturnFocusRequest,
+        firstRowFocusRequester = firstRowFocusRequester,
         onInitialContentFocus = onInitialContentFocus,
         onContentUpFallbackChanged = onContentUpFallbackChanged,
         iconForSection = { section ->

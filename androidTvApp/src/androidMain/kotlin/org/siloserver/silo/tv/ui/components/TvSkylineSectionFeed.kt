@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +71,7 @@ fun TvSkylineSectionFeed(
     modifier: Modifier = Modifier,
     focusRequest: Int = 0,
     detailReturnFocusRequest: Int = 0,
+    firstRowFocusRequester: FocusRequester? = null,
     onInitialContentFocus: () -> Unit = {},
     iconForSection: (ResolvedSection) -> ImageVector? = { null },
     onSeeAllClickForSection: (ResolvedSection) -> (() -> Unit)? = { null },
@@ -344,7 +346,14 @@ fun TvSkylineSectionFeed(
         marquee.backdropContent?.let { tintState.set(it.source, it.heroBackdropUrl) }
     }
 
-    val firstRowFocusRequester = remember { FocusRequester() }
+    val fallbackFirstRowFocusRequester = remember { FocusRequester() }
+    val resolvedFirstRowFocusRequester = firstRowFocusRequester ?: fallbackFirstRowFocusRequester
+    // Attached to the first row's LazyRow group (not a card). A programmatic
+    // focus request that targets a DESCENDANT of a focusRestorer group is
+    // cancelled by the restorer's custom `enter` (it restores, cancels, and
+    // the transaction rolls back), but a request ON the group itself is
+    // honored — so the reset ladder below hops onto the row first.
+    val firstRowContainerFocusRequester = remember { FocusRequester() }
     // These consumption guards must survive the outer Main → ItemDetail → Main
     // round trip. Plain remember resets when the feed is disposed, replaying
     // both first-card effects after focusRestorer has correctly restored the
@@ -395,7 +404,36 @@ fun TvSkylineSectionFeed(
         if (focusRequest == 0 || firstRowId == null) return@LaunchedEffect
         if (focusRequest == lastAppliedFocusRequest) return@LaunchedEffect
         lastAppliedFocusRequest = focusRequest
-        requestFirstRowFocus()
+        // Menu re-select = full reset to the app-launch state: band scrolled
+        // to the top, focus on row 0 / card 0. Focus walks down one scope per
+        // frame (row group, then card) because each restorer-guarded scope
+        // only honors a request on ITSELF — a request that has to pass
+        // through a restorer to a descendant is cancelled and rolled back.
+        onInitialContentFocus()
+        runCatching {
+            // Constant-velocity return to the top (~4 px/ms), clamped so a
+            // one-row hop stays snappy and a deep-feed reset never drags.
+            // animateScrollToItem's fixed-feel spec turns abrupt over long
+            // distances, so drive the scroll by pixel distance instead.
+            val info = rowBandState.layoutInfo
+            val rowExtent = (info.visibleItemsInfo.firstOrNull()?.size ?: 0) +
+                info.mainAxisItemSpacing
+            val distance = rowBandState.firstVisibleItemIndex.toFloat() * rowExtent +
+                rowBandState.firstVisibleItemScrollOffset
+            if (distance > 0f) {
+                val durationMs = (distance / 4f).toInt().coerceIn(250, 900)
+                rowBandState.animateScrollBy(
+                    -distance,
+                    tween(durationMs, easing = FastOutSlowInEasing),
+                )
+            }
+            // Exact-align safety net for any rounding drift; no-op at rest.
+            rowBandState.scrollToItem(0)
+        }
+        withFrameNanos { }
+        runCatching { firstRowContainerFocusRequester.requestFocus() }
+        withFrameNanos { }
+        runCatching { resolvedFirstRowFocusRequester.requestFocus() }
     }
 
     CompositionLocalProvider(
@@ -463,7 +501,9 @@ fun TvSkylineSectionFeed(
                             rowTopPadding = TvSkylineRowCardVerticalPadding,
                             rowBottomPadding = TvSkylineRowCardVerticalPadding,
                             posterWidth = RowDimens.DensePosterWidth,
-                            firstItemFocusRequester = firstRowFocusRequester
+                            firstItemFocusRequester = resolvedFirstRowFocusRequester
+                                .takeIf { isFirstRow },
+                            rowContainerFocusRequester = firstRowContainerFocusRequester
                                 .takeIf { isFirstRow },
                             firstItemFocusRequest = if (isFirstRow) firstRowFocusRequest else 0,
                             onItemFocusedAtIndex = { item, itemIndex ->

@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -84,6 +85,11 @@ fun TvMediaRow(
     onDirectionUp: (() -> Boolean)? = null,
     firstItemFocusRequester: FocusRequester? = null,
     firstItemFocusRequest: Int = 0,
+    /** Targets the LazyRow GROUP itself (not a card). Programmatic requests
+     *  that cross this row's focusRestorer toward a descendant card are
+     *  cancelled by its `enter` interception; a request on the group is
+     *  honored, letting callers hop onto the row before targeting card 0. */
+    rowContainerFocusRequester: FocusRequester? = null,
     firstItemCardModifier: Modifier = Modifier,
     /** Fired (on focus GAIN only) with whichever card the user focuses, so the
      *  Skyline marquee + backdrop can preview the focused item. */
@@ -140,9 +146,17 @@ fun TvMediaRow(
             // is remembered yet) is the explicit firstItemFocusRequester
             // attached to index 0 — or Compose's default first-focusable
             // search if the row wasn't given one.
-            modifier = Modifier.focusRestorer(
-                firstItemFocusRequester ?: FocusRequester.Default,
-            ),
+            modifier = Modifier
+                .then(
+                    if (rowContainerFocusRequester != null) {
+                        Modifier.focusRequester(rowContainerFocusRequester)
+                    } else {
+                        Modifier
+                    },
+                )
+                .focusRestorer(
+                    firstItemFocusRequester ?: FocusRequester.Default,
+                ),
             horizontalArrangement = Arrangement.spacedBy(itemSpacing),
             contentPadding = PaddingValues(
                 start = startPadding,

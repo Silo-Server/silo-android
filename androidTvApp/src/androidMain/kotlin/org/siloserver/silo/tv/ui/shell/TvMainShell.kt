@@ -282,6 +282,7 @@ fun TvMainShell(
 
     val focusManager = LocalFocusManager.current
     val contentFocusRequester = remember { FocusRequester() }
+    val homeFirstItemFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
     // Opening an outer item-detail route pauses/removes this shell. Remember the
     // pending hand-back in the Main back-stack entry so it survives either form,
@@ -485,6 +486,15 @@ fun TvMainShell(
 
     val onSelectRoot: (TvRootDestination) -> Unit = { dest ->
         val route = dest.toRoute()
+        if (dest == TvRootDestination.Home) {
+            // Detail return deliberately preserves the card that opened the
+            // detail page, but that protection must end when the user
+            // explicitly selects Home from the bar. Otherwise its nonzero
+            // token keeps suppressing Home's normal first-card focus request
+            // for the rest of the shell session.
+            homeDetailReturnFocusRequest = 0
+            homeDetailReturnNeedsRetry = false
+        }
         if (dest == TvRootDestination.Calendar) {
             calendarFocusHandoffPending = true
         }
@@ -500,6 +510,15 @@ fun TvMainShell(
         // contentFocusRequest; library-type screens listen to their section
         // nonce (which re-applies the section AND refocuses the first row).
         contentFocusRequest++
+        if (dest == TvRootDestination.Home) {
+            // A focus request made from the bar toward a card is cancelled by
+            // the content Box's focusRestorer (its `enter` restores the
+            // remembered card and rolls the transaction back). Enter content
+            // through the restorer here — the known-good hop — then the
+            // feed's focusRequest effect walks focus to row 0 / card 0 one
+            // scope per frame and scrolls the band to the top.
+            runCatching { contentFocusRequester.requestFocus() }
+        }
         if (dest is TvRootDestination.LibraryType) {
             sectionRequestNonces[dest.type] = (sectionRequestNonces[dest.type] ?: 0) + 1
         }
@@ -509,6 +528,11 @@ fun TvMainShell(
             // handoff and restores Home's last descendant during the route
             // transition. Leave focus on the Calendar tab until its screen is
             // composed, then let TvCalendarScreen target the filter directly.
+            focusState.closeProfileMenuForContent()
+        } else if (dest == TvRootDestination.Home) {
+            // Home's contentFocusRequest targets row 0 / card 0 directly.
+            // Re-entering the parent content focusRestorer here would restore
+            // the previously focused Home card and race that explicit reset.
             focusState.closeProfileMenuForContent()
         } else {
             moveFocusToContent(route)
@@ -747,6 +771,7 @@ fun TvMainShell(
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
                         detailReturnFocusRequest = homeDetailReturnFocusRequest,
+                        firstRowFocusRequester = homeFirstItemFocusRequester,
                         shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -766,6 +791,7 @@ fun TvMainShell(
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
                         detailReturnFocusRequest = homeDetailReturnFocusRequest,
+                        firstRowFocusRequester = homeFirstItemFocusRequester,
                         shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
