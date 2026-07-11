@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -65,9 +66,9 @@ import org.koin.core.parameter.parametersOf
  * + name + birth/death/birthplace badges + bio) over a media-type filter row
  * and a poster grid.
  *
- * TV idioms follow the tvOS person screen: a fixed identity header + filter
- * area, with only the filmography grid scrolling under it. `onOpenItemDetail`
- * routes a poster to its detail page.
+ * TV idioms follow the tvOS person screen: the identity, filters, and
+ * filmography form one continuous scrolling surface. `onOpenItemDetail` routes
+ * a poster to its detail page.
  */
 @Composable
 fun TvPersonDetailScreen(
@@ -118,84 +119,74 @@ private fun TvPersonDetailContent(
     onRetryItems: () -> Unit,
     onOpenItemDetail: (contentId: String) -> Unit,
 ) {
-    val firstItemFocusRequester = remember { FocusRequester() }
+    val firstFilterFocusRequester = remember { FocusRequester() }
     var initialFocusRequested by remember { mutableStateOf(false) }
 
-    // One-shot: focus the grid only the first time items appear. Without the
-    // guard, a filter reload (items cleared then repopulated) re-runs this and
-    // yanks focus back to card 1 mid-browse.
-    LaunchedEffect(state.items.isNotEmpty()) {
-        if (initialFocusRequested || state.items.isEmpty()) return@LaunchedEffect
+    // Enter on the filter row so the full identity header remains visible.
+    // Moving down into the posters then scrolls the whole header away naturally.
+    LaunchedEffect(state.availableFilters.isNotEmpty()) {
+        if (initialFocusRequested || state.availableFilters.isEmpty()) return@LaunchedEffect
         kotlinx.coroutines.delay(120)
-        runCatching { firstItemFocusRequester.requestFocus() }
+        runCatching { firstFilterFocusRequester.requestFocus() }
         initialFocusRequested = true
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(
-                start = Spacing.safeArea,
-                top = 22.dp,
-                end = Spacing.safeArea,
-                bottom = 20.dp,
-            ),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        PersonHeader(person = person)
-        FilmographyHeader(
-            selected = state.selectedFilter,
-            availableFilters = state.availableFilters,
-            totalLoaded = state.items.size,
-            totalItems = state.totalItems,
-            hasMore = state.hasMore,
-            onSelect = onFilterSelected,
-        )
-        state.pagingError?.let { error ->
-            Text(
-                text = error,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
-                color = Color.White.copy(alpha = 0.62f),
-            )
-            // A failed page-0 load leaves the grid with nothing focusable below
-            // the chips — give the D-pad an explicit retry (matches the grid's
-            // load-more retry footer) instead of dead-ending on "No titles found.".
-            if (state.items.isEmpty()) {
-                Button(
-                    onClick = onRetryItems,
-                    contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
-                ) {
-                    Text("Retry", style = MaterialTheme.typography.labelLarge)
+    TvCatalogGrid(
+        items = state.items,
+        isLoading = state.isLoadingItems,
+        hasMore = state.hasMore,
+        onItemClick = onOpenItemDetail,
+        onLoadMore = onLoadMore,
+        modifier = Modifier.fillMaxSize(),
+        fixedColumnCount = PersonGridColumns,
+        contentPadding = PaddingValues(
+            start = Spacing.safeArea,
+            top = 22.dp,
+            end = Spacing.safeArea,
+            bottom = Spacing.xxl,
+        ),
+        horizontalSpacing = PersonGridItemSpacing,
+        verticalSpacing = Spacing.sectionSpacing,
+        artworkAspectRatioForItem = ::personWorkCardAspectRatio,
+        header = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                PersonHeader(person = person)
+                FilmographyHeader(
+                    selected = state.selectedFilter,
+                    availableFilters = state.availableFilters,
+                    totalLoaded = state.items.size,
+                    totalItems = state.totalItems,
+                    hasMore = state.hasMore,
+                    firstFilterFocusRequester = firstFilterFocusRequester,
+                    onSelect = onFilterSelected,
+                )
+                state.pagingError?.let { error ->
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 14.sp,
+                            lineHeight = 17.sp,
+                        ),
+                        color = Color.White.copy(alpha = 0.62f),
+                    )
+                    // A failed page-0 load leaves the grid with nothing
+                    // focusable below the chips. Keep retry in the scrolling
+                    // header instead of dead-ending on the empty state.
+                    if (state.items.isEmpty()) {
+                        Button(
+                            onClick = onRetryItems,
+                            contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),
+                        ) {
+                            Text("Retry", style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
                 }
             }
-        }
-
-        TvCatalogGrid(
-            items = state.items,
-            isLoading = state.isLoadingItems,
-            hasMore = state.hasMore,
-            onItemClick = onOpenItemDetail,
-            onLoadMore = onLoadMore,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            fixedColumnCount = PersonGridColumns,
-            contentPadding = PaddingValues(
-                start = 0.dp,
-                // Room for the focus ring above / the title+year label below —
-                // with a single row the year clipped at the margin (QA
-                // 2026-07-08).
-                top = 12.dp,
-                end = 0.dp,
-                bottom = Spacing.xxl,
-            ),
-            horizontalSpacing = PersonGridItemSpacing,
-            verticalSpacing = Spacing.sectionSpacing,
-            firstItemFocusRequester = firstItemFocusRequester,
-            artworkAspectRatioForItem = ::personWorkCardAspectRatio,
-            emptyState = {
-                TvCatalogEmptyState(message = "No titles found.")
-            },
-        )
-    }
+        },
+        emptyState = {
+            TvCatalogEmptyState(message = "No titles found.")
+        },
+    )
 }
 
 // ============================================================================
@@ -314,6 +305,7 @@ private fun FilmographyHeader(
     totalLoaded: Int,
     totalItems: Int,
     hasMore: Boolean,
+    firstFilterFocusRequester: FocusRequester,
     onSelect: (TvPersonMediaFilter) -> Unit,
 ) {
     Column(
@@ -345,11 +337,16 @@ private fun FilmographyHeader(
             horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
-            availableFilters.forEach { filter ->
+            availableFilters.forEachIndexed { index, filter ->
                 FilterChoiceChip(
                     label = filter.title,
                     selected = filter == selected,
                     onClick = { onSelect(filter) },
+                    modifier = if (index == 0) {
+                        Modifier.focusRequester(firstFilterFocusRequester)
+                    } else {
+                        Modifier
+                    },
                 )
             }
         }
