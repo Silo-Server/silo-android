@@ -671,7 +671,7 @@ private fun TvTopMenuIconButton(
                 imageVector = icon,
                 contentDescription = contentDescription,
                 tint = iconColor,
-                modifier = Modifier.size(17.dp),
+                modifier = Modifier.size(19.dp),
             )
         }
     }

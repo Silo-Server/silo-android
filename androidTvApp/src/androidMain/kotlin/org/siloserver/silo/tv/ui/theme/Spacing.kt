@@ -56,19 +56,19 @@ object TvSkyline {
     val barHeight = 32.dp
 
     /** Active tab capsule height, aligned to the trailing search/profile chrome. */
-    val tabPillHeight = 25.dp
+    val tabPillHeight = 30.dp
 
     /** Gap between tab capsules in the bar's center cluster — tvOS `tabSpacing` (8pt). */
     val tabSpacing = 4.dp
 
     /** Tab label size — exact 0.5x mapping of the 26pt tvOS token. */
-    val tabLabelSize = 13.sp
+    val tabLabelSize = 15.sp
 
-    /** Tab capsule horizontal padding — tvOS `tabPaddingHorizontal` (26pt). */
-    val tabPaddingHorizontal = 13.dp
+    /** Tab capsule horizontal padding — tvOS `tabPaddingHorizontal` (29pt). */
+    val tabPaddingHorizontal = 14.5.dp
 
-    /** Tab capsule vertical padding — tvOS `tabPaddingVertical` (11pt). */
-    val tabPaddingVertical = 5.5.dp
+    /** Tab capsule vertical padding — tvOS `tabPaddingVertical` (12pt). */
+    val tabPaddingVertical = 6.dp
 
     /** Square hit target of the search button and the avatar — tuned 8% larger for TV readability. */
     val barIconSize = 28.dp
@@ -79,8 +79,8 @@ object TvSkyline {
     /** Gap between the search button and the avatar — tvOS `barTrailingSpacing` (22pt). */
     val barTrailingSpacing = 11.dp
 
-    /** Wordmark size — tvOS `wordmarkSize` (26pt). */
-    val wordmarkSize = 13.sp
+    /** Wordmark size, visually balanced with the top navigation labels. */
+    val wordmarkSize = 15.sp
 
     /** Wordmark letter tracking — tvOS `wordmarkTracking` (+0.34 em). */
     val wordmarkTracking = 0.34.em
