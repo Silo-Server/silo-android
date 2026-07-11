@@ -191,8 +191,8 @@ fun TvMediaCard(
         Text(
             text = title,
             style = MaterialTheme.typography.titleSmall.copy(
-                fontSize = 14.sp,
-                lineHeight = 17.sp,
+                fontSize = 15.5.sp,
+                lineHeight = 18.5.sp,
             ),
             color = if (isFocused) {
                 Color.White
@@ -209,8 +209,8 @@ fun TvMediaCard(
             Text(
                 text = year.toString(),
                 style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 11.sp,
-                    lineHeight = 14.sp,
+                    fontSize = 12.5.sp,
+                    lineHeight = 15.5.sp,
                 ),
                 color = Color.White.copy(alpha = 0.70f),
                 textAlign = TextAlign.Start,
