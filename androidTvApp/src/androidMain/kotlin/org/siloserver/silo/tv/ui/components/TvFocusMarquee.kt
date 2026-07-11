@@ -217,10 +217,10 @@ private fun MarqueeBadge(label: String) {
 private val MarqueeContentWidth = 440.dp
 private val MarqueeSynopsisMaxWidth = 390.dp
 private val MarqueeLogoMaxWidth = 440.dp
-private val MarqueeLogoMaxHeight = 100.dp
+private val MarqueeLogoMaxHeight = 95.dp
 private val MarqueeDetailLineHeight = 14.dp
-private val MarqueeTitleSize = 42.sp
-private val MarqueeMetaSize = 11.5.sp
-private val MarqueeDetailSize = 11.sp
-private val MarqueeSynopsisSize = 12.sp
-private val MarqueeBadgeSize = 8.sp
+private val MarqueeTitleSize = 44.sp
+private val MarqueeMetaSize = 12.5.sp
+private val MarqueeDetailSize = 12.sp
+private val MarqueeSynopsisSize = 13.sp
+private val MarqueeBadgeSize = 8.5.sp

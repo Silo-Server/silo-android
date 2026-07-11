@@ -62,6 +62,7 @@ import org.siloserver.silo.tv.ui.theme.ChromeSelectedBorder
 import org.siloserver.silo.tv.ui.theme.ChromeSelectedFill
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.DarkBackground
+import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.theme.navRailLabel
 
@@ -365,7 +366,7 @@ fun TvTopMenuBar(
         // Leading: SILO wordmark.
         Box(
             modifier = Modifier
-                .padding(start = TvSkyline.safeAreaX)
+                .padding(start = Spacing.safeArea)
                 .height(TvSkyline.barHeight),
             contentAlignment = Alignment.Center,
         ) {
