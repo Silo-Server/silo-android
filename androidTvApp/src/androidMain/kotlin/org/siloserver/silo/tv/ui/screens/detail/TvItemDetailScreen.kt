@@ -116,7 +116,6 @@ fun TvItemDetailScreen(
     seasonNumber: Int? = null,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, subtitleTrackIndex: Int?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
-    onItemDetailReplace: (contentId: String) -> Unit = onItemDetail,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchTogether: (RoomSnapshot) -> Unit,
@@ -173,7 +172,6 @@ fun TvItemDetailScreen(
             viewModel = viewModel,
             onPlay = onPlay,
             onItemDetail = onItemDetail,
-            onItemDetailReplace = onItemDetailReplace,
             onSeriesClick = onSeriesClick,
             onSeasonClick = onSeasonClick,
             onOpenPerson = onOpenPerson,
@@ -189,7 +187,6 @@ private fun TvDetailContent(
     viewModel: TvItemDetailViewModel,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, subtitleTrackIndex: Int?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
-    onItemDetailReplace: (contentId: String) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
@@ -470,15 +467,7 @@ private fun TvDetailContent(
                                 showsSeasonChips = showsSeasonChips,
                                 onReturnToHero = returnToHero,
                                 onSeasonSelected = { season ->
-                                    if (detail.type == "series") {
-                                        viewModel.onSeasonSelected(season.seasonNumber)
-                                    } else if (season.contentId != detail.contentId) {
-                                        // Switching seasons REPLACES the nav entry
-                                        // (QA 2026-07-08): flipping through seasons
-                                        // must not stack pages — one Back returns
-                                        // to wherever the user came from.
-                                        onItemDetailReplace(season.contentId)
-                                    }
+                                    viewModel.onSeasonSelected(season.seasonNumber)
                                 },
                                 // tvOS parity: OK navigates to the episode's own
                                 // detail page (version pick / mark watched / play)

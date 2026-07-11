@@ -513,16 +513,6 @@ fun TvAppNavigation(
                         launchSingleTop = true
                     }
                 },
-                // Season switching REPLACES the current detail entry so paging
-                // through seasons never stacks pages — one Back returns to the
-                // screen the user arrived from (QA 2026-07-08).
-                onItemDetailReplace = { itemContentId ->
-                    val current = navController.currentBackStackEntry?.destination?.route
-                    navController.navigate(TvRoute.ItemDetail(itemContentId).route) {
-                        launchSingleTop = true
-                        current?.let { popUpTo(it) { inclusive = true } }
-                    }
-                },
                 onSeriesClick = { seriesId ->
                     navController.navigate(TvRoute.ItemDetail(seriesId).route) {
                         launchSingleTop = true
