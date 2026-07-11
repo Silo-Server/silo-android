@@ -48,6 +48,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -94,6 +96,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.isImageAvatar
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
@@ -280,6 +283,42 @@ fun TvMainShell(
     val focusManager = LocalFocusManager.current
     val contentFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
+    // Opening an outer item-detail route pauses/removes this shell. Remember the
+    // pending hand-back in the Main back-stack entry so it survives either form,
+    // then re-enter the existing content focusRestorer when Main resumes.
+    var restoreHomeContentAfterDetail by rememberSaveable { mutableStateOf(false) }
+    var suppressHomeRefreshAfterDetail by rememberSaveable { mutableStateOf(false) }
+    var homeDetailReturnFocusRequest by remember { mutableIntStateOf(0) }
+    var homeDetailReturnNeedsRetry by remember { mutableStateOf(false) }
+    LifecycleResumeEffect(Unit) {
+        if (restoreHomeContentAfterDetail) {
+            restoreHomeContentAfterDetail = false
+            // Claim the content group synchronously during ON_RESUME, before
+            // Compose's default search can briefly settle on the Home tab.
+            homeDetailReturnNeedsRetry = runCatching {
+                !contentFocusRequester.requestFocus()
+            }.getOrDefault(true)
+            homeDetailReturnFocusRequest++
+        }
+        onPauseOrDispose { }
+    }
+    LaunchedEffect(homeDetailReturnFocusRequest) {
+        if (homeDetailReturnFocusRequest == 0) return@LaunchedEffect
+        // One-frame fallback for the disposed/recreated case where the Home row
+        // requester was not attached during the synchronous resume claim.
+        withFrameNanos { }
+        if (homeDetailReturnNeedsRetry) {
+            runCatching { contentFocusRequester.requestFocus() }
+        }
+        // The detail-return ON_RESUME event has now passed and Home is stable;
+        // future real resumes (playback/background) should refresh normally.
+        suppressHomeRefreshAfterDetail = false
+    }
+    val openHomeItemDetail: (String) -> Unit = { contentId ->
+        restoreHomeContentAfterDetail = true
+        suppressHomeRefreshAfterDetail = true
+        onOpenItemDetail(contentId)
+    }
     var contentUpFallback by remember { mutableStateOf<(() -> Boolean)?>(null) }
     // Feeds that registered the up-fallback slot, were superseded by a newer
     // feed, and are still awaiting their (now-stale) onDispose. Tracking them
@@ -695,7 +734,7 @@ fun TvMainShell(
             ) {
                 composable(TvMainRoute.Video.route) {
                     TvHomeScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openHomeItemDetail,
                         onPlayItem = onPlayItem,
                         onSeeAll = {
                             navigateToSecondary(TvMainRoute.Browse.route)
@@ -707,12 +746,14 @@ fun TvMainShell(
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
+                        detailReturnFocusRequest = homeDetailReturnFocusRequest,
+                        shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
                 composable(TvMainRoute.Home.route) {
                     TvHomeScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openHomeItemDetail,
                         onPlayItem = onPlayItem,
                         onSeeAll = {
                             navigateToSecondary(TvMainRoute.Browse.route)
@@ -724,6 +765,8 @@ fun TvMainShell(
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
+                        detailReturnFocusRequest = homeDetailReturnFocusRequest,
+                        shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }

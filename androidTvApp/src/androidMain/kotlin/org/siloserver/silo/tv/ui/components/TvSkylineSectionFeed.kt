@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -68,6 +69,7 @@ fun TvSkylineSectionFeed(
     onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     focusRequest: Int = 0,
+    detailReturnFocusRequest: Int = 0,
     onInitialContentFocus: () -> Unit = {},
     iconForSection: (ResolvedSection) -> ImageVector? = { null },
     onSeeAllClickForSection: (ResolvedSection) -> (() -> Unit)? = { null },
@@ -343,12 +345,16 @@ fun TvSkylineSectionFeed(
     }
 
     val firstRowFocusRequester = remember { FocusRequester() }
-    var initialFocusRequested by remember { mutableStateOf(false) }
+    // These consumption guards must survive the outer Main → ItemDetail → Main
+    // round trip. Plain remember resets when the feed is disposed, replaying
+    // both first-card effects after focusRestorer has correctly restored the
+    // previously entered card.
+    var initialFocusRequested by rememberSaveable { mutableStateOf(false) }
     var firstRowFocusRequest by remember { mutableIntStateOf(0) }
     // Last shell focus-request value we actually applied. Guards the effect
     // below so it only grabs the first row on a genuine counter bump, never on
     // a firstRowId change alone.
-    var lastAppliedFocusRequest by remember { mutableIntStateOf(0) }
+    var lastAppliedFocusRequest by rememberSaveable { mutableIntStateOf(0) }
 
     val firstRowId = rows.firstOrNull()?.id
     fun requestFirstRowFocus(): Boolean {
@@ -358,14 +364,27 @@ fun TvSkylineSectionFeed(
         return true
     }
 
-    LaunchedEffect(firstRowId) {
+    LaunchedEffect(firstRowId, detailReturnFocusRequest) {
+        if (detailReturnFocusRequest > 0) {
+            // The shell's content focusRestorer owns detail-return focus. Any
+            // feed recreated by Home's ON_RESUME refresh must not run its
+            // first-entry fallback over the restored card.
+            initialFocusRequested = true
+            return@LaunchedEffect
+        }
         if (initialFocusRequested || firstRowId == null) return@LaunchedEffect
         delay(120)
+        if (initialFocusRequested) return@LaunchedEffect
         requestFirstRowFocus()
         initialFocusRequested = true
     }
 
-    LaunchedEffect(focusRequest, firstRowId) {
+    LaunchedEffect(focusRequest, firstRowId, detailReturnFocusRequest) {
+        if (detailReturnFocusRequest > 0) {
+            // Consume any still-live menu handoff token without replaying it.
+            lastAppliedFocusRequest = focusRequest
+            return@LaunchedEffect
+        }
         // Grab the first row ONLY on an actual shell focus-request bump
         // (menu→content selection), never on a firstRowId change alone. Keeping
         // firstRowId as a key lets a bump that arrived before rows loaded still

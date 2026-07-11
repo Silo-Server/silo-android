@@ -30,6 +30,8 @@ fun TvHomeScreen(
     onOpenForYou: () -> Unit = {},
     onInitialContentFocus: () -> Unit = {},
     focusRequest: Int = 0,
+    detailReturnFocusRequest: Int = 0,
+    shouldRefreshOnResume: () -> Boolean = { true },
     onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
     viewModel: HomeViewModel = koinViewModel(),
 ) {
@@ -43,7 +45,9 @@ fun TvHomeScreen(
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshFromRealtime()
+                if (shouldRefreshOnResume()) {
+                    viewModel.refreshFromRealtime()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -66,6 +70,7 @@ fun TvHomeScreen(
             onOpenForYou = onOpenForYou,
             onInitialContentFocus = onInitialContentFocus,
             focusRequest = focusRequest,
+            detailReturnFocusRequest = detailReturnFocusRequest,
             onContentUpFallbackChanged = onContentUpFallbackChanged,
             onSetWatched = viewModel::setWatched,
             onToggleFavorite = viewModel::toggleFavorite,
@@ -83,6 +88,7 @@ private fun TvHomeContent(
     onOpenForYou: () -> Unit = {},
     onInitialContentFocus: () -> Unit,
     focusRequest: Int,
+    detailReturnFocusRequest: Int,
     onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)?,
     onSetWatched: (String, Boolean) -> Unit = { _, _ -> },
     onToggleFavorite: (String, Boolean) -> Unit = { _, _ -> },
@@ -93,6 +99,7 @@ private fun TvHomeContent(
         sections = sections,
         onItemClick = onItemClick,
         focusRequest = focusRequest,
+        detailReturnFocusRequest = detailReturnFocusRequest,
         onInitialContentFocus = onInitialContentFocus,
         onContentUpFallbackChanged = onContentUpFallbackChanged,
         iconForSection = { section ->
