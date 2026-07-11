@@ -191,7 +191,10 @@ fun TvServerSetupScreen(
                     },
                     onAllow = pairingReceiver::allowPendingServer,
                     onDeny = pairingReceiver::denyPendingServer,
-                    modifier = Modifier.widthIn(max = 620.dp),
+                    // tvOS renders pairing states directly on the Aurora backdrop
+                    // in an 880pt content column. Shield uses a 2x density, so
+                    // 440dp produces the same 880px maximum footprint.
+                    modifier = Modifier.widthIn(max = 440.dp),
                 )
             }
         } else {
@@ -213,9 +216,15 @@ fun TvServerSetupScreen(
                 ) {
                     AuroraEyebrow(text = "Step 01 — Connect")
                     Text(
-                        text = "Add your server",
+                        text = "Connect this Android TV",
                         style = TvServerSetupTextStyles.Title,
                         color = Color.White,
+                    )
+                    Text(
+                        text = "Use your phone, or enter the server address with the remote.",
+                        style = TvServerSetupTextStyles.PairingDetail,
+                        color = Color.White.copy(alpha = 0.72f),
+                        textAlign = TextAlign.Center,
                     )
                 }
 
@@ -292,7 +301,7 @@ private fun PhoneSetupCard(
             .padding(24.dp),
     ) {
         Text(
-            text = "SETUP WITH PHONE",
+            text = "RECOMMENDED · USE PHONE",
             style = TvServerSetupTextStyles.Pill,
             color = Color.White.copy(alpha = 0.70f),
             modifier = Modifier
@@ -593,13 +602,17 @@ private fun ActivePairingPanel(
     onDeny: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val allowFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(status) {
+        if (status is PairingReceiverStatus.ConsentRequested) {
+            runCatching { allowFocusRequester.requestFocus() }
+        }
+    }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
         modifier = modifier
-            .fillMaxWidth()
-            .auroraGlass(18.dp)
-            .padding(horizontal = 52.dp, vertical = 42.dp),
+            .fillMaxWidth(),
     ) {
         when (status) {
             PairingReceiverStatus.Connected -> {
@@ -611,29 +624,44 @@ private fun ActivePairingPanel(
                 )
                 WaitingDots()
                 Text(
-                    text = "Choose which server to set up on your phone.",
+                    text = "On your phone, choose which servers this TV should sign in to.",
                     style = TvServerSetupTextStyles.PairingDetail,
                     color = Color.White.copy(alpha = 0.72f),
                 )
                 AuroraGhostButton(label = "Cancel", onClick = onCancel)
             }
             is PairingReceiverStatus.ConsentRequested -> {
-                AuroraEyebrow(text = "Step 02 — Allow")
+                AuroraEyebrow(text = "Step 01 — Connect")
                 Text(
-                    text = "Set up this TV?",
+                    text = "Allow this setup?",
                     style = TvServerSetupTextStyles.PairingTitle,
                     color = Color.White,
                 )
-                ServerNameLabel(status.serverName)
                 Text(
-                    text = "A phone wants to sign this TV in to the server above. " +
-                        "Only continue if that phone is yours.",
+                    text = "A nearby phone wants to sign this TV in to ${status.serverName}.",
                     style = TvServerSetupTextStyles.PairingDetail,
                     color = Color.White.copy(alpha = 0.72f),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                    AuroraPrimaryButton(label = "Allow", onClick = onAllow)
-                    AuroraGhostButton(label = "Don\u2019t allow", onClick = onDeny)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    modifier = Modifier.padding(top = Spacing.sm),
+                ) {
+                    AuroraPrimaryButton(
+                        label = "Allow",
+                        onClick = onAllow,
+                        focusRequester = allowFocusRequester,
+                        modifier = Modifier
+                            .width(180.dp)
+                            .height(60.dp),
+                    )
+                    AuroraGhostButton(
+                        label = "Don\u2019t allow",
+                        onClick = onDeny,
+                        modifier = Modifier
+                            .width(180.dp)
+                            .height(60.dp),
+                    )
                 }
             }
             is PairingReceiverStatus.Pairing -> {
@@ -646,7 +674,7 @@ private fun ActivePairingPanel(
                 ServerNameLabel(status.serverName)
                 WaitingDots(compact = true)
                 Text(
-                    text = "Starting sign-in on your phone.",
+                    text = "Starting secure sign-in…",
                     style = TvServerSetupTextStyles.PairingDetail,
                     color = Color.White.copy(alpha = 0.72f),
                 )
@@ -683,7 +711,6 @@ private fun ActivePairingPanel(
                     style = TvServerSetupTextStyles.PairingDetail,
                     color = Color.White.copy(alpha = 0.72f),
                 )
-                AuroraGhostButton(label = "Cancel", onClick = onCancel)
             }
             is PairingReceiverStatus.Completed -> {
                 AuroraEyebrow(text = "All set")

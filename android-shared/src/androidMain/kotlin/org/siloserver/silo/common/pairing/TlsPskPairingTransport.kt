@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.bouncycastle.tls.AlertLevel
 import org.bouncycastle.tls.BasicTlsPSKExternal
 import org.bouncycastle.tls.CipherSuite
@@ -94,9 +95,11 @@ class TlsPskPairingTransport private constructor(
     override suspend fun send(message: PairingMessage) {
         val payload = PairingMessageCodec.encode(message).toByteArray(Charsets.UTF_8)
         val framed = PairingFrame.encode(payload)
-        protocolMutex.withLock {
-            protocol.writeApplicationData(framed, 0, framed.size)
-            flushOutputLocked()
+        withContext(Dispatchers.IO) {
+            protocolMutex.withLock {
+                protocol.writeApplicationData(framed, 0, framed.size)
+                flushOutputLocked()
+            }
         }
     }
 

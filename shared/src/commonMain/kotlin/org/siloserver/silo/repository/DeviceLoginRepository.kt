@@ -4,6 +4,7 @@ import org.siloserver.silo.model.auth.DeviceLoginPollResponse
 import org.siloserver.silo.model.auth.DeviceLoginStartResponse
 import org.siloserver.silo.model.auth.DeviceLoginStatus
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.DeviceLoginApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -53,9 +54,22 @@ class DeviceLoginRepository(
      * Call this from a cancellable coroutine — cancel to abort.
      */
     suspend fun begin(deviceName: String?, devicePlatform: String?) {
+        beginAt(serverUrl = null, deviceName = deviceName, devicePlatform = devicePlatform)
+    }
+
+    /**
+     * Begin against [serverUrl] without changing the globally active server.
+     * Companion setup uses this persist-on-success path for candidate servers.
+     */
+    suspend fun beginAt(serverUrl: String?, deviceName: String?, devicePlatform: String?) {
         _state.value = DeviceLoginState.Initiating
 
-        val session = when (val r = api.startDeviceLogin(deviceName, devicePlatform)) {
+        val startResult = if (serverUrl == null) {
+            api.startDeviceLogin(deviceName, devicePlatform)
+        } else {
+            api.startDeviceLoginAt(serverUrl, deviceName, devicePlatform)
+        }
+        val session = when (val r = startResult) {
             is ApiResult.Success -> r.data
             is ApiResult.Error -> {
                 _state.value = DeviceLoginState.Failed(
@@ -74,7 +88,7 @@ class DeviceLoginRepository(
         }
 
         _state.value = DeviceLoginState.Awaiting(session)
-        runPollLoop(session)
+        runPollLoop(session, serverUrl)
     }
 
     fun reset() {
@@ -90,12 +104,26 @@ class DeviceLoginRepository(
     suspend fun deny(token: String?, code: String?) =
         api.denyDeviceLogin(token = token, code = code)
 
-    private suspend fun runPollLoop(session: DeviceLoginStartResponse) {
+    suspend fun lookup(scope: AuthScopeSnapshot, code: String) =
+        api.lookupDeviceLoginForScope(scope, code)
+
+    suspend fun approve(scope: AuthScopeSnapshot, code: String) =
+        api.approveDeviceLoginForScope(scope, code)
+
+    suspend fun deny(scope: AuthScopeSnapshot, code: String) =
+        api.denyDeviceLoginForScope(scope, code)
+
+    private suspend fun runPollLoop(session: DeviceLoginStartResponse, serverUrl: String?) {
         var intervalMs = session.interval.coerceAtLeast(1) * 1_000L
 
         while (true) {
             try {
-                val response = when (val r = api.pollDeviceLogin(session.deviceCode)) {
+                val pollResult = if (serverUrl == null) {
+                    api.pollDeviceLogin(session.deviceCode)
+                } else {
+                    api.pollDeviceLoginAt(serverUrl, session.deviceCode)
+                }
+                val response = when (val r = pollResult) {
                     is ApiResult.Success -> r.data
                     is ApiResult.Error -> {
                         if (r.code == 404) {

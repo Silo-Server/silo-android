@@ -1,6 +1,9 @@
 package org.siloserver.silo.common.pairing
 
-import kotlinx.coroutines.cancelAndJoin
+import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.coroutineScope
@@ -9,11 +12,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.siloserver.silo.model.auth.DeviceLoginDecisionResponse
 import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.pairing.PairingMessage
 import org.siloserver.silo.pairing.PairingProtocol
 import org.siloserver.silo.pairing.PairingServerStatus
@@ -26,6 +32,10 @@ data class CompanionPairingTarget(
     val port: Int,
     val state: String? = null,
     val version: Int = PairingProtocol.VERSION,
+    /** Fresh TXT-record nonce for one TV advertising session. */
+    val sessionId: String? = null,
+    /** DNS-SD instance name used by onServiceLost; it can differ from the TXT display name. */
+    val serviceName: String = name,
 )
 
 data class CompanionPairingServer(
@@ -50,11 +60,12 @@ data class CompanionPairingApproval(
 sealed class CompanionPairingStatus {
     data object Idle : CompanionPairingStatus()
     data class Connecting(val targetName: String) : CompanionPairingStatus()
+    data class PickServers(val targetName: String) : CompanionPairingStatus()
     data class PushingServer(val targetName: String, val serverName: String) : CompanionPairingStatus()
     data class AwaitingMatchConfirmation(val approval: CompanionPairingApproval) : CompanionPairingStatus()
     data class Approving(val targetName: String, val serverName: String) : CompanionPairingStatus()
     data class SignedIn(val targetName: String, val serverName: String, val serverCount: Int) : CompanionPairingStatus()
-    data class Completed(val targetName: String, val serverCount: Int) : CompanionPairingStatus()
+    data class Completed(val targetName: String, val serverNames: List<String>) : CompanionPairingStatus()
     data class Failed(val targetName: String, val message: String) : CompanionPairingStatus()
 }
 
@@ -64,14 +75,13 @@ sealed class CompanionPairingResult {
 }
 
 interface CompanionPairingServerStore {
-    fun snapshot(): CompanionPairingServerSnapshot
-    suspend fun switchTo(serverId: String)
+    suspend fun snapshot(): CompanionPairingServerSnapshot
 }
 
 interface CompanionDeviceLoginApprover {
-    suspend fun lookup(code: String): ApiResult<DeviceLoginLookupResponse>
-    suspend fun approve(code: String): ApiResult<DeviceLoginDecisionResponse>
-    suspend fun deny(code: String): ApiResult<DeviceLoginDecisionResponse>
+    suspend fun lookup(server: CompanionPairingServer, code: String): ApiResult<DeviceLoginLookupResponse>
+    suspend fun approve(server: CompanionPairingServer, code: String): ApiResult<DeviceLoginDecisionResponse>
+    suspend fun deny(server: CompanionPairingServer, code: String): ApiResult<DeviceLoginDecisionResponse>
 }
 
 fun interface CompanionPairingTransportFactory {
@@ -80,12 +90,19 @@ fun interface CompanionPairingTransportFactory {
 
 class RegistryCompanionPairingServerStore(
     private val registry: ServerRegistry,
+    private val tokenManager: TokenManager,
 ) : CompanionPairingServerStore {
-    override fun snapshot(): CompanionPairingServerSnapshot =
-        CompanionPairingServerSnapshot(
+    override suspend fun snapshot(): CompanionPairingServerSnapshot {
+        val signedInServers = buildList {
+            for (entry in registry.entries.value) {
+                if (entry.url.isBlank()) continue
+                if (tokenManager.getAccessTokenForScope(entry.id).isNullOrBlank()) continue
+                add(entry)
+            }
+        }
+        return CompanionPairingServerSnapshot(
             activeServerId = registry.activeServerId.value,
-            servers = registry.entries.value
-                .filter { it.url.isNotBlank() }
+            servers = signedInServers
                 .sortedWith(
                     compareByDescending<org.siloserver.silo.model.server.ServerEntry> {
                         it.id == registry.activeServerId.value
@@ -99,23 +116,34 @@ class RegistryCompanionPairingServerStore(
                     )
                 },
         )
-
-    override suspend fun switchTo(serverId: String) {
-        registry.switchTo(serverId)
     }
+
 }
 
 class RepositoryCompanionDeviceLoginApprover(
     private val repository: DeviceLoginRepository,
 ) : CompanionDeviceLoginApprover {
-    override suspend fun lookup(code: String): ApiResult<DeviceLoginLookupResponse> =
-        repository.lookup(token = null, code = code)
+    override suspend fun lookup(
+        server: CompanionPairingServer,
+        code: String,
+    ): ApiResult<DeviceLoginLookupResponse> = repository.lookup(server.profilelessScope(), code)
 
-    override suspend fun approve(code: String): ApiResult<DeviceLoginDecisionResponse> =
-        repository.approve(token = null, code = code)
+    override suspend fun approve(
+        server: CompanionPairingServer,
+        code: String,
+    ): ApiResult<DeviceLoginDecisionResponse> = repository.approve(server.profilelessScope(), code)
 
-    override suspend fun deny(code: String): ApiResult<DeviceLoginDecisionResponse> =
-        repository.deny(token = null, code = code)
+    override suspend fun deny(
+        server: CompanionPairingServer,
+        code: String,
+    ): ApiResult<DeviceLoginDecisionResponse> = repository.deny(server.profilelessScope(), code)
+
+    private fun CompanionPairingServer.profilelessScope() = AuthScopeSnapshot(
+        serverId = id,
+        serverUrl = url,
+        profileId = null,
+        profileToken = null,
+    )
 }
 
 class CompanionPairingCoordinator(
@@ -126,8 +154,13 @@ class CompanionPairingCoordinator(
     private val _status = MutableStateFlow<CompanionPairingStatus>(CompanionPairingStatus.Idle)
     val status: StateFlow<CompanionPairingStatus> = _status.asStateFlow()
 
+    fun reset() {
+        _status.value = CompanionPairingStatus.Idle
+    }
+
     suspend fun pair(
         target: CompanionPairingTarget,
+        chooseServers: suspend (List<CompanionPairingServer>) -> List<CompanionPairingServer> = { it },
         confirmFirstMatch: suspend (CompanionPairingApproval) -> Boolean = { true },
     ): CompanionPairingResult {
         val snapshot = serverStore.snapshot()
@@ -137,9 +170,15 @@ class CompanionPairingCoordinator(
         }
 
         var signedInCount = 0
+        val signedInNames = mutableListOf<String>()
         var transport: PairingTransport? = null
         try {
             _status.value = CompanionPairingStatus.Connecting(target.name)
+            Log.i(
+                TAG,
+                "Connecting to ${target.name} at ${target.host}:${target.port} " +
+                    "(session=${target.sessionId ?: "unknown"})",
+            )
             val connected = transportFactory.connect(target).also { transport = it }
             coroutineScope {
                 val inbox = Channel<PairingMessage>(Channel.UNLIMITED)
@@ -148,9 +187,14 @@ class CompanionPairingCoordinator(
                 }
                 try {
                     awaitCompatibleHello(inbox)
+                    _status.value = CompanionPairingStatus.PickServers(target.name)
+                    val selectedServers = chooseServers(orderedServers)
+                        .filter { selected -> orderedServers.any { it.id == selected.id } }
+                    if (selectedServers.isEmpty()) {
+                        error("Choose at least one server to continue.")
+                    }
 
-                    orderedServers.forEachIndexed { index, server ->
-                        serverStore.switchTo(server.id)
+                    selectedServers.forEachIndexed { index, server ->
                         pushAndApproveServer(
                             target = target,
                             server = server,
@@ -160,6 +204,7 @@ class CompanionPairingCoordinator(
                             confirmFirstMatch = confirmFirstMatch,
                         )
                         signedInCount += 1
+                        signedInNames += server.displayName
                         _status.value = CompanionPairingStatus.SignedIn(
                             targetName = target.name,
                             serverName = server.displayName,
@@ -168,23 +213,41 @@ class CompanionPairingCoordinator(
                     }
                     connected.send(PairingMessage.Done)
                 } finally {
-                    collector.cancelAndJoin()
-                    inbox.close()
+                    // The TLS input stream performs a blocking socket read. Cancelling its
+                    // collector alone cannot interrupt that read, so close the transport
+                    // before joining or successful pairing can remain stuck in cleanup.
+                    withContext(NonCancellable) {
+                        collector.cancel()
+                        withContext(Dispatchers.IO) { connected.close() }
+                        collector.join()
+                        inbox.close()
+                    }
                 }
             }
-            _status.value = CompanionPairingStatus.Completed(target.name, signedInCount)
+            _status.value = CompanionPairingStatus.Completed(
+                targetName = target.name,
+                serverNames = signedInNames.toList(),
+            )
             return CompanionPairingResult.Completed(signedInCount)
+        } catch (e: CancellationException) {
+            throw e
         } catch (t: Throwable) {
-            val message = t.message?.takeIf { it.isNotBlank() } ?: "Companion setup failed."
+            Log.e(TAG, "Companion setup failed for ${target.name}", t)
+            val message = t.userFacingPairingMessage()
             _status.value = CompanionPairingStatus.Failed(target.name, message)
             return CompanionPairingResult.Failed(message)
         } finally {
-            val active = snapshot.activeServerId
-            if (active != null) {
-                runCatching { serverStore.switchTo(active) }
+            withContext(NonCancellable + Dispatchers.IO) {
+                transport?.close()
             }
-            transport?.close()
         }
+    }
+
+    private fun Throwable.userFacingPairingMessage(): String {
+        val detail = generateSequence(this) { it.cause }
+            .mapNotNull { it.message?.takeIf(String::isNotBlank) }
+            .firstOrNull()
+        return detail ?: "Couldn't connect to the TV. Keep its setup screen open and try again."
     }
 
     private suspend fun pushAndApproveServer(
@@ -201,7 +264,7 @@ class CompanionPairingCoordinator(
         val started = inbox.receiveFirst<PairingMessage.DeviceStarted>(
             timeoutMs = deviceStartedTimeoutMs(requireUserConfirmation),
         ) { it.serverURL == server.url }
-        val lookup = when (val result = deviceLoginApprover.lookup(started.userCode)) {
+        val lookup = when (val result = deviceLoginApprover.lookup(server, started.userCode)) {
             is ApiResult.Success -> result.data
             is ApiResult.Error -> error(result.message.ifBlank { "Unable to verify TV setup code." })
             is ApiResult.NetworkError -> error(result.exception.message ?: "Unable to verify TV setup code.")
@@ -209,7 +272,7 @@ class CompanionPairingCoordinator(
         val serverMatchCode = lookup.matchCode?.takeIf { it.isNotBlank() }
             ?: error("Server did not return a match code for TV setup.")
         if (serverMatchCode != started.matchCode) {
-            deviceLoginApprover.deny(started.userCode)
+            deviceLoginApprover.deny(server, started.userCode)
             transport.send(PairingMessage.Cancel(reason = "match-code-mismatch"))
             error("TV setup code mismatch. Nothing was approved.")
         }
@@ -224,14 +287,14 @@ class CompanionPairingCoordinator(
         if (requireUserConfirmation) {
             _status.value = CompanionPairingStatus.AwaitingMatchConfirmation(approval)
             if (!confirmFirstMatch(approval)) {
-                deviceLoginApprover.deny(started.userCode)
+                deviceLoginApprover.deny(server, started.userCode)
                 transport.send(PairingMessage.Cancel(reason = "user-cancelled"))
                 error("TV setup was cancelled.")
             }
         }
 
         _status.value = CompanionPairingStatus.Approving(target.name, server.displayName)
-        when (val approved = deviceLoginApprover.approve(started.userCode)) {
+        when (val approved = deviceLoginApprover.approve(server, started.userCode)) {
             is ApiResult.Success -> Unit
             is ApiResult.Error -> error(approved.message.ifBlank { "Unable to approve TV setup." })
             is ApiResult.NetworkError -> error(approved.exception.message ?: "Unable to approve TV setup.")
@@ -281,6 +344,7 @@ class CompanionPairingCoordinator(
         if (isFirstServer) FIRST_DEVICE_STARTED_TIMEOUT_MS else NEXT_DEVICE_STARTED_TIMEOUT_MS
 
     private companion object {
+        const val TAG = "CompanionPairing"
         const val HELLO_TIMEOUT_MS = 15_000L
         const val FIRST_DEVICE_STARTED_TIMEOUT_MS = 90_000L
         const val NEXT_DEVICE_STARTED_TIMEOUT_MS = 30_000L

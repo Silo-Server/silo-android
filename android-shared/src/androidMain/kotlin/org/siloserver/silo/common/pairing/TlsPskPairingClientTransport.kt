@@ -6,12 +6,16 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.bouncycastle.tls.BasicTlsPSKIdentity
+import org.bouncycastle.tls.BasicTlsPSKExternal
 import org.bouncycastle.tls.PSKTlsClient
+import org.bouncycastle.tls.PRFAlgorithm
 import org.bouncycastle.tls.ProtocolVersion
 import org.bouncycastle.tls.TlsClientProtocol
+import org.bouncycastle.tls.TlsPSKExternal
 import org.bouncycastle.tls.crypto.impl.bc.BcTlsCrypto
 import org.siloserver.silo.pairing.PairingFrame
 import org.siloserver.silo.pairing.PairingFrameBuffer
@@ -20,6 +24,7 @@ import org.siloserver.silo.pairing.PairingMessageCodec
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.SecureRandom
+import java.util.Vector
 
 class TlsPskPairingClientTransport private constructor(
     private val socket: Socket,
@@ -52,9 +57,11 @@ class TlsPskPairingClientTransport private constructor(
     override suspend fun send(message: PairingMessage) {
         val payload = PairingMessageCodec.encode(message).toByteArray(Charsets.UTF_8)
         val framed = PairingFrame.encode(payload)
-        writeMutex.withLock {
-            protocol.outputStream.write(framed)
-            protocol.outputStream.flush()
+        withContext(Dispatchers.IO) {
+            writeMutex.withLock {
+                protocol.outputStream.write(framed)
+                protocol.outputStream.flush()
+            }
         }
     }
 
@@ -68,31 +75,41 @@ class TlsPskPairingClientTransport private constructor(
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val HANDSHAKE_TIMEOUT_MS = 10_000
 
-        fun connect(host: String, port: Int): TlsPskPairingClientTransport {
+        suspend fun connect(host: String, port: Int): TlsPskPairingClientTransport =
+            withContext(Dispatchers.IO) {
+                connectBlocking(host, port)
+            }
+
+        private fun connectBlocking(host: String, port: Int): TlsPskPairingClientTransport {
             val socket = Socket()
-            socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
-            val previousSoTimeout = socket.soTimeout
-            socket.soTimeout = HANDSHAKE_TIMEOUT_MS
-            val protocol = TlsClientProtocol(socket.getInputStream(), socket.getOutputStream())
             try {
+                Log.i(TAG, "Connecting to $host:$port")
+                socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+                val previousSoTimeout = socket.soTimeout
+                socket.soTimeout = HANDSHAKE_TIMEOUT_MS
+                val protocol = TlsClientProtocol(socket.getInputStream(), socket.getOutputStream())
                 protocol.connect(
                     SiloPskTlsClient(
                         BcTlsCrypto(SecureRandom()),
                         BasicTlsPSKIdentity(PairingPsk.identity, PairingPsk.key),
                     ),
                 )
-            } finally {
                 runCatching { socket.soTimeout = previousSoTimeout }
+                Log.i(TAG, "TLS pairing connection established to $host:$port")
+                return TlsPskPairingClientTransport(socket = socket, protocol = protocol)
+            } catch (t: Throwable) {
+                Log.e(TAG, "TLS pairing connection failed to $host:$port", t)
+                runCatching { socket.close() }
+                throw t
             }
-            return TlsPskPairingClientTransport(socket = socket, protocol = protocol)
         }
     }
 }
 
 private class SiloPskTlsClient(
-    crypto: BcTlsCrypto,
+    private val bcCrypto: BcTlsCrypto,
     identity: BasicTlsPSKIdentity,
-) : PSKTlsClient(crypto, identity) {
+) : PSKTlsClient(bcCrypto, identity) {
     override fun getSupportedCipherSuites(): IntArray = intArrayOf(
         PairingPsk.tls13CipherSuite,
         PairingPsk.tls12CipherSuite,
@@ -102,4 +119,15 @@ private class SiloPskTlsClient(
         ProtocolVersion.TLSv13,
         ProtocolVersion.TLSv12,
     )
+
+    override fun getExternalPSKs(): Vector<TlsPSKExternal> =
+        Vector<TlsPSKExternal>().apply {
+            add(
+                BasicTlsPSKExternal(
+                    PairingPsk.identity,
+                    bcCrypto.createSecret(PairingPsk.key),
+                    PRFAlgorithm.tls13_hkdf_sha256,
+                ),
+            )
+        }
 }

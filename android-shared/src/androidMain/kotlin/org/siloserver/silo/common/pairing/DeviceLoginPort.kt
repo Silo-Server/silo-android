@@ -15,7 +15,7 @@ interface DeviceLoginPort {
     val state: StateFlow<DeviceLoginRepository.DeviceLoginState>
 
     /** Begin a device-login session; suspends until a terminal state is reached. */
-    suspend fun begin(deviceName: String?, devicePlatform: String?)
+    suspend fun begin(serverUrl: String, deviceName: String?, devicePlatform: String?)
 
     /** Reset back to Idle for the next attempt. */
     fun reset()
@@ -28,8 +28,8 @@ class DeviceLoginRepositoryPort(
     override val state: StateFlow<DeviceLoginRepository.DeviceLoginState>
         get() = repository.state
 
-    override suspend fun begin(deviceName: String?, devicePlatform: String?) =
-        repository.begin(deviceName, devicePlatform)
+    override suspend fun begin(serverUrl: String, deviceName: String?, devicePlatform: String?) =
+        repository.beginAt(serverUrl, deviceName, devicePlatform)
 
     override fun reset() = repository.reset()
 }

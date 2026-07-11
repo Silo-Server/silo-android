@@ -43,19 +43,32 @@ private class FakeTransport : PairingTransport {
     }
 }
 
-/** Fake auth port recording setServerUrl + persisted-token calls. */
+/** Fake auth port recording approved-session commits. */
 private class FakeAuthPort : PairingAuthPort {
-    val setUrls = mutableListOf<String>()
-    val persistedTokens = mutableListOf<Triple<String, String, Long>>()
-    override suspend fun setServerUrl(url: String) {
-        setUrls += url
-    }
-    override suspend fun persistApprovedTokens(
+    data class CommittedSession(
+        val serverUrl: String,
+        val serverName: String?,
+        val accessToken: String,
+        val refreshToken: String,
+        val expiresIn: Long,
+    )
+
+    val committedSessions = mutableListOf<CommittedSession>()
+
+    override suspend fun persistApprovedSession(
+        serverUrl: String,
+        serverName: String?,
         accessToken: String,
         refreshToken: String,
         expiresIn: Long,
     ) {
-        persistedTokens += Triple(accessToken, refreshToken, expiresIn)
+        committedSessions += CommittedSession(
+            serverUrl = serverUrl,
+            serverName = serverName,
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            expiresIn = expiresIn,
+        )
     }
 }
 
@@ -67,11 +80,13 @@ private class FakeDeviceLogin : DeviceLoginPort {
     private val _state =
         MutableStateFlow<DeviceLoginRepository.DeviceLoginState>(DeviceLoginRepository.DeviceLoginState.Idle)
     override val state: StateFlow<DeviceLoginRepository.DeviceLoginState> = _state
-    var beganWith: Pair<String?, String?>? = null
+    data class BeginCall(val serverUrl: String, val deviceName: String?, val devicePlatform: String?)
+
+    var beganWith: BeginCall? = null
     var resetCalled = false
 
-    override suspend fun begin(deviceName: String?, devicePlatform: String?) {
-        beganWith = deviceName to devicePlatform
+    override suspend fun begin(serverUrl: String, deviceName: String?, devicePlatform: String?) {
+        beganWith = BeginCall(serverUrl, deviceName, devicePlatform)
         // Drive Initiating → Awaiting; the terminal transition is pushed by the
         // test so the receiver's observer reliably sees each state.
         _state.value = DeviceLoginRepository.DeviceLoginState.Initiating
@@ -175,11 +190,14 @@ class PairingReceiverTest {
             recv.status.value,
         )
         recv.allowPendingServer()
-        // Let the receiver run setServerUrl + begin + observe Awaiting.
+        // Let the receiver begin against the candidate URL and observe Awaiting.
         repeat(10) { yield() }
 
-        assertEquals(listOf("https://srv.test"), auth.setUrls)
-        assertEquals("Test TV" to "Android TV", login.beganWith)
+        assertEquals(
+            FakeDeviceLogin.BeginCall("https://srv.test", "Test TV", "Android TV"),
+            login.beganWith,
+        )
+        assertEquals(emptyList(), auth.committedSessions)
 
         val deviceStarted = transport.sent.filterIsInstance<PairingMessage.DeviceStarted>().single()
         assertEquals("https://srv.test", deviceStarted.serverURL)
@@ -203,7 +221,16 @@ class PairingReceiverTest {
         assertTrue(login.resetCalled)
         // Tokens from the approved response must be persisted (so the TV is
         // authenticated, not just navigated to profile selection).
-        assertEquals(Triple("access", "refresh", 3600L), auth.persistedTokens.single())
+        assertEquals(
+            FakeAuthPort.CommittedSession(
+                serverUrl = "https://srv.test",
+                serverName = "Srv",
+                accessToken = "access",
+                refreshToken = "refresh",
+                expiresIn = 3600L,
+            ),
+            auth.committedSessions.single(),
+        )
 
         // Done → closed.
         transport.deliver(PairingMessage.Done)
@@ -236,6 +263,7 @@ class PairingReceiverTest {
         val failed = recv.status.value
         assertIs<PairingReceiverStatus.Failed>(failed)
         assertEquals("https://srv.test", failed.serverName)
+        assertEquals(emptyList(), auth.committedSessions)
 
         transport.deliver(PairingMessage.Done)
         job.join()
@@ -273,7 +301,7 @@ class PairingReceiverTest {
 
         // No login was started, no server was configured, the phone got a
         // Cancel and the connection closed.
-        assertEquals(emptyList(), auth.setUrls)
+        assertEquals(emptyList(), auth.committedSessions)
         assertEquals(null, login.beganWith)
         val cancel = transport.sent.filterIsInstance<PairingMessage.Cancel>().single()
         assertEquals("consent_denied", cancel.reason)
@@ -301,7 +329,8 @@ class PairingReceiverTest {
         // Second push in the same session must NOT re-ask for consent.
         transport.deliver(PairingMessage.PushServer(serverURL = "https://two.test", serverName = "Two"))
         repeat(10) { yield() }
-        assertEquals(listOf("https://one.test", "https://two.test"), auth.setUrls)
+        assertEquals(listOf("https://one.test"), auth.committedSessions.map { it.serverUrl })
+        assertEquals("https://two.test", login.beganWith?.serverUrl)
 
         transport.deliver(PairingMessage.Done)
         job.join()

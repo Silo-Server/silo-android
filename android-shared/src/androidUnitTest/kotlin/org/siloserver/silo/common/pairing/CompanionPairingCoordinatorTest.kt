@@ -75,7 +75,10 @@ private class FakeCompanionApprover(
     val approvals = mutableListOf<String>()
     val denials = mutableListOf<String>()
 
-    override suspend fun lookup(code: String): ApiResult<DeviceLoginLookupResponse> {
+    override suspend fun lookup(
+        server: CompanionPairingServer,
+        code: String,
+    ): ApiResult<DeviceLoginLookupResponse> {
         lookups += code
         return ApiResult.Success(
             DeviceLoginLookupResponse(
@@ -88,13 +91,19 @@ private class FakeCompanionApprover(
         )
     }
 
-    override suspend fun approve(code: String): ApiResult<DeviceLoginDecisionResponse> {
+    override suspend fun approve(
+        server: CompanionPairingServer,
+        code: String,
+    ): ApiResult<DeviceLoginDecisionResponse> {
         approvals += code
         onApprove(code)
         return ApiResult.Success(DeviceLoginDecisionResponse(status = "approved"))
     }
 
-    override suspend fun deny(code: String): ApiResult<DeviceLoginDecisionResponse> {
+    override suspend fun deny(
+        server: CompanionPairingServer,
+        code: String,
+    ): ApiResult<DeviceLoginDecisionResponse> {
         denials += code
         return ApiResult.Success(DeviceLoginDecisionResponse(status = "denied"))
     }
@@ -103,18 +112,12 @@ private class FakeCompanionApprover(
 private class FakeCompanionServerStore(
     private val snapshot: CompanionPairingServerSnapshot,
 ) : CompanionPairingServerStore {
-    val switches = mutableListOf<String>()
-
-    override fun snapshot(): CompanionPairingServerSnapshot = snapshot
-
-    override suspend fun switchTo(serverId: String) {
-        switches += serverId
-    }
+    override suspend fun snapshot(): CompanionPairingServerSnapshot = snapshot
 }
 
 class CompanionPairingCoordinatorTest {
     @Test
-    fun activeServerIsPushedApprovedAndRestored() = runTest {
+    fun activeServerIsPushedAndApprovedWithoutChangingPhoneScope() = runTest {
         val transport = ScriptedPhoneTransport()
         val server = CompanionPairingServer(
             id = "srv-1",
@@ -139,7 +142,6 @@ class CompanionPairingCoordinatorTest {
         val result = coordinator.pair(target = CompanionPairingTarget("tv-1", "Living Room", "127.0.0.1", 9999))
 
         assertEquals(CompanionPairingResult.Completed(serverCount = 1), result)
-        assertEquals(listOf("srv-1", "srv-1"), store.switches)
         assertEquals(listOf("ABCD-0001"), approver.lookups)
         assertEquals(listOf("ABCD-0001"), approver.approvals)
         assertTrue(approver.denials.isEmpty())
@@ -149,7 +151,7 @@ class CompanionPairingCoordinatorTest {
     }
 
     @Test
-    fun multiServerPairingConfirmsFirstMatchThenAutoApprovesRestoresOriginalActiveServer() = runTest {
+    fun multiServerPairingConfirmsFirstMatchThenAutoApprovesWithoutChangingPhoneScope() = runTest {
         val transport = ScriptedPhoneTransport()
         val servers = listOf(
             CompanionPairingServer(
@@ -199,7 +201,6 @@ class CompanionPairingCoordinatorTest {
         )
 
         assertEquals(CompanionPairingResult.Completed(serverCount = 2), result)
-        assertEquals(listOf("srv-2", "srv-1", "srv-2"), store.switches)
         assertEquals(listOf("ABCD-0001", "ABCD-0002"), approver.lookups)
         assertEquals(listOf("ABCD-0001", "ABCD-0002"), approver.approvals)
         assertEquals(listOf("Secondary"), confirmations.map { it.serverName })
@@ -212,5 +213,47 @@ class CompanionPairingCoordinatorTest {
             transport.sent.filterIsInstance<PairingMessage.PushServer>().map { it.serverURL },
         )
         assertIs<PairingMessage.Done>(transport.sent.last())
+    }
+
+    @Test
+    fun onlyUserSelectedServersAreSentToTv() = runTest {
+        val transport = ScriptedPhoneTransport()
+        val selected = CompanionPairingServer(
+            id = "srv-selected",
+            url = "https://selected.example",
+            displayName = "Selected",
+        )
+        val skipped = CompanionPairingServer(
+            id = "srv-skipped",
+            url = "https://skipped.example",
+            displayName = "Skipped",
+        )
+        val coordinator = CompanionPairingCoordinator(
+            serverStore = FakeCompanionServerStore(
+                CompanionPairingServerSnapshot(
+                    activeServerId = skipped.id,
+                    servers = listOf(selected, skipped),
+                ),
+            ),
+            deviceLoginApprover = FakeCompanionApprover(
+                onApprove = { transport.signIn(selected.url) },
+            ),
+            transportFactory = { transport },
+        )
+
+        val result = coordinator.pair(
+            target = CompanionPairingTarget("tv-1", "Living Room", "127.0.0.1", 9999),
+            chooseServers = { choices -> choices.filter { it.id == selected.id } },
+        )
+
+        assertEquals(CompanionPairingResult.Completed(serverCount = 1), result)
+        assertEquals(
+            listOf(selected.url),
+            transport.sent.filterIsInstance<PairingMessage.PushServer>().map { it.serverURL },
+        )
+        assertEquals(
+            CompanionPairingStatus.Completed("Living Room", listOf("Selected")),
+            coordinator.status.value,
+        )
     }
 }

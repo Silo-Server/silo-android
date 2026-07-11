@@ -285,7 +285,12 @@ class PairingReceiver(
         // reading so Cancel/EOF can cancel this job and tear the session down.
         pushJob = sessionScope.launch {
             try {
-                runDeviceLogin(serverURL, serverName, transport)
+                runDeviceLogin(
+                    serverURL = serverURL,
+                    serverName = serverName,
+                    fetchedName = message.serverName,
+                    transport = transport,
+                )
             } finally {
                 deviceLogin.reset()
                 pollingServerUrl = null
@@ -296,11 +301,9 @@ class PairingReceiver(
     private suspend fun runDeviceLogin(
         serverURL: String,
         serverName: String,
+        fetchedName: String?,
         transport: PairingTransport,
     ) {
-        // Point the auth/network stack at the pushed candidate. AuthRepository
-        // upserts into the ServerRegistry and switches to it.
-        authPort.setServerUrl(serverURL)
         _status.value = PairingReceiverStatus.Pairing(serverURL, serverName)
 
         val identity = identityProvider()
@@ -343,7 +346,9 @@ class PairingReceiver(
                                 val accessToken = response.accessToken
                                 val refreshToken = response.refreshToken
                                 if (!accessToken.isNullOrBlank() && !refreshToken.isNullOrBlank()) {
-                                    authPort.persistApprovedTokens(
+                                    authPort.persistApprovedSession(
+                                        serverUrl = serverURL,
+                                        serverName = fetchedName,
                                         accessToken = accessToken,
                                         refreshToken = refreshToken,
                                         expiresIn = response.expiresIn ?: 0L,
@@ -383,6 +388,7 @@ class PairingReceiver(
                 }
 
                 deviceLogin.begin(
+                    serverUrl = serverURL,
                     deviceName = identity.name,
                     devicePlatform = identity.platform,
                 )

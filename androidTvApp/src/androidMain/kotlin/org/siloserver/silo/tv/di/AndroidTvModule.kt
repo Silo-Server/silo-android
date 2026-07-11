@@ -258,7 +258,7 @@ val androidTvModule = module {
     // machine. A later step wires the UI to PairingReceiver.status.
     single {
         org.siloserver.silo.common.pairing.PairingReceiver(
-            authPort = org.siloserver.silo.common.pairing.AuthRepositoryPairingPort(get(), get()),
+            authPort = org.siloserver.silo.common.pairing.RegistryPairingAuthPort(get(), get()),
             deviceLogin = org.siloserver.silo.common.pairing.DeviceLoginRepositoryPort(get()),
             identityProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceIdentity(

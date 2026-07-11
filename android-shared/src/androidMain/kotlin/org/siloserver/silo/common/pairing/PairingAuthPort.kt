@@ -1,43 +1,50 @@
 package org.siloserver.silo.common.pairing
 
 import org.siloserver.silo.network.TokenManager
-import org.siloserver.silo.repository.AuthRepository
+import org.siloserver.silo.network.ServerRegistry
 
 /**
- * Narrow seam over [AuthRepository] for the pairing receiver: the
- * "point the stack at this server URL" call the receiver needs when a phone
- * pushes a server, plus persisting the approved device-login tokens so the TV
- * ends up authenticated (not just navigated to profile selection). Lets the
- * unit test assert the calls without a real token manager / registry.
- * [AuthRepositoryPairingPort] adapts the production repo.
+ * Narrow commit seam for the pairing receiver after a candidate server approves device
+ * login. Candidate requests do not mutate global auth state; this seam writes
+ * the server and credentials only after approval. Lets tests assert the commit
+ * without a real token manager / registry.
  */
 interface PairingAuthPort {
-    /** Upsert + switch to [url] (delegates to [AuthRepository.setServerUrl]). */
-    suspend fun setServerUrl(url: String)
-
     /**
-     * Persist the approved device-login tokens into the active server's token
-     * slot — same as the credential / QR login flow ([TokenManager.saveTokens]).
-     * Must run BEFORE the receiver signals SignedIn so downstream auth gating
-     * sees the tokens.
+     * Commit an approved account session. Reauthorizing the same URL is an
+     * account boundary, so old profile selection/token state must not survive.
      */
-    suspend fun persistApprovedTokens(accessToken: String, refreshToken: String, expiresIn: Long)
-}
-
-/** Production adapter delegating to the real [AuthRepository] / [TokenManager]. */
-class AuthRepositoryPairingPort(
-    private val authRepository: AuthRepository,
-    private val tokenManager: TokenManager,
-) : PairingAuthPort {
-    override suspend fun setServerUrl(url: String) = authRepository.setServerUrl(url)
-
-    override suspend fun persistApprovedTokens(
+    suspend fun persistApprovedSession(
+        serverUrl: String,
+        serverName: String?,
         accessToken: String,
         refreshToken: String,
         expiresIn: Long,
-    ) = tokenManager.saveTokens(
-        accessToken = accessToken,
-        refreshToken = refreshToken,
-        expiresIn = expiresIn,
     )
+}
+
+/** Production adapter matching Apple's receiver-side persist-on-success behavior. */
+class RegistryPairingAuthPort(
+    private val tokenManager: TokenManager,
+    private val serverRegistry: ServerRegistry,
+) : PairingAuthPort {
+    override suspend fun persistApprovedSession(
+        serverUrl: String,
+        serverName: String?,
+        accessToken: String,
+        refreshToken: String,
+        expiresIn: Long,
+    ) {
+        val serverId = serverRegistry.addOrUpdate(serverUrl, fetchedName = serverName)
+        serverRegistry.setProfileId(serverId, null)
+        serverRegistry.switchTo(serverId)
+        tokenManager.switchActiveServer(serverId)
+        tokenManager.setProfileId(null)
+        tokenManager.setProfileToken(null)
+        tokenManager.saveTokens(
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            expiresIn = expiresIn,
+        )
+    }
 }

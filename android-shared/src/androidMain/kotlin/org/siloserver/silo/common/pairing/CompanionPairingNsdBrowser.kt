@@ -29,13 +29,16 @@ class CompanionPairingNsdBrowser(context: Context) {
             }
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                if (serviceInfo.serviceType != PairingProtocol.SERVICE_TYPE) return
+                // Discovered DNS-SD service types carry a trailing dot on Android
+                // ("_silopair._tcp."). The browse request itself uses the undotted
+                // form, so normalize both before comparing.
+                if (!isPairingServiceType(serviceInfo.serviceType)) return
                 resolve(serviceInfo)
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
                 val lostName = serviceInfo.serviceName
-                _targets.update { targets -> targets.filterNot { it.name == lostName } }
+                _targets.update { targets -> targets.filterNot { it.serviceName == lostName } }
             }
 
             override fun onDiscoveryStopped(serviceType: String) {
@@ -74,6 +77,11 @@ class CompanionPairingNsdBrowser(context: Context) {
 
                 override fun onServiceResolved(info: NsdServiceInfo) {
                     val target = info.toPairingTarget() ?: return
+                    Log.i(
+                        TAG,
+                        "Resolved ${target.name} at ${target.host}:${target.port} " +
+                            "(session=${target.sessionId ?: "unknown"})",
+                    )
                     _targets.update { current ->
                         (current.filterNot { it.deviceId == target.deviceId } + target)
                             .sortedBy { it.name.lowercase() }
@@ -90,12 +98,14 @@ class CompanionPairingNsdBrowser(context: Context) {
         val deviceId = attributes.string("id") ?: "$host:$port"
         val version = attributes.string("v")?.toIntOrNull() ?: PairingProtocol.VERSION
         return CompanionPairingTarget(
+            serviceName = serviceName,
             deviceId = deviceId,
             name = name,
             host = host,
             port = port,
             state = attributes.string("st"),
             version = version,
+            sessionId = attributes.string("sid"),
         )
     }
 
@@ -106,3 +116,6 @@ class CompanionPairingNsdBrowser(context: Context) {
         const val TAG = "CompanionPairing"
     }
 }
+
+internal fun isPairingServiceType(serviceType: String): Boolean =
+    serviceType.trimEnd('.') == PairingProtocol.SERVICE_TYPE.trimEnd('.')
