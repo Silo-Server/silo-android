@@ -40,6 +40,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.MaterialTheme
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
@@ -52,6 +54,7 @@ import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -365,6 +368,7 @@ fun TvSkylineSectionFeed(
     // a firstRowId change alone.
     var lastAppliedFocusRequest by rememberSaveable { mutableIntStateOf(0) }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
     val firstRowId = rows.firstOrNull()?.id
     fun requestFirstRowFocus(): Boolean {
         if (firstRowId == null) return false
@@ -404,6 +408,14 @@ fun TvSkylineSectionFeed(
         if (focusRequest == 0 || firstRowId == null) return@LaunchedEffect
         if (focusRequest == lastAppliedFocusRequest) return@LaunchedEffect
         lastAppliedFocusRequest = focusRequest
+        // The shell bumps its token for EVERY menu selection, and during the
+        // route crossfade the exiting feed is still composed — without this
+        // gate it would briefly steal focus back (Home flashing focused en
+        // route to Calendar). Exiting nav entries fall to STARTED and never
+        // resume, so they park here until disposal with the token already
+        // consumed; the entering (or re-selected) feed passes immediately or
+        // when its transition settles.
+        lifecycleOwner.lifecycle.currentStateFlow.first { it.isAtLeast(Lifecycle.State.RESUMED) }
         // Menu re-select = full reset to the app-launch state: band scrolled
         // to the top, focus on row 0 / card 0. Focus walks down one scope per
         // frame (row group, then card) because each restorer-guarded scope
