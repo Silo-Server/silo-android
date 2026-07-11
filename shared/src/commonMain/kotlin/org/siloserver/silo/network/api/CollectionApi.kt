@@ -70,9 +70,15 @@ class CollectionApi(private val client: HttpClient) {
         offset: Int = 0,
         limit: Int = 40
     ): ApiResult<CatalogResponse> = safeApiCall {
-        client.get("/api/v1/collections/$id/items") {
+        // The legacy membership route is a complete-export compatibility
+        // endpoint and returns unhydrated join records. Display clients use
+        // the bounded catalog resolver so offset/limit are enforced in SQL.
+        client.get("/api/v1/catalog") {
+            parameter("source", "user_collection")
+            parameter("collection_id", id)
             parameter("offset", offset)
             parameter("limit", limit)
+            parameter("include_total", false)
         }
     }
 

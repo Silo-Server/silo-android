@@ -122,6 +122,7 @@ fun TvMediaRow(
             TvSectionHeader(
                 title = title,
                 icon = icon,
+                iconSize = if (showProgress) 22.dp else 18.dp,
                 onSeeAllClick = onSeeAllClick,
                 eyebrow = eyebrow,
                 modifier = Modifier.padding(start = startPadding, end = endPadding),
@@ -210,7 +211,7 @@ fun TvMediaRow(
                             seasonNumber = item.seasonNumber,
                             episodeNumber = item.episodeNumber,
                             progress = rowItem.progress,
-                            remainingMinutes = rowItem.remainingMinutes,
+                            year = item.year.takeIf { it > 0 },
                             onClick = { onItemClick(item.contentId) },
                             focusRequester = itemFocusRequester,
                             cardModifier = appliedCardModifier,
@@ -248,7 +249,7 @@ private fun SectionItem.progressFraction(): Float? {
     return (pos / dur).toFloat().coerceIn(0f, 1f)
 }
 
-/** Minutes remaining, used as the "12m left" caption on continue-watching cards. */
+/** Remaining runtime for layouts that expose it inside the card itself. */
 private fun SectionItem.remainingMinutes(): Int? {
     val pos = positionSeconds ?: return null
     val dur = durationSeconds ?: return null

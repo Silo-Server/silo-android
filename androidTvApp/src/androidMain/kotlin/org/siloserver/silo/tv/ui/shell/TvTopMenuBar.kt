@@ -530,7 +530,7 @@ private fun TvTopMenuTab(
         ),
         modifier = modifier
             .focusRequester(focusRequester)
-            .height(TvSkyline.barHeight),
+            .height(TvSkyline.tabPillHeight),
     ) {
         Box(
             modifier = Modifier

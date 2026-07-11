@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -185,11 +186,14 @@ fun TvMediaCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(11.dp))
 
         Text(
             text = title,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontSize = 14.sp,
+                lineHeight = 17.sp,
+            ),
             color = if (isFocused) {
                 Color.White
             } else {
@@ -197,16 +201,19 @@ fun TvMediaCard(
             },
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
+            textAlign = TextAlign.Start,
             modifier = Modifier.fillMaxWidth(),
         )
 
         if (year != null && year > 0) {
             Text(
                 text = year.toString(),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp,
+                ),
                 color = Color.White.copy(alpha = 0.70f),
-                textAlign = TextAlign.Center,
+                textAlign = TextAlign.Start,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

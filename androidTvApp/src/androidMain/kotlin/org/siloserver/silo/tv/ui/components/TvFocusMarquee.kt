@@ -1,11 +1,9 @@
 package org.siloserver.silo.tv.ui.components
 
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,7 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
@@ -56,13 +53,9 @@ fun TvFocusMarquee(
             .padding(start = startPadding, bottom = bottomPadding),
         contentAlignment = Alignment.BottomStart,
     ) {
-        AnimatedContent(
+        Crossfade(
             targetState = content,
-            transitionSpec = {
-                fadeIn(tween(TvMarqueeCrossfadeMs)) togetherWith
-                    fadeOut(tween(TvMarqueeCrossfadeMs))
-            },
-            contentKey = { it?.id },
+            animationSpec = tween(TvMarqueeCrossfadeMs),
             label = "tvFocusMarquee",
         ) { value ->
             if (value != null) {
@@ -154,18 +147,21 @@ private fun TvMarqueeBlock(content: TvMarqueeContent) {
 
 @Composable
 private fun MarqueeBadge(label: String) {
+    val shape = RoundedCornerShape(5.dp)
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color.White.copy(alpha = 0.12f))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.14f))
+            .border(1.dp, Color.White.copy(alpha = 0.24f), shape)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         Text(
             text = label,
             color = Color.White.copy(alpha = 0.92f),
             fontSize = MarqueeBadgeSize,
+            lineHeight = MarqueeBadgeSize,
+            letterSpacing = MarqueeBadgeSize * 0.08f,
             fontWeight = FontWeight.SemiBold,
-            style = MaterialTheme.typography.labelSmall,
         )
     }
 }
@@ -176,6 +172,6 @@ private val MarqueeSynopsisMaxWidth = 390.dp
 private val MarqueeLogoMaxWidth = 440.dp
 private val MarqueeLogoMaxHeight = 100.dp
 private val MarqueeTitleSize = 42.sp
-private val MarqueeMetaSize = 14.sp
-private val MarqueeSynopsisSize = 15.sp
-private val MarqueeBadgeSize = 13.sp
+private val MarqueeMetaSize = 10.sp
+private val MarqueeSynopsisSize = 11.sp
+private val MarqueeBadgeSize = 8.sp

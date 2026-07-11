@@ -55,7 +55,7 @@ fun TvRootHeroBackdrop(
     val targetAccent = ambientAccent ?: emptyWashColor ?: MaterialTheme.colorScheme.background
     val animatedTint by animateColorAsState(
         targetValue = targetAccent,
-        animationSpec = tween(durationMillis = 600),
+        animationSpec = tween(durationMillis = TvMarqueeCrossfadeMs),
         label = "tvRootHeroBackdropTint",
     )
 

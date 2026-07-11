@@ -7,7 +7,6 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,6 +27,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -63,10 +63,10 @@ fun TvEpisodeCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     seriesTitle: String? = null,
+    year: Int? = null,
     seasonNumber: Int? = null,
     episodeNumber: Int? = null,
     progress: Float? = null,
-    remainingMinutes: Int? = null,
     width: Dp = TvEpisodeCardWidth,
     focusRequester: FocusRequester? = null,
     cardModifier: Modifier = Modifier,
@@ -86,7 +86,7 @@ fun TvEpisodeCard(
 
     Column(
         modifier = modifier.width(width),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Card(
             onClick = onClick,
@@ -170,41 +170,37 @@ fun TvEpisodeCard(
             }
         }
 
-        if (seriesTitle != null) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             Text(
-                text = seriesTitle,
-                style = MaterialTheme.typography.titleSmall,
+                text = seriesTitle ?: title,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = 14.sp,
+                    lineHeight = 17.sp,
+                ),
                 color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White.copy(alpha = 0.52f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-
-        if (remainingMinutes != null && remainingMinutes > 0) {
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "${remainingMinutes}m left",
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White.copy(alpha = 0.52f),
-            )
+            val secondaryLine = if (seriesTitle != null) title else year?.toString()
+            if (secondaryLine != null) {
+                Text(
+                    text = secondaryLine,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
+                    ),
+                    color = Color.White.copy(alpha = 0.60f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
 
         TvMediaCardContextMenu(

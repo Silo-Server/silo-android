@@ -111,9 +111,10 @@ class TvSkylineTokenParityTest {
         assertToken("val safeAreaX = 44.dp")
         assertToken("val barTopInset = 28.dp")
         assertToken("val barHeight = 32.dp")
+        assertToken("val tabPillHeight = 25.dp")
         assertToken("val dropdownTopInset = 66.dp")
         assertToken("val tabSpacing = 4.dp")
-        assertToken("val tabLabelSize = 14.sp")
+        assertToken("val tabLabelSize = 13.sp")
         assertToken("val tabPaddingHorizontal = 13.dp")
         assertToken("val tabPaddingVertical = 5.5.dp")
         assertToken("val barIconSize = 28.dp")
@@ -214,10 +215,13 @@ class TvSkylineTokenParityTest {
     }
 
     @Test
-    fun backdropCardsMirrorTvOsEpisodeBadgeAndCaptionTreatment() {
+    fun backdropCardsMirrorTvOsEpisodeBadgeAndTwoLineCaptionTreatment() {
         assertTrue(episodeCard.contains("val episodeBadge = formatEpisodeTag(seasonNumber, episodeNumber)"))
         assertTrue(episodeCard.contains(".align(Alignment.BottomStart)"))
-        assertTrue(episodeCard.contains("text = title,"))
+        assertTrue(episodeCard.contains("text = seriesTitle ?: title,"))
+        assertTrue(episodeCard.contains("val secondaryLine = if (seriesTitle != null) title else year?.toString()"))
+        assertTrue(episodeCard.contains("verticalArrangement = Arrangement.spacedBy(4.dp)"))
+        assertFalse(episodeCard.contains("m left"))
         assertTrue(episodeCard.contains("fontSize = 13.sp"))
         assertFalse(episodeCard.contains("Icons.Default.PlayArrow"))
         assertFalse(episodeCard.contains("val subtitle = if (tag != null) \"\$tag · \$title\" else title"))

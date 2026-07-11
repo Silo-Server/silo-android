@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -28,6 +29,7 @@ fun TvSectionHeader(
     title: String,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    iconSize: androidx.compose.ui.unit.Dp = 18.dp,
     onSeeAllClick: (() -> Unit)? = null,
     /** Optional uppercase eyebrow rendered above the title (e.g. "SILO PICKS"). */
     eyebrow: String? = null,
@@ -54,13 +56,16 @@ fun TvSectionHeader(
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier
-                            .size(18.dp)
+                            .size(iconSize)
                             .padding(end = 8.dp),
                     )
                 }
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontSize = 18.sp,
+                        lineHeight = 22.sp,
+                    ),
                     color = Color.White,
                 )
             }

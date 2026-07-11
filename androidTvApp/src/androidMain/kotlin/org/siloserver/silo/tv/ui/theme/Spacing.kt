@@ -55,11 +55,14 @@ object TvSkyline {
     /** Top bar row height — tvOS `barHeight` (64pt). */
     val barHeight = 32.dp
 
+    /** Active tab capsule height, aligned to the trailing search/profile chrome. */
+    val tabPillHeight = 25.dp
+
     /** Gap between tab capsules in the bar's center cluster — tvOS `tabSpacing` (8pt). */
     val tabSpacing = 4.dp
 
-    /** Tab label size — tuned 8% above the original Android scale for 10-foot readability. */
-    val tabLabelSize = 14.sp
+    /** Tab label size — exact 0.5x mapping of the 26pt tvOS token. */
+    val tabLabelSize = 13.sp
 
     /** Tab capsule horizontal padding — tvOS `tabPaddingHorizontal` (26pt). */
     val tabPaddingHorizontal = 13.dp
