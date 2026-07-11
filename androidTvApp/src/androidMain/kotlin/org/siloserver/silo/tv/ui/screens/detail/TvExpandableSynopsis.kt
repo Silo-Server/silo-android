@@ -18,12 +18,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
@@ -93,8 +95,12 @@ internal fun TvExpandableSynopsis(
                 interactionSource = interactionSource,
                 indication = null,
             ) { expanded = !expanded }
-            .padding(horizontal = 10.dp, vertical = 7.dp)
+            // Keep the synopsis text on the same leading edge as the title,
+            // episode hierarchy, and metadata rows. The old 10dp horizontal
+            // inset made the description visibly drift right.
+            .padding(vertical = 7.dp)
             .then(sizeModifier),
+        horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (expanded && !tagline.isNullOrBlank()) {
@@ -106,6 +112,7 @@ internal fun TvExpandableSynopsis(
                 fontSize = 18.sp,
                 lineHeight = 21.sp,
                 color = Color.White.copy(alpha = 0.85f),
+                textAlign = TextAlign.Start,
             )
         }
         Text(
@@ -114,6 +121,7 @@ internal fun TvExpandableSynopsis(
             fontSize = 18.sp,
             lineHeight = 22.sp,
             color = Color.White.copy(alpha = 0.82f),
+            textAlign = TextAlign.Start,
             maxLines = if (expanded) Int.MAX_VALUE else 3,
             overflow = TextOverflow.Ellipsis,
         )

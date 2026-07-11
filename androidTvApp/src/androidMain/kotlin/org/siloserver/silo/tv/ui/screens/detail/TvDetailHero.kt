@@ -244,6 +244,7 @@ private fun EditorialColumn(
 ) {
     Column(
         modifier = Modifier.widthIn(max = contentMaxWidth),
+        horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (!eyebrow.isNullOrBlank()) {
@@ -305,11 +306,15 @@ private fun TitleBlock(
 @Composable
 private fun HeroTextTitle(title: String) {
     val parts = remember(title) { splitDisplayTitle(title) }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
         Text(
             text = parts.first.uppercase(),
             style = heroDisplayHero,
             color = Color.White,
+            textAlign = TextAlign.Start,
             maxLines = 2,
         )
         parts.second?.let { sub ->
@@ -322,6 +327,7 @@ private fun HeroTextTitle(title: String) {
                     letterSpacing = 0.sp,
                 ),
                 color = Color.White.copy(alpha = 0.95f),
+                textAlign = TextAlign.Start,
                 maxLines = 2,
             )
         }
@@ -331,11 +337,15 @@ private fun HeroTextTitle(title: String) {
 @Composable
 private fun EpisodeHierarchyTitle(seriesTitle: String, episodeTitle: String) {
     val parts = remember(episodeTitle) { splitDisplayTitle(episodeTitle) }
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    Column(
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
         Text(
             text = seriesTitle.uppercase(),
             style = heroDisplayHero,
             color = Color.White,
+            textAlign = TextAlign.Start,
             maxLines = 2,
         )
         Text(
@@ -346,6 +356,7 @@ private fun EpisodeHierarchyTitle(seriesTitle: String, episodeTitle: String) {
                 lineHeight = 27.sp,
             ),
             color = Color.White.copy(alpha = 0.94f),
+            textAlign = TextAlign.Start,
             maxLines = 2,
         )
         parts.second?.let { sub ->
@@ -358,6 +369,7 @@ private fun EpisodeHierarchyTitle(seriesTitle: String, episodeTitle: String) {
                     letterSpacing = 0.sp,
                 ),
                 color = Color.White.copy(alpha = 0.82f),
+                textAlign = TextAlign.Start,
                 maxLines = 2,
             )
         }
