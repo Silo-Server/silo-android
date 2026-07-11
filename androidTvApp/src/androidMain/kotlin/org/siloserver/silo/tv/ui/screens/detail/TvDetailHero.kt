@@ -210,7 +210,7 @@ internal fun TvDetailHero(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = 60.dp),
+                .padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             EditorialColumn(

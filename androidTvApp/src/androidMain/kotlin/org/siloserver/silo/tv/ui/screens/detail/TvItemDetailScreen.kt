@@ -347,10 +347,11 @@ private fun TvDetailContent(
                     }
                 }
 
-                // Body = VStack(spacing 72), horizontal safeArea, hero→body 48.
+                // Keep a short hero→body handoff so the next section header
+                // peeks below the selectors and signals that more is available.
                 item(key = "body", contentType = "detail-body") {
                     Column(
-                        modifier = Modifier.padding(top = 48.dp),
+                        modifier = Modifier.padding(top = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(72.dp),
                     ) {
                         if (isAudiobook && audiobookParts.size > 1) {
