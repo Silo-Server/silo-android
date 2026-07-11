@@ -151,6 +151,7 @@ fun TvTopMenuBar(
     onMenuFocusChange: (Boolean) -> Unit,
     isFocusSuppressed: Boolean,
     focusRequest: Int,
+    focusRequestTarget: TvTopMenuPanel? = null,
     profileFocusRequest: Int = 0,
     isSearchActive: Boolean = false,
     visibility: Float = 1f,
@@ -176,6 +177,39 @@ fun TvTopMenuBar(
     // (which is unreliable while the parent suppresses focus mid-animation).
     var focusedButton by remember { mutableStateOf<TvTopMenuFocus?>(null) }
 
+    // tvOS keeps the tab focused after Back closes its panel, but suppresses
+    // that tab's dwell preview until focus leaves it. Android additionally
+    // uses the first Down from that state as a direct handoff to content.
+    var dwellSuppressedButton by remember { mutableStateOf<TvTopMenuFocus?>(null) }
+
+    fun focusForRoot(root: TvRootDestination): TvTopMenuFocus = when (root) {
+        TvRootDestination.Home -> TvTopMenuFocus.Home
+        TvRootDestination.ForYou -> TvTopMenuFocus.ForYou
+        TvRootDestination.Calendar -> TvTopMenuFocus.Calendar
+        is TvRootDestination.LibraryType -> TvTopMenuFocus.Tab(root.type)
+    }
+
+    fun focusForPanel(panel: TvTopMenuPanel): TvTopMenuFocus? = when (panel) {
+        is TvTopMenuPanel.Root -> focusForRoot(panel.dest)
+        TvTopMenuPanel.Profile -> TvTopMenuFocus.Profile
+    }
+
+    fun requesterForFocus(focus: TvTopMenuFocus): FocusRequester = when (focus) {
+        TvTopMenuFocus.Home -> homeFocusRequester
+        is TvTopMenuFocus.Tab -> tabFocusRequesters[focus.type] ?: homeFocusRequester
+        TvTopMenuFocus.ForYou -> forYouFocusRequester
+        TvTopMenuFocus.Calendar -> calendarFocusRequester
+        TvTopMenuFocus.Search -> searchFocusRequester
+        TvTopMenuFocus.Profile -> profileFocusRequester
+    }
+
+    fun panelForFocus(focus: TvTopMenuFocus?): TvTopMenuPanel? = when (focus) {
+        is TvTopMenuFocus.Tab ->
+            TvTopMenuPanel.Root(TvRootDestination.LibraryType(focus.type))
+        TvTopMenuFocus.ForYou -> TvTopMenuPanel.Root(TvRootDestination.ForYou)
+        else -> null
+    }
+
     fun selectedEntryRequester(): FocusRequester = when (val root = selectedRoot) {
         TvRootDestination.Home -> homeFocusRequester
         TvRootDestination.Calendar -> calendarFocusRequester
@@ -194,7 +228,10 @@ fun TvTopMenuBar(
         if (isFocusSuppressed) return@LaunchedEffect
         if (focusRequest == lastHandledFocusRequest) return@LaunchedEffect
         lastHandledFocusRequest = focusRequest
-        runCatching { selectedEntryRequester().requestFocus() }
+        val explicitFocus = focusRequestTarget?.let(::focusForPanel)
+        dwellSuppressedButton = explicitFocus
+        val requester = explicitFocus?.let(::requesterForFocus) ?: selectedEntryRequester()
+        runCatching { requester.requestFocus() }
     }
 
     LaunchedEffect(focusedButton) {
@@ -218,8 +255,18 @@ fun TvTopMenuBar(
     // once a panel is already visible tab-to-tab switching should feel direct.
     // Landing on any non-panel button closes the preview immediately; losing
     // bar focus may mean the user is entering that panel, so the shell owns it.
-    LaunchedEffect(focusedButton) {
+    LaunchedEffect(focusedButton, dwellSuppressedButton) {
         val focus = focusedButton
+        val suppressed = dwellSuppressedButton
+        if (suppressed != null) {
+            // A transient null is the panel→bar focus handoff itself; keep the
+            // suppression armed until the requested anchor actually focuses.
+            if (focus == null || focus == suppressed) return@LaunchedEffect
+            // Moving anywhere else re-arms normal dwell behavior, matching
+            // tvOS's dwellSuppressedElement lifecycle.
+            dwellSuppressedButton = null
+            return@LaunchedEffect
+        }
         if (focus is TvTopMenuFocus.Tab) {
             delay(if (openPanel == null) TopMenuInitialPreviewDelayMillis else TopMenuPanelSwitchDelayMillis)
             onDwell(TvTopMenuPanel.Root(TvRootDestination.LibraryType(focus.type)))
@@ -279,10 +326,15 @@ fun TvTopMenuBar(
                         // On a library-type tab, d-pad-down opens that tab's cascade
                         // panel (and focuses into it) instead of diving to content.
                         // Home/Calendar/Search keep the move-to-content behavior.
-                        if (focus is TvTopMenuFocus.Tab) {
-                            onEnterPanel(TvTopMenuPanel.Root(TvRootDestination.LibraryType(focus.type)))
-                        } else if (focus is TvTopMenuFocus.ForYou) {
-                            onEnterPanel(TvTopMenuPanel.Root(TvRootDestination.ForYou))
+                        val panel = panelForFocus(focus)
+                        if (panel != null && dwellSuppressedButton == focus) {
+                            // Back just dismissed this tab's panel. Treat the
+                            // next Down as the user's intent to leave chrome
+                            // and enter the first/remembered content row.
+                            dwellSuppressedButton = null
+                            onMoveDown()
+                        } else if (panel != null) {
+                            onEnterPanel(panel)
                         } else {
                             onMoveDown()
                         }

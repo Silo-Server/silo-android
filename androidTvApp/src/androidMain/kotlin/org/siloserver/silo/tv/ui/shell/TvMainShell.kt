@@ -965,6 +965,7 @@ fun TvMainShell(
             onMenuFocusChange = focusState::updateMenuFocused,
             isFocusSuppressed = focusState.isMenuFocusSuppressed,
             focusRequest = focusState.menuFocusRequest,
+            focusRequestTarget = focusState.menuFocusTarget,
             profileFocusRequest = focusState.profileFocusRequest,
             isSearchActive = currentRoute == TvMainRoute.Search.route,
             visibility = menuVisibility.value,

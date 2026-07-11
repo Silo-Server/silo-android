@@ -119,6 +119,15 @@ class TvShellFocusState {
     var menuFocusRequest by mutableIntStateOf(0)
         private set
 
+    /**
+     * Optional explicit bar element for [menuFocusRequest]. A panel Back-close
+     * returns to its own anchor and lets the bar suppress that anchor's dwell
+     * preview; ordinary content-to-bar moves leave this null and use the
+     * selected tab normally.
+     */
+    var menuFocusTarget by mutableStateOf<TvTopMenuPanel?>(null)
+        private set
+
     /** Nudge the menu bar to return focus to the profile avatar. */
     var profileFocusRequest by mutableIntStateOf(0)
         private set
@@ -162,7 +171,8 @@ class TvShellFocusState {
     // --- Menu-bar focus signals -------------------------------------------------
 
     /** Route focus to the bar's selected tab (content → bar Up, or panel close). */
-    fun requestMenuFocus() {
+    fun requestMenuFocus(target: TvTopMenuPanel? = null) {
+        menuFocusTarget = target
         menuFocusRequest++
     }
 
@@ -225,10 +235,11 @@ class TvShellFocusState {
      * raced back to the bar by the focus bump.
      */
     fun closePanel(returnFocusToBar: Boolean) {
+        val closingPanel = openPanel
         openPanel = null
         panelEntersFocus = false
-        if (returnFocusToBar) {
-            menuFocusRequest++
+        if (returnFocusToBar && closingPanel != null) {
+            requestMenuFocus(closingPanel)
         }
     }
 

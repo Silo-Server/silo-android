@@ -126,6 +126,7 @@ class TvShellFocusStateTest {
         assertNull(s.openPanel)
         assertFalse(s.panelEntersFocus)
         assertEquals(menuBefore + 1, s.menuFocusRequest)
+        assertEquals(moviesPanel, s.menuFocusTarget)
     }
 
     @Test
@@ -135,6 +136,7 @@ class TvShellFocusStateTest {
         val menuBefore = s.menuFocusRequest
         s.closePanel(returnFocusToBar = false)
         assertEquals(menuBefore, s.menuFocusRequest)
+        assertNull(s.menuFocusTarget)
     }
 
     @Test
@@ -196,6 +198,7 @@ class TvShellFocusStateTest {
         assertEquals(TvShellBackAction.ClosePanel, s.onBack(onTabRoot = true))
         assertNull(s.openPanel)
         assertEquals(menuBefore + 1, s.menuFocusRequest)
+        assertEquals(moviesPanel, s.menuFocusTarget)
 
         // Profile open → CloseProfileMenu, dropdown closed, avatar nudged.
         s.toggleProfileMenu()

@@ -34,6 +34,7 @@ class TvShellFocusSourceTest {
         assertTrue(shell.contains("onEnterPanel = focusState::enterPanel"))
         assertTrue(shell.contains("isFocusSuppressed = focusState.isMenuFocusSuppressed"))
         assertTrue(shell.contains("focusRequest = focusState.menuFocusRequest"))
+        assertTrue(shell.contains("focusRequestTarget = focusState.menuFocusTarget"))
     }
 
     @Test
@@ -87,7 +88,8 @@ class TvShellFocusSourceTest {
         assertTrue(topMenu.contains("if (focusRequest == lastHandledFocusRequest) return@LaunchedEffect"))
         assertTrue(topMenu.contains("if (profileFocusRequest > 0)"))
         assertTrue(topMenu.contains("enter = { barEntryRequester }"))
-        assertTrue(topMenu.contains("runCatching { selectedEntryRequester().requestFocus() }"))
+        assertTrue(topMenu.contains("dwellSuppressedButton = explicitFocus"))
+        assertTrue(topMenu.contains("runCatching { requester.requestFocus() }"))
         assertTrue(!topMenu.contains("selectedEntryFocus()"))
     }
 }
