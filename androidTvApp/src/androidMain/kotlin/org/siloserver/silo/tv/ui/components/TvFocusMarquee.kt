@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -123,14 +124,15 @@ private fun TvMarqueeBlock(content: TvMarqueeContent) {
             }
         }
 
-        // 3-line synopsis (2 when a logo is shown, mirroring tvOS).
+        // Keep three synopsis lines even when logo art is present. The whole
+        // marquee is raised above the row band to preserve that extra line.
         content.synopsis?.takeIf { it.isNotBlank() }?.let { synopsis ->
             Text(
                 text = synopsis,
                 color = SiloSecondaryText,
                 fontSize = MarqueeSynopsisSize,
                 lineHeight = MarqueeSynopsisSize * 1.35f,
-                maxLines = if (content.logoUrl.isNullOrBlank()) 3 else 2,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.widthIn(max = MarqueeSynopsisMaxWidth),
             )
@@ -141,11 +143,13 @@ private fun TvMarqueeBlock(content: TvMarqueeContent) {
             Text(
                 text = line,
                 color = SiloOnSurface.copy(alpha = 0.5f),
-                fontSize = MarqueeMetaSize,
+                fontSize = MarqueeDetailSize,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = MarqueeSynopsisMaxWidth),
+                modifier = Modifier
+                    .offset(y = (-4).dp)
+                    .widthIn(max = MarqueeSynopsisMaxWidth),
             )
         }
     }
@@ -178,6 +182,7 @@ private val MarqueeSynopsisMaxWidth = 390.dp
 private val MarqueeLogoMaxWidth = 440.dp
 private val MarqueeLogoMaxHeight = 100.dp
 private val MarqueeTitleSize = 42.sp
-private val MarqueeMetaSize = 10.sp
-private val MarqueeSynopsisSize = 11.sp
+private val MarqueeMetaSize = 11.5.sp
+private val MarqueeDetailSize = 11.sp
+private val MarqueeSynopsisSize = 12.sp
 private val MarqueeBadgeSize = 8.sp

@@ -382,7 +382,7 @@ private val TvSkylineRowBandBottomInset = 10.dp
 private const val TvSkylineRowBandHeightFraction = 0.50f
 
 /** Gap between the marquee block and the top of the row band. */
-private val TvSkylineMarqueeBottomGap = 16.dp
+private val TvSkylineMarqueeBottomGap = 17.dp
 
 // Row-band relocation requests are close to row-sized; horizontal card rails
 // have much wider viewports and must still use the smooth scroll distance.
