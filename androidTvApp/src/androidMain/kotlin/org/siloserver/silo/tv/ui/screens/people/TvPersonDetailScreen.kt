@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
@@ -25,6 +26,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +34,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,6 +66,7 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import java.time.LocalDate
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import kotlinx.coroutines.launch
 
 /**
  * Android TV person detail surface — the cast/crew profile plus their
@@ -120,7 +128,14 @@ private fun TvPersonDetailContent(
     onOpenItemDetail: (contentId: String) -> Unit,
 ) {
     val firstFilterFocusRequester = remember { FocusRequester() }
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
     var initialFocusRequested by remember { mutableStateOf(false) }
+
+    val restoreHeaderTop = {
+        scope.launch { gridState.animateScrollToItem(0) }
+        Unit
+    }
 
     // Enter on the filter row so the full identity header remains visible.
     // Moving down into the posters then scrolls the whole header away naturally.
@@ -138,6 +153,7 @@ private fun TvPersonDetailContent(
         onItemClick = onOpenItemDetail,
         onLoadMore = onLoadMore,
         modifier = Modifier.fillMaxSize(),
+        gridState = gridState,
         fixedColumnCount = PersonGridColumns,
         contentPadding = PaddingValues(
             start = Spacing.safeArea,
@@ -158,6 +174,7 @@ private fun TvPersonDetailContent(
                     totalItems = state.totalItems,
                     hasMore = state.hasMore,
                     firstFilterFocusRequester = firstFilterFocusRequester,
+                    onMoveUp = restoreHeaderTop,
                     onSelect = onFilterSelected,
                 )
                 state.pagingError?.let { error ->
@@ -306,6 +323,7 @@ private fun FilmographyHeader(
     totalItems: Int,
     hasMore: Boolean,
     firstFilterFocusRequester: FocusRequester,
+    onMoveUp: () -> Unit,
     onSelect: (TvPersonMediaFilter) -> Unit,
 ) {
     Column(
@@ -333,7 +351,19 @@ private fun FilmographyHeader(
             }
         }
         FlowRow(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onPreviewKeyEvent { event ->
+                    if (event.key == Key.DirectionUp) {
+                        if (event.type == KeyEventType.KeyDown) onMoveUp()
+                        // The identity header is intentionally non-focusable;
+                        // consume both phases so Compose's geometric search
+                        // cannot dead-end or jump outside the page.
+                        true
+                    } else {
+                        false
+                    }
+                },
             horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
