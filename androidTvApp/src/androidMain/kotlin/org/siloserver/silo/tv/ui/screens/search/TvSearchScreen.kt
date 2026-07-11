@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -31,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,7 +40,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -65,6 +69,7 @@ import org.siloserver.silo.tv.ui.theme.tvPageContentPadding
 import org.siloserver.silo.tv.ui.theme.tvPageStartPadding
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -86,6 +91,10 @@ fun TvSearchScreen(
     val firstRequestResultFocusRequester = remember { FocusRequester() }
     val firstFilterChipFocusRequester = remember { FocusRequester() }
     val internalSearchFieldFocusRequester = remember { FocusRequester() }
+    val searchGridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    val searchTopPadding = TvTopMenuLayout.contentTopInset - 16.dp
+    val searchTopPaddingPx = with(LocalDensity.current) { searchTopPadding.roundToPx() }
     val activeSearchFieldFocusRequester = searchFieldFocusRequester ?: internalSearchFieldFocusRequester
     var pendingSearchFocus by remember { mutableStateOf(false) }
     val requestMediaType = state.mediaType.toRequestMediaType()
@@ -161,9 +170,10 @@ fun TvSearchScreen(
             onBrowseItemClick = onResultClick,
             onLoadMore = viewModel::loadMore,
             modifier = Modifier.fillMaxSize(),
+            gridState = searchGridState,
             minCellWidth = 132.dp,
             contentPadding = tvPageContentPadding(
-                top = TvTopMenuLayout.contentTopInset - 16.dp,
+                top = searchTopPadding,
                 bottom = Spacing.xxxl,
                 end = 24.dp,
                 expandedGap = Spacing.md,
@@ -192,6 +202,15 @@ fun TvSearchScreen(
                     searchFieldFocusRequester = activeSearchFieldFocusRequester,
                     firstFilterChipFocusRequester = firstFilterChipFocusRequester,
                     firstResultFocusRequester = firstContentFocusRequester,
+                    onSearchFieldFocused = {
+                        scope.launch {
+                            delay(180)
+                            searchGridState.scrollToItem(
+                                index = 0,
+                                scrollOffset = -searchTopPaddingPx,
+                            )
+                        }
+                    },
                     onQueryChanged = viewModel::onQueryChanged,
                     onSearch = {
                         pendingSearchFocus = true
@@ -344,6 +363,7 @@ private fun SearchStage(
     searchFieldFocusRequester: FocusRequester,
     firstFilterChipFocusRequester: FocusRequester,
     firstResultFocusRequester: FocusRequester,
+    onSearchFieldFocused: () -> Unit,
     onQueryChanged: (String) -> Unit,
     onSearch: () -> Unit,
     onMediaTypeChanged: (TvSearchMediaType) -> Unit,
@@ -413,6 +433,9 @@ private fun SearchStage(
                 // the search field onto the All/Movies/Series filters,
                 // regardless of whether result cards are also rendered below.
                 .focusRequester(searchFieldFocusRequester)
+                .onFocusChanged { focusState ->
+                    if (focusState.isFocused) onSearchFieldFocused()
+                }
                 .focusProperties { down = firstFilterChipFocusRequester },
             colors = tvOutlinedTextFieldColors(),
         )

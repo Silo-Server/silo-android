@@ -60,6 +60,7 @@ fun TvCatalogGrid(
     onItemClick: (contentId: String) -> Unit,
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
+    gridState: LazyGridState? = null,
     // Adaptive keeps the grid responsive across TV resolutions, but the page
     // gutter stays fixed so column counts do not change when the rail expands.
     minCellWidth: Dp = 180.dp,
@@ -81,7 +82,7 @@ fun TvCatalogGrid(
     footer: (@Composable () -> Unit)? = null,
     emptyState: (@Composable () -> Unit)? = null,
 ) {
-    val gridState: LazyGridState = rememberLazyGridState()
+    val resolvedGridState = gridState ?: rememberLazyGridState()
 
     // Backoff gate against an endless load-more retry storm. When a load-more
     // completes without growing the list while the server still reports more
@@ -100,7 +101,7 @@ fun TvCatalogGrid(
         derivedStateOf {
             if (!hasMore || isLoading || items.isEmpty()) return@derivedStateOf false
             if (items.size == loadMoreRequestedSize) return@derivedStateOf false
-            val lastVisible = gridState.layoutInfo.visibleItemsInfo
+            val lastVisible = resolvedGridState.layoutInfo.visibleItemsInfo
                 .lastOrNull()?.index ?: return@derivedStateOf false
             lastVisible >= items.size - loadMoreThreshold
         }
@@ -133,7 +134,7 @@ fun TvCatalogGrid(
 
     CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
     LazyVerticalGrid(
-        state = gridState,
+        state = resolvedGridState,
         columns = fixedColumnCount?.let { GridCells.Fixed(it) }
             ?: GridCells.Adaptive(minSize = minCellWidth),
         horizontalArrangement = Arrangement.spacedBy(horizontalSpacing),
