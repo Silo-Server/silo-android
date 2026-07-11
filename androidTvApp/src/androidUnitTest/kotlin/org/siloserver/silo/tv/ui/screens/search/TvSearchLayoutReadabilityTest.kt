@@ -18,7 +18,7 @@ class TvSearchLayoutReadabilityTest {
     @Test
     fun searchSupportsPredictableDpadHandoffFromFieldToResults() {
         assertTrue(source.contains(".focusProperties { down = firstFilterChipFocusRequester }"))
-        assertTrue(source.contains("Modifier.focusProperties { down = firstResultFocusRequester }"))
+        assertTrue(source.contains("Modifier.focusProperties { down = firstContentFocusRequester }"))
         assertTrue(source.contains("up = firstFilterChipFocusRequester"))
         assertTrue(source.contains("firstResultFocusRequester.requestFocus()"))
         assertTrue(source.contains("firstRequestResultFocusRequester.requestFocus()"))
@@ -26,6 +26,14 @@ class TvSearchLayoutReadabilityTest {
         assertTrue(source.contains("requestSearchSettled"))
         assertTrue(source.contains("visibleRequestResults.size"))
         assertTrue(source.contains("pendingSearchFocus = true"))
+    }
+
+    @Test
+    fun searchKeepsItsControlsPinnedAboveTheScrollingGrid() {
+        assertTrue(source.contains("SearchStage("))
+        assertTrue(source.contains(".weight(1f)"))
+        assertFalse(source.contains("header = {"))
+        assertFalse(source.contains("scrollToItem("))
     }
 
     @Test
