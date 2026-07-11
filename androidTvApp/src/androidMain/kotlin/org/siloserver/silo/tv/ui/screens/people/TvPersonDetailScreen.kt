@@ -226,7 +226,7 @@ private fun PersonHeader(person: Person) {
             )
             val badges = personMetadataBadges(person, todayIso = LocalDate.now().toString())
             if (badges.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     badges.forEach { badge -> MetadataBadge(text = badge) }
                 }
             }
@@ -286,11 +286,14 @@ private fun MetadataBadge(text: String) {
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
             .background(Color.White.copy(alpha = 0.08f))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 5.dp),
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = 12.sp,
+                lineHeight = 14.sp,
+            ),
             color = Color.White.copy(alpha = 0.85f),
             fontWeight = FontWeight.Medium,
         )
