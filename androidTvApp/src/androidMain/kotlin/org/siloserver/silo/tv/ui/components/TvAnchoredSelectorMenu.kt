@@ -102,7 +102,8 @@ fun TvAnchoredSelectorMenu(
                 Text(
                     text = label.uppercase(),
                     style = MaterialTheme.typography.labelLarge.copy(
-                        fontSize = 13.sp,
+                        fontSize = 10.sp,
+                        lineHeight = 12.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp,
                     ),
@@ -113,7 +114,8 @@ fun TvAnchoredSelectorMenu(
                 Text(
                     text = value,
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = 13.sp,
+                        fontSize = 15.sp,
+                        lineHeight = 18.sp,
                         fontWeight = FontWeight.SemiBold,
                     ),
                     color = fg,
