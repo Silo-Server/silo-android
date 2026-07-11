@@ -63,6 +63,7 @@ import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.viewmodel.CalendarViewModel
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import java.time.LocalDate
@@ -170,7 +171,7 @@ fun CalendarScreen(
                 else -> LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = LargePadding),
+                    contentPadding = PaddingValues(bottom = LargePadding + LocalBottomChromeInset.current),
                 ) {
                     // iOS pins this header (LazyVStack pinnedViews:[.sectionHeaders]).
                     stickyHeader(key = "calendar-header") {

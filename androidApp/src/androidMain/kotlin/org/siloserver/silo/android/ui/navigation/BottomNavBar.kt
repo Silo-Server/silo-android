@@ -18,7 +18,9 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -28,6 +30,15 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+
+/**
+ * Total height of the translucent bottom chrome (cast mini bar + nav bar +
+ * gesture inset) as measured by the main Scaffold. Tab content scrolls
+ * edge-to-edge underneath the chrome (iOS glass tab bar behavior), so
+ * scrollable screens add this to their bottom content padding to keep their
+ * last items reachable above it. Zero outside the tab scaffold.
+ */
+val LocalBottomChromeInset = compositionLocalOf { 0.dp }
 
 /**
  * Bottom navigation tabs for the main scaffold.
@@ -67,39 +78,59 @@ fun SiloBottomNavBar(
     // NavigationBar itself. This keeps a clean 72dp content area for the
     // items so they sit vertically centered, instead of getting squeezed
     // toward the top by NavigationBar's internal inset padding.
+    //
+    // Translucent glass (iOS tab bar): content scrolls edge-to-edge beneath
+    // the bar, so the fill is a light-to-heavier scrim — enough see-through
+    // to read as glass, enough ink to keep labels legible over bright
+    // posters — capped with the same hairline the top chrome uses. True
+    // backdrop blur needs API 31 + a blur pipeline; the scrim is the
+    // dependency-free equivalent.
+    val glass = MaterialTheme.colorScheme.background
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.96f))
-            .navigationBarsPadding(),
+            .background(
+                Brush.verticalGradient(
+                    0f to glass.copy(alpha = 0.72f),
+                    1f to glass.copy(alpha = 0.94f),
+                ),
+            ),
     ) {
-        NavigationBar(
-            containerColor = Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            tonalElevation = 0.dp,
-            windowInsets = WindowInsets(0),
-            modifier = Modifier.height(60.dp),
-        ) {
-            tabs.forEach { tab ->
-                val selected = tab == currentTab
-                NavigationBarItem(
-                    selected = selected,
-                    onClick = { onTabSelected(tab) },
-                    icon = {
-                        Icon(
-                            imageVector = if (selected) tab.selectedIcon else tab.icon,
-                            contentDescription = tab.label,
-                        )
-                    },
-                    label = { Text(text = tab.label, style = MaterialTheme.typography.labelSmall) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.onSurface,
-                        selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        indicatorColor = Color.White.copy(alpha = 0.08f),
-                    ),
-                )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.75.dp)
+                .background(Color.White.copy(alpha = 0.08f)),
+        )
+        Box(modifier = Modifier.navigationBarsPadding()) {
+            NavigationBar(
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                tonalElevation = 0.dp,
+                windowInsets = WindowInsets(0),
+                modifier = Modifier.height(60.dp),
+            ) {
+                tabs.forEach { tab ->
+                    val selected = tab == currentTab
+                    NavigationBarItem(
+                        selected = selected,
+                        onClick = { onTabSelected(tab) },
+                        icon = {
+                            Icon(
+                                imageVector = if (selected) tab.selectedIcon else tab.icon,
+                                contentDescription = tab.label,
+                            )
+                        },
+                        label = { Text(text = tab.label, style = MaterialTheme.typography.labelSmall) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onSurface,
+                            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            indicatorColor = Color.White.copy(alpha = 0.08f),
+                        ),
+                    )
+                }
             }
         }
     }

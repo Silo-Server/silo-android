@@ -80,6 +80,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.components.HeroBackdropImage
 import org.siloserver.silo.android.ui.components.HeroTintBackground
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
@@ -854,7 +855,7 @@ private fun RecommendedTabContent(
                 }
 
                 item {
-                    Spacer(modifier = Modifier.height(96.dp))
+                    Spacer(modifier = Modifier.height(24.dp + LocalBottomChromeInset.current))
                 }
             }
         }
@@ -1090,7 +1091,7 @@ private fun CollectionsTabContent(
                     start = 16.dp,
                     end = 16.dp,
                     top = contentTopPadding,
-                    bottom = 24.dp,
+                    bottom = 24.dp + LocalBottomChromeInset.current,
                 ),
             ) {
                 items(

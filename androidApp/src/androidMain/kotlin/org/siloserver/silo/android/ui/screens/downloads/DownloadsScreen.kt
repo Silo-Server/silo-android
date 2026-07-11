@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.LoadingIndicator
 import kotlinx.coroutines.launch
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -158,7 +159,7 @@ fun DownloadsScreen(
             ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = 8.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp + LocalBottomChromeInset.current),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     item(contentType = "downloads-top-padding") {

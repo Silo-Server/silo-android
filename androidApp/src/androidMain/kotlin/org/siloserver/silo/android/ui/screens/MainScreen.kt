@@ -18,6 +18,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import org.siloserver.silo.android.ui.components.MainAppHeaderBodyHeight
 import org.siloserver.silo.android.ui.components.MainAppTopBar
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.navigation.SiloBottomNavBar
 import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.android.ui.navigation.Tab
@@ -258,11 +260,13 @@ fun MainScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .consumeWindowInsets(padding),
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = padding.calculateBottomPadding()),
+            // Content extends edge-to-edge under the translucent bottom chrome
+            // (iOS glass tab bar); screens read the measured chrome height and
+            // pad their scroll ends so the last items stay reachable.
+            CompositionLocalProvider(
+                LocalBottomChromeInset provides padding.calculateBottomPadding(),
             ) {
+            Box(modifier = Modifier.fillMaxSize()) {
                 when (currentTab) {
                     Tab.Home -> {
                         val homeViewModel = koinViewModel<HomeViewModel>()
@@ -437,6 +441,7 @@ fun MainScreen(
                 )
             }
         }
+    }
     }
 }
 

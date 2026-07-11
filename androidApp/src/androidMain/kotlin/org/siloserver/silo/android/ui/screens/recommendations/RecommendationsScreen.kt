@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -164,12 +165,12 @@ fun RecommendationsScreen(
                     SavedList.Watchlist -> WatchlistGridContent(
                         onItemClick = onItemClick,
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 96.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
                     )
                     SavedList.Favorites -> FavoritesGridContent(
                         onItemClick = onItemClick,
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 96.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
                     )
                 }
             }
@@ -202,12 +203,12 @@ fun RecommendationsScreen(
                     SavedList.Watchlist -> WatchlistGridContent(
                         onItemClick = onItemClick,
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 96.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
                     )
                     SavedList.Favorites -> FavoritesGridContent(
                         onItemClick = onItemClick,
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 96.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
                     )
                     null -> PullToRefreshBox(
                         isRefreshing = state.isRefreshing,
@@ -220,7 +221,7 @@ fun RecommendationsScreen(
                             modifier = Modifier.fillMaxSize(),
                             // Keep room for the floating bottom nav while preserving
                             // iOS section rhythm inside the list.
-                            contentPadding = PaddingValues(bottom = 96.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
                             // iOS sectionSpacing (phone) = largePadding (24).
                             verticalArrangement = Arrangement.spacedBy(24.dp),
                         ) {

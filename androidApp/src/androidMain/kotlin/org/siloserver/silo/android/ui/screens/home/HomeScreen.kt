@@ -63,6 +63,7 @@ import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.splitFeatured
 import org.siloserver.silo.viewmodel.HomeViewModel
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
 
 private const val ChromeFadeDistanceDp = 72f
@@ -221,9 +222,10 @@ fun HomeScreen(
                         )
                     }
 
-                    // iOS bottom padding = SiloTheme.largePadding (24).
+                    // iOS bottom padding = SiloTheme.largePadding (24), plus the
+                    // translucent bottom chrome the content scrolls beneath.
                     item(key = "bottomPad") {
-                        Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.height(24.dp + LocalBottomChromeInset.current))
                     }
                 }
             }
