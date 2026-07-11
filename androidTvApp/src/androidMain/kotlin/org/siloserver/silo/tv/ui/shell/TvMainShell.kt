@@ -260,6 +260,15 @@ fun TvMainShell(
     val activeLibrary: (TvLibraryTabType) -> UserLibrary? = { type -> resolvedLibraries[type] }
 
     val currentRoute = currentEntry?.destination?.route ?: firstTvRoute()
+    var calendarFocusHandoffPending by remember(currentRoute) {
+        mutableStateOf(currentRoute == TvMainRoute.Calendar.route)
+    }
+
+    LaunchedEffect(currentRoute) {
+        if (currentRoute != TvMainRoute.Calendar.route) {
+            calendarFocusHandoffPending = false
+        }
+    }
 
     LaunchedEffect(activeServerEntry?.id, activeServerEntry?.profileId) {
         requestsFeatureStore.reset()
@@ -437,6 +446,9 @@ fun TvMainShell(
 
     val onSelectRoot: (TvRootDestination) -> Unit = { dest ->
         val route = dest.toRoute()
+        if (dest == TvRootDestination.Calendar) {
+            calendarFocusHandoffPending = true
+        }
         // A dwell preview can still be open when Center commits For You (or a
         // library root). Close it without returning focus to the bar before the
         // content handoff, otherwise the overlay lingers and races page focus.
@@ -452,7 +464,16 @@ fun TvMainShell(
         if (dest is TvRootDestination.LibraryType) {
             sectionRequestNonces[dest.type] = (sectionRequestNonces[dest.type] ?: 0) + 1
         }
-        moveFocusToContent(route)
+        if (dest == TvRootDestination.Calendar) {
+            // Calendar owns an explicit shell-token -> active-filter focus
+            // handoff. Requesting the parent content group here races that
+            // handoff and restores Home's last descendant during the route
+            // transition. Leave focus on the Calendar tab until its screen is
+            // composed, then let TvCalendarScreen target the filter directly.
+            focusState.closeProfileMenuForContent()
+        } else {
+            moveFocusToContent(route)
+        }
     }
 
     // Cascade panel choreography (tvOS openPanelPreview / openPanelAndEnter /
@@ -879,7 +900,11 @@ fun TvMainShell(
                 composable(TvMainRoute.Calendar.route) {
                     TvCalendarScreen(
                         onOpenItemDetail = onOpenItemDetail,
-                        onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onInitialContentFocus = {
+                            focusState.closeProfileMenuForContent()
+                            calendarFocusHandoffPending = false
+                        },
+                        focusRequest = contentFocusRequest,
                     )
                 }
                 composable(TvMainRoute.Browse.route) {
@@ -968,7 +993,7 @@ fun TvMainShell(
             // escape out of an entered panel can't leave it stuck (which would
             // freeze dwell preview-switching under the previously-entered tab).
             onMenuFocusChange = focusState::updateMenuFocused,
-            isFocusSuppressed = focusState.isMenuFocusSuppressed,
+            isFocusSuppressed = focusState.isMenuFocusSuppressed || calendarFocusHandoffPending,
             focusRequest = focusState.menuFocusRequest,
             focusRequestTarget = focusState.menuFocusTarget,
             profileFocusRequest = focusState.profileFocusRequest,

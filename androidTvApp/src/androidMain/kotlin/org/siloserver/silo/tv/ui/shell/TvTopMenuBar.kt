@@ -318,7 +318,13 @@ fun TvTopMenuBar(
             // labels — content stays legibly scrimmed even while the bar is
             // dimmed (QA 2026-07-08).
             .focusGroup()
-            .focusProperties { enter = { barEntryRequester } }
+            .focusProperties {
+                // Suppression must remove the bar from focus search, not merely
+                // ignore explicit requester bumps. Otherwise Android's initial
+                // focus pass can still choose Home while content is composing.
+                canFocus = !isFocusSuppressed
+                enter = { barEntryRequester }
+            }
             .onPreviewKeyEvent { event ->
                 val focus = focusedButton
                 when {
@@ -380,6 +386,7 @@ fun TvTopMenuBar(
                         label = "Home",
                         isSelected = selectedRoot == TvRootDestination.Home,
                         isFocused = focusedButton == TvTopMenuFocus.Home,
+                        canFocus = !isFocusSuppressed,
                         focusRequester = homeFocusRequester,
                         onFocusChanged = { hasFocus ->
                             focusedButton = if (hasFocus) {
@@ -398,6 +405,7 @@ fun TvTopMenuBar(
                             label = type.title,
                             isSelected = selectedRoot == destination,
                             isFocused = focusedButton == TvTopMenuFocus.Tab(type),
+                            canFocus = !isFocusSuppressed,
                             focusRequester = tabFocusRequesters[type] ?: homeFocusRequester,
                             onFocusChanged = { hasFocus ->
                                 focusedButton = if (hasFocus) {
@@ -421,6 +429,7 @@ fun TvTopMenuBar(
                         label = "For You",
                         isSelected = selectedRoot == TvRootDestination.ForYou,
                         isFocused = focusedButton == TvTopMenuFocus.ForYou,
+                        canFocus = !isFocusSuppressed,
                         focusRequester = forYouFocusRequester,
                         onFocusChanged = { hasFocus ->
                             focusedButton = if (hasFocus) {
@@ -442,6 +451,7 @@ fun TvTopMenuBar(
                         label = "Calendar",
                         isSelected = selectedRoot == TvRootDestination.Calendar,
                         isFocused = focusedButton == TvTopMenuFocus.Calendar,
+                        canFocus = !isFocusSuppressed,
                         focusRequester = calendarFocusRequester,
                         onFocusChanged = { hasFocus ->
                             focusedButton = if (hasFocus) {
@@ -470,6 +480,7 @@ fun TvTopMenuBar(
                 icon = Icons.Outlined.Search,
                 contentDescription = "Search",
                 isFocused = focusedButton == TvTopMenuFocus.Search,
+                canFocus = !isFocusSuppressed,
                 focusRequester = searchFocusRequester,
                 onFocusChanged = { hasFocus ->
                     focusedButton = if (hasFocus) {
@@ -484,6 +495,7 @@ fun TvTopMenuBar(
             TvTopMenuProfileButton(
                 accountState = accountState,
                 isFocused = focusedButton == TvTopMenuFocus.Profile,
+                canFocus = !isFocusSuppressed,
                 focusRequester = profileFocusRequester,
                 onFocusChanged = { hasFocus ->
                     focusedButton = if (hasFocus) TvTopMenuFocus.Profile else focusedButton.takeUnless { it == TvTopMenuFocus.Profile }
@@ -535,6 +547,7 @@ private fun TvTopMenuTab(
     label: String,
     isSelected: Boolean,
     isFocused: Boolean,
+    canFocus: Boolean,
     focusRequester: FocusRequester,
     onFocusChanged: (Boolean) -> Unit,
     onClick: () -> Unit,
@@ -581,6 +594,7 @@ private fun TvTopMenuTab(
             focusedBorder = Border(border = BorderStroke(0.dp, Color.Transparent), shape = shape),
         ),
         modifier = modifier
+            .focusProperties { this.canFocus = canFocus }
             .focusRequester(focusRequester)
             .height(TvSkyline.tabPillHeight),
     ) {
@@ -617,6 +631,7 @@ private fun TvTopMenuIconButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
     isFocused: Boolean,
+    canFocus: Boolean,
     focusRequester: FocusRequester,
     onFocusChanged: (Boolean) -> Unit,
     onClick: () -> Unit,
@@ -647,6 +662,7 @@ private fun TvTopMenuIconButton(
             focusedBorder = Border(border = BorderStroke(0.dp, Color.Transparent), shape = shape),
         ),
         modifier = Modifier
+            .focusProperties { this.canFocus = canFocus }
             .focusRequester(focusRequester)
             .size(TvSkyline.barIconSize),
     ) {
@@ -671,6 +687,7 @@ private fun TvTopMenuIconButton(
 private fun TvTopMenuProfileButton(
     accountState: TvAccountState,
     isFocused: Boolean,
+    canFocus: Boolean,
     focusRequester: FocusRequester,
     onFocusChanged: (Boolean) -> Unit,
     onClick: () -> Unit,
@@ -699,6 +716,7 @@ private fun TvTopMenuProfileButton(
             focusedBorder = Border(border = BorderStroke(0.dp, Color.Transparent), shape = shape),
         ),
         modifier = Modifier
+            .focusProperties { this.canFocus = canFocus }
             .focusRequester(focusRequester)
             .size(TvSkyline.barIconSize),
     ) {
