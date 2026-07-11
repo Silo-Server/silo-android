@@ -321,22 +321,17 @@ private fun FilmographyHeader(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(verticalAlignment = Alignment.Bottom) {
-            Column(
+            Text(
+                text = "FILMOGRAPHY",
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontSize = 24.sp,
+                    lineHeight = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp,
+                ),
+                color = Color.White,
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "FILMOGRAPHY",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.55f),
-                    letterSpacing = 1.4.sp,
-                )
-                Text(
-                    text = "Appearances",
-                    style = MaterialTheme.typography.displaySmall,
-                    color = Color.White,
-                )
-            }
+            )
             personWorksCountLabel(total = totalItems, loaded = totalLoaded, hasMore = hasMore)?.let { label ->
                 Text(
                     text = label,
