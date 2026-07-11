@@ -596,14 +596,9 @@ class TvSettingsViewModel(
         }
     }
 
-    fun onSwitchProfile(context: Context) {
+    fun onSwitchProfile() {
         viewModelScope.launch {
             playerSettingsStore.flushPendingDeviceSettings()
-            profileRepository.clearProfile()
-            // Library prefs are per-profile — drop the cache so the next
-            // profile's prefs don't ghost-render the previous user's rows.
-            libraryPlaybackPrefsStore.clear()
-            overlayPrefsStore.clear()
             _uiState.update { it.copy(navAction = NavAction.SWITCH_PROFILE) }
         }
     }

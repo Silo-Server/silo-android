@@ -129,7 +129,7 @@ fun TvSettingsScreen(
         firstActionFocusRequester = firstActionFocusRequester,
         onCategorySelected = { selectedCategory = it },
         onOpenCardOverlays = { showCardOverlaysEditor = true },
-        onSwitchProfile = { viewModel.onSwitchProfile(context) },
+        onSwitchProfile = viewModel::onSwitchProfile,
         onManageSessions = onManageSessions,
         onPairDevice = onPairDevice,
         onManageServers = onManageServers,

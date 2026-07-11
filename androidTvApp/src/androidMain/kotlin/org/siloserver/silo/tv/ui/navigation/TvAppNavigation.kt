@@ -424,6 +424,13 @@ fun TvAppNavigation(
                 },
                 onSwitchProfile = {
                     scope.launch {
+                        // Leave the main shell before clearing profile-scoped
+                        // state. Clearing first briefly recomposed Home with
+                        // default overlay pills behind Settings before the
+                        // profile picker appeared.
+                        navController.navigate(TvRoute.ProfileSelection.route) {
+                            popUpTo(TvRoute.Main.route) { inclusive = true }
+                        }
                         profileRepository.clearProfile()
                         // Library/overlay prefs are per-profile — drop the caches
                         // so the next profile's prefs don't ghost-render the
@@ -435,9 +442,6 @@ fun TvAppNavigation(
                         // landing on the picker; the new profile will re-seed
                         // via [onProfileSelected].
                         watchNextSeeder.clear()
-                        navController.navigate(TvRoute.ProfileSelection.route) {
-                            popUpTo(TvRoute.Main.route) { inclusive = true }
-                        }
                     }
                 },
                 // Android TV is now multi-server (parity with tvOS). "Switch
