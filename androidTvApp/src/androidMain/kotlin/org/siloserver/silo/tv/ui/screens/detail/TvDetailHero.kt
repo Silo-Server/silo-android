@@ -164,28 +164,42 @@ internal fun TvDetailHero(
         // trailing overlay — we anchor to the bottom edge and lift it by the
         // same fraction.
         starringText?.takeIf { it.isNotBlank() }?.let { line ->
-            Text(
-                text = line,
-                fontWeight = FontWeight.Normal,
-                fontSize = 13.sp,
-                lineHeight = 16.sp,
-                color = Color.White.copy(alpha = 0.8f),
-                textAlign = TextAlign.End,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                // tvOS floats "Starring …" high in the trailing margin, roughly a
-                // sixth of the way down — clear of the bottom-anchored editorial
-                // column. Anchoring top-end (not center-end) keeps it pinned there
-                // even as the hero grows to fit a taller editorial column. + the
-                // trailing shadow.
-                style = TextStyle(
-                    shadow = Shadow(color = Color.Black.copy(alpha = 0.55f), offset = Offset(0f, 2f), blurRadius = 6f),
-                ),
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(bottom = heroHeight * 0.45f, end = Spacing.safeArea)
-                    .widthIn(max = 230.dp),
-            )
+                    .widthIn(max = 250.dp)
+                    .background(
+                        brush = Brush.horizontalGradient(
+                            0f to Color.Transparent,
+                            0.42f to Color.Black.copy(alpha = 0.30f),
+                            1f to Color.Black.copy(alpha = 0.62f),
+                        ),
+                        shape = RoundedCornerShape(6.dp),
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Text(
+                    text = line,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    lineHeight = 17.sp,
+                    color = Color.White.copy(alpha = 0.92f),
+                    textAlign = TextAlign.End,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    // Keep a soft text shadow in addition to the localized
+                    // trailing scrim so names remain legible over highlights.
+                    style = TextStyle(
+                        shadow = Shadow(
+                            color = Color.Black.copy(alpha = 0.72f),
+                            offset = Offset(0f, 2f),
+                            blurRadius = 7f,
+                        ),
+                    ),
+                )
+            }
         }
 
         // Bottom-anchored editorial column + action cluster. Bottom inset +
