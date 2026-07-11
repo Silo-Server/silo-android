@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -8,7 +9,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.SectionItem
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -241,10 +241,9 @@ data class TvMarqueeEnrichment(
 /**
  * Focused-card → marquee state for the Skyline Home. Row cards report focus
  * immediately via [preview]; the displayed [content] (and therefore the backdrop
- * + tint) only swaps after focus has rested ~150 ms, so scrubbing across a row
- * never flashes intermediate backdrops. Focus is reported only on gain — rows
- * never report loss — so while focus is in chrome the last previewed item is
- * retained.
+ * + tint) swaps in the same focus transaction so the fade begins with the D-pad
+ * move. Focus is reported only on gain — rows never report loss — so while focus
+ * is in chrome the last previewed item is retained.
  */
 class TvFocusMarqueeState internal constructor() {
     var content: TvMarqueeContent? by mutableStateOf(null)
@@ -267,7 +266,7 @@ class TvFocusMarqueeState internal constructor() {
     private val enrichmentCache = mutableMapOf<String, TvMarqueeEnrichment>()
     private val enrichmentRequests = mutableSetOf<String>()
 
-    /** Report card focus. The displayed content swaps after the rest debounce. */
+    /** Report card focus. The displayed content swaps on the next composition turn. */
     fun preview(item: SectionItem, rowTitle: String) {
         val next = TvMarqueeContent.from(item, rowTitle)
         // Focus is back on the already-displayed card: cancel any pending swap
@@ -281,13 +280,13 @@ class TvFocusMarqueeState internal constructor() {
     }
 
     /**
-     * Populate the passive marquee before any row card has focus. This is only
-     * for page entry: once focus has produced displayed or pending content, the
-     * seed is ignored so it never fights real navigation.
+     * Seed the same coordinated candidate transaction used by real focus. This
+     * is only for page entry: once focus has produced displayed or pending
+     * content, the seed is ignored so it never fights real navigation.
      */
     fun seedInitialPreview(item: SectionItem, rowTitle: String) {
         if (content != null || candidate != null) return
-        commit(TvMarqueeContent.from(item, rowTitle))
+        candidate = TvMarqueeContent.from(item, rowTitle)
     }
 
     internal fun commit(value: TvMarqueeContent?) {
@@ -313,29 +312,26 @@ class TvFocusMarqueeState internal constructor() {
         enrichmentRequests -= contentId
     }
 
-    /** Cache freshly-fetched enrichment and publish it independently when its
-     *  item is still displayed. This can fade the detail line/backdrop without
-     *  moving or crossfading the already-visible text block. */
+    internal fun isEnrichmentRequestInFlight(contentId: String): Boolean =
+        contentId in enrichmentRequests
+
+    /** Cache freshly-fetched enrichment. It is intentionally not published into
+     *  an already-rendered hero: the next coordinated commit consumes it so an
+     *  aired/cast row never appears as a late second-stage UI update. */
     internal fun applyEnrichment(contentId: String, enrichment: TvMarqueeEnrichment) {
         enrichmentCache[contentId] = enrichment
-        val current = content ?: return
-        if (current.contentId == contentId) {
-            this.enrichment = enrichment
-        }
     }
 }
 
-/** Focus-rest debounce before the marquee + backdrop swap (tvOS §4.2). */
-const val TvMarqueeRestDebounceMs = 150L
-
-/** Marquee text + backdrop crossfade duration in ms (tvOS §4.2: 240 ms). */
-const val TvMarqueeCrossfadeMs = 240
+/** Tuned Skyline timing: 0.5 s with the tvOS `.easeInOut` curve. */
+const val TvMarqueeCrossfadeMs = 500
+val TvMarqueeEasing = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
 
 /**
  * @param fetchDetail item-detail fetcher for the §9 marquee enrichment (air
- *  date, cast, series backdrop). Non-blocking: it runs only after the displayed
- *  content has rested, never delaying the marquee swap. `null` (the default)
- *  disables enrichment — the marquee falls back to the section payload only.
+ *  date, cast, series backdrop). Cached detail joins the first rendered frame;
+ *  uncached detail loads only for a future visit and never postpones or mutates
+ *  the active fade. `null` disables enrichment.
  */
 @Composable
 fun rememberTvFocusMarqueeState(
@@ -344,14 +340,12 @@ fun rememberTvFocusMarqueeState(
     val state = remember { TvFocusMarqueeState() }
     LaunchedEffect(state.candidate?.id) {
         val candidate = state.candidate ?: return@LaunchedEffect
-        delay(TvMarqueeRestDebounceMs)
         state.commit(candidate)
     }
-    // §9 detail enrichment: after a content swap rests, async-fetch item detail
-    // for the displayed item, cache per contentId, and fold it in only if that
-    // item is still displayed. Keyed on the committed content id so the
-    // in-flight fetch is cancelled (and re-issued) when the displayed item
-    // changes; a cached item never refetches (the swap re-applies it on commit).
+
+    // Populate cache for the next visit without changing the currently visible
+    // hero. Near-viewport proactive prefetch usually wins this request; the
+    // shared claim prevents duplicates when it is already in flight.
     LaunchedEffect(state.content?.contentId, fetchDetail) {
         val fetch = fetchDetail ?: return@LaunchedEffect
         val contentId = state.content?.contentId ?: return@LaunchedEffect

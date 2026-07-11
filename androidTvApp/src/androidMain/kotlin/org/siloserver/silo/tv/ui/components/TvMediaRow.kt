@@ -88,6 +88,9 @@ fun TvMediaRow(
     /** Fired (on focus GAIN only) with whichever card the user focuses, so the
      *  Skyline marquee + backdrop can preview the focused item. */
     onItemFocused: ((SectionItem) -> Unit)? = null,
+    /** Indexed focus callback for callers that maintain a rolling prefetch
+     *  window around the currently focused card. */
+    onItemFocusedAtIndex: ((SectionItem, Int) -> Unit)? = null,
     cardActions: (SectionItem) -> TvMediaCardActions = { TvMediaCardActions() },
 ) {
     if (items.isEmpty()) return
@@ -179,9 +182,12 @@ fun TvMediaRow(
                         Modifier
                     },
                 ).then(
-                    if (onItemFocused != null) {
+                    if (onItemFocused != null || onItemFocusedAtIndex != null) {
                         Modifier.onFocusChanged { st ->
-                            if (st.isFocused) onItemFocused(item)
+                            if (st.isFocused) {
+                                onItemFocused?.invoke(item)
+                                onItemFocusedAtIndex?.invoke(item, index)
+                            }
                         }
                     } else {
                         Modifier

@@ -1,6 +1,5 @@
 package org.siloserver.silo.tv.ui.components
 
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -17,14 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -65,16 +59,23 @@ fun TvFocusMarquee(
         if (animateTransition) {
             Crossfade(
                 targetState = content,
-                animationSpec = tween(TvMarqueeCrossfadeMs),
+                animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
                 label = "tvFocusMarquee",
+                // Keep the transition viewport fixed. A wrapping Crossfade
+                // animates its own measured size between differently tall hero
+                // blocks, which moves bottom-anchored copy while it fades.
+                modifier = Modifier.fillMaxSize(),
             ) { value ->
-                if (value != null) {
-                    TvMarqueeBlock(
-                        content = value,
-                        detailLine = detailLine.takeIf { value.id == content?.id },
-                    )
-                } else {
-                    Box(modifier = Modifier)
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.BottomStart,
+                ) {
+                    if (value != null) {
+                        TvMarqueeBlock(
+                            content = value,
+                            detailLine = detailLine.takeIf { value.id == content?.id },
+                        )
+                    }
                 }
             }
         } else if (content != null) {
@@ -92,33 +93,17 @@ private fun TvMarqueeBlock(
         modifier = Modifier.widthIn(max = MarqueeContentWidth),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Title slot — keep the title visible immediately while uncached logo
-        // art decodes, then fade the logo over the same fixed-height slot. This
-        // mirrors tvOS and prevents a cold logo request from leaving the first
-        // focused hero visibly incomplete.
+        // Title slot — when logo artwork exists, never substitute the plain
+        // title into this slot. The fallback-to-logo swap reads as a rescale;
+        // preloading supplies the actual artwork while this fixed slot keeps
+        // the rest of the marquee geometrically stable.
         if (!content.logoUrl.isNullOrBlank()) {
-            var logoLoaded by remember(content.id, content.logoUrl) { mutableStateOf(false) }
-            val logoAlpha by animateFloatAsState(
-                targetValue = if (logoLoaded) 1f else 0f,
-                animationSpec = tween(LogoRevealMillis),
-                label = "tvMarqueeLogoReveal",
-            )
             Box(
                 modifier = Modifier
                     .height(MarqueeLogoMaxHeight)
                     .fillMaxWidth(),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                Text(
-                    text = content.title,
-                    color = Color.White,
-                    fontWeight = FontWeight.Black,
-                    fontSize = MarqueeTitleSize,
-                    lineHeight = MarqueeTitleSize,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.alpha(1f - logoAlpha),
-                )
                 ThumbhashImage(
                     url = content.logoUrl,
                     thumbhash = null,
@@ -126,10 +111,7 @@ private fun TvMarqueeBlock(
                     contentScale = ContentScale.Fit,
                     transparent = true,
                     crossfadeMillis = 0,
-                    onSuccess = { logoLoaded = true },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .alpha(logoAlpha),
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         } else {
@@ -189,7 +171,7 @@ private fun TvMarqueeBlock(
         ) {
             Crossfade(
                 targetState = detailLine?.takeIf { it.isNotBlank() },
-                animationSpec = tween(TvMarqueeCrossfadeMs),
+                animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
                 label = "tvMarqueeDetailLine",
             ) { line ->
                 if (line != null) {
@@ -242,4 +224,3 @@ private val MarqueeMetaSize = 11.5.sp
 private val MarqueeDetailSize = 11.sp
 private val MarqueeSynopsisSize = 12.sp
 private val MarqueeBadgeSize = 8.sp
-private const val LogoRevealMillis = 200

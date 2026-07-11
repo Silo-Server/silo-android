@@ -131,7 +131,7 @@ class TvFocusMarqueeEnrichmentTest {
     }
 
     @Test
-    fun `initial seed commits immediately and does not replace existing focus`() {
+    fun `initial seed joins the coordinated candidate and does not replace it`() {
         val state = TvFocusMarqueeState()
         val first = SectionItem(
             contentId = "first",
@@ -148,11 +148,14 @@ class TvFocusMarqueeEnrichmentTest {
 
         state.seedInitialPreview(first, "Continue Watching")
 
-        assertEquals("First Movie", state.content?.title)
-        assertEquals("https://art/first.jpg", state.content?.heroBackdropUrl)
-        assertNull(state.candidate)
+        assertNull(state.content)
+        assertEquals("First Movie", state.candidate?.title)
 
         state.seedInitialPreview(second, "Next Row")
+
+        assertEquals("First Movie", state.candidate?.title)
+
+        state.commit(state.candidate)
 
         assertEquals("First Movie", state.content?.title)
         assertEquals("https://art/first.jpg", state.content?.heroBackdropUrl)

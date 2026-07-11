@@ -198,18 +198,94 @@ fun TvSkylineSectionFeed(
     // retained across the swap; the index must survive too. It's clamped into
     // the new bounds below in case rows were added/removed.
     var focusedRowIndex by remember { mutableIntStateOf(-1) }
+    var focusedItemIndex by remember { mutableIntStateOf(-1) }
     LaunchedEffect(rows) {
         if (focusedRowIndex >= rows.size) {
             focusedRowIndex = (rows.size - 1).coerceAtLeast(-1)
+        }
+        if (focusedRowIndex in rows.indices && focusedItemIndex >= rows[focusedRowIndex].items.size) {
+            focusedItemIndex = (rows[focusedRowIndex].items.size - 1).coerceAtLeast(-1)
         }
     }
     val focusManager = LocalFocusManager.current
     val rowBandScope = rememberCoroutineScope()
     // Skyline matches tvOS' view-aligned row stack: vertical motion is owned by
     // this feed, while each row's LazyRow still handles horizontal card scroll.
-    val onItemFocused: (SectionItem, String, Int) -> Unit = { item, rowTitle, rowIndex ->
+    val onItemFocused: (SectionItem, String, Int, Int) -> Unit = { item, rowTitle, rowIndex, itemIndex ->
         marquee.preview(item, rowTitle)
         focusedRowIndex = rowIndex
+        focusedItemIndex = itemIndex
+    }
+
+    // Keep the two cards immediately before and after focus hot. Because this
+    // window is established while the current card is focused, the next two
+    // D-pad moves in either direction already have logo/backdrop bytes and
+    // aired/cast enrichment in cache before their focus events arrive.
+    LaunchedEffect(rows, focusedRowIndex, focusedItemIndex, fetchDetail) {
+        val row = rows.getOrNull(focusedRowIndex) ?: return@LaunchedEffect
+        if (focusedItemIndex !in row.items.indices) return@LaunchedEffect
+        val window = ((focusedItemIndex - HeroFocusPrefetchRadius)..
+            (focusedItemIndex + HeroFocusPrefetchRadius))
+            .filter { it in row.items.indices && it != focusedItemIndex }
+            .map(row.items::get)
+        val loader = SingletonImageLoader.get(context)
+
+        coroutineScope {
+            window.map { item ->
+                async {
+                    coroutineScope {
+                        val artwork = buildList {
+                            item.backdropUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                                add(
+                                    ImageRequest.Builder(context)
+                                        .data(url)
+                                        .size(HeroBackdropPreloadWidthPx, HeroBackdropPreloadHeightPx)
+                                        .build(),
+                                )
+                            }
+                            item.logoUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                                add(
+                                    ImageRequest.Builder(context)
+                                        .data(url)
+                                        .size(HeroLogoPreloadWidthPx, HeroLogoPreloadHeightPx)
+                                        .build(),
+                                )
+                            }
+                        }
+                        val artworkJobs = artwork.map { request ->
+                            async { runCatching { loader.execute(request) } }
+                        }
+                        val detailJob = async {
+                            val contentId = item.contentId
+                            if (!marquee.beginEnrichmentRequest(contentId)) return@async
+                            try {
+                                val detail = runCatching { fetchDetail(contentId) }.getOrNull()
+                                    ?: return@async
+                                val enrichment = TvMarqueeEnrichment.from(detail)
+                                marquee.applyEnrichment(contentId, enrichment)
+                                enrichment.backdropUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                                    runCatching {
+                                        loader.execute(
+                                            ImageRequest.Builder(context)
+                                                .data(url)
+                                                .size(
+                                                    HeroBackdropPreloadWidthPx,
+                                                    HeroBackdropPreloadHeightPx,
+                                                )
+                                                .build(),
+                                        )
+                                    }
+                                }
+                            } finally {
+                                marquee.finishEnrichmentRequest(contentId)
+                            }
+                        }
+                        artworkJobs.awaitAll()
+                        detailJob.await()
+                    }
+                }
+            }.awaitAll()
+        }
     }
 
     LaunchedEffect(focusedRowIndex, rows.size) {
@@ -371,7 +447,9 @@ fun TvSkylineSectionFeed(
                             firstItemFocusRequester = firstRowFocusRequester
                                 .takeIf { isFirstRow },
                             firstItemFocusRequest = if (isFirstRow) firstRowFocusRequest else 0,
-                            onItemFocused = { item -> onItemFocused(item, section.title, rowIndex) },
+                            onItemFocusedAtIndex = { item, itemIndex ->
+                                onItemFocused(item, section.title, rowIndex, itemIndex)
+                            },
                             cardActions = { item -> cardActions(section, item) },
                         )
                     }
@@ -402,6 +480,7 @@ private const val HeroLogoPreloadWidthPx = 880
 private const val HeroLogoPreloadHeightPx = 200
 private const val HeroPreloadRowCount = 2
 private const val HeroPreloadItemsPerRow = 8
+private const val HeroFocusPrefetchRadius = 2
 
 /** tvOS MediaRow cardSpacing 40pt maps to 20dp. */
 private val TvSkylineItemSpacing = 20.dp

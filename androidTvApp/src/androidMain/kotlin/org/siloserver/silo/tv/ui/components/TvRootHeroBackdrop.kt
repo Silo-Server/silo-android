@@ -56,7 +56,10 @@ fun TvRootHeroBackdrop(
     val targetAccent = ambientAccent ?: emptyWashColor ?: MaterialTheme.colorScheme.background
     val animatedTint by animateColorAsState(
         targetValue = targetAccent,
-        animationSpec = tween(durationMillis = TvMarqueeCrossfadeMs),
+        animationSpec = tween(
+            durationMillis = TvMarqueeCrossfadeMs,
+            easing = TvMarqueeEasing,
+        ),
         label = "tvRootHeroBackdropTint",
     )
     val displayedTint = if (animateTransition) animatedTint else targetAccent
@@ -115,7 +118,7 @@ fun TvRootHeroBackdrop(
         if (animateTransition) {
             Crossfade(
                 targetState = content,
-                animationSpec = tween(TvMarqueeCrossfadeMs),
+                animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
                 label = "tvRootHeroBackdropArt",
             ) { value ->
                 if (value?.heroBackdropUrl != null) {
