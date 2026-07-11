@@ -418,7 +418,7 @@ private fun SearchStage(
         )
 
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(end = Spacing.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -449,6 +449,11 @@ private fun SearchStage(
                     selected = mediaType == type,
                     onClick = { onMediaTypeChanged(type) },
                     modifier = chipModifier,
+                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 8.dp),
+                    textStyle = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 13.sp,
+                        lineHeight = 16.sp,
+                    ),
                 )
             }
         }

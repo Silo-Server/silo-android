@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -9,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.BorderStroke
 import androidx.tv.material3.Border
@@ -60,6 +62,8 @@ fun TvFilterChip(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+    textStyle: TextStyle = MaterialTheme.typography.labelLarge,
 ) {
     val shape = RoundedCornerShape(100.dp)
     Surface(
@@ -92,12 +96,12 @@ fun TvFilterChip(
         Box(
             modifier = Modifier
                 .background(Color.Transparent)
-                .padding(horizontal = 20.dp, vertical = 10.dp),
+                .padding(contentPadding),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = text,
-                style = MaterialTheme.typography.labelLarge,
+                style = textStyle,
             )
         }
     }
