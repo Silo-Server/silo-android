@@ -8,11 +8,19 @@ class TvSiloCastReceiverSourceTest {
     @Test
     fun receiverAdvertisesSilocastAndAllowsNewestControllerToWin() {
         val receiver = File("src/androidMain/kotlin/org/siloserver/silo/tv/cast/TvSiloCastReceiver.kt").takeIf { it.exists() }?.readText().orEmpty()
+        val identity = File("src/androidMain/kotlin/org/siloserver/silo/tv/cast/RemotePlaybackIdentityManager.kt").readText()
         val module = File("src/androidMain/kotlin/org/siloserver/silo/tv/di/AndroidTvModule.kt").readText()
+        val navigation = File("src/androidMain/kotlin/org/siloserver/silo/tv/ui/navigation/TvAppNavigation.kt").readText()
 
         assertTrue(receiver.contains("_silocast._tcp") || receiver.contains("SiloCastProtocol.serviceType"))
         assertTrue(receiver.contains("activeSession"))
         assertTrue(receiver.contains("closePreviousController"))
+        assertTrue(receiver.contains("SiloCastMessage.HandoffOffer"))
+        assertTrue(receiver.contains("launchRequests"))
+        assertTrue(receiver.contains("withContext(Dispatchers.Main.immediate)"))
+        assertTrue(identity.contains("beginTemporaryScope"))
+        assertTrue(navigation.contains("siloCastReceiver.launchRequests.collect"))
+        assertTrue(navigation.contains("TvRoute.Player"))
         assertTrue(module.contains("TvSiloCastReceiver"))
     }
 

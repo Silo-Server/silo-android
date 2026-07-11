@@ -31,6 +31,34 @@ sealed class SiloCastMessage {
     ) : SiloCastMessage()
 
     @Serializable
+    @SerialName("handoff_offer")
+    data class HandoffOffer(
+        val handoffOffer: SiloCastHandoffOffer,
+        @EncodeDefault(EncodeDefault.Mode.ALWAYS) override val v: Int = SiloCastProtocol.version,
+    ) : SiloCastMessage()
+
+    @Serializable
+    @SerialName("handoff_challenge")
+    data class HandoffChallenge(
+        val handoffChallenge: SiloCastHandoffChallenge,
+        @EncodeDefault(EncodeDefault.Mode.ALWAYS) override val v: Int = SiloCastProtocol.version,
+    ) : SiloCastMessage()
+
+    @Serializable
+    @SerialName("handoff_ready")
+    data class HandoffReady(
+        val handoffReady: SiloCastHandoffReady,
+        @EncodeDefault(EncodeDefault.Mode.ALWAYS) override val v: Int = SiloCastProtocol.version,
+    ) : SiloCastMessage()
+
+    @Serializable
+    @SerialName("handoff_cancel")
+    data class HandoffCancel(
+        val handoffCancel: SiloCastHandoffCancel,
+        @EncodeDefault(EncodeDefault.Mode.ALWAYS) override val v: Int = SiloCastProtocol.version,
+    ) : SiloCastMessage()
+
+    @Serializable
     @SerialName("launch")
     data class Launch(
         val launch: SiloCastLaunchRequest,
@@ -116,6 +144,40 @@ data class SiloCastPlaybackRequest(
 data class SiloCastLaunchRequest(
     val serverId: String,
     val playback: SiloCastPlaybackRequest,
+)
+
+@Serializable
+data class SiloCastHandoffOffer(
+    val requestId: String,
+    val serverId: String,
+    val serverURL: String,
+    val serverName: String? = null,
+    val profileId: String,
+    val profileName: String? = null,
+)
+
+@Serializable
+data class SiloCastHandoffChallenge(
+    val requestId: String,
+    val userCode: String,
+    val matchCode: String,
+    val expiresAt: String,
+)
+
+@Serializable
+data class SiloCastHandoffReady(
+    val requestId: String,
+    val serverId: String,
+    val profileId: String,
+    val sessionExpiresAt: String,
+    val reused: Boolean,
+)
+
+@Serializable
+data class SiloCastHandoffCancel(
+    val requestId: String,
+    val reason: String,
+    val message: String? = null,
 )
 
 @Serializable

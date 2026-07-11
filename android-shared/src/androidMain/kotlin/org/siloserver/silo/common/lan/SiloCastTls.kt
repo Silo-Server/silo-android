@@ -142,14 +142,27 @@ object SiloCastTls {
         }
     }
 
-    private class CastPskTlsClient(crypto: BcTlsCrypto) : PSKTlsClient(
-        crypto,
+    private class CastPskTlsClient(
+        private val bcCrypto: BcTlsCrypto,
+    ) : PSKTlsClient(
+        bcCrypto,
         BasicTlsPSKIdentity(IDENTITY, KEY),
     ) {
         override fun getSupportedCipherSuites(): IntArray = intArrayOf(TLS13_SUITE, TLS12_SUITE)
 
         override fun getSupportedVersions(): Array<ProtocolVersion> =
             arrayOf(ProtocolVersion.TLSv13, ProtocolVersion.TLSv12)
+
+        override fun getExternalPSKs(): Vector<TlsPSKExternal> =
+            Vector<TlsPSKExternal>().apply {
+                add(
+                    BasicTlsPSKExternal(
+                        IDENTITY,
+                        bcCrypto.createSecret(KEY),
+                        PRFAlgorithm.tls13_hkdf_sha256,
+                    ),
+                )
+            }
     }
 }
 

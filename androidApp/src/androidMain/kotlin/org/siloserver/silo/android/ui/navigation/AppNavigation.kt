@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -66,6 +67,7 @@ import org.siloserver.silo.android.ui.screens.servers.ServerListScreen
 import org.siloserver.silo.android.ui.screens.servers.ServerSwitchDestination
 import org.siloserver.silo.android.ui.screens.settings.CardOverlaySettingsScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsScreen
+import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.settings.OverlayPrefsStore
@@ -549,15 +551,29 @@ fun AppNavigation(
             ItemDetailScreen(
                 onBackClick = { navController.popBackStack() },
                 onPlayClick = { contentId, fileId, audioTrackIndex, subtitleTrackIndex, resumePositionSeconds ->
-                    navController.navigate(
-                        Route.Player(
+                    val launchedRemotely = siloCastController.launchOnConnectedTarget(
+                        SiloCastPlaybackRequest(
                             contentId = contentId,
                             fileId = fileId,
                             audioTrackIndex = audioTrackIndex,
                             subtitleTrackIndex = subtitleTrackIndex,
-                            resumePositionSeconds = resumePositionSeconds,
-                        ).route,
+                            startFromBeginning = resumePositionSeconds == null,
+                            resumePosition = resumePositionSeconds,
+                        ),
                     )
+                    if (launchedRemotely) {
+                        navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
+                    } else {
+                        navController.navigate(
+                            Route.Player(
+                                contentId = contentId,
+                                fileId = fileId,
+                                audioTrackIndex = audioTrackIndex,
+                                subtitleTrackIndex = subtitleTrackIndex,
+                                resumePositionSeconds = resumePositionSeconds,
+                            ).route,
+                        )
+                    }
                 },
                 onItemDetailClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
@@ -582,6 +598,9 @@ fun AppNavigation(
                     navController.navigate(Route.BookReader(contentId, fileId).route)
                 },
                 onWatchTogether = { contentId, fileId -> wtTarget = contentId to fileId },
+                onOpenCastRemote = {
+                    navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
+                },
                 viewModel = detailViewModel,
             )
             wtTarget?.let { (cid, fid) ->
@@ -790,11 +809,29 @@ fun AppNavigation(
         }
 
     }
-        SiloCastMiniBar(
-            controller = siloCastController,
-            onOpenRemote = { navController.navigate(Route.SiloCastRemote.route) },
-            modifier = Modifier.align(Alignment.BottomCenter),
+        // Menu-less routes (detail screens etc.) get the cast bar as a bottom
+        // overlay. Tab routes render it inside MainScreen's Scaffold, stacked
+        // above the nav menu (iOS placement); the full remote and the local
+        // player own their whole screen.
+        val currentRoute = currentEntry?.destination?.route
+        val castBarInlineRoutes = setOf(
+            Route.Home.route,
+            Route.Libraries.route,
+            Route.Recommendations.route,
+            Route.Downloads.route,
+            Route.Calendar.route,
+            Route.SiloCastRemote.route,
+            Route.Player.ROUTE,
         )
+        if (currentRoute !in castBarInlineRoutes) {
+            SiloCastMiniBar(
+                controller = siloCastController,
+                onOpenRemote = { navController.navigate(Route.SiloCastRemote.route) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding(),
+            )
+        }
     }
     }
     }

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import org.siloserver.silo.cast.SiloCastProtocol
 import java.nio.charset.Charset
+import java.util.ArrayDeque
 
 data class SiloCastTarget(
     val deviceId: String,
@@ -21,6 +22,14 @@ data class SiloCastTarget(
      *  onServiceLost only reports this, so removal must match on it — the
      *  display name comes from the TXT record and can collide/diverge. */
     val serviceName: String = name,
+    /** The receiver's active server (TXT `server`) — same-server targets are
+     *  controllable without a handoff; others need the v2 profile handoff. */
+    val serverId: String? = null,
+    val serverName: String? = null,
+    /** The receiver's advertised `playing` TXT flag. Drives the picker's
+     *  "Playing now" badge and gates silent auto-resume (idle TVs must never
+     *  be reattached — a bare connection flips them into standby takeover). */
+    val isPlaying: Boolean = false,
 )
 
 class SiloCastNsdBrowser(context: Context) {
@@ -31,6 +40,8 @@ class SiloCastNsdBrowser(context: Context) {
     val targets: StateFlow<List<SiloCastTarget>> = _targets.asStateFlow()
 
     private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private val pendingResolutions = ArrayDeque<PendingResolution>()
+    private var activeResolution: PendingResolution? = null
 
     @Synchronized
     fun start() {
@@ -45,7 +56,7 @@ class SiloCastNsdBrowser(context: Context) {
                 // trailing dot ("_silocast._tcp."); exact equality would
                 // silently reject every receiver.
                 if (serviceInfo.serviceType.trimEnd('.') != SiloCastProtocol.serviceType.trimEnd('.')) return
-                resolve(serviceInfo)
+                enqueueResolution(serviceInfo)
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
@@ -76,26 +87,70 @@ class SiloCastNsdBrowser(context: Context) {
             runCatching { nsdManager.stopServiceDiscovery(listener) }
         }
         discoveryListener = null
+        pendingResolutions.clear()
+        activeResolution = null
         _targets.value = emptyList()
     }
 
-    private fun resolve(serviceInfo: NsdServiceInfo) {
-        nsdManager.resolveService(
-            serviceInfo,
+    /**
+     * Legacy NsdManager permits only one resolve at a time. Bonjour commonly
+     * reports Apple TV and Android TV receivers together; resolving both in
+     * parallel returns FAILURE_ALREADY_ACTIVE and silently drops one target.
+     */
+    private fun enqueueResolution(serviceInfo: NsdServiceInfo) {
+        val next = synchronized(this) {
+            if (discoveryListener == null) return
+            val serviceName = serviceInfo.serviceName
+            if (activeResolution?.serviceInfo?.serviceName == serviceName ||
+                pendingResolutions.any { it.serviceInfo.serviceName == serviceName }
+            ) {
+                return
+            }
+            pendingResolutions.addLast(PendingResolution(serviceInfo))
+            takeNextResolutionLocked()
+        }
+        next?.let(::startResolution)
+    }
+
+    private fun startResolution(pending: PendingResolution) {
+        runCatching {
+            nsdManager.resolveService(
+                pending.serviceInfo,
             object : NsdManager.ResolveListener {
                 override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
                     Log.w(TAG, "SiloCast resolve failed for ${info.serviceName}: $errorCode")
+                    finishResolution(pending)
                 }
 
                 override fun onServiceResolved(info: NsdServiceInfo) {
-                    val target = info.toSiloCastTarget() ?: return
-                    _targets.update { current ->
-                        (current.filterNot { it.deviceId == target.deviceId } + target)
-                            .sortedBy { it.name.lowercase() }
+                    info.toSiloCastTarget()?.let { target ->
+                        _targets.update { current ->
+                            (current.filterNot { it.deviceId == target.deviceId } + target)
+                                .sortedBy { it.name.lowercase() }
+                        }
                     }
+                    finishResolution(pending)
                 }
             },
-        )
+            )
+        }.onFailure { error ->
+            Log.w(TAG, "SiloCast resolve could not start for ${pending.serviceInfo.serviceName}", error)
+            finishResolution(pending)
+        }
+    }
+
+    private fun finishResolution(completed: PendingResolution) {
+        val next = synchronized(this) {
+            if (activeResolution !== completed) return
+            activeResolution = null
+            takeNextResolutionLocked()
+        }
+        next?.let(::startResolution)
+    }
+
+    private fun takeNextResolutionLocked(): PendingResolution? {
+        if (activeResolution != null || pendingResolutions.isEmpty()) return null
+        return pendingResolutions.removeFirst().also { activeResolution = it }
     }
 
     private fun NsdServiceInfo.toSiloCastTarget(): SiloCastTarget? {
@@ -112,11 +167,16 @@ class SiloCastNsdBrowser(context: Context) {
             host = host,
             port = port,
             version = version,
+            serverId = attributes.string("server"),
+            serverName = attributes.string("serverName"),
+            isPlaying = attributes.string("playing") == "1",
         )
     }
 
     private fun Map<String, ByteArray>.string(key: String): String? =
         this[key]?.toString(Charset.forName("UTF-8"))?.takeIf { it.isNotBlank() }
+
+    private class PendingResolution(val serviceInfo: NsdServiceInfo)
 
     private companion object {
         const val TAG = "SiloCastNsdBrowser"

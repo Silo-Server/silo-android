@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -86,6 +87,10 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
+    onRemoteControlClick: () -> Unit,
+    onRemoteChooseTvClick: () -> Unit,
+    onRemoteDisconnectClick: () -> Unit,
+    isRemoteControlActive: Boolean,
     onRequestsClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
@@ -229,6 +234,10 @@ fun HomeScreen(
             scrollProgress = scrollProgress,
             activeProfile = activeProfile,
             onSearchClick = onSearchClick,
+            onRemoteControlClick = onRemoteControlClick,
+            onRemoteChooseTvClick = onRemoteChooseTvClick,
+            onRemoteDisconnectClick = onRemoteDisconnectClick,
+            isRemoteControlActive = isRemoteControlActive,
             onRequestsClick = onRequestsClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
@@ -282,6 +291,10 @@ private fun HomeFloatingChrome(
     scrollProgress: Float,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
+    onRemoteControlClick: () -> Unit,
+    onRemoteChooseTvClick: () -> Unit,
+    onRemoteDisconnectClick: () -> Unit,
+    isRemoteControlActive: Boolean,
     onRequestsClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
@@ -320,6 +333,60 @@ private fun HomeFloatingChrome(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Mirrors Apple's SiloControlModeButton: chrome-free at rest,
+                // filled disc while controlling a TV; the active state opens a
+                // menu instead of jumping straight to the remote.
+                Box {
+                    var remoteMenuExpanded by remember { mutableStateOf(false) }
+                    HomeChromeButton(
+                        onClick = {
+                            if (isRemoteControlActive) {
+                                remoteMenuExpanded = true
+                            } else {
+                                onRemoteControlClick()
+                            }
+                        },
+                        isActive = isRemoteControlActive,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.SettingsRemote,
+                            contentDescription = "Remote Control",
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = remoteMenuExpanded,
+                        onDismissRequest = { remoteMenuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Remote Control") },
+                            onClick = {
+                                remoteMenuExpanded = false
+                                onRemoteControlClick()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Choose TV") },
+                            onClick = {
+                                remoteMenuExpanded = false
+                                onRemoteChooseTvClick()
+                            },
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "Turn Off Control Mode",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                            onClick = {
+                                remoteMenuExpanded = false
+                                onRemoteDisconnectClick()
+                            },
+                        )
+                    }
+                }
+
                 HomeChromeButton(onClick = onSearchClick) {
                     Icon(
                         imageVector = Icons.Outlined.Search,
@@ -352,13 +419,15 @@ private fun HomeFloatingChrome(
 @Composable
 private fun HomeChromeButton(
     onClick: () -> Unit,
+    isActive: Boolean = false,
     content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
 ) {
     // iOS top-bar icon buttons are bare 40x40 tap targets (no chip background).
     Surface(
         onClick = onClick,
-        color = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = if (isActive) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+        contentColor = if (isActive) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurface,
+        shape = CircleShape,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
     ) {

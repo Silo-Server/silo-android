@@ -28,13 +28,13 @@ class SiloCastMessageTest {
     fun helloMatchesAppleEnvelopeAndFields() {
         assertWireEquals(
             """
-            {"type":"hello","v":1,"hello":{
+            {"type":"hello","v":2,"hello":{
                 "role":"phone",
                 "deviceName":"Pixel 9",
                 "deviceId":"android-abc",
                 "serverId":"srv-1",
                 "serverName":"Home",
-                "supportedVersions":[1]
+                "supportedVersions":[2]
             }}
             """,
             SiloCastMessage.Hello(
@@ -54,8 +54,8 @@ class SiloCastMessageTest {
     fun decodesAppleTvHello() {
         val decoded = json.decodeFromString(
             SiloCastMessage.serializer(),
-            """{"type":"hello","v":1,"hello":{"role":"tv","deviceName":"Living Room",""" +
-                """"deviceId":"atv-1","serverId":"srv-1","serverName":"Home","supportedVersions":[1]}}""",
+            """{"type":"hello","v":2,"hello":{"role":"tv","deviceName":"Living Room",""" +
+                """"deviceId":"atv-1","serverId":"srv-1","serverName":"Home","supportedVersions":[2]}}""",
         )
         val hello = assertIs<SiloCastMessage.Hello>(decoded).hello
         assertEquals(SiloCastPeerRole.Tv, hello.role)
@@ -66,7 +66,7 @@ class SiloCastMessageTest {
     fun launchNestsPlaybackRequestLikeApple() {
         assertWireEquals(
             """
-            {"type":"launch","v":1,"launch":{
+            {"type":"launch","v":2,"launch":{
                 "serverId":"srv-1",
                 "playback":{
                     "contentId":"movie-42",
@@ -96,23 +96,23 @@ class SiloCastMessageTest {
     @Test
     fun controlCommandsUseAppleNamesAndFields() {
         assertWireEquals(
-            """{"type":"control","v":1,"control":{"name":"play_pause"}}""",
+            """{"type":"control","v":2,"control":{"name":"play_pause"}}""",
             SiloCastMessage.Control(SiloCastControlCommand.playPause()),
         )
         assertWireEquals(
-            """{"type":"control","v":1,"control":{"name":"set_quality","value":"hd-1080"}}""",
+            """{"type":"control","v":2,"control":{"name":"set_quality","value":"hd-1080"}}""",
             SiloCastMessage.Control(SiloCastControlCommand.setQuality("hd-1080")),
         )
         assertWireEquals(
-            """{"type":"control","v":1,"control":{"name":"select_audio_track","trackId":3}}""",
+            """{"type":"control","v":2,"control":{"name":"select_audio_track","trackId":3}}""",
             SiloCastMessage.Control(SiloCastControlCommand.selectAudioTrack(3L)),
         )
         assertWireEquals(
-            """{"type":"control","v":1,"control":{"name":"set_subtitle_sync_ms","milliseconds":-250}}""",
+            """{"type":"control","v":2,"control":{"name":"set_subtitle_sync_ms","milliseconds":-250}}""",
             SiloCastMessage.Control(SiloCastControlCommand.setSubtitleSyncMs(-250)),
         )
         assertWireEquals(
-            """{"type":"control","v":1,"control":{"name":"play_next"}}""",
+            """{"type":"control","v":2,"control":{"name":"play_next"}}""",
             SiloCastMessage.Control(SiloCastControlCommand.playNext()),
         )
     }
@@ -121,24 +121,24 @@ class SiloCastMessageTest {
     fun subtitleOffOmitsTrackIdLikeApple() {
         val message = SiloCastMessage.Control(SiloCastControlCommand.selectSubtitleTrack(null))
         assertWireEquals(
-            """{"type":"control","v":1,"control":{"name":"select_subtitle_track"}}""",
+            """{"type":"control","v":2,"control":{"name":"select_subtitle_track"}}""",
             message,
         )
         val decoded = json.decodeFromString(
             SiloCastMessage.serializer(),
-            """{"type":"control","v":1,"control":{"name":"select_subtitle_track"}}""",
+            """{"type":"control","v":2,"control":{"name":"select_subtitle_track"}}""",
         )
         assertNull(assertIs<SiloCastMessage.Control>(decoded).control.trackId)
     }
 
     @Test
     fun pingPongCloseCarryNoPayload() {
-        assertWireEquals("""{"type":"ping","v":1}""", SiloCastMessage.Ping())
-        assertWireEquals("""{"type":"pong","v":1}""", SiloCastMessage.Pong())
-        assertWireEquals("""{"type":"close","v":1}""", SiloCastMessage.Close())
+        assertWireEquals("""{"type":"ping","v":2}""", SiloCastMessage.Ping())
+        assertWireEquals("""{"type":"pong","v":2}""", SiloCastMessage.Pong())
+        assertWireEquals("""{"type":"close","v":2}""", SiloCastMessage.Close())
         // Apple's decoder reads only `type` for these kinds.
         assertIs<SiloCastMessage.Ping>(
-            json.decodeFromString(SiloCastMessage.serializer(), """{"type":"ping","v":1}"""),
+            json.decodeFromString(SiloCastMessage.serializer(), """{"type":"ping","v":2}"""),
         )
     }
 
@@ -147,7 +147,7 @@ class SiloCastMessageTest {
         val decoded = json.decodeFromString(
             SiloCastMessage.serializer(),
             """
-            {"type":"state","v":1,"state":{
+            {"type":"state","v":2,"state":{
                 "contentId":"ep-9","title":"S01E09","isPlaying":true,"isLoading":false,
                 "isBuffering":false,"currentTime":42.0,"duration":2700.0,
                 "audioTracks":[{"kind":"audio","trackId":1,"title":"English","detail":"EAC3 5.1"}],
@@ -175,14 +175,48 @@ class SiloCastMessageTest {
     @Test
     fun errorMatchesAppleShape() {
         assertWireEquals(
-            """{"type":"error","v":1,"error":{"code":"server_mismatch","message":"wrong server"}}""",
+            """{"type":"error","v":2,"error":{"code":"server_mismatch","message":"wrong server"}}""",
             SiloCastMessage.Error(SiloCastError(code = "server_mismatch", message = "wrong server")),
         )
     }
 
     @Test
     fun protocolConstantsMatchApple() {
-        assertEquals(1, SiloCastProtocol.version)
+        assertEquals(2, SiloCastProtocol.version)
+        assertEquals(listOf(2), SiloCastProtocol.supportedVersions)
         assertEquals("_silocast._tcp", SiloCastProtocol.serviceType)
+    }
+
+    @Test
+    fun v2HandoffMessagesMatchAppleShapes() {
+        assertWireEquals(
+            """{"type":"handoff_offer","v":2,"handoffOffer":{"requestId":"req-1","serverId":"srv-1","serverURL":"https://silo.example","serverName":"Home","profileId":"profile-1","profileName":"Alex"}}""",
+            SiloCastMessage.HandoffOffer(
+                SiloCastHandoffOffer(
+                    requestId = "req-1",
+                    serverId = "srv-1",
+                    serverURL = "https://silo.example",
+                    serverName = "Home",
+                    profileId = "profile-1",
+                    profileName = "Alex",
+                ),
+            ),
+        )
+        assertWireEquals(
+            """{"type":"handoff_challenge","v":2,"handoffChallenge":{"requestId":"req-1","userCode":"ABCD","matchCode":"MATCH","expiresAt":"2099-01-01T00:00:00Z"}}""",
+            SiloCastMessage.HandoffChallenge(
+                SiloCastHandoffChallenge("req-1", "ABCD", "MATCH", "2099-01-01T00:00:00Z"),
+            ),
+        )
+        assertWireEquals(
+            """{"type":"handoff_ready","v":2,"handoffReady":{"requestId":"req-1","serverId":"srv-1","profileId":"profile-1","sessionExpiresAt":"2099-01-02T00:00:00Z","reused":false}}""",
+            SiloCastMessage.HandoffReady(
+                SiloCastHandoffReady("req-1", "srv-1", "profile-1", "2099-01-02T00:00:00Z", false),
+            ),
+        )
+        assertWireEquals(
+            """{"type":"handoff_cancel","v":2,"handoffCancel":{"requestId":"req-1","reason":"denied","message":"No"}}""",
+            SiloCastMessage.HandoffCancel(SiloCastHandoffCancel("req-1", "denied", "No")),
+        )
     }
 }

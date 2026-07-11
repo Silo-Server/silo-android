@@ -82,6 +82,9 @@ fun ItemDetailScreen(
     onAudiobookPlayClick: (contentId: String, fileId: Int?, fromStart: Boolean, startPosition: Double?) -> Unit = { _, _, _, _ -> },
     onBookReadClick: (String, Int?) -> Unit = { _, _ -> },
     onWatchTogether: (String, Int?) -> Unit = { _, _ -> },
+    // Auto-presents the cast remote after "Play on device" launches, mirroring
+    // Apple's playOnTV: the connect/handoff handshake renders in the remote.
+    onOpenCastRemote: () -> Unit = {},
     viewModel: ItemDetailViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -816,6 +819,7 @@ fun ItemDetailScreen(
             SiloCastTargetPickerSheet(
                 launchRequest = request,
                 onDismiss = { pendingSiloCastLaunchRequest = null },
+                onLaunched = onOpenCastRemote,
             )
         }
 

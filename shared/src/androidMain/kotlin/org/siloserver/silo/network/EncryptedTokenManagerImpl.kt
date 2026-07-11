@@ -46,6 +46,7 @@ class EncryptedTokenManagerImpl(
     private var tokenExpiryEpochMs: Long? = null
     private var profileId: String? = null
     private var profileToken: String? = null
+    private var temporaryScope: TemporaryAuthScope? = null
 
     private val _sessionExpired = MutableSharedFlow<Unit>(
         replay = 0,
@@ -79,11 +80,11 @@ class EncryptedTokenManagerImpl(
 
     override suspend fun getAccessToken(): String? = mutex.withLock {
         ensureCacheMatchesRegistryLocked()
-        accessToken
+        temporaryScope?.accessToken ?: accessToken
     }
     override suspend fun getRefreshToken(): String? = mutex.withLock {
         ensureCacheMatchesRegistryLocked()
-        refreshToken
+        temporaryScope?.refreshToken ?: refreshToken
     }
 
     /**
@@ -105,6 +106,14 @@ class EncryptedTokenManagerImpl(
 
     override suspend fun saveTokens(accessToken: String, refreshToken: String, expiresIn: Long) {
         mutex.withLock {
+            temporaryScope?.let { scope ->
+                temporaryScope = scope.copy(
+                    accessToken = accessToken,
+                    refreshToken = refreshToken,
+                    expiresAtEpochMs = System.currentTimeMillis() + expiresIn * 1000L,
+                )
+                return@withLock
+            }
             val serverId = activeServerId ?: return  // No active server — drop on the floor.
             this.accessToken = accessToken
             this.refreshToken = refreshToken
@@ -120,6 +129,10 @@ class EncryptedTokenManagerImpl(
 
     override suspend fun clearTokens() {
         mutex.withLock {
+            if (temporaryScope != null) {
+                temporaryScope = null
+                return@withLock
+            }
             val serverId = activeServerId
             accessToken = null
             refreshToken = null
@@ -139,17 +152,34 @@ class EncryptedTokenManagerImpl(
     }
 
     override suspend fun invalidateSession() {
+        val invalidatedTemporaryScope = mutex.withLock {
+            if (temporaryScope == null) {
+                false
+            } else {
+                temporaryScope = null
+                true
+            }
+        }
+        // A remote-playback token failure must not sign the TV out of its
+        // saved account. The player surfaces the failed temporary session and
+        // receiver teardown restores the saved scope; only a persistent-scope
+        // rejection belongs on the root session-expired navigation path.
+        if (invalidatedTemporaryScope) return
         clearTokens()
         _sessionExpired.tryEmit(Unit)
     }
 
     override suspend fun getProfileId(): String? = mutex.withLock {
         ensureCacheMatchesRegistryLocked()
-        profileId
+        temporaryScope?.profileId ?: profileId
     }
 
     override suspend fun setProfileId(profileId: String?) {
         mutex.withLock {
+            temporaryScope?.let { scope ->
+                if (profileId != null) temporaryScope = scope.copy(profileId = profileId)
+                return@withLock
+            }
             val serverId = activeServerId ?: return
             if (this.profileId == profileId) return
             this.profileId = profileId
@@ -162,11 +192,15 @@ class EncryptedTokenManagerImpl(
 
     override suspend fun getProfileToken(): String? = mutex.withLock {
         ensureCacheMatchesRegistryLocked()
-        profileToken
+        temporaryScope?.profileToken ?: profileToken
     }
 
     override suspend fun setProfileToken(token: String?) {
         mutex.withLock {
+            temporaryScope?.let { scope ->
+                if (token != null) temporaryScope = scope.copy(profileToken = token)
+                return@withLock
+            }
             val serverId = activeServerId ?: return
             if (this.profileToken == token) return
             this.profileToken = token
@@ -177,8 +211,9 @@ class EncryptedTokenManagerImpl(
         }
     }
 
-    override suspend fun getServerUrl(): String =
-        registry.activeEntry.value?.url.orEmpty()
+    override suspend fun getServerUrl(): String = mutex.withLock {
+        temporaryScope?.serverUrl ?: registry.activeEntry.value?.url.orEmpty()
+    }
 
     /**
      * Adds-or-updates [url] in the registry and switches to it. Used by the
@@ -197,7 +232,9 @@ class EncryptedTokenManagerImpl(
 
     // ---- Multi-server controls ----
 
-    override suspend fun getCurrentServerId(): String? = mutex.withLock { activeServerId }
+    override suspend fun getCurrentServerId(): String? = mutex.withLock {
+        temporaryScope?.serverId ?: activeServerId
+    }
 
     override suspend fun switchActiveServer(serverId: String?) {
         mutex.withLock {
@@ -211,9 +248,29 @@ class EncryptedTokenManagerImpl(
         clearTokens()
     }
 
+    override suspend fun beginTemporaryScope(scope: TemporaryAuthScope) {
+        mutex.withLock { temporaryScope = scope }
+    }
+
+    override suspend fun endTemporaryScope(): Boolean = mutex.withLock {
+        val existed = temporaryScope != null
+        temporaryScope = null
+        existed
+    }
+
+    override suspend fun hasTemporaryScope(): Boolean = mutex.withLock { temporaryScope != null }
+
     // ---- Scoped auth (pinned background requests) ----
 
     override suspend fun snapshotCurrentScope(): AuthScopeSnapshot? = mutex.withLock {
+        temporaryScope?.let { scope ->
+            return@withLock AuthScopeSnapshot(
+                serverId = scope.serverId,
+                profileId = scope.profileId,
+                serverUrl = scope.serverUrl,
+                profileToken = scope.profileToken,
+            )
+        }
         val serverId = activeServerId ?: return@withLock null
         // Resolve the URL for *this* serverId from the registry entries so the
         // snapshot is internally consistent. Do NOT fall back to activeEntry —
@@ -231,12 +288,14 @@ class EncryptedTokenManagerImpl(
     }
 
     override suspend fun getAccessTokenForScope(serverId: String): String? = mutex.withLock {
-        if (serverId == activeServerId) accessToken
+        if (serverId == temporaryScope?.serverId) temporaryScope?.accessToken
+        else if (serverId == activeServerId) accessToken
         else prefs.getString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), null)
     }
 
     override suspend fun getRefreshTokenForScope(serverId: String): String? = mutex.withLock {
-        if (serverId == activeServerId) refreshToken
+        if (serverId == temporaryScope?.serverId) temporaryScope?.refreshToken
+        else if (serverId == activeServerId) refreshToken
         else prefs.getString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), null)
     }
 
@@ -248,6 +307,14 @@ class EncryptedTokenManagerImpl(
     ) {
         mutex.withLock {
             val expiryEpochMs = System.currentTimeMillis() + expiresIn * 1000L
+            temporaryScope?.takeIf { it.serverId == serverId }?.let { scope ->
+                temporaryScope = scope.copy(
+                    accessToken = accessToken,
+                    refreshToken = refreshToken,
+                    expiresAtEpochMs = expiryEpochMs,
+                )
+                return@withLock
+            }
             prefs.edit()
                 .putString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), accessToken)
                 .putString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), refreshToken)

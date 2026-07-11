@@ -2,6 +2,16 @@ package org.siloserver.silo.network
 
 import kotlinx.coroutines.flow.SharedFlow
 
+data class TemporaryAuthScope(
+    val serverId: String,
+    val serverUrl: String,
+    val accessToken: String,
+    val refreshToken: String,
+    val profileId: String,
+    val profileToken: String,
+    val expiresAtEpochMs: Long,
+)
+
 /**
  * Manages JWT access and refresh tokens.
  * Implementation provided by Agent 2 in TokenManagerImpl.kt.
@@ -102,4 +112,12 @@ interface TokenManager {
         refreshToken: String,
         expiresIn: Long,
     ) = saveTokens(accessToken, refreshToken, expiresIn)
+
+    /** Install a process-only identity for remote playback without mutating saved accounts. */
+    suspend fun beginTemporaryScope(scope: TemporaryAuthScope) {}
+
+    /** Restore the saved identity after remote playback. Returns true when an overlay existed. */
+    suspend fun endTemporaryScope(): Boolean = false
+
+    suspend fun hasTemporaryScope(): Boolean = false
 }

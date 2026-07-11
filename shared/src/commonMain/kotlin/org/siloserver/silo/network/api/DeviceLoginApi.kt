@@ -4,6 +4,7 @@ import org.siloserver.silo.model.auth.DeviceLoginPollRequest
 import org.siloserver.silo.model.auth.DeviceLoginPollResponse
 import org.siloserver.silo.model.auth.DeviceLoginDecisionRequest
 import org.siloserver.silo.model.auth.DeviceLoginDecisionResponse
+import org.siloserver.silo.model.auth.DeviceLoginCapabilityResponse
 import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
 import org.siloserver.silo.model.auth.DeviceLoginStartRequest
 import org.siloserver.silo.model.auth.DeviceLoginStartResponse
@@ -58,6 +59,20 @@ interface DeviceLoginApi {
         deviceCode: String,
     ): ApiResult<DeviceLoginPollResponse> = pollDeviceLogin(deviceCode)
 
+    suspend fun remotePlaybackCapabilityAt(
+        serverUrl: String,
+    ): ApiResult<DeviceLoginCapabilityResponse> = ApiResult.Error(
+        code = 501,
+        error = "remote_playback_unsupported",
+        message = "Remote playback handoff is not supported.",
+    )
+
+    suspend fun startRemotePlaybackAt(
+        serverUrl: String,
+        deviceName: String?,
+        devicePlatform: String?,
+    ): ApiResult<DeviceLoginStartResponse> = startDeviceLoginAt(serverUrl, deviceName, devicePlatform)
+
     suspend fun lookupDeviceLogin(
         token: String?,
         code: String?,
@@ -83,6 +98,13 @@ interface DeviceLoginApi {
         scope: AuthScopeSnapshot,
         code: String,
     ): ApiResult<DeviceLoginDecisionResponse> = approveDeviceLogin(token = null, code = code)
+
+    suspend fun approveRemotePlaybackForScope(
+        scope: AuthScopeSnapshot,
+        code: String,
+    ): ApiResult<DeviceLoginDecisionResponse> = approveDeviceLoginForScope(scope, code)
+
+    suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> = ApiResult.Success(Unit)
 
     suspend fun denyDeviceLoginForScope(
         scope: AuthScopeSnapshot,
@@ -136,6 +158,33 @@ class DefaultDeviceLoginApi(private val client: HttpClient) : DeviceLoginApi {
         }
     }
 
+    override suspend fun remotePlaybackCapabilityAt(
+        serverUrl: String,
+    ): ApiResult<DeviceLoginCapabilityResponse> = safeApiCall {
+        client.get("${serverUrl.trimEnd('/')}/api/v1/auth/device/capability") {
+            skipSiloAuth()
+        }
+    }
+
+    override suspend fun startRemotePlaybackAt(
+        serverUrl: String,
+        deviceName: String?,
+        devicePlatform: String?,
+    ): ApiResult<DeviceLoginStartResponse> = safeApiCall {
+        client.post("${serverUrl.trimEnd('/')}/api/v1/auth/device/start") {
+            skipSiloAuth()
+            contentType(ContentType.Application.Json)
+            setBody(
+                DeviceLoginStartRequest(
+                    deviceName = deviceName,
+                    devicePlatform = devicePlatform,
+                    clientPurpose = "remote_playback",
+                    temporary = true,
+                ),
+            )
+        }
+    }
+
     override suspend fun lookupDeviceLogin(
         token: String?,
         code: String?,
@@ -184,6 +233,24 @@ class DefaultDeviceLoginApi(private val client: HttpClient) : DeviceLoginApi {
             authScope(scope)
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(code = code))
+        }
+    }
+
+    override suspend fun approveRemotePlaybackForScope(
+        scope: AuthScopeSnapshot,
+        code: String,
+    ): ApiResult<DeviceLoginDecisionResponse> = safeApiCall {
+        client.post("/api/v1/auth/device/approve-handoff") {
+            authScope(scope)
+            contentType(ContentType.Application.Json)
+            setBody(DeviceLoginDecisionRequest(code = code))
+        }
+    }
+
+    override suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> = safeApiCall {
+        client.post("/api/v1/auth/logout") {
+            authScope(scope)
+            contentType(ContentType.Application.Json)
         }
     }
 

@@ -432,6 +432,7 @@ fun TvPlayerScreen(
                 hdrEnabled = latestSiloCastHdrEnabled,
                 subtitleDelayMs = latestSiloCastSubtitleDelayMs,
                 subtitleAppearance = latestSiloCastSubtitleAppearance,
+                volume = latestSiloCastMediaController?.volume?.toDouble() ?: 1.0,
             )
         }
         onDispose { registration.close() }
@@ -2671,6 +2672,7 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
     hdrEnabled: Boolean,
     subtitleDelayMs: Int,
     subtitleAppearance: SubtitleAppearance,
+    volume: Double,
 ): SiloCastPlaybackState {
     val activeQualityId = videoQualities.firstOrNull { it.isSelected }?.id ?: VIDEO_QUALITY_AUTO_ID
     return SiloCastPlaybackState(
@@ -2702,8 +2704,8 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
         subtitlePosition = subtitleAppearance.position.toSiloCastPositionValue(),
         supportsSubtitleDelay = true,
         supportsSubtitlePosition = true,
-        volume = 1.0,
-        isMuted = false,
+        volume = volume.coerceIn(0.0, 1.0),
+        isMuted = volume <= 0.001,
         hasNextEpisode = nextEpisode != null,
         nextEpisodeTitle = nextEpisode?.title,
         error = error,

@@ -57,6 +57,16 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
         }.onFailure {
             android.util.Log.w("SiloApplication", "Android push registration starter init failed", it)
         }
+        // SiloCast session lifecycle: foreground pings a live TV session and
+        // probes for a silent auto-resume of the last-controlled TV; background
+        // drops unengaged auto-resumed sessions. Guarded — never load-bearing.
+        runCatching {
+            org.siloserver.silo.android.cast.SiloCastForegroundStarter(
+                controller = koinApp.koin.get(),
+            ).register()
+        }.onFailure {
+            android.util.Log.w("SiloApplication", "SiloCast foreground starter init failed", it)
+        }
         // Configuration.Provider wasn't reliably picked up by WM's androidx.startup
         // auto-init (the auto-init seemed to win the race, leaving WM with its
         // default reflection-based WorkerFactory). Force-initialise explicitly

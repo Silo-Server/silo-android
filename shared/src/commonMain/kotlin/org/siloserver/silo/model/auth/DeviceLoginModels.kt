@@ -7,6 +7,8 @@ import kotlinx.serialization.Serializable
 data class DeviceLoginStartRequest(
     @SerialName("device_name") val deviceName: String? = null,
     @SerialName("device_platform") val devicePlatform: String? = null,
+    @SerialName("client_purpose") val clientPurpose: String? = null,
+    val temporary: Boolean? = null,
 )
 
 /**
@@ -26,6 +28,8 @@ data class DeviceLoginStartResponse(
     val interval: Int,
     @SerialName("device_name") val deviceName: String,
     @SerialName("device_platform") val devicePlatform: String,
+    @SerialName("client_purpose") val clientPurpose: String? = null,
+    val temporary: Boolean? = null,
 )
 
 @Serializable
@@ -49,6 +53,10 @@ data class DeviceLoginPollResponse(
     @SerialName("refresh_token") val refreshToken: String? = null,
     @SerialName("expires_in") val expiresIn: Long? = null,
     val user: User? = null,
+    @SerialName("profile_id") val profileId: String? = null,
+    @SerialName("profile_token") val profileToken: String? = null,
+    val temporary: Boolean? = null,
+    @SerialName("session_expires_at") val sessionExpiresAt: String? = null,
 )
 
 @Serializable
@@ -60,6 +68,14 @@ data class DeviceLoginLookupResponse(
     @SerialName("device_platform") val devicePlatform: String? = null,
     @SerialName("ip_address_hint") val ipAddressHint: String? = null,
     @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("client_purpose") val clientPurpose: String? = null,
+    val temporary: Boolean? = null,
+)
+
+@Serializable
+data class DeviceLoginCapabilityResponse(
+    @SerialName("remote_playback_handoff") val remotePlaybackHandoff: Boolean,
+    @SerialName("protocol_versions") val protocolVersions: List<Int>,
 )
 
 @Serializable
