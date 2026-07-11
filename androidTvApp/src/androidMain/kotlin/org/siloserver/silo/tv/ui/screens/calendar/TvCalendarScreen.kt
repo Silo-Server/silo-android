@@ -122,13 +122,6 @@ fun TvCalendarScreen(
     // re-emission doesn't yank focus back after the user has navigated.
     val filterFocusRequester = remember { FocusRequester() }
     var initialFocusRequested by remember { mutableStateOf(false) }
-    LaunchedEffect(state.weekStart) {
-        if (initialFocusRequested) return@LaunchedEffect
-        runCatching { filterFocusRequester.requestFocus() }
-        onInitialContentFocus()
-        initialFocusRequested = true
-    }
-
     // Focus hand-off for day selection: picking a day in the week strip scrolls
     // to that day's shelf and kicks focus onto its first card. Only the most
     // recently selected day sees a changing, non-zero token, so exactly one
@@ -158,59 +151,54 @@ fun TvCalendarScreen(
                 modifier = Modifier.fillMaxSize(),
             )
 
-            Column(
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                Column(
-                    modifier = Modifier.padding(
-                        start = Spacing.safeArea,
-                        end = Spacing.safeArea,
-                        top = TvTopMenuLayout.contentTopInset,
-                        bottom = Spacing.sm,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.lg),
-                ) {
-                    CalendarControlRow(
-                        selectedFilter = state.filter,
-                        onSelectFilter = viewModel::setFilter,
-                        firstSegmentFocusRequester = filterFocusRequester,
-                    )
+            val controls: @Composable (Boolean, Boolean) -> Unit = { allowInitialFocus, includeTopInset ->
+                CalendarControls(
+                    selectedFilter = state.filter,
+                    weekDates = state.weekDates,
+                    today = state.today,
+                    selectedDay = state.selectedDay,
+                    isCurrentWeek = state.isCurrentWeek,
+                    hasEvents = { date -> state.itemsFor(date).isNotEmpty() },
+                    firstSegmentFocusRequester = filterFocusRequester,
+                    requestInitialFocus = allowInitialFocus && !initialFocusRequested,
+                    includeTopInset = includeTopInset,
+                    onInitialFocusApplied = {
+                        onInitialContentFocus()
+                        initialFocusRequested = true
+                    },
+                    onSelectFilter = viewModel::setFilter,
+                    onSelectDay = { date ->
+                        viewModel.selectDay(date)
+                        val index = state.weekDates.indexOf(date)
+                        if (index >= 0) {
+                            scope.launch { listState.animateScrollToItem(index + 1) }
+                        }
+                        if (state.itemsFor(date).isNotEmpty()) {
+                            shelfFocusDay = date
+                            shelfFocusRequest += 1
+                        }
+                    },
+                    onPrevWeek = viewModel::prevWeek,
+                    onNextWeek = viewModel::nextWeek,
+                    onToday = viewModel::goToToday,
+                )
+            }
 
-                    WeekStrip(
-                        weekDates = state.weekDates,
-                        today = state.today,
-                        selectedDay = state.selectedDay,
-                        isCurrentWeek = state.isCurrentWeek,
-                        hasEvents = { date -> state.itemsFor(date).isNotEmpty() },
-                        onSelectDay = { date ->
-                            viewModel.selectDay(date)
-                            val index = state.weekDates.indexOf(date)
-                            if (index >= 0) {
-                                scope.launch { listState.animateScrollToItem(index) }
-                            }
-                            if (state.itemsFor(date).isNotEmpty()) {
-                                shelfFocusDay = date
-                                shelfFocusRequest += 1
-                            }
-                        },
-                        onPrevWeek = viewModel::prevWeek,
-                        onNextWeek = viewModel::nextWeek,
-                        onToday = viewModel::goToToday,
-                    )
-                }
-
-                when {
+            when {
                     // Unconditional (phone parity): the shared VM keeps the old week's
                     // days during a new week/filter load, so gating these on
                     // !hasAnyItems would show stale content + suppress errors on a
                     // week change.
-                    state.isLoading -> TvLoadingScreen()
-                    state.error != null -> CalendarMessage(
+                state.isLoading -> CalendarStaticState(controls = { controls(false, true) }) { TvLoadingScreen() }
+                state.error != null -> CalendarStaticState(controls = { controls(true, true) }) {
+                    CalendarMessage(
                         title = state.error ?: "Failed to load calendar",
                         subtitle = "Press the week arrows to try another week.",
                         action = CalendarAction("Refresh", viewModel::refresh),
                     )
-                    !state.hasAnyItems -> CalendarMessage(
+                }
+                !state.hasAnyItems -> CalendarStaticState(controls = { controls(true, true) }) {
+                    CalendarMessage(
                         title = emptyTitle(state.filter),
                         subtitle = emptyCopy(state.filter),
                         action = if (state.filter != CalendarFilter.All) {
@@ -219,25 +207,91 @@ fun TvCalendarScreen(
                             CalendarAction("Refresh", viewModel::refresh)
                         },
                     )
-                    else -> DayList(
-                        state = state,
-                        listState = listState,
-                        shelfFocusDay = shelfFocusDay,
-                        shelfFocusRequest = shelfFocusRequest,
-                        // Consume the token once a shelf has applied it so a later
-                        // dispose/recompose of that shelf (LazyColumn recycle or
-                        // prefetch) can't replay the still-non-zero token and yank
-                        // the row back to item 0, stealing focus.
-                        onShelfFocusConsumed = {
-                            shelfFocusDay = null
-                            shelfFocusRequest = 0
-                        },
-                        onItemFocused = { item -> tintState.set(null, item.posterUrl) },
-                        onOpenItemDetail = onOpenItemDetail,
-                    )
                 }
+                else -> DayList(
+                    state = state,
+                    listState = listState,
+                    controls = { controls(true, false) },
+                    shelfFocusDay = shelfFocusDay,
+                    shelfFocusRequest = shelfFocusRequest,
+                    // Consume the token once a shelf has applied it so a later
+                    // dispose/recompose of that shelf (LazyColumn recycle or
+                    // prefetch) can't replay the still-non-zero token and yank
+                    // the row back to item 0, stealing focus.
+                    onShelfFocusConsumed = {
+                        shelfFocusDay = null
+                        shelfFocusRequest = 0
+                    },
+                    onItemFocused = { item -> tintState.set(null, item.posterUrl) },
+                    onOpenItemDetail = onOpenItemDetail,
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun CalendarStaticState(
+    controls: @Composable () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        controls()
+        content()
+    }
+}
+
+@Composable
+private fun CalendarControls(
+    selectedFilter: String,
+    weekDates: List<String>,
+    today: String,
+    selectedDay: String,
+    isCurrentWeek: Boolean,
+    hasEvents: (String) -> Boolean,
+    firstSegmentFocusRequester: FocusRequester,
+    requestInitialFocus: Boolean,
+    includeTopInset: Boolean,
+    onInitialFocusApplied: () -> Unit,
+    onSelectFilter: (String) -> Unit,
+    onSelectDay: (String) -> Unit,
+    onPrevWeek: () -> Unit,
+    onNextWeek: () -> Unit,
+    onToday: () -> Unit,
+) {
+    LaunchedEffect(requestInitialFocus) {
+        if (!requestInitialFocus) return@LaunchedEffect
+        kotlinx.coroutines.delay(80)
+        val applied = runCatching { firstSegmentFocusRequester.requestFocus() }.getOrDefault(false)
+        if (applied) onInitialFocusApplied()
+    }
+
+    Column(
+        modifier = Modifier.padding(
+            start = Spacing.safeArea,
+            end = Spacing.safeArea,
+            top = if (includeTopInset) TvTopMenuLayout.contentTopInset else 0.dp,
+            bottom = Spacing.sm,
+        ),
+        verticalArrangement = Arrangement.spacedBy(Spacing.lg),
+    ) {
+        CalendarControlRow(
+            selectedFilter = selectedFilter,
+            onSelectFilter = onSelectFilter,
+            firstSegmentFocusRequester = firstSegmentFocusRequester,
+        )
+
+        WeekStrip(
+            weekDates = weekDates,
+            today = today,
+            selectedDay = selectedDay,
+            isCurrentWeek = isCurrentWeek,
+            hasEvents = hasEvents,
+            onSelectDay = onSelectDay,
+            onPrevWeek = onPrevWeek,
+            onNextWeek = onNextWeek,
+            onToday = onToday,
+        )
     }
 }
 
@@ -563,6 +617,7 @@ private fun monthYearLabel(weekDates: List<String>): String {
 private fun DayList(
     state: org.siloserver.silo.viewmodel.CalendarUiState,
     listState: LazyListState,
+    controls: @Composable () -> Unit,
     shelfFocusDay: String?,
     shelfFocusRequest: Int,
     onShelfFocusConsumed: () -> Unit,
@@ -571,7 +626,7 @@ private fun DayList(
 ) {
     val snapScope = rememberCoroutineScope()
     val onShelfFocused: (Int) -> Unit = { index ->
-        snapScope.launch { listState.animateScrollToItem(index) }
+        snapScope.launch { listState.animateScrollToItem(index + 1) }
     }
     // The day-snap is the ONLY vertical scroller: with the default spec the
     // focused card's own bring-into-view fought the snap (it re-scrolled to
@@ -584,6 +639,7 @@ private fun DayList(
         state = listState,
         modifier = Modifier
             .fillMaxSize()
+            .padding(top = TvTopMenuLayout.contentTopInset)
             .focusGroup(),
         contentPadding = PaddingValues(
             top = Spacing.sm,
@@ -591,6 +647,9 @@ private fun DayList(
         ),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        item(key = "calendar-controls") {
+            controls()
+        }
         // Render EVERY weekday so the week keeps its shape; event-less days get
         // a "Nothing scheduled" stub instead of being skipped.
         itemsIndexed(state.weekDates, key = { _, date -> "day-$date" }) { index, date ->
