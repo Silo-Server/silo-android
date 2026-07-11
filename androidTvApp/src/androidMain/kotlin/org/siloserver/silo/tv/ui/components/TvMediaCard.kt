@@ -144,7 +144,7 @@ fun TvMediaCard(
                         prefs = overlayState.prefs,
                         variant = CardOverlayVariant.Poster,
                         scale = TvCardOverlayScale,
-                        forceOpaqueBackground = true,
+                        forceOpaqueBackground = false,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }

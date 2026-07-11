@@ -30,19 +30,19 @@ class TvCardOverlayScaleSourceTest {
     ).readText()
 
     @Test
-    fun tvCardsUseOpticalBadgeScaleAndOpaqueFills() {
+    fun tvCardsUseOpticalBadgeScaleAndTranslucentFills() {
         assertTrue(tvMediaCardSource.contains("const val TvCardOverlayScale: Float = 0.7f"))
         assertTrue(tvMediaCardSource.contains("scale = TvCardOverlayScale"))
-        assertTrue(tvMediaCardSource.contains("forceOpaqueBackground = true"))
+        assertTrue(tvMediaCardSource.contains("forceOpaqueBackground = false"))
         assertTrue(tvEpisodeCardSource.contains("scale = TvCardOverlayScale"))
-        assertTrue(tvEpisodeCardSource.contains("forceOpaqueBackground = true"))
+        assertTrue(tvEpisodeCardSource.contains("forceOpaqueBackground = false"))
     }
 
     @Test
     fun tvOverlaySettingsPreviewUsesSameTvScaleAndOpacity() {
         assertTrue(tvSettingsSource.contains("import org.siloserver.silo.tv.ui.components.TvCardOverlayScale"))
         assertTrue(tvSettingsSource.contains("scale = TvCardOverlayScale"))
-        assertTrue(tvSettingsSource.contains("forceOpaqueBackground = true"))
+        assertTrue(tvSettingsSource.contains("forceOpaqueBackground = false"))
     }
 
     @Test

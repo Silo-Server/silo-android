@@ -314,7 +314,7 @@ private fun OverlayPreviewPoster(
                 prefs = prefs,
                 variant = CardOverlayVariant.Poster,
                 scale = TvCardOverlayScale,
-                forceOpaqueBackground = true,
+                forceOpaqueBackground = false,
             )
         }
     }
@@ -520,7 +520,7 @@ private fun OverlayBadgePreview(
             prefs = previewPrefs,
             variant = CardOverlayVariant.Poster,
             scale = TvCardOverlayScale,
-            forceOpaqueBackground = true,
+            forceOpaqueBackground = false,
         )
     }
 }
