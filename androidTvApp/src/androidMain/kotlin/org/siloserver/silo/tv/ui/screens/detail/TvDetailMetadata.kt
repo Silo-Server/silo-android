@@ -49,7 +49,13 @@ internal object TvDetailMetadata {
         selectedFileId: Int? = null,
     ): List<TvHeroFactToken> {
         val tokens = mutableListOf<TvHeroFactToken>()
-        if (detail.year > 0) tokens += TvHeroFactToken.TextToken(detail.year.toString())
+        if (detail.type.equals("episode", ignoreCase = true)) {
+            abbreviatedDate(detail.airDate ?: detail.releaseDate)?.let {
+                tokens += TvHeroFactToken.TextToken(it)
+            }
+        } else if (detail.year > 0) {
+            tokens += TvHeroFactToken.TextToken(detail.year.toString())
+        }
         when {
             detail.type.equals("series", ignoreCase = true) ->
                 detail.seasonCount?.takeIf { it > 0 }?.let {
@@ -120,6 +126,23 @@ internal object TvDetailMetadata {
     private fun runtimeLabel(minutes: Int): String? {
         if (minutes <= 0) return null
         return if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "$minutes min"
+    }
+
+    /** tvOS `DetailDateFormatting.abbreviatedDate`: stable medium-style date
+     *  for episode hero facts, tolerant of full RFC3339 timestamps. */
+    private fun abbreviatedDate(raw: String?): String? {
+        val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val date = trimmed.take(10)
+        val parts = date.split("-")
+        if (parts.size != 3) return trimmed
+        val year = parts[0].toIntOrNull() ?: return trimmed
+        val month = parts[1].toIntOrNull() ?: return trimmed
+        val day = parts[2].toIntOrNull() ?: return trimmed
+        val monthName = listOf(
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ).getOrNull(month - 1) ?: return trimmed
+        return "$monthName $day, $year"
     }
 
     private fun formatOneDecimal(value: Double): String {

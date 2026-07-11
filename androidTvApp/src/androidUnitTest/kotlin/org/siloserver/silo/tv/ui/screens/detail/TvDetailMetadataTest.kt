@@ -11,6 +11,26 @@ import kotlin.test.assertEquals
 
 class TvDetailMetadataTest {
     @Test
+    fun episodeFactsPutAirDateBeforeRuntime() {
+        val detail = ItemDetail(
+            contentId = "e1",
+            type = "episode",
+            title = "Episode",
+            year = 2026,
+            airDate = "2026-03-30T00:00:00Z",
+            runtime = 52,
+        )
+
+        assertEquals(
+            listOf(
+                TvHeroFactToken.TextToken("Mar 30, 2026"),
+                TvHeroFactToken.TextToken("52 min"),
+            ),
+            TvDetailMetadata.factsLine(detail),
+        )
+    }
+
+    @Test
     fun audiobookSourceTokensIncludeTypePublisherAndNarrator() {
         val detail = ItemDetail(
             contentId = "a1",
