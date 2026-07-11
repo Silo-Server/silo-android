@@ -238,12 +238,14 @@ private fun PersonHeader(person: Person) {
                     color = Color.White.copy(alpha = 0.78f),
                     maxLines = 4,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(0.67f),
                 )
             } else {
                 Text(
                     text = "No biography or personal details are available yet.",
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
                     color = Color.White.copy(alpha = 0.48f),
+                    modifier = Modifier.fillMaxWidth(0.67f),
                 )
             }
         }
