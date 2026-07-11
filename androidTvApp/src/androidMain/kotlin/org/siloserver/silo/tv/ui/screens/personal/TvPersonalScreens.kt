@@ -99,6 +99,46 @@ fun TvWatchlistScreen(
     )
 }
 
+/** Saved-list content embedded in the For You page, without secondary-page chrome. */
+@Composable
+fun TvFavoritesInline(
+    onItemClick: (contentId: String) -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: FavoritesViewModel = koinViewModel(),
+) {
+    val state by viewModel.uiState.collectAsState()
+    PersonalListResumeRefresh(viewModel)
+    PersonalInlineGrid(
+        state = state,
+        emptyMessage = "No favorites yet",
+        emptyIcon = Icons.Filled.Favorite,
+        onItemClick = onItemClick,
+        onLoadMore = viewModel::loadMore,
+        onRetry = viewModel::retry,
+        modifier = modifier,
+    )
+}
+
+/** Saved-list content embedded in the For You page, without secondary-page chrome. */
+@Composable
+fun TvWatchlistInline(
+    onItemClick: (contentId: String) -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: WatchlistViewModel = koinViewModel(),
+) {
+    val state by viewModel.uiState.collectAsState()
+    PersonalListResumeRefresh(viewModel)
+    PersonalInlineGrid(
+        state = state,
+        emptyMessage = "Your watchlist is empty",
+        emptyIcon = Icons.Outlined.BookmarkBorder,
+        onItemClick = onItemClick,
+        onLoadMore = viewModel::loadMore,
+        onRetry = viewModel::retry,
+        modifier = modifier,
+    )
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun TvHistoryScreen(
@@ -236,6 +276,51 @@ private fun PersonalGrid(
                 // (QA 2026-07-08).
                 fixedColumnCount = 6,
                 firstItemFocusRequester = firstItemFocusRequester,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PersonalInlineGrid(
+    state: PersonalListUiState,
+    emptyMessage: String,
+    emptyIcon: ImageVector,
+    onItemClick: (contentId: String) -> Unit,
+    onLoadMore: () -> Unit,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        when {
+            state.isLoading && state.items.isEmpty() -> TvLoadingScreen()
+            state.error != null && state.items.isEmpty() -> TvErrorScreen(
+                message = state.error ?: "",
+                onRetry = onRetry,
+            )
+            state.items.isEmpty() -> EmptyState(
+                message = emptyMessage,
+                icon = emptyIcon,
+            )
+            else -> TvCatalogGrid(
+                items = state.items,
+                isLoading = state.isLoadingMore,
+                hasMore = state.hasMore,
+                onItemClick = onItemClick,
+                onLoadMore = onLoadMore,
+                contentPadding = PaddingValues(
+                    // For You's saved-list grid sits directly beneath its
+                    // selector pills; share their exact leading edge.
+                    start = Spacing.safeArea,
+                    end = Spacing.safeArea,
+                    top = Spacing.md,
+                    bottom = Spacing.xl,
+                ),
+                fixedColumnCount = 6,
             )
         }
     }

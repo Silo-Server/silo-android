@@ -437,6 +437,10 @@ fun TvMainShell(
 
     val onSelectRoot: (TvRootDestination) -> Unit = { dest ->
         val route = dest.toRoute()
+        // A dwell preview can still be open when Center commits For You (or a
+        // library root). Close it without returning focus to the bar before the
+        // content handoff, otherwise the overlay lingers and races page focus.
+        focusState.closePanel(false)
         if (route != currentRoute) {
             navigateToRoute(route)
         }
@@ -793,6 +797,7 @@ fun TvMainShell(
                     TvRecommendationsScreen(
                         onItemClick = onOpenItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        focusRequest = contentFocusRequest,
                     )
                 }
                 composable(TvMainRoute.Requests.route) {

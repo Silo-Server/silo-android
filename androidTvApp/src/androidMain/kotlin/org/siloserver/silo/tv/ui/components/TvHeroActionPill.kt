@@ -75,12 +75,19 @@ fun TvHeroActionPill(
     onDirectionDown: (() -> Boolean)? = null,
     heightOverride: androidx.compose.ui.unit.Dp? = null,
     horizontalPaddingOverride: androidx.compose.ui.unit.Dp? = null,
+    iconSizeOverride: androidx.compose.ui.unit.Dp? = null,
+    iconLabelSpacingOverride: androidx.compose.ui.unit.Dp? = null,
+    restBorderWidthOverride: androidx.compose.ui.unit.Dp? = null,
+    focusedBorderWidthOverride: androidx.compose.ui.unit.Dp? = null,
+    focusedScaleOverride: Float? = null,
+    focusedGlowElevationOverride: androidx.compose.ui.unit.Dp? = null,
+    selected: Boolean = false,
     labelStyle: TextStyle = navRailLabel,
     enabled: Boolean = true,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val (restBg, restFg, restBorder) = when (variant) {
+    val (baseRestBg, restFg, baseRestBorder) = when (variant) {
         TvPillVariant.Filled -> Triple(
             Color.White.copy(alpha = 0.92f),
             DarkOnPrimary,
@@ -97,6 +104,8 @@ fun TvHeroActionPill(
             Color.Transparent,
         )
     }
+    val restBg = if (selected) Color.White.copy(alpha = 0.14f) else baseRestBg
+    val restBorder = if (selected) Color.White.copy(alpha = 0.70f) else baseRestBorder
 
     val pillShape = RoundedCornerShape(100.dp)
     val controlHeight = heightOverride ?: when (variant) {
@@ -110,6 +119,7 @@ fun TvHeroActionPill(
         TvPillVariant.Ghost -> 16.dp
     }
     val focusedBorderColor = DarkBackground.copy(alpha = 0.86f)
+    val focusedBorderWidth = focusedBorderWidthOverride ?: 2.2.dp
 
     Surface(
         onClick = onClick,
@@ -124,31 +134,35 @@ fun TvHeroActionPill(
             pressedContainerColor = FocusedContainer,
             pressedContentColor = FocusedContent,
         ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = focusedScaleOverride ?: 1.05f),
         border = ClickableSurfaceDefaults.border(
             border = Border(
                 border = BorderStroke(
-                    width = if (restBorder != Color.Transparent) 1.2.dp else 0.dp,
+                    width = if (restBorder != Color.Transparent) {
+                        restBorderWidthOverride ?: 1.2.dp
+                    } else {
+                        0.dp
+                    },
                     color = restBorder,
                 ),
                 shape = pillShape,
             ),
             focusedBorder = Border(
-                border = BorderStroke(2.2.dp, focusedBorderColor),
+                border = BorderStroke(focusedBorderWidth, focusedBorderColor),
                 shape = pillShape,
             ),
         ),
         glow = ClickableSurfaceDefaults.glow(
             focusedGlow = Glow(
                 elevationColor = Color.White.copy(alpha = 0.20f),
-                elevation = 20.dp,
+                elevation = focusedGlowElevationOverride ?: 20.dp,
             ),
         ),
         modifier = modifier
             .then(
                 if (isFocused) {
                     Modifier.border(
-                        width = 2.2.dp,
+                        width = focusedBorderWidth,
                         color = Color.White.copy(alpha = 0.98f),
                         shape = pillShape,
                     )
@@ -192,10 +206,12 @@ fun TvHeroActionPill(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    modifier = Modifier.size(if (variant == TvPillVariant.Filled) 20.dp else 18.dp),
+                    modifier = Modifier.size(
+                        iconSizeOverride ?: if (variant == TvPillVariant.Filled) 20.dp else 18.dp,
+                    ),
                 )
                 if (variant != TvPillVariant.Ghost || label.isNotBlank()) {
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(iconLabelSpacingOverride ?: 10.dp))
                 }
             }
             if (label.isNotBlank()) {
