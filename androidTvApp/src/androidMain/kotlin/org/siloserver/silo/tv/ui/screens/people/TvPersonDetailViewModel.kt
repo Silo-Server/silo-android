@@ -20,7 +20,7 @@ private const val TvPersonWorksPageSize = 60
 enum class TvPersonMediaFilter(val key: String, val title: String, val mediaType: String?) {
     All("all", "All", null),
     Movies("movie", "Movies", "movie"),
-    Series("series", "TV", "series"),
+    Series("series", "Series", "series"),
     Audiobooks("audiobook", "Audiobooks", "audiobook"),
     Music("music", "Music", "music");
 

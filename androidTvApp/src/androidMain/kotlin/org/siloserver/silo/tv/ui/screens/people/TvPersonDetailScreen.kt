@@ -381,7 +381,7 @@ private fun FilterChoiceChip(
     Surface(
         onClick = onClick,
         interactionSource = interactionSource,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(999.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = container,
             contentColor = foreground,
@@ -397,22 +397,25 @@ private fun FilterChoiceChip(
                     width = 1.dp,
                     color = if (selected) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.06f),
                 ),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(999.dp),
             ),
             focusedBorder = Border(
                 border = BorderStroke(0.dp, Color.Transparent),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(999.dp),
             ),
         ),
         modifier = modifier,
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = 13.sp,
+                lineHeight = 15.sp,
+            ),
             color = foreground,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
         )
     }
 }
