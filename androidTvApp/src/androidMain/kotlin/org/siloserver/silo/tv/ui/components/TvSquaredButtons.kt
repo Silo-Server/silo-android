@@ -182,7 +182,7 @@ private fun SquaredPill(
                 imageVector = icon,
                 contentDescription = null,
                 tint = foreground,
-                modifier = Modifier.size(if (primary) 16.dp else 14.dp),
+                modifier = Modifier.size(if (primary) 20.dp else 14.dp),
             )
             Spacer(Modifier.width(if (primary) 9.dp else 8.dp))
             Text(
