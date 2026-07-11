@@ -15,7 +15,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
  *   sections); always first / the landing default.
  * - [Browse] — the full library grid.
  * - [Collections] — curated collections within the library.
- * - [Genres] / [Alphabet] / [RecentlyAdded] — video-library browse shortcuts.
  * - [Authors] / [Series] — audiobook-native browse shortcuts.
  *
  * The set is type-aware so the cascade never exposes ebook-only or unsupported
@@ -59,10 +58,10 @@ enum class TvLibraryPill {
 
     companion object {
         /**
-         * Sections offered for [type]. Movies/Series expose the documented
-         * video browse shortcuts; audiobooks expose only audiobook-safe
-         * destinations. Music is intentionally conservative until the server
-         * exposes album/artist/playlist grouping endpoints for native rows.
+         * Sections offered for [type]. Movies/Series mirror tvOS's compact
+         * Recommended / Browse / Collections set; audiobooks expose only
+         * audiobook-safe destinations. Music is intentionally conservative
+         * until the server exposes native album/artist/playlist grouping.
          */
         fun set(type: TvLibraryTabType): List<TvLibraryPill> = when (type) {
             TvLibraryTabType.Movies,
@@ -70,9 +69,6 @@ enum class TvLibraryPill {
                 Recommended,
                 Browse,
                 Collections,
-                Genres,
-                Alphabet,
-                RecentlyAdded,
             )
             TvLibraryTabType.Audiobooks -> listOf(
                 Recommended,

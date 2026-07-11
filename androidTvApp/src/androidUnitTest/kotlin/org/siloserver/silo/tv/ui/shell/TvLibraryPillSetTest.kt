@@ -5,14 +5,11 @@ import kotlin.test.assertEquals
 
 class TvLibraryPillSetTest {
     @Test
-    fun videoLibraryTypesExposeDocumentedBrowseDestinations() {
+    fun videoLibraryTypesMatchTvOsDestinations() {
         val expected = listOf(
             TvLibraryPill.Recommended,
             TvLibraryPill.Browse,
             TvLibraryPill.Collections,
-            TvLibraryPill.Genres,
-            TvLibraryPill.Alphabet,
-            TvLibraryPill.RecentlyAdded,
         )
 
         assertEquals(expected, TvLibraryPill.set(TvLibraryTabType.Movies))
