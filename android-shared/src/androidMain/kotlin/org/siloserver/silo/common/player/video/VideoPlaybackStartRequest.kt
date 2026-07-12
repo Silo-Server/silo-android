@@ -7,13 +7,13 @@ data class VideoPlaybackStartRequest(
     val resumePositionOverride: Double?,
     val audioTrackIndex: Int? = null,
     val subtitleTrackIndex: Int? = null,
-    /** Selects the preferred source file version; it does not authorize transcoding. */
+    /** Selects the preferred source file version and supplies the default output-quality ceiling. */
     val preferredQualityOverride: String? = null,
     /**
      * Explicit delivery-quality intent from the in-player quality control.
-     * Null means original-quality playback: the server may adapt audio, but
-     * must not transcode video merely because a source-version preference is
-     * set.
+     * Null falls back to [preferredQualityOverride] or the saved profile/device
+     * setting. A fixed rung authorizes video transcoding only when the selected
+     * source exceeds that rung; it never requests an upscale.
      */
     val playbackQualityIntent: String? = null,
     /**

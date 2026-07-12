@@ -511,6 +511,9 @@ class TvPlayerControlsUsabilityTest {
 
     @Test
     fun playNextCarriesCurrentQualityToNextEpisodeRoute() {
+        val starterSource = File(
+            "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/player/TvVideoPlaybackStarter.kt",
+        ).readText()
         assertTrue(viewModelSource.contains("val preferredQuality: String? = null"))
         assertTrue(viewModelSource.contains("PlayNextRequest(next.contentId, nextAutoAdvanceCount, selectedQuality)"))
         assertTrue(screenSource.contains("onPlayNext(req.contentId, req.autoAdvanceCount, req.preferredQuality)"))
@@ -518,10 +521,11 @@ class TvPlayerControlsUsabilityTest {
         assertTrue(routeSource.contains("if (quality != null) add(\"quality=\${quality.routeEncode()}\")"))
         assertTrue(navigationSource.contains("TvRoute.Player(contentId = nextContentId, quality = nextQuality"))
         assertTrue(navigationSource.contains("preferredQuality = preferredQuality"))
-        // Source-version preference must stay separate from the explicit
-        // in-player transcode-quality intent.
+        // The saved preference supplies the default ceiling; an explicit
+        // in-player selection remains a separate override.
         assertTrue(viewModelSource.contains("preferredQualityOverride = preferredQuality"))
         assertTrue(viewModelSource.contains("playbackQualityIntent = qualityOverride"))
+        assertTrue(starterSource.contains("request.playbackQualityIntent ?: preferredQuality"))
         assertTrue(viewModelSource.contains("fun switchQuality(wireValue: String)"))
     }
 

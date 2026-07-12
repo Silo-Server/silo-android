@@ -529,8 +529,8 @@ class TvPlayerViewModel(
     private val preferredFileId: Int? = launchArgs.preferredFileId
     private val preferredQuality: String? = launchArgs.preferredQuality
     // Explicit session-level video-quality intent chosen in the player's
-    // Quality menu. Null keeps original-quality video; source-version selection
-    // remains independent in [preferredQuality]. Wire values match
+    // Quality menu. Null uses [preferredQuality] as the default output ceiling.
+    // Wire values match
     // [PlaybackQuality]: "auto"/"original"/"2160p"/"1080p"/"720p"/"480p".
     private var qualityOverride: String? = null
     private val roomId: String? = launchArgs.roomId
@@ -938,9 +938,6 @@ class TvPlayerViewModel(
                         resumePositionOverride = startPositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,
                         subtitleTrackIndex = pendingInitialSubtitleIndex,
-                        // Source-version preference and transcode permission are
-                        // intentionally separate. A preferred 4K source must not
-                        // turn ordinary playback into a fixed-rung transcode.
                         preferredQualityOverride = preferredQuality,
                         playbackQualityIntent = qualityOverride,
                         suppressResumeRewind = suppressResumeRewind,

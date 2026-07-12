@@ -49,7 +49,7 @@ class TvVideoPlaybackStarter(
             val serverUrl = playbackSessionManager.getServerUrl()
             val preferredQuality = request.preferredQualityOverride
                 ?: playerSettingsStore.preferredQualityFlow.first()
-            val playbackQualityIntent = request.playbackQualityIntent ?: "original"
+            val playbackQualityIntent = request.playbackQualityIntent ?: preferredQuality
             val version = request.preferredFileId
                 ?.let { id -> watchDetail.versions.firstOrNull { it.fileId == id } }
                 ?: selectPlaybackVersion(

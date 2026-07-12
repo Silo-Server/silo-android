@@ -50,7 +50,7 @@ class MobileVideoPlaybackStarter(
             val serverUrl = playbackSessionManager.getServerUrl()
             val preferredQuality = request.preferredQualityOverride
                 ?: playerSettingsStore.preferredQualityFlow.first()
-            val playbackQualityIntent = request.playbackQualityIntent ?: "original"
+            val playbackQualityIntent = request.playbackQualityIntent ?: preferredQuality
             val preferredAudioLanguage = playerSettingsStore.audioLanguageFlow
                 .first().ifBlank { null }
             val version = request.preferredFileId
