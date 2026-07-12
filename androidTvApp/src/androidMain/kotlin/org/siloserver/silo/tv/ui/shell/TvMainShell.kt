@@ -1093,12 +1093,18 @@ fun TvMainShell(
             // escape out of an entered panel can't leave it stuck (which would
             // freeze dwell preview-switching under the previously-entered tab).
             onMenuFocusChange = focusState::updateMenuFocused,
-            isFocusSuppressed = focusState.isMenuFocusSuppressed || calendarFocusHandoffPending,
+            // Settings is a full-screen surface (tvOS parity): the bar is
+            // hidden AND unfocusable there, so Up at the top of the settings
+            // rail simply holds instead of focusing an invisible menu. Back
+            // still pops the route via DelegateToNav.
+            isFocusSuppressed = focusState.isMenuFocusSuppressed ||
+                calendarFocusHandoffPending ||
+                currentRoute == TvMainRoute.Settings.route,
             focusRequest = focusState.menuFocusRequest,
             focusRequestTarget = focusState.menuFocusTarget,
             profileFocusRequest = focusState.profileFocusRequest,
             isSearchActive = currentRoute == TvMainRoute.Search.route,
-            visibility = menuVisibility.value,
+            visibility = if (currentRoute == TvMainRoute.Settings.route) 0f else menuVisibility.value,
             openPanel = focusState.openPanel,
             onDwell = focusState::previewPanel,
             onEnterPanel = focusState::enterPanel,

@@ -29,9 +29,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -41,17 +48,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
@@ -66,7 +78,6 @@ import org.siloserver.silo.tv.BuildConfig
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.ui.screens.player.TvSubtitleAppearanceOptions
-import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.Spacing
@@ -197,26 +208,31 @@ private enum class TvSettingsCategory(
     val title: String,
     val eyebrow: String,
     val blurb: String,
+    val icon: ImageVector,
 ) {
     General(
         title = "General",
         eyebrow = "PREFERENCES",
         blurb = "App-level options for this Android TV.",
+        icon = Icons.Filled.Settings,
     ),
     Playback(
         title = "Playback",
         eyebrow = "PREFERENCES",
         blurb = "Streaming, episode, and playback behavior for this device.",
+        icon = Icons.Filled.PlayCircle,
     ),
     Subtitles(
         title = "Subtitles",
         eyebrow = "PREFERENCES",
         blurb = "Language, behavior, and subtitle appearance.",
+        icon = Icons.Filled.ClosedCaption,
     ),
     Server(
         title = "Server",
         eyebrow = "CONNECTION",
         blurb = "Active server, device pairing, and account tools.",
+        icon = Icons.Filled.Dns,
     ),
 }
 
@@ -278,13 +294,16 @@ private fun SettingsSplitLayout(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            // tvOS TVSettingsView: safeAreaX 88pt + HStack spacing 64pt, with a
+            // 430pt rail — halved to Android dp. Full-screen surface (the shell
+            // hides the top bar on this route), so only the safe-area inset.
             .padding(
-                start = 72.dp,
-                top = TvTopMenuLayout.contentTopInset,
-                end = 72.dp,
+                start = 44.dp,
+                top = Spacing.safeArea,
+                end = 44.dp,
                 bottom = Spacing.xxxl,
             ),
-        horizontalArrangement = Arrangement.spacedBy(52.dp),
+        horizontalArrangement = Arrangement.spacedBy(32.dp),
         verticalAlignment = Alignment.Top,
     ) {
         SettingsRail(
@@ -295,7 +314,7 @@ private fun SettingsSplitLayout(
             onSwitchProfile = onSwitchProfile,
             onNavigateToAdmin = onNavigateToAdmin,
             onRequestSignOut = onRequestSignOut,
-            modifier = Modifier.width(300.dp),
+            modifier = Modifier.width(200.dp),
         )
         SettingsDetailPane(
             state = state,
@@ -370,57 +389,68 @@ private fun SettingsRail(
         modifier = modifier
             .fillMaxSize()
             .focusGroup(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(
             text = "Settings",
-            style = MaterialTheme.typography.displayMedium,
+            style = MaterialTheme.typography.displayMedium.copy(fontSize = 22.sp, lineHeight = 26.sp),
             color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(start = 8.dp, bottom = 20.dp),
+            modifier = Modifier.padding(start = 10.dp, bottom = 10.dp),
         )
         SettingsAccountRow(
             name = state.profileName ?: state.user?.username ?: "-",
             subtitle = accountSubtitle(state),
             avatar = state.profileAvatar,
             onClick = onSwitchProfile,
-            focusRequester = firstActionFocusRequester,
         )
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(9.dp))
         TvSettingsCategory.entries.forEach { category ->
             SettingsRailCategoryRow(
                 category = category,
                 selected = category == selectedCategory,
                 onClick = { onCategorySelected(category) },
+                // tvOS parity: focusing a category live-swaps the detail pane.
+                onFocused = { onCategorySelected(category) },
+                // Entry focus lands on General, not the profile row.
+                focusRequester = firstActionFocusRequester
+                    .takeIf { category == TvSettingsCategory.General },
             )
         }
         Spacer(modifier = Modifier.weight(1f))
-        // Apple-parity admin surface: the stats dashboard only, role-gated.
-        if (state.adminVisible) {
-            SettingsActionRow(
-                label = "Admin",
-                onClick = onNavigateToAdmin,
-            )
-        }
-        SettingsActionRow(
+        // Admin dashboard entry hidden for now (product call 2026-07-12);
+        // route + screen stay compiled for an easy re-enable.
+        SettingsRailActionRow(
             label = "Sign Out",
+            icon = Icons.AutoMirrored.Filled.Logout,
             onClick = onRequestSignOut,
             destructive = true,
         )
         Text(
             text = "Silo ${BuildConfig.VERSION_NAME}",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                letterSpacing = 1.sp,
+            ),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-            modifier = Modifier.padding(start = 8.dp, top = 8.dp),
+            modifier = Modifier.padding(start = 10.dp, top = 6.dp),
         )
     }
 }
 
+/**
+ * tvOS `TVSettingsRailRowStyle` parity: rows rest transparent, the selected
+ * category keeps a soft white fill + hairline border while unfocused, and the
+ * focused row inverts to the white platter.
+ */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SettingsRailCategoryRow(
     category: TvSettingsCategory,
     selected: Boolean,
     onClick: () -> Unit,
+    onFocused: () -> Unit = {},
+    focusRequester: FocusRequester? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -430,7 +460,74 @@ private fun SettingsRailCategoryRow(
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = RowShape),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (selected) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
+            containerColor = if (selected) Color.White.copy(alpha = 0.14f) else Color.Transparent,
+            contentColor = Color.White,
+            focusedContainerColor = FocusedContainer,
+            focusedContentColor = FocusedContent,
+            pressedContainerColor = FocusedContainer,
+            pressedContentColor = FocusedContent,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            border = if (selected) {
+                Border(BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)), shape = RowShape)
+            } else {
+                Border.None
+            },
+            focusedBorder = Border.None,
+            pressedBorder = Border.None,
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        modifier = (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .fillMaxWidth()
+            .height(38.dp)
+            .onFocusChanged { if (it.isFocused) onFocused() },
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Icon(
+                imageVector = category.icon,
+                contentDescription = null,
+                tint = foreground,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = category.title,
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                color = foreground,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** Rail action row (Admin, Sign Out) — same transparent rest chrome as categories. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SettingsRailActionRow(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val foreground = when {
+        isFocused && destructive -> DestructiveRedOnPlatter
+        isFocused -> FocusedContent
+        destructive -> DestructiveRed
+        else -> Color.White
+    }
+    Surface(
+        onClick = onClick,
+        interactionSource = interactionSource,
+        shape = ClickableSurfaceDefaults.shape(shape = RowShape),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
             contentColor = Color.White,
             focusedContainerColor = FocusedContainer,
             focusedContentColor = FocusedContent,
@@ -440,17 +537,24 @@ private fun SettingsRailCategoryRow(
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp),
+            .height(38.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 18.dp),
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
         ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = foreground,
+                modifier = Modifier.size(15.dp),
+            )
             Text(
-                text = category.title,
-                style = MaterialTheme.typography.titleMedium,
+                text = label,
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
                 color = foreground,
                 modifier = Modifier.weight(1f),
             )
@@ -506,20 +610,21 @@ private fun SettingsDetailPane(
     Column(modifier = modifier.fillMaxSize()) {
         Text(
             text = selectedCategory.eyebrow,
-            style = MaterialTheme.typography.labelMedium,
+            style = SettingsMonoHeaderStyle(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
             text = selectedCategory.title,
-            style = MaterialTheme.typography.displaySmall,
+            style = MaterialTheme.typography.displaySmall.copy(fontSize = 20.sp, lineHeight = 24.sp),
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = Modifier.padding(top = 5.dp),
         )
         Text(
             text = selectedCategory.blurb,
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 16.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp, bottom = 22.dp),
+            modifier = Modifier.padding(top = 5.dp, bottom = 14.dp),
         )
 
         when (selectedCategory) {
@@ -591,7 +696,7 @@ private fun TvGeneralSettingsPane(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
@@ -603,6 +708,9 @@ private fun TvGeneralSettingsPane(
                     label = "Show Audiobooks",
                     checked = state.showAudiobooksTab,
                     onCheckedChange = onShowAudiobooksTabChanged,
+                )
+                SettingsFooterText(
+                    text = "Adds an Audiobooks tab to the top menu when your server has an audiobook library. Hidden by default.",
                 )
             }
         }
@@ -673,7 +781,7 @@ private fun TvPlaybackSettingsPane(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
@@ -760,6 +868,9 @@ private fun TvPlaybackSettingsPane(
                     onClick = onResetPlaybackOverrides,
                     destructive = true,
                 )
+                SettingsFooterText(
+                    text = "Resets playback choices for this Android TV and profile back to the server fallback.",
+                )
             }
         }
     }
@@ -841,7 +952,7 @@ private fun TvSubtitleSettingsPane(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
@@ -867,6 +978,10 @@ private fun TvSubtitleSettingsPane(
                     label = "Show Forced Subtitles",
                     checked = state.showForcedSubtitles,
                     onCheckedChange = onShowForcedSubtitlesChanged,
+                )
+                SettingsFooterText(
+                    text = "Used to pick a matching track when one is available. Forced subtitles cover " +
+                        "foreign-language dialogue even when subtitles are off or set to auto.",
                 )
             }
         }
@@ -1068,7 +1183,7 @@ private fun TvServerSettingsPane(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
@@ -1097,11 +1212,12 @@ private fun TvServerSettingsPane(
     }
 }
 
+// tvOS `accountSubtitle` parity: "Administrator" for admins, else the
+// username, else a generic signed-in line.
 private fun accountSubtitle(state: TvSettingsViewModel.UiState): String {
-    val role = state.user?.role?.takeIf { it.isNotBlank() }
-        ?.replaceFirstChar { it.uppercase() }
-    val username = state.user?.username?.takeIf { it.isNotBlank() }
-    return listOfNotNull(role, username).joinToString(" · ").ifBlank { "Switch profile" }
+    val role = state.user?.role?.trim().orEmpty()
+    if (role.equals("admin", ignoreCase = true)) return "Administrator"
+    return state.user?.username?.takeIf { it.isNotBlank() } ?: "Signed in"
 }
 
 private enum class PlaybackPicker { Quality, AudioLanguage, NextUpPrompt, ResumeRewind, PassOutThreshold }
@@ -1159,10 +1275,12 @@ fun TvSettingsPickerSheet(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        // tvOS presents pickers as a fullScreenCover over the opaque app
+        // background with a leading nav title and a centered option column.
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.86f)),
+                .background(Color.Black.copy(alpha = 0.94f)),
             contentAlignment = Alignment.Center,
         ) {
             Column(
@@ -1170,15 +1288,16 @@ fun TvSettingsPickerSheet(
             ) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.displaySmall.copy(fontSize = 18.sp, lineHeight = 21.sp),
+                    style = MaterialTheme.typography.displaySmall.copy(fontSize = 19.sp, lineHeight = 23.sp),
+                    fontWeight = FontWeight.SemiBold,
                     color = Color.White,
-                    modifier = Modifier.padding(bottom = 28.dp),
+                    modifier = Modifier.padding(bottom = 20.dp),
                 )
 
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
-                        .width(340.dp),
+                        .width(420.dp),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
@@ -1218,12 +1337,17 @@ private fun TvSettingsPickerOptionRow(
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = shape),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.White.copy(alpha = 0.08f),
+            containerColor = Color.White.copy(alpha = 0.07f),
             contentColor = Color.White,
             focusedContainerColor = FocusedContainer,
             focusedContentColor = FocusedContent,
             pressedContainerColor = FocusedContainer,
             pressedContentColor = FocusedContent,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(BorderStroke(1.dp, Color.White.copy(alpha = 0.09f)), shape = shape),
+            focusedBorder = Border.None,
+            pressedBorder = Border.None,
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
         modifier = modifier.fillMaxWidth(),
@@ -1231,23 +1355,26 @@ private fun TvSettingsPickerOptionRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 13.dp, vertical = 8.dp),
+                .padding(horizontal = 14.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            // tvOS TVSettingsPickerOptionRow: the checkmark leads and always
+            // reserves its slot so option labels stay aligned.
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                tint = if (isFocused) FocusedContent else Color.White,
+                modifier = Modifier
+                    .size(15.dp)
+                    .alpha(if (selected) 1f else 0f),
+            )
             Text(
                 text = option.label,
-                style = MaterialTheme.typography.headlineSmall.copy(fontSize = 17.sp, lineHeight = 20.sp),
+                style = MaterialTheme.typography.headlineSmall.copy(fontSize = 15.sp, lineHeight = 18.sp),
                 color = if (isFocused) FocusedContent else Color.White,
                 modifier = Modifier.weight(1f),
             )
-            if (selected) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = null,
-                    tint = if (isFocused) FocusedContent else Color.White,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
         }
     }
 }
@@ -1355,26 +1482,50 @@ private fun DialogButton(
 // Shared row primitives — inverted-capsule focus chrome
 // ---------------------------------------------------------------------------
 
+/**
+ * tvOS `TVSettingsSectionHeader` parity: small mono uppercase section label
+ * (size 15pt mono semibold, tracking 2) above tightly packed rows.
+ */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SettingsGroup(
     title: String,
     content: @Composable () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
-            modifier = Modifier.padding(vertical = 8.dp),
+            text = title.uppercase(),
+            style = SettingsMonoHeaderStyle(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 2.dp, top = 8.dp, bottom = 2.dp),
         )
         content()
     }
 }
 
-private val RowShape = RoundedCornerShape(12.dp)
-private val RowMaxWidth = 840.dp
-private val RowHeight = 56.dp
+@Composable
+private fun SettingsMonoHeaderStyle() =
+    MaterialTheme.typography.labelMedium.copy(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 10.sp,
+        lineHeight = 13.sp,
+        letterSpacing = 1.5.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+
+/** Shared 14sp text for all detail-pane row labels and values. */
+@Composable
+private fun SettingsRowTextStyle() =
+    MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp, lineHeight = 18.sp)
+
+private val RowShape = RoundedCornerShape(10.dp)
+private val RowMaxWidth = 520.dp
+private val RowHeight = 38.dp
+
+// tvOS destructive row colors: bright red at rest on black, deeper red on the
+// focused white platter (TVSettingsRailRowStyle).
+private val DestructiveRed = Color(0xFFD22F3F)
+private val DestructiveRedOnPlatter = Color(0xFFB00020)
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -1391,22 +1542,30 @@ private fun SettingsAccountRow(
         onClick = onClick,
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = RowShape),
-        colors = invertedRowColors(),
+        // tvOS rail parity: the profile row rests transparent (no card fill)
+        // and only inverts to the platter on focus.
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            contentColor = Color.White,
+            focusedContainerColor = FocusedContainer,
+            focusedContentColor = FocusedContent,
+            pressedContainerColor = FocusedContainer,
+            pressedContentColor = FocusedContent,
+        ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         modifier = (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-            .fillMaxWidth()
-            .widthIn(max = RowMaxWidth),
+            .fillMaxWidth(),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .size(56.dp)
+                    .size(30.dp)
                     .clip(CircleShape)
                     .background(
                         if (isFocused) FocusedContent.copy(alpha = 0.15f)
@@ -1416,14 +1575,14 @@ private fun SettingsAccountRow(
             ) {
                 Text(
                     text = name.take(1).uppercase(),
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp),
                     color = if (isFocused) FocusedContent else Color.White,
                 )
             }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(
                     text = name,
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
                     fontWeight = FontWeight.SemiBold,
                     color = if (isFocused) FocusedContent else Color.White,
                     maxLines = 1,
@@ -1431,8 +1590,8 @@ private fun SettingsAccountRow(
                 )
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.sp, lineHeight = 13.sp),
+                    color = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.62f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1440,7 +1599,8 @@ private fun SettingsAccountRow(
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.6f),
+                tint = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.5f),
+                modifier = Modifier.size(14.dp),
             )
         }
     }
@@ -1460,30 +1620,34 @@ private fun SettingsValueRow(
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = RowShape),
         colors = invertedRowColors(),
+        border = invertedRowBorder(),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        // widthIn must precede fillMaxWidth: as the outer constraint it caps
+        // the row at RowMaxWidth, and fillMaxWidth then stretches to that cap
+        // (the reverse order lets fillMaxWidth's fixed constraints win).
         modifier = Modifier
-            .fillMaxWidth()
             .widthIn(max = RowMaxWidth)
+            .fillMaxWidth()
             .height(RowHeight),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyLarge,
+                style = SettingsRowTextStyle(),
                 color = if (isFocused) FocusedContent else Color.White,
                 modifier = Modifier.weight(1f),
             )
             if (value.isNotBlank()) {
                 Text(
                     text = value,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.6f),
+                    style = SettingsRowTextStyle(),
+                    color = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.68f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1491,7 +1655,8 @@ private fun SettingsValueRow(
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.6f),
+                tint = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.55f),
+                modifier = Modifier.size(14.dp),
             )
         }
     }
@@ -1511,29 +1676,41 @@ private fun SettingsActionRow(
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = RowShape),
         colors = invertedRowColors(),
+        border = invertedRowBorder(),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        // widthIn must precede fillMaxWidth: as the outer constraint it caps
+        // the row at RowMaxWidth, and fillMaxWidth then stretches to that cap
+        // (the reverse order lets fillMaxWidth's fixed constraints win).
         modifier = Modifier
-            .fillMaxWidth()
             .widthIn(max = RowMaxWidth)
+            .fillMaxWidth()
             .height(RowHeight),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyLarge,
+                style = SettingsRowTextStyle(),
                 color = when {
+                    isFocused && destructive -> DestructiveRedOnPlatter
                     isFocused -> FocusedContent
-                    destructive -> MaterialTheme.colorScheme.error
+                    destructive -> DestructiveRed
                     else -> Color.White
                 },
                 modifier = Modifier.weight(1f),
             )
-            Spacer(modifier = Modifier.width(16.dp))
+            if (!destructive) {
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.55f),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
         }
     }
 }
@@ -1552,32 +1729,36 @@ private fun SettingsToggleRow(
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = RowShape),
         colors = invertedRowColors(),
+        border = invertedRowBorder(),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        // widthIn must precede fillMaxWidth: as the outer constraint it caps
+        // the row at RowMaxWidth, and fillMaxWidth then stretches to that cap
+        // (the reverse order lets fillMaxWidth's fixed constraints win).
         modifier = Modifier
-            .fillMaxWidth()
             .widthIn(max = RowMaxWidth)
+            .fillMaxWidth()
             .height(RowHeight),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyLarge,
+                style = SettingsRowTextStyle(),
                 color = if (isFocused) FocusedContent else Color.White,
                 modifier = Modifier.weight(1f),
             )
+            // tvOS TVSettingsToggleRow: the state reads as text — semibold and
+            // near-opaque when on, faded when off. No accent color.
             Text(
                 text = if (checked) "On" else "Off",
-                style = MaterialTheme.typography.titleMedium,
-                color = when {
-                    isFocused -> FocusedContent
-                    checked -> MaterialTheme.colorScheme.primary
-                    else -> Color.White.copy(alpha = 0.6f)
-                },
+                style = SettingsRowTextStyle(),
+                fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal,
+                color = (if (isFocused) FocusedContent else Color.White)
+                    .copy(alpha = if (checked) 0.9f else 0.55f),
             )
         }
     }
@@ -1588,12 +1769,13 @@ private fun SettingsToggleRow(
 private fun SettingsInfoRow(label: String, value: String, singleLine: Boolean = true) {
     Row(
         modifier = Modifier
-            .fillMaxWidth()
             .widthIn(max = RowMaxWidth)
+            .fillMaxWidth()
             .let { if (singleLine) it.height(RowHeight) else it.heightIn(min = RowHeight) }
             .clip(RowShape)
-            .background(Color.White.copy(alpha = 0.06f))
-            .padding(horizontal = 24.dp, vertical = if (singleLine) 0.dp else 12.dp),
+            .background(Color.White.copy(alpha = 0.07f))
+            .border(1.dp, Color.White.copy(alpha = 0.09f), RowShape)
+            .padding(horizontal = 16.dp, vertical = if (singleLine) 0.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -1616,29 +1798,41 @@ private fun SettingsInfoRow(label: String, value: String, singleLine: Boolean = 
     }
 }
 
-/** Non-focusable explanatory footer below a settings group (tvOS Section footer). */
+/** Non-focusable explanatory footer below a settings group (tvOS `TVSettingsFooter`). */
 @Composable
 private fun SettingsFooterText(text: String) {
     Text(
         text = text,
-        style = MaterialTheme.typography.bodyMedium,
+        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp, lineHeight = 15.sp),
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
         modifier = Modifier
-            .fillMaxWidth()
             .widthIn(max = RowMaxWidth)
-            .padding(horizontal = 8.dp),
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp),
     )
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun invertedRowColors() = ClickableSurfaceDefaults.colors(
-    containerColor = Color.White.copy(alpha = 0.06f),
+    containerColor = Color.White.copy(alpha = 0.07f),
     contentColor = Color.White,
     focusedContainerColor = FocusedContainer,
     focusedContentColor = FocusedContent,
     pressedContainerColor = FocusedContainer,
     pressedContentColor = FocusedContent,
+)
+
+/**
+ * tvOS `TVSettingsPaneRowStyle` parity: resting rows carry a hairline
+ * `white 0.09` border over the `white 0.07` fill; the focused platter drops it.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun invertedRowBorder() = ClickableSurfaceDefaults.border(
+    border = Border(BorderStroke(1.dp, Color.White.copy(alpha = 0.09f)), shape = RowShape),
+    focusedBorder = Border.None,
+    pressedBorder = Border.None,
 )
 
 // ---------------------------------------------------------------------------
