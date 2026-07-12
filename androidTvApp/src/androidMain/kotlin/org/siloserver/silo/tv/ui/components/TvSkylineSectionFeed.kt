@@ -74,6 +74,11 @@ fun TvSkylineSectionFeed(
     modifier: Modifier = Modifier,
     focusRequest: Int = 0,
     detailReturnFocusRequest: Int = 0,
+    /** Shell-owned requester for the card a detail page was launched from.
+     *  The shell uses it as its content restorer's enter fallback during the
+     *  detail-return resume, so the very first synchronous focus claim lands
+     *  on the launch card with no intermediate wrong-card frame. */
+    detailReturnCardFocusRequester: FocusRequester? = null,
     firstRowFocusRequester: FocusRequester? = null,
     onInitialContentFocus: () -> Unit = {},
     iconForSection: (ResolvedSection) -> ImageVector? = { null },
@@ -363,6 +368,24 @@ fun TvSkylineSectionFeed(
     // previously entered card.
     var initialFocusRequested by rememberSaveable { mutableStateOf(false) }
     var firstRowFocusRequest by remember { mutableIntStateOf(0) }
+    // The (row, item) a card click launched a detail page from — saveable so
+    // it survives the Main → ItemDetail → Main round trip that removes this
+    // feed from composition. That disposal also drops the shell restorer's
+    // saved child NODE, so its default enter can land a row below the launch
+    // card; these indices let the detail-return effect re-target it exactly.
+    var returnRowIndex by rememberSaveable { mutableIntStateOf(-1) }
+    var returnItemIndex by rememberSaveable { mutableIntStateOf(-1) }
+    // True from card click until the detail-return restore consumes it. Gates
+    // the restore requester attachments (and the row restorer's enter-fallback
+    // redirect they imply) to the return window only.
+    var detailReturnPending by rememberSaveable { mutableStateOf(false) }
+    val detailReturnRowContainerFocusRequester = remember { FocusRequester() }
+    val detailReturnItemFocusRequester =
+        detailReturnCardFocusRequester ?: remember { FocusRequester() }
+    // Plain remember on purpose: the shell's detail-return counter is also
+    // plain remember, so after a round trip both reset and the fresh bump
+    // (0 → 1) must not be mistaken for an already-applied one.
+    var lastAppliedDetailReturnRequest by remember { mutableIntStateOf(0) }
     // Last shell focus-request value we actually applied. Guards the effect
     // below so it only grabs the first row on a genuine counter bump, never on
     // a firstRowId change alone.
@@ -377,17 +400,93 @@ fun TvSkylineSectionFeed(
         return true
     }
 
+    // Early detail-return restore: runs when this feed is RECREATED for the
+    // pop-return transition, long before the shell's ON_RESUME claim (the nav
+    // fade has to settle first, ~500ms). Compose assigns default focus to the
+    // restored screen within its first frames — before the launch card's
+    // requester attaches — which briefly landed on the return row's first
+    // card. Keep re-targeting the launch card every couple of frames until
+    // the request sticks, so any wrong-card frame is corrected immediately
+    // instead of after the transition. Not keyed on detailReturnPending: it
+    // must only fire on recreation (restored pending=true), never on the
+    // click that sets pending while this feed is still composed and focused.
+    LaunchedEffect(firstRowId) {
+        if (!detailReturnPending || firstRowId == null) return@LaunchedEffect
+        val rowIndex = returnRowIndex
+        val itemIndex = returnItemIndex
+        if (rowIndex !in rows.indices || itemIndex !in rows[rowIndex].items.indices) {
+            return@LaunchedEffect
+        }
+        runCatching { rowBandState.scrollToItem(rowIndex) }
+        val rowRequester = if (rows[rowIndex].id == firstRowId) {
+            firstRowContainerFocusRequester
+        } else {
+            detailReturnRowContainerFocusRequester
+        }
+        for (attempt in 0 until 40) {
+            withFrameNanos { }
+            // The real success signal is the card's own focus callback —
+            // requestFocus() can report success yet silently roll back when
+            // the request crosses a restorer scope.
+            if (focusedRowIndex == rowIndex && focusedItemIndex == itemIndex) break
+            // Hop one restorer scope per frame pair: row group, then card —
+            // once default focus is anywhere inside the content group these
+            // are honored, and the row restorer's enter fallback is the
+            // launch card itself, so the hop lands directly on it.
+            runCatching { rowRequester.requestFocus() }
+            withFrameNanos { }
+            runCatching { detailReturnItemFocusRequester.requestFocus() }
+        }
+    }
+
     LaunchedEffect(firstRowId, detailReturnFocusRequest) {
         if (detailReturnFocusRequest > 0) {
             // The shell's content focusRestorer owns detail-return focus. Any
             // feed recreated by Home's ON_RESUME refresh must not run its
             // first-entry fallback over the restored card.
             initialFocusRequested = true
+            // Re-target the remembered launch card explicitly (the restorer's
+            // saved node did not survive the round trip). Walk one restorer
+            // scope per frame — row group, then card — because a request that
+            // crosses a focusRestorer toward a descendant is cancelled and
+            // rolled back. Skips without consuming while rows are still
+            // loading so the firstRowId key re-runs it once data lands.
+            if (detailReturnFocusRequest == lastAppliedDetailReturnRequest) return@LaunchedEffect
+            if (!detailReturnPending) return@LaunchedEffect
+            val rowIndex = returnRowIndex
+            val itemIndex = returnItemIndex
+            if (rowIndex !in rows.indices || itemIndex !in rows[rowIndex].items.indices) {
+                detailReturnPending = false
+                return@LaunchedEffect
+            }
+            lastAppliedDetailReturnRequest = detailReturnFocusRequest
+            if (focusedRowIndex == rowIndex && focusedItemIndex == itemIndex) {
+                // The early recreation-time ladder already landed the launch
+                // card; re-running the hops would only jiggle focus.
+                detailReturnPending = false
+                return@LaunchedEffect
+            }
+            runCatching { rowBandState.scrollToItem(rowIndex) }
+            withFrameNanos { }
+            val rowRequester = if (rows[rowIndex].id == firstRowId) {
+                firstRowContainerFocusRequester
+            } else {
+                detailReturnRowContainerFocusRequester
+            }
+            runCatching { rowRequester.requestFocus() }
+            // The card requester attaches once the row's restored LazyRow
+            // window composes the launch card; retry across a few frames.
+            for (attempt in 0 until 8) {
+                withFrameNanos { }
+                if (runCatching { detailReturnItemFocusRequester.requestFocus() }.isSuccess) break
+            }
+            detailReturnPending = false
             return@LaunchedEffect
         }
         if (initialFocusRequested || firstRowId == null) return@LaunchedEffect
         delay(120)
         if (initialFocusRequested) return@LaunchedEffect
+        detailReturnPending = false
         requestFirstRowFocus()
         initialFocusRequested = true
     }
@@ -408,6 +507,8 @@ fun TvSkylineSectionFeed(
         if (focusRequest == 0 || firstRowId == null) return@LaunchedEffect
         if (focusRequest == lastAppliedFocusRequest) return@LaunchedEffect
         lastAppliedFocusRequest = focusRequest
+        // Menu re-select is a full reset; drop any stale detail-return target.
+        detailReturnPending = false
         // The shell bumps its token for EVERY menu selection, and during the
         // route crossfade the exiting feed is still composed — without this
         // gate it would briefly steal focus back (Home flashing focused en
@@ -499,10 +600,17 @@ fun TvSkylineSectionFeed(
                     ) { rowIndex, section ->
                         val isFirstRow = section.id == firstRowId
                         val showProgress = showProgressForSection(section)
+                        val isReturnRow = detailReturnPending && rowIndex == returnRowIndex
                         TvMediaRow(
                             title = section.title,
                             items = section.items,
-                            onItemClick = onItemClick,
+                            onItemClick = { contentId ->
+                                returnRowIndex = rowIndex
+                                returnItemIndex =
+                                    section.items.indexOfFirst { it.contentId == contentId }
+                                detailReturnPending = true
+                                onItemClick(contentId)
+                            },
                             icon = iconForSection(section),
                             onSeeAllClick = onSeeAllClickForSection(section),
                             showProgress = showProgress,
@@ -515,9 +623,15 @@ fun TvSkylineSectionFeed(
                             posterWidth = RowDimens.DensePosterWidth,
                             firstItemFocusRequester = resolvedFirstRowFocusRequester
                                 .takeIf { isFirstRow },
-                            rowContainerFocusRequester = firstRowContainerFocusRequester
-                                .takeIf { isFirstRow },
+                            rowContainerFocusRequester = when {
+                                isFirstRow -> firstRowContainerFocusRequester
+                                isReturnRow -> detailReturnRowContainerFocusRequester
+                                else -> null
+                            },
                             firstItemFocusRequest = if (isFirstRow) firstRowFocusRequest else 0,
+                            restoreFocusIndex = if (isReturnRow) returnItemIndex else -1,
+                            restoreFocusRequester = detailReturnItemFocusRequester
+                                .takeIf { isReturnRow },
                             onItemFocusedAtIndex = { item, itemIndex ->
                                 onItemFocused(item, section.title, rowIndex, itemIndex)
                             },

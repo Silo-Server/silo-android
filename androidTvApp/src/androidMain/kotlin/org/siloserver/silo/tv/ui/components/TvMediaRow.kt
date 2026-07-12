@@ -91,6 +91,13 @@ fun TvMediaRow(
      *  honored, letting callers hop onto the row before targeting card 0. */
     rowContainerFocusRequester: FocusRequester? = null,
     firstItemCardModifier: Modifier = Modifier,
+    /** Attaches [restoreFocusRequester] to the card at this index so callers
+     *  can restore focus to the exact card that launched a detail page. While
+     *  set it also becomes the row restorer's enter fallback, so the FIRST
+     *  enter after this row is recreated lands directly on that card instead
+     *  of card 0. Callers should only pass it while a restore is pending. */
+    restoreFocusIndex: Int = -1,
+    restoreFocusRequester: FocusRequester? = null,
     /** Fired (on focus GAIN only) with whichever card the user focuses, so the
      *  Skyline marquee + backdrop can preview the focused item. */
     onItemFocused: ((SectionItem) -> Unit)? = null,
@@ -155,7 +162,7 @@ fun TvMediaRow(
                     },
                 )
                 .focusRestorer(
-                    firstItemFocusRequester ?: FocusRequester.Default,
+                    restoreFocusRequester ?: firstItemFocusRequester ?: FocusRequester.Default,
                 ),
             horizontalArrangement = Arrangement.spacedBy(itemSpacing),
             contentPadding = PaddingValues(
@@ -177,6 +184,12 @@ fun TvMediaRow(
                 val itemFocusRequester = firstItemFocusRequester.takeIf { index == 0 }
                 val appliedCardModifier = itemCardModifier.then(
                     if (index == 0) firstItemCardModifier else Modifier,
+                ).then(
+                    if (restoreFocusRequester != null && index == restoreFocusIndex) {
+                        Modifier.focusRequester(restoreFocusRequester)
+                    } else {
+                        Modifier
+                    },
                 ).then(
                     if (onDirectionUp != null) {
                         Modifier.onPreviewKeyEvent { event ->

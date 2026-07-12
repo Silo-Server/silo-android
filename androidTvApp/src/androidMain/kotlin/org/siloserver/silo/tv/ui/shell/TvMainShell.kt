@@ -60,6 +60,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -291,14 +292,32 @@ fun TvMainShell(
     var suppressHomeRefreshAfterDetail by rememberSaveable { mutableStateOf(false) }
     var homeDetailReturnFocusRequest by remember { mutableIntStateOf(0) }
     var homeDetailReturnNeedsRetry by remember { mutableStateOf(false) }
+    // Attached (by the Home feed) to the exact card a detail page was launched
+    // from, while that return is pending. Used as the content restorer's enter
+    // fallback during the return resume so the synchronous claim below lands
+    // straight on the launch card — the restorer's saved child node does not
+    // survive the shell being removed for the outer detail route, and its
+    // default enter could land a row below the launch card for a few frames.
+    val homeDetailReturnCardFocusRequester = remember { FocusRequester() }
+    // Whether focus currently sits anywhere inside the content group. Gates
+    // the detail-return resume claim below: the Home feed's early restore
+    // ladder usually re-focuses the launch card during the pop transition, and
+    // re-requesting the content group after that re-runs its enter search and
+    // yanks focus to a different card for a frame.
+    var contentHasFocus by remember { mutableStateOf(false) }
     LifecycleResumeEffect(Unit) {
         if (restoreHomeContentAfterDetail) {
-            restoreHomeContentAfterDetail = false
             // Claim the content group synchronously during ON_RESUME, before
-            // Compose's default search can briefly settle on the Home tab.
-            homeDetailReturnNeedsRetry = runCatching {
-                !contentFocusRequester.requestFocus()
-            }.getOrDefault(true)
+            // Compose's default search can briefly settle on the Home tab —
+            // but only when the feed hasn't already claimed it. Claim BEFORE
+            // clearing the flag so the restorer fallback still points at the
+            // launch card for this claim.
+            homeDetailReturnNeedsRetry = if (contentHasFocus) {
+                false
+            } else {
+                runCatching { !contentFocusRequester.requestFocus() }.getOrDefault(true)
+            }
+            restoreHomeContentAfterDetail = false
             homeDetailReturnFocusRequest++
         }
         onPauseOrDispose { }
@@ -693,8 +712,18 @@ fun TvMainShell(
             modifier = Modifier
                 .fillMaxSize()
                 .nestedScroll(nestedScrollConnection)
+                .onFocusChanged { contentHasFocus = it.hasFocus }
                 .focusRequester(contentFocusRequester)
-                .focusRestorer()
+                // During a detail-return resume the restorer's saved child is
+                // gone (the shell left composition), so fall back to the Home
+                // feed's launch-card requester; Default otherwise.
+                .focusRestorer(
+                    if (restoreHomeContentAfterDetail) {
+                        homeDetailReturnCardFocusRequester
+                    } else {
+                        FocusRequester.Default
+                    },
+                )
                 // Block any GEOMETRIC focus escape upward out of the content
                 // group. Without this, moveFocus(Up) from the top content row
                 // does a 2D search into the sibling top bar and lands on the
@@ -771,6 +800,7 @@ fun TvMainShell(
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
                         detailReturnFocusRequest = homeDetailReturnFocusRequest,
+                        detailReturnCardFocusRequester = homeDetailReturnCardFocusRequester,
                         firstRowFocusRequester = homeFirstItemFocusRequester,
                         shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
@@ -791,6 +821,7 @@ fun TvMainShell(
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
                         detailReturnFocusRequest = homeDetailReturnFocusRequest,
+                        detailReturnCardFocusRequester = homeDetailReturnCardFocusRequester,
                         firstRowFocusRequester = homeFirstItemFocusRequester,
                         shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
