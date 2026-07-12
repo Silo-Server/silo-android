@@ -114,12 +114,12 @@ class TvSkylineTokenParityTest {
         assertToken("val tabPillHeight = 30.dp")
         assertToken("val dropdownTopInset = 66.dp")
         assertToken("val tabSpacing = 4.dp")
-        assertToken("val tabLabelSize = 13.sp")
-        assertToken("val tabPaddingHorizontal = 13.dp")
-        assertToken("val tabPaddingVertical = 5.5.dp")
+        assertToken("val tabLabelSize = 15.sp")
+        assertToken("val tabPaddingHorizontal = 14.5.dp")
+        assertToken("val tabPaddingVertical = 6.dp")
         assertToken("val barIconSize = 28.dp")
         assertToken("val barTrailingSpacing = 11.dp")
-        assertToken("val wordmarkSize = 13.sp")
+        assertToken("val wordmarkSize = 15.sp")
     }
 
     @Test
@@ -275,10 +275,10 @@ class TvSkylineTokenParityTest {
         assertTrue(detailHero.contains("val contentMaxWidth = 600.dp"))
         assertTrue(detailHero.contains(".padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = TvDetailHeroBottomInset)"))
         // Starring credit: trailing overlay, vertically centered then lifted
-        // by 0.45×heroHeight (tvOS `starringOverlay`), capped at 230dp.
+        // by 0.45×heroHeight (tvOS `starringOverlay`), capped at 280dp.
         assertTrue(detailHero.contains(".align(Alignment.CenterEnd)"))
         assertTrue(detailHero.contains(".padding(end = Spacing.safeArea, bottom = heroHeight * 0.45f)"))
-        assertTrue(detailHero.contains(".widthIn(max = 230.dp)"))
+        assertTrue(detailHero.contains(".widthIn(max = 280.dp)"))
         assertTrue(detailHero.contains("fontSize = 13.sp"))
         // Display title: condensed Inter companion, tvOS 92pt ÷ 2 trimmed to
         // 42sp per design review (2026-07-11).

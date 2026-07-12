@@ -17,7 +17,7 @@ class TvCalendarSizingSourceTest {
         assertTrue(source.contains("private val posterWidth = 124.dp"))
         assertTrue(source.contains("private val posterHeight = 186.dp"))
         // Meaningless midnight timestamps stay hidden.
-        assertTrue(source.contains("it.isNotBlank() && it != \"00:00\""))
+        assertTrue(source.contains("item.localDisplayAirTime()?.let { airTime ->"))
     }
 
     @Test

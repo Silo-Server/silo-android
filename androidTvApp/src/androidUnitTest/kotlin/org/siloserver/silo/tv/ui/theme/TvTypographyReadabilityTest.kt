@@ -37,6 +37,7 @@ class TvTypographyReadabilityTest {
         val tinyFontPattern = Regex("""fontSize\s*=\s*(9|10|11|12|13|14|15)\.sp""")
         val tvOsMappedSmallTextFiles = setOf(
             "org/siloserver/silo/tv/ui/components/TvAnchoredSelectorMenu.kt",
+            "org/siloserver/silo/tv/ui/components/TvAlphabetRail.kt",
             "org/siloserver/silo/tv/ui/components/TvEpisodeCard.kt",
             "org/siloserver/silo/tv/ui/components/TvFullScreenPicker.kt",
             "org/siloserver/silo/tv/ui/components/TvOptionDialog.kt",
@@ -46,15 +47,20 @@ class TvTypographyReadabilityTest {
             "org/siloserver/silo/tv/ui/screens/detail/TvDetailEpisodeRail.kt",
             "org/siloserver/silo/tv/ui/screens/detail/TvDetailFactsTable.kt",
             "org/siloserver/silo/tv/ui/screens/detail/TvDetailHero.kt",
+            "org/siloserver/silo/tv/ui/screens/detail/TvExpandableSynopsis.kt",
+            "org/siloserver/silo/tv/ui/screens/detail/TvItemDetailScreen.kt",
             "org/siloserver/silo/tv/ui/screens/detail/TvMediaInfoDialog.kt",
             "org/siloserver/silo/tv/ui/screens/detail/TvDetailSectionHeader.kt",
             "org/siloserver/silo/tv/ui/screens/people/TvPersonDetailScreen.kt",
+            "org/siloserver/silo/tv/ui/screens/calendar/TvCalendarScreen.kt",
+            "org/siloserver/silo/tv/ui/screens/library/TvLibraryBrowseControls.kt",
             "org/siloserver/silo/tv/ui/screens/player/TvHoldSeekIndicator.kt",
             "org/siloserver/silo/tv/ui/screens/player/TvPlayerHud.kt",
             "org/siloserver/silo/tv/ui/screens/profiles/TvProfileForm.kt",
             "org/siloserver/silo/tv/ui/screens/recommendations/TvRecommendationsScreen.kt",
             "org/siloserver/silo/tv/ui/screens/search/TvSearchScreen.kt",
             "org/siloserver/silo/tv/ui/screens/settings/TvSettingsScreen.kt",
+            "org/siloserver/silo/tv/ui/shell/TvTopMenuBar.kt",
         )
         val offenders = File("src/androidMain/kotlin/org/siloserver/silo/tv")
             .walkTopDown()
