@@ -30,6 +30,19 @@ interface UserItemStateDao {
     )
     suspend fun getByContent(serverId: String, profileId: String, contentId: String): List<UserItemStateEntity>
 
+    /** Clears resume state without discarding per-file playback or reading preferences. */
+    @Query(
+        "UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs " +
+            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
+            "AND positionSeconds <> 0",
+    )
+    suspend fun clearPlaybackProgress(
+        serverId: String,
+        profileId: String,
+        contentId: String,
+        updatedAtMs: Long,
+    )
+
     @Query(
         "SELECT * FROM user_item_state " +
             "WHERE serverId = :serverId AND profileId = :profileId " +

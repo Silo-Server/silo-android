@@ -8,6 +8,7 @@ import org.siloserver.silo.model.catalog.CastMember
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.sortedForDisplay
@@ -370,16 +371,30 @@ class TvItemDetailViewModel(
         val current = _uiState.value
         if (current.isTogglingWatched) return
         val target = !current.isWatched
-        _uiState.update { it.copy(isTogglingWatched = true, isWatched = target) }
+        val previousDetail = current.detail
+        _uiState.update {
+            it.copy(
+                isTogglingWatched = true,
+                isWatched = target,
+                detail = it.detail?.withWatchedPlaybackState(target),
+            )
+        }
         viewModelScope.launch {
             val result = personalDataRepository.setWatched(contentId, target)
             if (result !is ApiResult.Success) {
                 // Roll back on error.
                 _uiState.update {
-                    it.copy(isTogglingWatched = false, isWatched = !target)
+                    it.copy(
+                        isTogglingWatched = false,
+                        isWatched = !target,
+                        detail = previousDetail,
+                    )
                 }
             } else {
                 _uiState.update { it.copy(isTogglingWatched = false) }
+                // Re-read server-resolved state (including series/season episode
+                // resolution) without flashing the full detail loading screen.
+                refreshOnReturn()
             }
         }
     }
@@ -793,6 +808,17 @@ class TvItemDetailViewModel(
             }
         }
     }
+}
+
+private fun ItemDetail.withWatchedPlaybackState(watched: Boolean): ItemDetail {
+    val current = userData ?: LeafItemUserData()
+    return copy(
+        userData = current.copy(
+            played = watched,
+            isInProgress = if (watched) false else current.isInProgress,
+            positionSeconds = if (watched) null else current.positionSeconds,
+        ),
+    )
 }
 
 private fun ItemDetail.toSectionItem(): SectionItem = SectionItem(

@@ -90,6 +90,29 @@ class LocalUserStateOverlayTest {
     }
 
     @Test
+    fun `detail overlay preserves watched status while applying rewatch progress`() {
+        val detail = ItemDetail(
+            contentId = "episode-watched",
+            type = "episode",
+            title = "Watched Episode",
+            userData = LeafItemUserData(played = true),
+        )
+
+        val overlaid = applyLocalPlaybackProgress(
+            detail,
+            LocalPlaybackProgress(
+                fileId = 22,
+                positionSeconds = 450.0,
+                durationSeconds = 1_100.0,
+            ),
+        )
+
+        assertEquals(true, overlaid.userData?.played)
+        assertEquals(450.0, overlaid.userData?.positionSeconds)
+        assertEquals(true, overlaid.userData?.isInProgress)
+    }
+
+    @Test
     fun `episode overlay updates stale episode progress before sync`() {
         val episode = EpisodeListItem(
             contentId = "episode-1",

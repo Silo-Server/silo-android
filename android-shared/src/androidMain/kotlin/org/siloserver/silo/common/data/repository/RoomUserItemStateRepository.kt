@@ -52,7 +52,12 @@ class RoomUserItemStateRepository(
     private val outboxDao = db.dirtyOperationDao()
 
     override suspend fun recordWatched(contentId: String, watched: Boolean): OutboxHandle =
-        record(contentId, OutboxOperation.SET_WATCHED, JsonPrimitive(watched).toString()) {
+        record(
+            contentId,
+            OutboxOperation.SET_WATCHED,
+            JsonPrimitive(watched).toString(),
+            clearPlaybackProgress = true,
+        ) {
             it.copy(watched = watched)
         }
 
@@ -288,6 +293,7 @@ class RoomUserItemStateRepository(
         contentId: String,
         opKind: String,
         payloadJson: String,
+        clearPlaybackProgress: Boolean = false,
         applyField: (ContentItemStateEntity) -> ContentItemStateEntity,
     ): OutboxHandle {
         val snapshot = snapshotProvider() ?: return OutboxHandle.NONE
@@ -311,6 +317,10 @@ class RoomUserItemStateRepository(
                     serverUpdatedAtMs = null,
                 )
             contentDao.upsert(applyField(existing).copy(clientUpdatedAtMs = nowMs))
+
+            if (clearPlaybackProgress) {
+                userStateDao.clearPlaybackProgress(serverId, profileId, contentId, nowMs)
+            }
 
             opId = outboxDao.enqueueCoalescing(
                 DirtyOperationEntity(

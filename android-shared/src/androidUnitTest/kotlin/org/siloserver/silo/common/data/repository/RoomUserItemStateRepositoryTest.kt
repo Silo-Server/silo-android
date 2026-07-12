@@ -49,6 +49,33 @@ class RoomUserItemStateRepositoryTest {
     }
 
     @Test
+    fun watchedChangesClearResumeButPreserveFilePreferencesAndReadingState() = runTest {
+        val location = "epubcfi(/6/4!/4)"
+        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordAudioTrackSelection("c1", fileId = 7, audioFingerprint = "audio")
+        repo.recordSubtitleTrackSelection("c1", fileId = 7, subtitleFingerprint = "subtitle")
+        repo.recordEbookProgress("c1", fileId = 7, location = location, progress = 0.42)
+
+        repo.recordWatched("c1", watched = true)
+
+        var row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        assertEquals(0.0, row?.positionSeconds)
+        assertEquals(3600.0, row?.durationSeconds)
+        assertEquals("audio", row?.audioFingerprint)
+        assertEquals("subtitle", row?.subtitleFingerprint)
+        assertEquals(location, row?.cfi)
+        assertEquals(0.42, row?.readProgress)
+        assertNull(repo.localPlaybackProgress("c1"))
+
+        repo.recordPosition("c1", fileId = 7, positionSeconds = 789.0, durationSeconds = 3600.0)
+        repo.recordWatched("c1", watched = false)
+
+        row = db.userItemStateDao().get("s1", "p1", "c1", 7)
+        assertEquals(0.0, row?.positionSeconds)
+        assertNull(repo.localPlaybackProgress("c1"))
+    }
+
+    @Test
     fun favoriteToggleDoesNotClobberExistingRating() = runTest {
         repo.recordRating("c1", rating = 5)
         repo.recordFavorite("c1", favorite = true)
