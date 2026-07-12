@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -178,17 +180,29 @@ private fun SquaredPill(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = foreground,
-                modifier = Modifier.size(if (primary) 20.dp else 14.dp),
-            )
+            // Enlarged glyphs (design review: play 30dp, start-over 20dp) that
+            // must NOT grow the pill: the Box reserves the full glyph WIDTH but
+            // only the original icon HEIGHT, and the Icon escapes the slot
+            // vertically via requiredSize — so the row still measures at the
+            // pre-enlargement button height.
+            Box(
+                modifier = Modifier
+                    .width(if (primary) 30.dp else 20.dp)
+                    .height(if (primary) 16.dp else 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = foreground,
+                    modifier = Modifier.requiredSize(if (primary) 30.dp else 20.dp),
+                )
+            }
             Spacer(Modifier.width(if (primary) 9.dp else 8.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge.copy(
-                    fontSize = 16.sp,
+                    fontSize = if (primary) 17.sp else 15.sp,
                 ),
                 color = foreground,
                 maxLines = 1,
@@ -398,7 +412,8 @@ fun TvSquareToggleButton(
 
     Box(
         modifier = modifier
-            .size(36.dp)
+            // tvOS 72×72 ÷ 2 = 36dp, +4 per design review.
+            .size(40.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -443,7 +458,7 @@ fun TvSquareToggleButton(
             imageVector = if (isActive) iconActive else icon,
             contentDescription = null,
             tint = foreground,
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier.size(16.dp),
         )
     }
 }

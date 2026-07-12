@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import coil3.compose.AsyncImage
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.tv.ui.theme.DarkSurface
 import org.siloserver.silo.tv.ui.theme.Spacing
@@ -65,8 +67,8 @@ internal sealed class TvHeroFactToken {
  * Layout = a `ZStack(bottomLeading)`: a near-full-viewport backdrop, a
  * 4-stop horizontal darkening on the left, a soft vertical fade into the
  * rail body at the bottom, then the bottom-anchored editorial + action
- * column on the left, including a single-line "Starring …" credit directly
- * below the synopsis.
+ * column on the left. The "Starring …" credit floats upper-right as its own
+ * trailing overlay (tvOS `starringOverlay`), NOT inside the editorial column.
  *
  * Apple sizes the hero relative to the viewport (`heroHeight = 980` of a
  * 1080-pt canvas ≈ 0.907×), so we compute the height as a fraction of the
@@ -158,15 +160,45 @@ internal fun TvDetailHero(
                 ),
         )
 
+        // "Starring …" floats in the upper-right of the hero, right-aligned —
+        // tvOS `.overlay(alignment: .trailing)` + `.padding(.bottom, heroHeight
+        // * 0.45)` (the bottom padding on the vertically-centered overlay
+        // pushes the credit into the top-right region). maxWidth 460pt → 230dp,
+        // 2-line limit, 24pt regular → 12sp.
+        starringText?.takeIf { it.isNotBlank() }?.let { line ->
+            Text(
+                text = line,
+                fontWeight = FontWeight.Normal,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
+                color = Color.White.copy(alpha = 0.8f),
+                textAlign = TextAlign.End,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(
+                    shadow = Shadow(
+                        color = Color.Black.copy(alpha = 0.55f),
+                        offset = Offset(0f, 2f),
+                        blurRadius = 6f,
+                    ),
+                ),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = Spacing.safeArea, bottom = heroHeight * 0.45f)
+                    .widthIn(max = 230.dp),
+            )
+        }
+
         // Bottom-anchored editorial column + action cluster. Bottom inset +
         // inter-row gaps kept tight so the full stack (tagline → title →
         // synopsis → facts → actions → selector) fits within heroHeight on a
         // 540dp-tall canvas instead of overflowing and clipping the tagline off
-        // the top. (tvOS point values were ~2x these.)
+        // the top. (tvOS point values were ~2x these.) Bottom inset trimmed
+        // 28 → 16dp per design review so the stack sits lower in the hero.
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = 28.dp),
+                .padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             EditorialColumn(
@@ -177,7 +209,6 @@ internal fun TvDetailHero(
                 ratingChip = ratingChip,
                 overview = overview,
                 tagline = tagline,
-                starringText = starringText,
                 factsLine = factsLine,
                 contentMaxWidth = contentMaxWidth,
                 translation = translation,
@@ -207,7 +238,6 @@ private fun EditorialColumn(
     ratingChip: String?,
     overview: String?,
     tagline: String?,
-    starringText: String?,
     factsLine: List<TvHeroFactToken>,
     contentMaxWidth: androidx.compose.ui.unit.Dp,
     translation: (@Composable () -> Unit)? = null,
@@ -232,25 +262,6 @@ private fun EditorialColumn(
         // the full overview with the tagline revealed above it.
         overview?.takeIf { it.isNotBlank() }?.let { line ->
             TvExpandableSynopsis(overview = line, tagline = tagline)
-        }
-        starringText?.takeIf { it.isNotBlank() }?.let { line ->
-            Text(
-                text = line,
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp,
-                lineHeight = 17.sp,
-                color = Color.White.copy(alpha = 0.82f),
-                textAlign = TextAlign.Start,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = TextStyle(
-                    shadow = Shadow(
-                        color = Color.Black.copy(alpha = 0.72f),
-                        offset = Offset(0f, 2f),
-                        blurRadius = 7f,
-                    ),
-                ),
-            )
         }
         translation?.invoke()
 
@@ -291,7 +302,7 @@ private fun HeroTextTitle(title: String) {
     val parts = remember(title) { splitDisplayTitle(title) }
     Column(
         horizontalAlignment = Alignment.Start,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(
             text = parts.first.uppercase(),
@@ -307,7 +318,8 @@ private fun HeroTextTitle(title: String) {
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 20.sp,
                     lineHeight = 22.sp,
-                    letterSpacing = 0.sp,
+                    // tvOS `.tracking(1.5)` → 0.75sp at half scale.
+                    letterSpacing = 0.75.sp,
                 ),
                 color = Color.White.copy(alpha = 0.95f),
                 textAlign = TextAlign.Start,
@@ -335,8 +347,8 @@ private fun EpisodeHierarchyTitle(seriesTitle: String, episodeTitle: String) {
             text = parts.first,
             style = heroDisplayHero.copy(
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 25.sp,
-                lineHeight = 27.sp,
+                fontSize = 23.sp,
+                lineHeight = 25.sp,
             ),
             color = Color.White.copy(alpha = 0.94f),
             textAlign = TextAlign.Start,
@@ -349,7 +361,8 @@ private fun EpisodeHierarchyTitle(seriesTitle: String, episodeTitle: String) {
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 16.sp,
                     lineHeight = 18.sp,
-                    letterSpacing = 0.sp,
+                    // tvOS `.tracking(1.2)` → 0.6sp at half scale.
+                    letterSpacing = 0.6.sp,
                 ),
                 color = Color.White.copy(alpha = 0.82f),
                 textAlign = TextAlign.Start,
@@ -401,7 +414,7 @@ private fun FactsRow(tokens: List<TvHeroFactToken>) {
                 Text(
                     text = "·",
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     color = Color.White.copy(alpha = 0.45f),
                 )
             }
@@ -409,7 +422,7 @@ private fun FactsRow(tokens: List<TvHeroFactToken>) {
                 is TvHeroFactToken.TextToken -> Text(
                     text = token.value,
                     fontWeight = FontWeight.Medium,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     color = Color.White.copy(alpha = 0.88f),
                     maxLines = 1,
                 )
@@ -426,7 +439,7 @@ private fun FactsRow(tokens: List<TvHeroFactToken>) {
                     Text(
                         text = token.value,
                         fontWeight = FontWeight.Medium,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         color = Color.White.copy(alpha = 0.88f),
                         maxLines = 1,
                     )
@@ -448,11 +461,12 @@ private fun RatingChip(text: String) {
             )
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
+        // tvOS: 20pt heavy, tracking 1.0 → 10sp / 0.5sp, +1 per design review.
         Text(
             text = text,
             fontWeight = FontWeight.Black,
-            fontSize = 13.sp,
-            letterSpacing = 0.sp,
+            fontSize = 11.sp,
+            letterSpacing = 0.5.sp,
             color = Color.White,
             maxLines = 1,
         )
@@ -470,11 +484,12 @@ private fun QualityChip(text: String) {
             )
             .padding(horizontal = 4.5.dp, vertical = 2.dp),
     ) {
+        // tvOS: 16pt heavy, tracking 1.0 → 8sp / 0.5sp, +1 per design review.
         Text(
             text = text,
             fontWeight = FontWeight.Black,
-            fontSize = 13.sp,
-            letterSpacing = 0.sp,
+            fontSize = 9.sp,
+            letterSpacing = 0.5.sp,
             color = Color.White,
             maxLines = 1,
         )
@@ -498,20 +513,32 @@ private fun splitDisplayTitle(raw: String): Pair<String, String?> {
 private const val HERO_HEIGHT_FRACTION = 0.907f
 
 /**
- * Hero display title — primary line. Mirrors tvOS `TVHeroTitle`'s visual
- * hierarchy on Android TV's half-scale layout canvas. Android has no
- * `.compressed` system font, so we use the heaviest available weight with
- * tight line height and keep this local so the shared home `heroDisplay`
- * token stays unchanged.
+ * Condensed family for the hero display title. tvOS renders the title in SF
+ * Pro `.width(.compressed)` at `.black`; Inter has no width axis, so this
+ * uses Inter Tight Black — the official narrow Inter companion — keeping the
+ * hero on-brand with the app's Inter type system. (The most condensed system
+ * alternative is `DeviceFontFamilyName("sans-serif-condensed")` / Roboto
+ * Condensed, which is narrower but off-brand.)
+ */
+private val heroCondensedFamily = FontFamily(
+    Font(R.font.inter_tight_black, weight = FontWeight.Bold),
+    Font(R.font.inter_tight_black, weight = FontWeight.ExtraBold),
+    Font(R.font.inter_tight_black, weight = FontWeight.Black),
+)
+
+/**
+ * Hero display title — primary line. Mirrors tvOS `TVHeroTitle` /
+ * `TVEpisodeHierarchyTitle` (92pt `.black` `.width(.compressed)`) on Android
+ * TV's half-scale layout canvas, via the condensed device family above. Kept
+ * local so the shared home `heroDisplay` token stays unchanged.
  */
 private val heroDisplayHero = TextStyle(
-    fontFamily = FontFamily.Default,
+    fontFamily = heroCondensedFamily,
     fontWeight = FontWeight.Black,
     // tvOS uses 92pt in its 1920x1080 POINT canvas; Android TV is a 960x540 DP
-    // canvas (≈half), so the point value must be ~halved or the title overflows
-    // the hero. 56sp sits just above the shared home `heroDisplay` (58sp).
-    fontSize = 48.sp,
-    lineHeight = 52.sp,
+    // canvas (≈half) → 46sp, trimmed to 42sp per design review (2026-07-11).
+    fontSize = 42.sp,
+    lineHeight = 46.sp,
     letterSpacing = 0.sp,
     // Apple shadows the hero title (black@0.55, r16, y4) for legibility on
     // bright backdrops. Inherited by the subtitle/episode `.copy()` variants.

@@ -13,12 +13,12 @@ import androidx.tv.material3.Text
 
 /**
  * Editorial section header used below the detail hero. Mirrors the tvOS
- * `TVSectionHeader` at Android TV canvas scale, with text lifted above raw
- * tvOS÷2 sizing so lower detail sections still read as premium 10-foot UI.
+ * `TVSectionHeader` at tvOS÷2 sizing (eyebrow 20pt bold tracking 3.0 → 10sp /
+ * 1.5sp; title 42pt semibold → 21sp).
  *
  * Sizes are scoped locally (rather than via the shared `sectionEyebrow` /
- * `displaySmall` tokens) so the larger detail-page treatment doesn't shift the
- * other screens that share those tokens at their smaller scale.
+ * `displaySmall` tokens) so the detail-page treatment doesn't shift the
+ * other screens that share those tokens.
  */
 @Composable
 internal fun TvDetailSectionHeader(
@@ -41,8 +41,8 @@ internal fun TvDetailSectionHeader(
                 text = eyebrow.uppercase(),
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    lineHeight = 15.sp,
+                    fontSize = 10.sp,
+                    lineHeight = 12.sp,
                     letterSpacing = 1.5.sp,
                 ),
                 color = Color.White.copy(alpha = 0.55f),
@@ -52,8 +52,8 @@ internal fun TvDetailSectionHeader(
             text = title,
             style = MaterialTheme.typography.displaySmall.copy(
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 24.sp,
-                lineHeight = 27.sp,
+                fontSize = 21.sp,
+                lineHeight = 24.sp,
             ),
             color = Color.White,
         )

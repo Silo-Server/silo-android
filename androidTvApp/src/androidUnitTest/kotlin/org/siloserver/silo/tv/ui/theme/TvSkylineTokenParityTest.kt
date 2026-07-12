@@ -273,22 +273,25 @@ class TvSkylineTokenParityTest {
     @Test
     fun detailHeroUsesHalfScaleTvOsTypographyAndOverlayGeometry() {
         assertTrue(detailHero.contains("val contentMaxWidth = 600.dp"))
-        assertTrue(detailHero.contains(".padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = 60.dp)"))
-        assertTrue(detailHero.contains(".align(Alignment.BottomEnd)"))
-        assertTrue(detailHero.contains(".padding(bottom = heroHeight * 0.45f, end = Spacing.safeArea)"))
-        assertTrue(detailHero.contains("fontSize = 13.sp"))
-        assertTrue(detailHero.contains("lineHeight = 52.sp"))
+        assertTrue(detailHero.contains(".padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = 16.dp)"))
+        // Starring credit: trailing overlay, vertically centered then lifted
+        // by 0.45×heroHeight (tvOS `starringOverlay`), capped at 230dp.
+        assertTrue(detailHero.contains(".align(Alignment.CenterEnd)"))
+        assertTrue(detailHero.contains(".padding(end = Spacing.safeArea, bottom = heroHeight * 0.45f)"))
         assertTrue(detailHero.contains(".widthIn(max = 230.dp)"))
+        assertTrue(detailHero.contains("fontSize = 13.sp"))
+        // Display title: condensed Inter companion, tvOS 92pt ÷ 2 trimmed to
+        // 42sp per design review (2026-07-11).
         assertTrue(detailHero.contains("private val heroDisplayHero = TextStyle"))
-        assertTrue(detailHero.contains("fontSize = 48.sp"))
-        assertTrue(detailHero.contains("lineHeight = 52.sp"))
+        assertTrue(detailHero.contains("R.font.inter_tight_black"))
+        assertTrue(detailHero.contains("fontSize = 42.sp"))
+        assertTrue(detailHero.contains("lineHeight = 46.sp"))
         assertTrue(detailHero.contains("letterSpacing = 0.sp"))
         assertTrue(detailHero.contains(".height(110.dp)"))
         assertTrue(detailHero.contains(".widthIn(max = 310.dp)"))
-        assertTrue(detailHero.contains("fontSize = 25.sp"))
-        assertTrue(detailHero.contains("fontSize = 13.sp"))
-        assertTrue(detailHero.contains("fontSize = 16.sp"))
+        assertTrue(detailHero.contains("fontSize = 23.sp"))
         assertTrue(detailHero.contains("fontSize = 14.sp"))
+        assertTrue(detailHero.contains("fontSize = 16.sp"))
         assertFalse(detailHero.contains("fontSize = 56.sp"))
         assertFalse(detailHero.contains("letterSpacing = (-1).sp"))
         assertFalse(detailHero.contains(".align(Alignment.TopEnd)"))
@@ -304,10 +307,12 @@ class TvSkylineTokenParityTest {
 
     @Test
     fun detailSectionHeadersUseHalfScaleTvOsTypography() {
-        assertTrue(detailSectionHeader.contains("fontSize = 13.sp"))
-        assertTrue(detailSectionHeader.contains("lineHeight = 15.sp"))
+        // tvOS TVSectionHeader ÷ 2: eyebrow 20pt bold tracking 3.0 → 10sp /
+        // 1.5sp; title 42pt semibold → 21sp.
+        assertTrue(detailSectionHeader.contains("fontSize = 10.sp"))
+        assertTrue(detailSectionHeader.contains("lineHeight = 12.sp"))
         assertTrue(detailSectionHeader.contains("letterSpacing = 1.5.sp"))
-        assertTrue(detailSectionHeader.contains("fontSize = 24.sp"))
+        assertTrue(detailSectionHeader.contains("fontSize = 21.sp"))
         assertFalse(detailSectionHeader.contains("fontSize = 16.sp"))
     }
 
@@ -461,11 +466,13 @@ class TvSkylineTokenParityTest {
 
     @Test
     fun anchoredSelectorTriggerUsesHalfScaleTvOsMetrics() {
-        assertTrue(anchoredSelectorMenu.contains("contentPadding = PaddingValues(horizontal = 20.dp, vertical = 11.dp)"))
-        assertTrue(anchoredSelectorMenu.contains("modifier = Modifier.size(12.dp)"))
+        assertTrue(anchoredSelectorMenu.contains("contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp)"))
+        assertTrue(anchoredSelectorMenu.contains("modifier = Modifier.size(13.dp)"))
         assertTrue(anchoredSelectorMenu.contains("Spacer(Modifier.width(7.dp))"))
-        assertTrue(anchoredSelectorMenu.contains("fontSize = 13.sp"))
-        assertTrue(anchoredSelectorMenu.contains("modifier = Modifier.size(8.5.dp)"))
+        // tvOS TVSelectorButton ÷ 2 +1 per design review: label 10sp, value 12sp.
+        assertTrue(anchoredSelectorMenu.contains("fontSize = 10.sp"))
+        assertTrue(anchoredSelectorMenu.contains("fontSize = 12.sp"))
+        assertTrue(anchoredSelectorMenu.contains("modifier = Modifier.size(9.5.dp)"))
         assertFalse(anchoredSelectorMenu.contains("contentPadding = PaddingValues(horizontal = 40.dp, vertical = 22.dp)"))
     }
 

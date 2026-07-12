@@ -5,10 +5,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.ClosedCaption
-import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -99,9 +99,9 @@ fun TvPlaybackSelectorRow(
             )
         }
 
-        // Version
+        // Version — tvOS uses the `tv` display glyph, not an HQ badge.
         TvAnchoredSelectorMenu(
-            icon = Icons.Filled.HighQuality,
+            icon = Icons.Filled.Tv,
             label = "Version",
             value = TvPlaybackFormatting.versionValueLabel(currentVersion, selectedVersionFileId),
             options = buildList {
@@ -167,9 +167,11 @@ fun TvPlaybackSelectorRow(
             },
         )
 
-        // Subtitles
+        // Subtitles — tvOS uses `captions.bubble`; Chat (bubble with text
+        // lines) is the closest Material glyph, and reads as subtitles rather
+        // than the narrower CC (closed captions).
         TvAnchoredSelectorMenu(
-            icon = Icons.Filled.ClosedCaption,
+            icon = Icons.AutoMirrored.Filled.Chat,
             label = "Subtitles",
             value = TvPlaybackFormatting.subtitleValueLabel(
                 currentVersion,
