@@ -1,8 +1,11 @@
 package org.siloserver.silo.tv.ui.screens.calendar
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -138,6 +141,8 @@ fun TvCalendarScreen(
     val filterFocusRequester = filterFocusRequesters.getValue(CalendarFilter.Following)
     val selectedDayFocusRequester = remember { FocusRequester() }
     var lastAppliedFocusRequest by remember { mutableIntStateOf(-1) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     // Explicit shell-to-screen handoff. The shell bumps this token whenever
     // Calendar is selected, including re-selection after a restored route.
@@ -145,6 +150,21 @@ fun TvCalendarScreen(
     // group to guess a descendant (which falls back to Home while navigating).
     LaunchedEffect(focusRequest, state.isLoading) {
         if (focusRequest == lastAppliedFocusRequest && !state.isLoading) return@LaunchedEffect
+        if (!state.isLoading) {
+            val layoutInfo = listState.layoutInfo
+            val itemExtent = (layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 0) +
+                layoutInfo.mainAxisItemSpacing
+            val distance = listState.firstVisibleItemIndex.toFloat() * itemExtent +
+                listState.firstVisibleItemScrollOffset
+            if (distance > 0f) {
+                val durationMs = (distance / 4f).toInt().coerceIn(250, 900)
+                listState.animateScrollBy(
+                    -distance,
+                    tween(durationMs, easing = FastOutSlowInEasing),
+                )
+            }
+            listState.scrollToItem(0)
+        }
         // Let the active loading/content branch attach its focus nodes before
         // applying the handoff. A request in the same frame as NavHost restore
         // is overwritten by Android's initial focus search.
@@ -167,8 +187,6 @@ fun TvCalendarScreen(
     // to that day's shelf and kicks focus onto its first card. Only the most
     // recently selected day sees a changing, non-zero token, so exactly one
     // shelf claims focus.
-    val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     val snapControlsToInitialPosition: () -> Unit = {
         scope.launch { listState.animateScrollToItem(0) }
     }
