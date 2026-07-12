@@ -18,7 +18,7 @@ class TvSkylineSectionFeedSourceTest {
         assertTrue(source.contains("rememberLazyListState()"))
         assertTrue(source.contains("state = rowBandState"))
         assertTrue(source.contains("itemsIndexed("))
-        assertTrue(source.contains("val onItemFocused: (SectionItem, String, Int) -> Unit"))
+        assertTrue(source.contains("val onItemFocused: (SectionItem, String, Int, Int) -> Unit"))
         // Vertical row-band motion is owned once by the feed, matching tvOS'
         // view-aligned row stack, while the Skyline bring-into-view spec keeps
         // card focus from issuing competing vertical relocation requests.

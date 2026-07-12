@@ -52,6 +52,8 @@ class TvTypographyReadabilityTest {
             "org/siloserver/silo/tv/ui/screens/player/TvHoldSeekIndicator.kt",
             "org/siloserver/silo/tv/ui/screens/player/TvPlayerHud.kt",
             "org/siloserver/silo/tv/ui/screens/profiles/TvProfileForm.kt",
+            "org/siloserver/silo/tv/ui/screens/recommendations/TvRecommendationsScreen.kt",
+            "org/siloserver/silo/tv/ui/screens/search/TvSearchScreen.kt",
             "org/siloserver/silo/tv/ui/screens/settings/TvSettingsScreen.kt",
         )
         val offenders = File("src/androidMain/kotlin/org/siloserver/silo/tv")

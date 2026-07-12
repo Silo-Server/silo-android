@@ -111,7 +111,7 @@ class TvSkylineTokenParityTest {
         assertToken("val safeAreaX = 44.dp")
         assertToken("val barTopInset = 28.dp")
         assertToken("val barHeight = 32.dp")
-        assertToken("val tabPillHeight = 25.dp")
+        assertToken("val tabPillHeight = 30.dp")
         assertToken("val dropdownTopInset = 66.dp")
         assertToken("val tabSpacing = 4.dp")
         assertToken("val tabLabelSize = 13.sp")
@@ -235,7 +235,7 @@ class TvSkylineTokenParityTest {
         assertTrue(mediaRow.contains("width = posterWidth ?: TvCardWidth"))
         assertTrue(skylineSectionFeed.contains("posterWidth = RowDimens.DensePosterWidth"))
         assertTrue(skylineSectionFeed.contains("val TvSkylineItemSpacing = 20.dp"))
-        assertTrue(skylineSectionFeed.contains("val TvSkylineRowPreviewSpacing = 5.dp"))
+        assertTrue(skylineSectionFeed.contains("val TvSkylineRowPreviewSpacing = 14.dp"))
         assertTrue(skylineSectionFeed.contains("val TvSkylineRowCardVerticalPadding = 7.dp"))
         assertTrue(skylineSectionFeed.contains("val TvSkylineRowBandBottomInset = 10.dp"))
         assertTrue(skylineSectionFeed.contains("verticalArrangement = Arrangement.spacedBy(TvSkylineRowPreviewSpacing)"))
@@ -245,7 +245,7 @@ class TvSkylineTokenParityTest {
     @Test
     fun homeMarqueeUsesHalfScaleTvOsLogoBounds() {
         assertTrue(focusMarquee.contains("private val MarqueeLogoMaxWidth = 440.dp"))
-        assertTrue(focusMarquee.contains("private val MarqueeLogoMaxHeight = 100.dp"))
+        assertTrue(focusMarquee.contains("private val MarqueeLogoMaxHeight = 95.dp"))
         assertTrue(focusMarquee.contains(".height(MarqueeLogoMaxHeight)"))
         assertFalse(focusMarquee.contains("private val MarqueeLogoMaxWidth = 320.dp"))
         assertFalse(focusMarquee.contains(".heightIn(max = MarqueeLogoMaxHeight)"))
@@ -273,7 +273,7 @@ class TvSkylineTokenParityTest {
     @Test
     fun detailHeroUsesHalfScaleTvOsTypographyAndOverlayGeometry() {
         assertTrue(detailHero.contains("val contentMaxWidth = 600.dp"))
-        assertTrue(detailHero.contains(".padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = 16.dp)"))
+        assertTrue(detailHero.contains(".padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = TvDetailHeroBottomInset)"))
         // Starring credit: trailing overlay, vertically centered then lifted
         // by 0.45×heroHeight (tvOS `starringOverlay`), capped at 230dp.
         assertTrue(detailHero.contains(".align(Alignment.CenterEnd)"))
@@ -400,15 +400,15 @@ class TvSkylineTokenParityTest {
 
     @Test
     fun settingsPickerSheetUsesHalfScaleTvOsRows() {
-        assertTrue(settingsScreen.contains("style = MaterialTheme.typography.displaySmall.copy(fontSize = 18.sp, lineHeight = 21.sp)"))
-        assertTrue(settingsScreen.contains(".width(340.dp)"))
+        assertTrue(settingsScreen.contains("style = MaterialTheme.typography.displaySmall.copy(fontSize = 19.sp, lineHeight = 23.sp)"))
+        assertTrue(settingsScreen.contains(".width(420.dp)"))
         assertTrue(settingsScreen.contains("contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)"))
         assertTrue(settingsScreen.contains("verticalArrangement = Arrangement.spacedBy(5.dp)"))
         assertTrue(settingsScreen.contains("val shape = RoundedCornerShape(7.dp)"))
-        assertTrue(settingsScreen.contains(".padding(horizontal = 13.dp, vertical = 8.dp)"))
-        assertTrue(settingsScreen.contains("fontSize = 17.sp"))
-        assertTrue(settingsScreen.contains("lineHeight = 20.sp"))
-        assertTrue(settingsScreen.contains("modifier = Modifier.size(14.dp)"))
+        assertTrue(settingsScreen.contains(".padding(horizontal = 14.dp, vertical = 9.dp)"))
+        assertTrue(settingsScreen.contains("fontSize = 15.sp"))
+        assertTrue(settingsScreen.contains("lineHeight = 18.sp"))
+        assertTrue(settingsScreen.contains(".size(15.dp)"))
         assertFalse(settingsScreen.contains(".width(680.dp)"))
         assertFalse(settingsScreen.contains(".padding(horizontal = 26.dp, vertical = 18.dp)"))
     }

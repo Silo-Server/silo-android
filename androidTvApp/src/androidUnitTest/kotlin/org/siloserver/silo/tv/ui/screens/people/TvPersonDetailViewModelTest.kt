@@ -75,7 +75,7 @@ class TvPersonDetailViewModelTest {
         awaitState(viewModel) { !it.isLoading && !it.isLoadingItems }
 
         assertEquals(
-            listOf("All", "Movies", "TV", "Audiobooks", "Music"),
+            listOf("All", "Movies", "Series", "Audiobooks", "Music"),
             viewModel.uiState.value.availableFilters.map { it.title },
         )
         assertFalse(viewModel.uiState.value.availableFilters.any { it.title == "Reading" })

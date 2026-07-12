@@ -38,7 +38,7 @@ class TvServerSetupReadabilityTest {
 
     @Test
     fun phoneSetupPillIsCenteredAndUsesSetupLabel() {
-        assertTrue(source.contains("text = \"SETUP WITH PHONE\""))
+        assertTrue(source.contains("text = \"RECOMMENDED · USE PHONE\""))
         assertTrue(source.contains(".align(Alignment.CenterHorizontally)"))
     }
 

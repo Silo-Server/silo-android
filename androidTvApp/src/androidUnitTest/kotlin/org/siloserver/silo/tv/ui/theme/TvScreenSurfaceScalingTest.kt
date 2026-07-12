@@ -86,11 +86,9 @@ class TvScreenSurfaceScalingTest {
 
     @Test
     fun searchAndRequestInputsUseTvOsMappedWidths() {
-        assertTrue(searchScreen.contains(".widthIn(max = 380.dp)"))
-        assertTrue(searchScreen.contains(".widthIn(max = 340.dp)"))
+        assertTrue(searchScreen.contains(".width(520.dp)"))
         assertTrue(requestsScreen.contains("modifier = Modifier.widthIn(max = 410.dp)"))
-        assertFalse(searchScreen.contains(".widthIn(max = 760.dp)"))
-        assertFalse(searchScreen.contains(".widthIn(max = 680.dp)"))
+        assertFalse(searchScreen.contains(".width(760.dp)"))
         assertFalse(requestsScreen.contains("modifier = Modifier.widthIn(max = 820.dp)"))
     }
 

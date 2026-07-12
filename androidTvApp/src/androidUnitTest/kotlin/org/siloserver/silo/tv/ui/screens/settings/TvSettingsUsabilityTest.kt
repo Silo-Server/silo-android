@@ -12,9 +12,9 @@ class TvSettingsUsabilityTest {
 
     @Test
     fun settingsContentClearsTopMenuAndFocusedCardScale() {
-        assertTrue(source.contains("top = TvTopMenuLayout.contentTopInset"))
-        assertTrue(source.contains("start = 72.dp"))
-        assertTrue(source.contains("end = 72.dp"))
+        assertTrue(source.contains("start = 44.dp"))
+        assertTrue(source.contains("top = Spacing.safeArea"))
+        assertTrue(source.contains("end = 44.dp"))
     }
 
     @Test
@@ -35,9 +35,9 @@ class TvSettingsUsabilityTest {
 
     @Test
     fun splitSettingsUseCompactTvDensity() {
-        assertTrue(source.contains("modifier = Modifier.width(300.dp)"))
-        assertTrue(source.contains("private val RowMaxWidth = 840.dp"))
-        assertTrue(source.contains("private val RowHeight = 56.dp"))
+        assertTrue(source.contains("modifier = Modifier.width(200.dp)"))
+        assertTrue(source.contains("private val RowMaxWidth = 520.dp"))
+        assertTrue(source.contains("private val RowHeight = 38.dp"))
         assertTrue(source.contains(".focusGroup()"))
     }
 }

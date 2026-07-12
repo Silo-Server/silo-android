@@ -14,8 +14,8 @@ class TvCalendarSizingSourceTest {
     fun calendarCellsMatchTvosPortraitCardAtReducedScale() {
         // tvOS CalendarEventCard parity (QA 2026-07-08): portrait poster with
         // the caption below, sized so a full day shelf fits above the fold.
-        assertTrue(source.contains("private val posterWidth = 120.dp"))
-        assertTrue(source.contains("private val posterHeight = 180.dp"))
+        assertTrue(source.contains("private val posterWidth = 124.dp"))
+        assertTrue(source.contains("private val posterHeight = 186.dp"))
         // Meaningless midnight timestamps stay hidden.
         assertTrue(source.contains("it.isNotBlank() && it != \"00:00\""))
     }
