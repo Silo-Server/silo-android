@@ -17,7 +17,7 @@ data class VideoBackendCapabilities(
 ) {
     companion object {
         fun media3(
-            route: PlaybackRoute = PlaybackRoute.Compatibility,
+            route: PlaybackRoute = PlaybackRoute.SiloPlayer,
         ): VideoBackendCapabilities = VideoBackendCapabilities(
             backendKind = VideoPlaybackBackendKind.Media3,
             route = route,
@@ -29,7 +29,7 @@ data class VideoBackendCapabilities(
             supportsAudioDelay = true,
             subtitleRendering = SubtitleRendering.Media3Text,
             supportsHardContainers = false,
-            displayName = "Media3",
+            displayName = "SiloPlayer",
         )
     }
 }

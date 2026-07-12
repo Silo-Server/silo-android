@@ -11,7 +11,7 @@ package org.siloserver.silo.common.player.route
  */
 enum class PlaybackRoute(val displayName: String) {
     /** ProgressiveMediaSource + RenderersFactory with FFmpeg audio extension (`EXTENSION_RENDERER_MODE_PREFER`). */
-    Compatibility("Compatibility"),
+    SiloPlayer("SiloPlayer"),
 
     /** ProgressiveMediaSource + platform-only renderers (`EXTENSION_RENDERER_MODE_OFF`). Narrower codec breadth. */
     NativeDirect("Native Direct"),

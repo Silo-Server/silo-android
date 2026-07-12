@@ -13,8 +13,8 @@ class RouteCapabilityMatrixTest {
     }
 
     @Test
-    fun `compatibility route supports audio delay`() {
-        val cap = RouteCapabilityMatrix.get(PlaybackRoute.Compatibility)
+    fun `SiloPlayer route supports audio delay`() {
+        val cap = RouteCapabilityMatrix.get(PlaybackRoute.SiloPlayer)
         assertTrue(cap.audioDelaySupported)
     }
 
@@ -31,16 +31,16 @@ class RouteCapabilityMatrixTest {
     }
 
     @Test
-    fun `compatibility and native direct have identical capability flags`() {
+    fun `SiloPlayer and native direct have identical capability flags`() {
         // The differentiator is codec breadth, not capability flags.
-        val a = RouteCapabilityMatrix.get(PlaybackRoute.Compatibility)
+        val a = RouteCapabilityMatrix.get(PlaybackRoute.SiloPlayer)
         val b = RouteCapabilityMatrix.get(PlaybackRoute.NativeDirect)
         assertEquals(a, b)
     }
 
     @Test
     fun `displayName is human-readable`() {
-        assertEquals("Compatibility", PlaybackRoute.Compatibility.displayName)
+        assertEquals("SiloPlayer", PlaybackRoute.SiloPlayer.displayName)
         assertEquals("Native Direct", PlaybackRoute.NativeDirect.displayName)
         assertEquals("HLS", PlaybackRoute.Hls.displayName)
     }

@@ -11,10 +11,10 @@ package org.siloserver.silo.common.player.route
 object RouteCapabilityMatrix {
 
     private val map: Map<PlaybackRoute, RouteCapability> = mapOf(
-        // Compatibility: ProgressiveMediaSource + FFmpeg audio extension.
+        // SiloPlayer: ProgressiveMediaSource + FFmpeg audio extension.
         // Same capabilities as NativeDirect; differs only in codec breadth
         // (FFmpeg unlocks TrueHD/EAC-3 JOC/AC-4 software-decoded).
-        PlaybackRoute.Compatibility to RouteCapability(
+        PlaybackRoute.SiloPlayer to RouteCapability(
             buffersReported = true,
             videoGravityToggle = true,
             hdrToggle = true,
