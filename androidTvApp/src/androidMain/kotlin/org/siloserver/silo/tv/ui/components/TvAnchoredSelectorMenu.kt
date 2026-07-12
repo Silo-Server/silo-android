@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +28,8 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
+import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 
 // ---------------------------------------------------------------------------
 // Anchored selector popover — Compose-for-TV port of the silo-apple tvOS
@@ -141,6 +144,9 @@ fun TvAnchoredSelectorMenu(
                 // reloaded on selection) — requesting focus then throws.
                 runCatching { triggerFr.requestFocus() }
             },
+            containerColor = DarkSurfaceElevated,
+            tonalElevation = 0.dp,
+            shadowElevation = 18.dp,
         ) {
             options.forEach { option ->
                 val labelText = if (option.detail.isBlank()) {
@@ -171,6 +177,12 @@ fun TvAnchoredSelectorMenu(
                     } else {
                         null
                     },
+                    colors = MenuDefaults.itemColors(
+                        textColor = SiloOnSurface,
+                        leadingIconColor = SiloOnSurface,
+                        disabledTextColor = SiloOnSurface.copy(alpha = 0.38f),
+                        disabledLeadingIconColor = SiloOnSurface.copy(alpha = 0.38f),
+                    ),
                     onClick = {
                         option.onSelect()
                         expanded = false

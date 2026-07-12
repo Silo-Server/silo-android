@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -24,6 +25,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.unit.dp
+import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
+import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 
 /**
  * Bundle of optional callbacks for the TV long-press / DPAD-center-hold
@@ -69,6 +73,9 @@ fun TvMediaCardContextMenu(
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
+        containerColor = DarkSurfaceElevated,
+        tonalElevation = 0.dp,
+        shadowElevation = 18.dp,
         modifier = Modifier.onPreviewKeyEvent { event ->
             if (!awaitingOpeningPressRelease || event.key !in MenuSelectKeys) {
                 false
@@ -130,6 +137,10 @@ private fun TvMenuRow(text: String, icon: ImageVector, onClick: () -> Unit) {
     DropdownMenuItem(
         text = { Text(text) },
         leadingIcon = { Icon(icon, contentDescription = null) },
+        colors = MenuDefaults.itemColors(
+            textColor = SiloOnSurface,
+            leadingIconColor = SiloOnSurface,
+        ),
         onClick = onClick,
     )
 }

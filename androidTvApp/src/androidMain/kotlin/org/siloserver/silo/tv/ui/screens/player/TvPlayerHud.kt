@@ -72,6 +72,7 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
+import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 
 private val HudMaxWidth = 680.dp
 private val HudMinHeight = 290.dp
@@ -1967,7 +1968,7 @@ internal fun HudPickerDialog(
             .width(360.dp)
             .heightIn(max = 220.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
+            .background(DarkSurfaceElevated.copy(alpha = 0.98f))
             .border(0.5.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(14.dp))
             // Focus trap: contain D-pad navigation inside the modal so focus
             // can't leak to the player root at the list edges. Cancelling exit

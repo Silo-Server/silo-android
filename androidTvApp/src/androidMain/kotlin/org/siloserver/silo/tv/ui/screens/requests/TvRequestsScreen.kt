@@ -61,6 +61,8 @@ import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.screens.search.TV_SEARCH_QUERY_MAX_LENGTH
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.SiloBlue
+import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
+import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.sectionEyebrow
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
@@ -166,6 +168,9 @@ fun TvRequestsScreen(
     pendingRequest?.let { item ->
         AlertDialog(
             onDismissRequest = { pendingRequest = null },
+            containerColor = DarkSurfaceElevated,
+            titleContentColor = SiloOnSurface,
+            textContentColor = SiloOnSurface.copy(alpha = 0.76f),
             title = { Text("Request ${item.title}?") },
             text = { Text("This will submit a ${item.mediaType} request for your profile.") },
             confirmButton = {
