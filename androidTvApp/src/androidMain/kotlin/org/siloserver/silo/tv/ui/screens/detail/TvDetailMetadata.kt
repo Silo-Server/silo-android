@@ -3,6 +3,11 @@ package org.siloserver.silo.tv.ui.screens.detail
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.isAudiobookItemType
+import java.time.Instant
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZoneOffset
 import kotlin.math.round
 
 /**
@@ -47,10 +52,11 @@ internal object TvDetailMetadata {
         detail: ItemDetail,
         preferredQuality: String? = null,
         selectedFileId: Int? = null,
+        zone: ZoneId = ZoneId.systemDefault(),
     ): List<TvHeroFactToken> {
         val tokens = mutableListOf<TvHeroFactToken>()
         if (detail.type.equals("episode", ignoreCase = true)) {
-            abbreviatedDate(detail.airDate ?: detail.releaseDate)?.let {
+            abbreviatedDate(detail.airDate ?: detail.releaseDate, zone)?.let {
                 tokens += TvHeroFactToken.TextToken(it)
             }
         } else if (detail.year > 0) {
@@ -106,22 +112,31 @@ internal object TvDetailMetadata {
         return if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "$minutes min"
     }
 
-    /** tvOS `DetailDateFormatting.abbreviatedDate`: stable medium-style date
-     *  for episode hero facts, tolerant of full RFC3339 timestamps. */
-    private fun abbreviatedDate(raw: String?): String? {
+    /**
+     * tvOS `DetailDateFormatting.abbreviatedDate`: parse the server value as a
+     * UTC instant (its ISO8601 parsers all assume GMT — including bare
+     * `yyyy-MM-dd` dates) and render the DEVICE-LOCAL calendar date. Keeping
+     * that quirk is deliberate: for a viewer west of UTC both clients show
+     * e.g. "Jul 8" for a `2026-07-09T00:00:00Z` air date, instead of the TV
+     * app drifting a day ahead of tvOS.
+     */
+    internal fun abbreviatedDate(raw: String?, zone: ZoneId = ZoneId.systemDefault()): String? {
         val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        val date = trimmed.take(10)
-        val parts = date.split("-")
-        if (parts.size != 3) return trimmed
-        val year = parts[0].toIntOrNull() ?: return trimmed
-        val month = parts[1].toIntOrNull() ?: return trimmed
-        val day = parts[2].toIntOrNull() ?: return trimmed
+        val instant = parseServerInstant(trimmed) ?: return trimmed
+        val date = instant.atZone(zone).toLocalDate()
         val monthName = listOf(
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-        ).getOrNull(month - 1) ?: return trimmed
-        return "$monthName $day, $year"
+        ).getOrNull(date.monthValue - 1) ?: return trimmed
+        return "$monthName ${date.dayOfMonth}, ${date.year}"
     }
+
+    /** RFC3339 timestamp (with/without fraction or offset) or bare full date,
+     *  as UTC — the same parser cascade as Apple's `DetailDateFormatting`. */
+    private fun parseServerInstant(raw: String): Instant? =
+        runCatching { Instant.parse(raw) }.getOrNull()
+            ?: runCatching { OffsetDateTime.parse(raw).toInstant() }.getOrNull()
+            ?: runCatching { LocalDate.parse(raw).atStartOfDay(ZoneOffset.UTC).toInstant() }.getOrNull()
 
     private fun formatOneDecimal(value: Double): String {
         val rounded = round(value * 10.0) / 10.0

@@ -7,6 +7,7 @@ import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.VideoTrack
 import org.siloserver.silo.model.ebook.MediaPerson
+import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -27,7 +28,30 @@ class TvDetailMetadataTest {
                 TvHeroFactToken.TextToken("Mar 30, 2026"),
                 TvHeroFactToken.TextToken("52 min"),
             ),
-            TvDetailMetadata.factsLine(detail),
+            TvDetailMetadata.factsLine(detail, zone = ZoneId.of("UTC")),
+        )
+    }
+
+    @Test
+    fun airDateRendersInViewerZoneLikeTvOs() {
+        // tvOS parses the timestamp as a UTC instant and formats the LOCAL
+        // calendar date, so a midnight-UTC air date shows the previous day for
+        // viewers west of UTC. The Android hero mirrors that.
+        assertEquals(
+            "Mar 29, 2026",
+            TvDetailMetadata.abbreviatedDate(
+                "2026-03-30T00:00:00Z",
+                zone = ZoneId.of("America/Los_Angeles"),
+            ),
+        )
+        // Bare full dates are parsed at UTC midnight too (Apple's
+        // `.withFullDate` ISO8601 parser defaults to GMT).
+        assertEquals(
+            "Mar 29, 2026",
+            TvDetailMetadata.abbreviatedDate(
+                "2026-03-30",
+                zone = ZoneId.of("America/Los_Angeles"),
+            ),
         )
     }
 

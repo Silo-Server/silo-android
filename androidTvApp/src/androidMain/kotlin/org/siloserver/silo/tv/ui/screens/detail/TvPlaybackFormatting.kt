@@ -156,7 +156,7 @@ object TvPlaybackFormatting {
             TvAudioOption(
                 ordinal = ordinal,
                 title = audioTitle(track, ordinal),
-                detail = audioDetail(track),
+                detail = audioDetail(track, ordinal, version),
                 isSelected = selectedOrdinal == ordinal,
             )
         }
@@ -166,14 +166,13 @@ object TvPlaybackFormatting {
         val tracks = version?.audioTracks ?: return "Unknown"
         val ordinal = resolvedAudioOrdinal(version, selectedAudioTrackIndex) ?: return "Unknown"
         val track = tracks.getOrNull(ordinal) ?: return "Unknown"
-        val title = audioTitle(track, ordinal)
-        // Auto shows what it resolved to ("Auto - EAC3 - English"); a manual
-        // pick shows just the track (QA 2026-07-08 / Apple parity). Audio auto
+        val summary = audioSummary(track, ordinal)
+        // Auto shows what it resolved to ("Auto: English · EAC3 · 5.1"); a
+        // manual pick shows just the track (tvOS `annotateAuto`). Audio auto
         // is the file's default/first track — the same signal the player uses
         // (there is no client-side language audio resolver; the server drives
-        // audio selection), so unlike subtitles this preview needs no prefs
-        // and already matches tvOS's `annotateAuto` label.
-        return if (selectedAudioTrackIndex == null) "Auto - $title" else title
+        // audio selection), so unlike subtitles this preview needs no prefs.
+        return if (selectedAudioTrackIndex == null) "Auto: $summary" else summary
     }
 
     /**
@@ -202,28 +201,35 @@ object TvPlaybackFormatting {
         return 0
     }
 
-    private fun audioTitle(track: AudioTrack, ordinal: Int): String {
-        val format = listOfNotNull(
+    /** Menu-row title. Mirrors tvOS `audioTitle`: language → useful custom
+     *  title → "Track N". */
+    private fun audioTitle(track: AudioTrack, ordinal: Int): String =
+        languageDisplayName(track.language)
+            ?: usefulAudioTitle(track.title)
+            ?: "Track ${ordinal + 1}"
+
+    /** Pill-value summary. Mirrors tvOS `audioSummary`:
+     *  "English · EAC3 · 5.1". */
+    private fun audioSummary(track: AudioTrack, ordinal: Int): String {
+        val tokens = listOfNotNull(
+            languageDisplayName(track.language),
             normalizedAudioCodec(track.codec),
             compactAudioLayout(track),
-        ).joinToString(" ")
-        val language = languageDisplayName(track.language)
-        val formatNonEmpty = nonEmpty(format)
-
-        return when {
-            formatNonEmpty != null && language != null -> "$formatNonEmpty - $language"
-            formatNonEmpty != null -> formatNonEmpty
-            usefulAudioTitle(track.title) != null ->
-                listOfNotNull(usefulAudioTitle(track.title), language).joinToString(" - ")
-            language != null -> language
-            else -> "Track ${ordinal + 1}"
-        }
+        )
+        return if (tokens.isEmpty()) audioTitle(track, ordinal) else tokens.joinToString(" · ")
     }
 
-    private fun audioDetail(track: AudioTrack): String {
+    /** Menu-row detail. Mirrors tvOS `audioDetail`: custom title (when it
+     *  isn't already the row title), codec, layout, Default, Preferred. */
+    private fun audioDetail(track: AudioTrack, ordinal: Int, version: FileVersion?): String {
         val tokens = buildList {
-            usefulAudioTitle(track.title)?.let { add(it) }
+            usefulAudioTitle(track.title)
+                ?.takeIf { it != audioTitle(track, ordinal) }
+                ?.let { add(it) }
+            normalizedAudioCodec(track.codec)?.let { add(it) }
+            compactAudioLayout(track)?.let { add(it) }
             if (track.isDefault) add("Default")
+            if (version?.effectiveAudioTrackIndex == ordinal) add("Preferred")
         }
         return tokens.joinToString(" · ")
     }
@@ -288,12 +294,12 @@ object TvPlaybackFormatting {
             if (autoContext != null) {
                 val resolved = autoResolvedSubtitle(version, autoContext)
                 return if (resolved != null) {
-                    "Auto - ${subtitleTitle(resolved.first, resolved.second)}"
+                    "Auto: ${subtitlePillSummary(resolved.first, resolved.second)}"
                 } else {
-                    "Auto - None"
+                    "Auto: Off"
                 }
             }
-            if (tracks != null && tracks.size == 1) return subtitleTitle(tracks[0], 0)
+            if (tracks != null && tracks.size == 1) return subtitlePillSummary(tracks[0], 0)
             return "Auto"
         }
         if (selectedSubtitleTrackIndex == -1) return "Off"
@@ -301,7 +307,7 @@ object TvPlaybackFormatting {
         // track list: a subtitle IS requested, so "On" (not "Auto"/"Off").
         if (tracks == null) return "On"
         val track = tracks.getOrNull(selectedSubtitleTrackIndex) ?: return "On"
-        return subtitleTitle(track, selectedSubtitleTrackIndex)
+        return subtitlePillSummary(track, selectedSubtitleTrackIndex)
     }
 
     /**
@@ -445,46 +451,66 @@ object TvPlaybackFormatting {
             n.contains("dvbsub") || n.contains("vobsub")
     }
 
-    private fun subtitleTitle(track: SubtitleTrack, ordinal: Int): String {
-        val type = subtitleType(track)
-        val language = languageDisplayName(track.language)
-        return when {
-            type != null && language != null -> "$type - $language"
-            type != null -> type
-            language != null -> language
-            else -> "Track ${ordinal + 1}"
+    /** Menu-row title. Mirrors tvOS `subtitleTitle`: language → meaningful
+     *  custom title → "Track N". */
+    private fun subtitleTitle(track: SubtitleTrack, ordinal: Int): String =
+        languageDisplayName(track.language)
+            ?: meaningfulSubtitleTitle(track)
+            ?: "Track ${ordinal + 1}"
+
+    /**
+     * Pill-value summary. Mirrors tvOS `subtitlePillSummary`:
+     * "English (Forced) · SRT" / "English (SDH) · PGS".
+     */
+    private fun subtitlePillSummary(track: SubtitleTrack, ordinal: Int): String {
+        var name = subtitleTitle(track, ordinal)
+        if (isHearingImpairedSubtitle(track) && !containsAccessibilityMarker(name)) {
+            name += " (SDH)"
         }
+        if (isForcedSubtitle(track) && !name.contains("forced", ignoreCase = true)) {
+            name += " (Forced)"
+        }
+        val codec = normalizedSubtitleCodec(track.codec) ?: return name
+        return "$name · $codec"
     }
 
+    /** Menu-row detail. Mirrors tvOS `subtitleDetail`: custom title, codec,
+     *  Forced, SDH, Default, External. */
     private fun subtitleDetail(track: SubtitleTrack): String {
         val tokens = buildList {
+            meaningfulSubtitleTitle(track)?.let { add(it) }
             normalizedSubtitleCodec(track.codec)?.let { add(it) }
-            if (track.forced) add("Forced")
+            if (isForcedSubtitle(track)) add("Forced")
+            if (isHearingImpairedSubtitle(track)) add("SDH")
             if (track.isDefault) add("Default")
             if (track.external) add("External")
         }
         return tokens.joinToString(" · ")
     }
 
-    /**
-     * Badge/type derivation: SDH/HI (hearing-impaired), CC, Forced, a
-     * meaningful custom title, then codec. Returns null when nothing
-     * distinguishing applies (the caller falls back to language).
-     */
-    private fun subtitleType(track: SubtitleTrack): String? {
-        nonEmpty(track.title)?.let { title ->
-            val lowered = title.lowercase(Locale.US)
-            if (lowered.contains("sdh") || lowered.contains("hearing") || lowered.contains("(hi)") ||
-                lowered == "hi"
-            ) {
-                return "SDH"
-            }
-            if (lowered.contains("closed caption") || lowered == "cc") return "CC"
-            if (lowered.contains("forced")) return "Forced"
-            if (!isRedundantSubtitleTitle(title, track)) return displayTitle(title)
+    /** Mirrors tvOS `meaningfulSubtitleTitle`: a custom title worth showing —
+     *  not language/codec-redundant and not a bare accessibility/forced tag. */
+    private fun meaningfulSubtitleTitle(track: SubtitleTrack): String? {
+        val title = nonEmpty(track.title)?.takeUnless { isRedundantSubtitleTitle(it, track) }
+            ?: return null
+        val lowered = title.lowercase(Locale.US)
+        if (lowered == "forced" || lowered in listOf("sdh", "cc", "hi", "hearing impaired")) {
+            return null
         }
-        if (track.forced) return "Forced"
-        return normalizedSubtitleCodec(track.codec)
+        return displayTitle(title)
+    }
+
+    /** Mirrors tvOS `isForced`: flag OR a "forced" mention in the title. */
+    private fun isForcedSubtitle(track: SubtitleTrack): Boolean =
+        track.forced || track.title?.contains("forced", ignoreCase = true) == true
+
+    /** Mirrors tvOS `containsAccessibilityMarker` — keeps the pill from
+     *  doubling up markers a custom title already carries. */
+    private fun containsAccessibilityMarker(value: String): Boolean {
+        val lowered = value.lowercase(Locale.US)
+        val words = lowered.split(Regex("[^a-z]+")).filter { it.isNotEmpty() }
+        return "sdh" in words || "cc" in words || "hi" in words ||
+            lowered.contains("hearing impaired")
     }
 
     // --- Editions (Android model has no edition data) --------------------
@@ -540,7 +566,7 @@ object TvPlaybackFormatting {
         val lowered = codec?.lowercase(Locale.US)?.trim()
         if (lowered.isNullOrEmpty()) return null
         return when {
-            lowered == "srt" || lowered.contains("subrip") -> "SubRip"
+            lowered == "srt" || lowered.contains("subrip") -> "SRT"
             lowered.contains("ass") -> "ASS"
             lowered.contains("ssa") -> "SSA"
             lowered == "vtt" || lowered.contains("webvtt") -> "WebVTT"
@@ -627,7 +653,7 @@ object TvPlaybackFormatting {
         return when (trimmed.lowercase(Locale.US)) {
             "sdh" -> "SDH"
             "cc" -> "CC"
-            "srt", "subrip" -> "SubRip"
+            "srt", "subrip" -> "SRT"
             "webvtt", "vtt" -> "WebVTT"
             else -> trimmed
         }

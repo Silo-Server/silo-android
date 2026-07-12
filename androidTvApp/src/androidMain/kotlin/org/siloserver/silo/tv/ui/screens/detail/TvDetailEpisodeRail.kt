@@ -382,19 +382,10 @@ private fun episodeRuntime(runtimeMinutes: Int): String? {
     }
 }
 
-private fun abbreviatedEpisodeDate(raw: String?): String? {
-    val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    val parts = trimmed.take(10).split("-")
-    if (parts.size != 3) return trimmed
-    val year = parts[0].toIntOrNull() ?: return trimmed
-    val month = parts[1].toIntOrNull() ?: return trimmed
-    val day = parts[2].toIntOrNull() ?: return trimmed
-    val monthName = listOf(
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ).getOrNull(month - 1) ?: return trimmed
-    return "$monthName $day, $year"
-}
+// Shared UTC-instant → device-local formatting (tvOS parity) so the card
+// dates agree with the hero facts row.
+private fun abbreviatedEpisodeDate(raw: String?): String? =
+    TvDetailMetadata.abbreviatedDate(raw)
 
 private fun EpisodeListItem.progressFraction(): Float? {
     val user = userData ?: return null
