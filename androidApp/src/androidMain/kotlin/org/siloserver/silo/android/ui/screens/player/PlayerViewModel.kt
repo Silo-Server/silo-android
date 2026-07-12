@@ -9,10 +9,9 @@ import org.siloserver.silo.common.downloads.OfflineMediaResolver
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.Playability
-import org.siloserver.silo.common.player.PlaybackRecoveryAction
-import org.siloserver.silo.common.player.PlaybackRecoveryPlanner
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
+import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.PlayerNotice
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
 import org.siloserver.silo.common.player.SessionState
@@ -25,8 +24,6 @@ import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
 import org.siloserver.silo.common.player.video.canPlayResolvedStreamDirectly
-import org.siloserver.silo.common.player.video.immediateServerFallbackMode
-import org.siloserver.silo.common.player.video.requestedOriginalPlaybackMethod
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
@@ -39,9 +36,7 @@ import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
-import org.siloserver.silo.model.playback.PlaybackRouteEventRequest
 import org.siloserver.silo.model.playback.PlaybackRouteFamily
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
@@ -84,6 +79,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -132,12 +128,6 @@ class PlayerViewModel(
     companion object {
         private const val TAG = "PlayerViewModel"
         private const val CONTROLS_AUTO_HIDE_MS = 3_000L
-        // Silent-black-screen watchdog window (matches TV's FIRST_FRAME_WATCHDOG_MS).
-        // If playback is rolling but no first video frame lands within this window,
-        // treat it as an engine failure and run the recovery ladder. NOTE: may need
-        // on-device tuning against phone remux cold-start (a slow cold remux could
-        // legitimately roll audio before the first frame).
-        private const val FIRST_FRAME_WATCHDOG_MS = 8_000L
         // Record a durable position roughly every 10s of content time (matches the
         // server reporter cadence) to bound DB/outbox churn.
         private const val POSITION_RECORD_INTERVAL_SEC = 10.0
@@ -203,10 +193,10 @@ class PlayerViewModel(
         val sessionId: String? = null,
         val playMethod: PlayMethod? = null,
         val playbackPlan: PlaybackExecutionPlan? = null,
+        val requestHeaders: Map<String, String> = emptyMap(),
         val delivery: PlaybackDelivery? = null,
         val streamUrl: String? = null,
         val container: String? = null,
-        val softwareOnlyVideoCodec: Boolean = false,
         val serverUrl: String = "",
         val accessToken: String = "",
         val startPosition: Double = 0.0,
@@ -237,9 +227,6 @@ class PlayerViewModel(
         val seasonNumber: Int? = null,
         val episodeNumber: Int? = null,
         // F2 next-episode auto-advance: resolved next episode + Up Next card.
-        // iOS parity: simultaneous second subtitle (MPV route only). Null = off.
-        val selectedSecondarySubtitleIndex: Int? = null,
-        val supportsSecondarySubtitles: Boolean = false,
         val nextEpisode: NextEpisodeInfo? = null,
         val onDeckItems: List<OnDeckItem> = emptyList(),
         val showUpNext: Boolean = false,
@@ -378,16 +365,6 @@ class PlayerViewModel(
     // strongest videoEnded flag seen) so resolveNextEpisode can commit the card.
     private var pendingApproachingEndVideoEnded: Boolean? = null
     private var upNextCountdownJob: Job? = null
-    // Engines for which an engine-switch failure ([onEngineSwitchFailed]) has
-    // already been escalated. Replaces the old one-shot boolean so repeated
-    // SET_ENGINE failures — or a re-armed black-screen watchdog — for the SAME
-    // engine don't re-enter the ladder, while a black screen on a LATER fallback
-    // engine can still escalate. Nullable on purpose: a plan-less session keys
-    // on null, so it still escalates exactly once instead of bypassing the
-    // guard. Cleared on every fresh load/version switch; the ladder terminates
-    // because the planner stops offering direct engines once attemptedEngines
-    // is exhausted.
-    private val engineSwitchFailureEngines = mutableSetOf<PlaybackEngineKind?>()
     // Auto-dismiss timer for the transient version-switch failure pill. A new
     // failure cancels the prior job so a stale one can't clear the fresh
     // message early (repeated identical failures used to be dismissed within a
@@ -395,21 +372,10 @@ class PlayerViewModel(
     private var versionSwitchMessageJob: Job? = null
     private var persistNextSubtitleSelection = false
 
-    // Recovery ladder state — mirrors TvPlayerViewModel. The planner picks the
-    // cheapest viable fallback (alternate direct engine → server remux →
-    // transcode); attemptedEngines prevents Media3↔mpv ping-pong; the
-    // transient-network budget lets a single blip retry the SAME route instead
-    // of demoting a healthy direct stream for the rest of playback.
-    private val recoveryPlanner = PlaybackRecoveryPlanner()
-    private val attemptedEngines = mutableSetOf<PlaybackEngineKind>()
+    // Runtime recovery is a single protocol-v3 replan flight. A transient
+    // network failure gets one same-route reopen before server replanning.
     private var transientNetworkRetries = 0
     private var recoveryJob: Job? = null
-    private data class ServerRecoveryIdentity(
-        val contentId: String,
-        val sessionId: String,
-        val selectedVersionIndex: Int,
-        val fileId: Int,
-    )
 
     val hdrEnabled: StateFlow<Boolean> = playerSettingsStore.hdrEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
@@ -499,6 +465,33 @@ class PlayerViewModel(
                 }
             }
         }
+        viewModelScope.launch {
+            sessionLifecycle.missingSessionEvents.collect { position ->
+                val state = _uiState.value
+                if (state.sessionId != null) {
+                    loadContent(
+                        contentId = state.contentId,
+                        preferredFileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId,
+                        initialAudioTrackIndex = state.selectedAudioIndex,
+                        initialSubtitleTrackIndex = state.selectedSubtitleIndex,
+                        resumePositionOverride = position,
+                        suppressResumeRewind = true,
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            capabilityDetector.outputRouteGeneration.drop(1).collect {
+                val state = _uiState.value
+                if (state.sessionId != null && state.playbackPlan != null) {
+                    startProtocolV3Replan(
+                        classification = "output_route_changed",
+                        notice = "Audio or display output changed. Revalidating playback.",
+                        state = state,
+                    )
+                }
+            }
+        }
 
         // When the sleep timer fires, flip user intent to paused. PlayerScreen
         // mirrors `isPaused` to `mediaController.playWhenReady`, so this is
@@ -525,14 +518,6 @@ class PlayerViewModel(
                     subtitleRendering = capabilities.subtitleRendering.name,
                     hardContainers = if (capabilities.supportsHardContainers) "Yes" else "No",
                 ),
-                supportsSecondarySubtitles = capabilities.supportsSecondarySubtitles,
-                // A backend swap (Media3 <-> MPV mid-session fallback) drops
-                // dual-track support; never leave a stale secondary armed.
-                selectedSecondarySubtitleIndex = if (capabilities.supportsSecondarySubtitles) {
-                    state.selectedSecondarySubtitleIndex
-                } else {
-                    null
-                },
             )
         }
     }
@@ -558,7 +543,6 @@ class PlayerViewModel(
         // AutoPlayGuard streak intentionally PERSISTS across episodes.)
         autoAdvanceHandled = false
         pendingApproachingEndVideoEnded = null
-        engineSwitchFailureEngines.clear()
         persistNextSubtitleSelection = false
         resetPlaybackRecoveryState()
         upNextCountdownJob?.cancel()
@@ -745,10 +729,10 @@ class PlayerViewModel(
                 sessionId = playbackState.sessionId,
                 playMethod = playbackState.playMethod,
                 playbackPlan = playbackState.playbackPlan,
+                requestHeaders = playbackState.requestHeaders,
                 delivery = playbackState.delivery,
                 streamUrl = playbackState.streamUrl,
                 container = playbackState.container,
-                softwareOnlyVideoCodec = playbackState.softwareOnlyVideoCodec,
                 serverUrl = playbackState.serverUrl,
                 accessToken = playbackState.accessToken,
                 startPosition = playbackState.startPositionSeconds,
@@ -852,9 +836,28 @@ class PlayerViewModel(
         }
         Log.i(TAG, "Preflight fallback: $notice")
 
-        val recoveryAction = recoveryPlanner.planForPlayability(state.playbackPlan, reason, attemptedEngines)
-        if (applyAlternateDirectFallback(state, recoveryAction)) return
-        startServerRecoveryFallback(notice, recoveryAction, state)
+        if (reason is Playability.StartupStalled &&
+            reason.classification == "transport_stall" &&
+            state.playbackPlan != null &&
+            transientNetworkRetries < MAX_TRANSIENT_NETWORK_RETRIES &&
+            playbackSessionManager.recordTransportReopen()
+        ) {
+            transientNetworkRetries++
+            val plan = state.playbackPlan
+            _uiState.update {
+                it.copy(
+                    error = null,
+                    playbackPlan = plan.copy(
+                        timeline = plan.timeline.copy(playerStartSeconds = state.position),
+                        decisionTrace = plan.decisionTrace + "client_retry=transport_reopen",
+                    ),
+                    startPosition = state.position,
+                )
+            }
+            return
+        }
+
+        startProtocolV3Replan(reason.failureClassification(), notice, state)
     }
 
     /**
@@ -870,6 +873,39 @@ class PlayerViewModel(
         val state = _uiState.value
         val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
             ?: "Playback failed. Please try again."
+        val isAudioSinkFailure = error.errorCode in setOf(
+            androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_INIT_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED,
+        )
+        if (isAudioSinkFailure) {
+            val track = state.audioTracks.getOrNull(state.selectedAudioIndex)
+            val mime = track?.codec.toAudioMimeType()
+            val plan = state.playbackPlan
+            if (mime != null && plan != null &&
+                playbackSessionManager.trySingleLocalPcmRetry(mime, track?.channels ?: 0)
+            ) {
+                _uiState.update {
+                    it.copy(
+                        error = null,
+                        playbackPlan = plan.copy(
+                            timeline = plan.timeline.copy(playerStartSeconds = state.position),
+                            claims = plan.claims.copy(
+                                audio = plan.claims.audio.copy(
+                                    passthrough = false,
+                                    reason = "client_pcm_retry",
+                                ),
+                            ),
+                            decisionTrace = plan.decisionTrace +
+                                "client_retry=pcm_decode:$mime:${track?.channels ?: 0}",
+                        ),
+                        startPosition = state.position,
+                    )
+                }
+                return
+            }
+        }
         val isTransientNetwork =
             error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT
@@ -877,7 +913,8 @@ class PlayerViewModel(
         if (isTransientNetwork &&
             state.sessionId != null &&
             plan != null &&
-            transientNetworkRetries < MAX_TRANSIENT_NETWORK_RETRIES
+            transientNetworkRetries < MAX_TRANSIENT_NETWORK_RETRIES &&
+            playbackSessionManager.recordTransportReopen()
         ) {
             transientNetworkRetries++
             Log.i(TAG, "Transient network error; retrying same route ($transientNetworkRetries/$MAX_TRANSIENT_NETWORK_RETRIES)")
@@ -898,10 +935,8 @@ class PlayerViewModel(
             }
             return
         }
-        val recoveryAction = recoveryPlanner.planForPlayerError(state.playbackPlan, error, attemptedEngines)
-        if (applyAlternateDirectFallback(state, recoveryAction)) return
-        if (state.sessionId != null && recoveryAction != PlaybackRecoveryAction.None) {
-            startServerRecoveryFallback(message, recoveryAction, state)
+        if (state.sessionId != null) {
+            startProtocolV3Replan(error.failureClassification(), message, state)
             return
         }
         _uiState.update {
@@ -914,269 +949,120 @@ class PlayerViewModel(
         }
     }
 
-    /**
-     * Client-side engine switch (Media3 ↔ mpv) without a server fallback.
-     * Updating the plan's engine + startPosition re-runs the screen's mount
-     * effect, which sends SET_ENGINE to the playback service and remounts.
-     * Returns false when the action isn't an engine switch so the caller
-     * proceeds to the server ladder.
-     */
-    private fun applyAlternateDirectFallback(
-        state: PlayerUiState,
-        recoveryAction: PlaybackRecoveryAction,
-    ): Boolean {
-        val action = recoveryAction as? PlaybackRecoveryAction.AlternateDirectEngine ?: return false
-        val plan = state.playbackPlan ?: return false
-        val sessionId = state.sessionId ?: return false
-        // Record the engine we're leaving (and the one we're moving to) so a later
-        // failure can't bounce back to an engine that already failed.
-        attemptedEngines.add(plan.engine)
-        attemptedEngines.add(action.engine)
-        val nextRouteFamily = when (action.engine) {
-            PlaybackEngineKind.MPV_DIRECT -> PlaybackRouteFamily.COMPATIBILITY_DIRECT
-            PlaybackEngineKind.MEDIA3_DIRECT -> PlaybackRouteFamily.PLATFORM_NATIVE
-            else -> plan.routeFamily
-        }
-        viewModelScope.launch {
-            playbackSessionManager.reportRouteEvent(
-                sessionId = sessionId,
-                request = PlaybackRouteEventRequest(
-                    planId = plan.planId,
-                    fromEngine = plan.engine,
-                    toEngine = action.engine,
-                    delivery = plan.delivery,
-                    routeFamily = nextRouteFamily,
-                    fallbackReason = "alternate_direct_engine",
-                    errorClass = action.errorClass,
-                    claims = plan.claims,
-                    blockers = plan.capabilities.blockers,
-                ),
-            )
-        }
-        // Swapping to a new engine re-arms the black-screen watchdog so a black
-        // frame on the fallback engine is escalated too (not just the first one).
-        rearmFirstFrameWatchdog()
-        _uiState.update {
-            it.copy(
-                isLoading = false,
-                error = null,
-                playbackPlan = plan.copy(
-                    engine = action.engine,
-                    routeFamily = nextRouteFamily,
-                    timeline = plan.timeline.copy(playerStartSeconds = state.position),
-                    decisionTrace = plan.decisionTrace +
-                        "client_fallback=alternate_direct_engine:${plan.engine}->${action.engine}",
-                ),
-                startPosition = state.position,
-            )
-        }
-        return true
-    }
-
-    private fun startServerRecoveryFallback(
+    private fun startProtocolV3Replan(
+        classification: String,
         notice: String,
-        recoveryAction: PlaybackRecoveryAction,
         state: PlayerUiState,
     ) {
-        val sessionId = state.sessionId ?: return
-        val selectedAudioIndex = state.selectedAudioIndex
-        val selectedSubtitleIndex = state.selectedSubtitleIndex
-        val version = state.versions.getOrNull(state.selectedVersionIndex) ?: return
-        val recoveryIdentity = state.serverRecoveryIdentityFor(version) ?: return
-        val fallbackMode = when (recoveryAction) {
-            is PlaybackRecoveryAction.ServerRemux -> PlaybackSessionManager.TranscodeMode.REMUX
-            is PlaybackRecoveryAction.AlternateDirectEngine -> PlaybackSessionManager.TranscodeMode.REMUX
-            is PlaybackRecoveryAction.ServerTranscode,
-            PlaybackRecoveryAction.None,
-            -> PlaybackSessionManager.TranscodeMode.FULL
-        }
-
-        // Single-flight: a second player/preflight error arriving before the
-        // first fallback finishes must not launch a competing transcode session
-        // (which would orphan one server session and race _uiState).
-        if (recoveryJob?.isActive == true) {
-            Log.i(TAG, "Server recovery already in flight; ignoring duplicate fallback request")
-            return
-        }
+        if (recoveryJob?.isActive == true) return
+        val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId ?: return
         recoveryJob = viewModelScope.launch {
-            if (!isCurrentServerRecovery(recoveryIdentity)) {
-                Log.i(TAG, "Ignoring stale server recovery before fallback start: $recoveryIdentity")
-                return@launch
-            }
-            val capabilities = capabilityDetector.detect(dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot())
-            val sessionResponse = PlaybackSessionResponse(
-                sessionId = sessionId,
-                userId = 0,
-                profileId = null,
-                mediaFileId = version.fileId,
-                playMethod = state.playMethod ?: PlayMethod.DIRECT,
-                position = state.position,
-                isPaused = state.isPaused,
-                streamUrl = state.streamUrl.orEmpty(),
-                audioTrackIndex = selectedAudioIndex,
-                durationSeconds = state.duration,
-                subtitleUrls = state.subtitleTracks,
-                playbackInfo = null,
-                playbackPlan = state.playbackPlan,
+            val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
+            val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
+            val playbackContext = capabilityDetector.detectPlaybackContext(
+                formFactor = "mobile",
+                appVersion = BuildConfig.VERSION_NAME,
+                dolbyVision = dolbyVision,
             )
-            val renewStartParams = StartParams(
-                contentId = state.contentId,
-                fileId = version.fileId,
+            when (val result = playbackSessionManager.replanActiveVideoSession(
+                classification = classification,
+                message = notice,
+                positionSeconds = state.position,
+                audioTrackIndex = state.selectedAudioIndex,
+                subtitleTrackIndex = state.selectedSubtitleIndex,
                 capabilities = capabilities,
-                audioTrackIndex = selectedAudioIndex,
-                subtitleTrackIndex = selectedSubtitleIndex,
-                qualityPreference = null,
-                startPosition = state.position,
-                preserveDirectAudioSelection = true,
-            )
-            when (val r = playbackSessionManager.startTranscodeFallbackRecoveringMissingSession(
-                session = sessionResponse,
-                seekSeconds = state.position,
-                resolution = version.resolution.orEmpty(),
-                mode = fallbackMode,
-                audioTrackIndex = selectedAudioIndex,
-                subtitleTrackIndex = selectedSubtitleIndex,
-                renewSession = {
-                    when (val renewed = sessionLifecycle.start(renewStartParams)) {
-                        is SessionState.Active -> ApiResult.Success(renewed.session)
-                        is SessionState.Failed -> ApiResult.Error(
-                            code = 0,
-                            error = "playback_session_renewal_failed",
-                            message = renewed.message,
-                        )
-                        else -> ApiResult.Error(
-                            code = 0,
-                            error = "playback_session_renewal_failed",
-                            message = "Failed to renew playback session.",
-                        )
-                    }
-                },
+                clientPlaybackContext = playbackContext,
             )) {
-                is ApiResult.Success -> {
-                    if (!isCurrentServerRecovery(recoveryIdentity)) {
-                        Log.i(TAG, "Ignoring stale server recovery success: $recoveryIdentity")
-                        return@launch
-                    }
-                    val fallback = r.data
-                    sessionLifecycle.adoptActiveSession(
-                        params = StartParams(
-                            contentId = state.contentId,
-                            fileId = version.fileId,
-                            capabilities = capabilities,
-                            audioTrackIndex = fallback.audioTrackIndex,
-                            qualityPreference = null,
-                            startPosition = fallback.position,
-                        ),
-                        session = fallback,
-                    )
-                    _uiState.update { current ->
-                        if (!current.matchesServerRecovery(recoveryIdentity)) {
-                            current
-                        } else {
+                is ApiResult.Success -> when (val decision = result.data) {
+                    is VideoSessionStartV3.Ready -> {
+                        sessionLifecycle.adoptActiveSession(
+                            params = StartParams(
+                                contentId = state.contentId,
+                                fileId = fileId,
+                                capabilities = capabilities,
+                                audioTrackIndex = decision.session.audioTrackIndex,
+                                subtitleTrackIndex = state.selectedSubtitleIndex,
+                                startPosition = decision.session.position,
+                            ),
+                            session = decision.session,
+                            renewMissingSessionWithLegacyStart = false,
+                        )
+                        _uiState.update { current ->
                             current.copy(
-                                sessionId = fallback.sessionId,
-                                playMethod = fallback.playMethod,
-                                playbackPlan = fallback.playbackPlan,
-                                delivery = fallback.resolvedPlaybackDelivery(),
-                                streamUrl = fallback.streamUrl,
-                                startPosition = fallback.position,
+                                error = null,
+                                sessionId = decision.session.sessionId,
+                                playMethod = decision.session.playMethod,
+                                playbackPlan = decision.session.playbackPlan,
+                                delivery = decision.plan.delivery,
+                                streamUrl = decision.plan.stream.url,
+                                requestHeaders = decision.plan.stream.headers,
+                                startPosition = decision.plan.timeline.playerStartSeconds,
                             )
                         }
                     }
-                    // Adopting a new server route swaps the effective engine/route,
-                    // so re-arm the black-screen watchdog for the adopted stream.
-                    rearmFirstFrameWatchdog()
-                }
-                is ApiResult.Error -> _uiState.update { current ->
-                    if (!current.matchesServerRecovery(recoveryIdentity)) {
-                        current
-                    } else {
-                        current.copy(error = "$notice (start failed: ${r.message})")
+                    is VideoSessionStartV3.Terminal -> _uiState.update {
+                        it.copy(error = "Playback unavailable (${decision.reason}): ${decision.message}")
+                    }
+                    VideoSessionStartV3.ServerUpgradeRequired -> _uiState.update {
+                        it.copy(error = "This Silo server must be updated to support playback recovery.")
                     }
                 }
-                is ApiResult.NetworkError -> _uiState.update { current ->
-                    if (!current.matchesServerRecovery(recoveryIdentity)) {
-                        current
-                    } else {
-                        current.copy(error = "$notice (network error: ${r.exception.message})")
-                    }
+                is ApiResult.Error -> _uiState.update { it.copy(error = "$notice (${result.message})") }
+                is ApiResult.NetworkError -> _uiState.update {
+                    it.copy(error = "$notice (${result.exception.message})")
                 }
             }
         }
     }
 
+    private fun Playability.failureClassification(): String = when (this) {
+        is Playability.UnsupportedDvProfile -> "unsupported_dolby_vision_profile"
+        is Playability.UnsupportedAudioCodec -> "unsupported_audio_encoding"
+        is Playability.UnsupportedChannelCount -> "unsupported_audio_layout"
+        is Playability.StartupStalled -> classification
+        Playability.Supported -> "none"
+    }
+
+    private fun androidx.media3.common.PlaybackException.failureClassification(): String = when (errorCode) {
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        -> "decoder_failure"
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+        -> "transport_stall"
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "http_failure"
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "source_unavailable"
+        else -> "player_failure"
+    }
+
+    private fun String?.toAudioMimeType(): String? = when (this?.trim()?.lowercase()) {
+        "aac" -> androidx.media3.common.MimeTypes.AUDIO_AAC
+        "ac3", "ac-3" -> androidx.media3.common.MimeTypes.AUDIO_AC3
+        "eac3", "e-ac-3", "eac3_joc" -> androidx.media3.common.MimeTypes.AUDIO_E_AC3
+        "truehd", "mlp" -> androidx.media3.common.MimeTypes.AUDIO_TRUEHD
+        "dts" -> androidx.media3.common.MimeTypes.AUDIO_DTS
+        "dts_hd", "dts-hd", "dtshd" -> androidx.media3.common.MimeTypes.AUDIO_DTS_HD
+        "ac4", "ac-4" -> androidx.media3.common.MimeTypes.AUDIO_AC4
+        "flac" -> androidx.media3.common.MimeTypes.AUDIO_FLAC
+        "opus" -> androidx.media3.common.MimeTypes.AUDIO_OPUS
+        else -> this?.takeIf { it.startsWith("audio/") }
+    }
+    /**
+     * Legacy implementation retained temporarily until Release B source removal.
+     * Updating the plan's engine + startPosition re-runs the screen's mount
+     * Returns false when the action isn't an engine switch so the caller
+     * proceeds to the server ladder.
+     */
+
     private fun resetPlaybackRecoveryState() {
         cancelRecoveryJob()
-        attemptedEngines.clear()
         transientNetworkRetries = 0
-        // Fresh load / version switch / exit: re-arm the first-frame watchdog
-        // for the next mount. (Recovery paths that adopt a new engine/route
-        // mid-session — applyAlternateDirectFallback, startServerRecoveryFallback
-        // — re-arm it themselves; they don't come through here.)
-        rearmFirstFrameWatchdog()
     }
 
     private fun cancelRecoveryJob() {
         recoveryJob?.cancel()
         recoveryJob = null
-    }
-
-    private fun PlayerUiState.serverRecoveryIdentityFor(version: FileVersion): ServerRecoveryIdentity? {
-        val sessionId = sessionId ?: return null
-        val contentId = contentId.takeIf { it.isNotBlank() } ?: return null
-        return ServerRecoveryIdentity(
-            contentId = contentId,
-            sessionId = sessionId,
-            selectedVersionIndex = selectedVersionIndex,
-            fileId = version.fileId,
-        )
-    }
-
-    private fun isCurrentServerRecovery(identity: ServerRecoveryIdentity): Boolean =
-        _uiState.value.matchesServerRecovery(identity)
-
-    private fun PlayerUiState.matchesServerRecovery(identity: ServerRecoveryIdentity): Boolean {
-        val currentFileId = versions.getOrNull(selectedVersionIndex)?.fileId
-        return contentId == identity.contentId &&
-            sessionId == identity.sessionId &&
-            selectedVersionIndex == identity.selectedVersionIndex &&
-            currentFileId == identity.fileId
-    }
-
-    fun onEngineSwitchFailed(message: String) {
-        val state = _uiState.value
-        // Per-engine scoping (TV parity): escalate at most once per distinct
-        // engine. Repeated SET_ENGINE failures — or a re-armed black-screen
-        // watchdog firing again — for the SAME engine must not re-enter the
-        // ladder and emit duplicate route events, but a black screen on a LATER
-        // fallback engine still needs to escalate. `add` returns false when the
-        // engine was already handled; a null plan keys on null so a plan-less
-        // session gets exactly one escalation instead of bypassing the guard.
-        if (
-            engineSwitchFailureEngines.add(state.playbackPlan?.engine) &&
-            state.sessionId != null &&
-            state.streamUrl != null &&
-            state.versions.getOrNull(state.selectedVersionIndex) != null
-        ) {
-            // Don't blindly transcode: prefer another direct engine, then fall
-            // through the plan's remux/transcode ladder. A transcode-only source
-            // can't be rescued by a remux that copies the same streams.
-            val recoveryAction = recoveryPlanner.planForEngineSwitchFailure(
-                state.playbackPlan,
-                attemptedEngines,
-            )
-            if (applyAlternateDirectFallback(state, recoveryAction)) return
-            startServerRecoveryFallback(message, recoveryAction, state)
-            return
-        }
-        _uiState.update {
-            it.copy(
-                isLoading = false,
-                error = message,
-                isPlaying = false,
-                isBuffering = false,
-            )
-        }
     }
 
     /** Called by the player when the current position changes. */
@@ -1267,64 +1153,18 @@ class PlayerViewModel(
      * user intends to play. `isPaused` is the user's intent and must not be overwritten here,
      * otherwise a buffering glitch flips the pause icon and defeats scheduleControlsHide.
      */
-    /** Set once Media3 renders the first video frame of the current item. */
-    private var firstVideoFrameRendered = false
-    private var firstFrameWatchdogJob: Job? = null
-
-    fun onFirstVideoFrameRendered() {
-        firstVideoFrameRendered = true
-        firstFrameWatchdogJob?.cancel()
-        firstFrameWatchdogJob = null
-    }
-
-    /**
-     * Re-arm the black-screen watchdog for a freshly swapped engine/route. The
-     * watchdog is one-shot per armed engine (see [onPlayingChanged]); without
-     * clearing the rendered latch and cancelling the previous engine's job, a
-     * black screen on the NEW (fallback) engine would never be detected — the
-     * ladder would stall on permanent black-with-audio. The next
-     * [onPlayingChanged] with isPlaying=true re-arms it for the new engine.
-     */
-    private fun rearmFirstFrameWatchdog() {
-        firstVideoFrameRendered = false
-        firstFrameWatchdogJob?.cancel()
-        firstFrameWatchdogJob = null
-    }
-
     fun onPlayingChanged(isPlaying: Boolean) {
         _uiState.update { it.copy(isPlaying = isPlaying) }
-        // Silent-black-screen watchdog (QA 2026-07-08: a DV Profile 7 remux played
-        // audio over a permanently black surface with NO Media3 decoder error — the
-        // error-driven recovery ladder never fires, and the client can't tell a
-        // stock server (DV copied → black) from a newer one (RPUs stripped → plays
-        // fine). If playback is rolling and no first video frame lands within the
-        // window, treat it as an engine failure: the ladder prefers another direct
-        // engine (MPV plays the HDR10 base layer) before conceding a server
-        // transcode. Guarded on !firstVideoFrameRendered so it can't fire on a
-        // session that has started audio and rendered video normally.
-        if (isPlaying && !firstVideoFrameRendered && firstFrameWatchdogJob == null) {
-            firstFrameWatchdogJob = viewModelScope.launch {
-                delay(FIRST_FRAME_WATCHDOG_MS)
-                if (!firstVideoFrameRendered && _uiState.value.isPlaying) {
-                    Log.w(TAG, "No first video frame after ${FIRST_FRAME_WATCHDOG_MS}ms — engine fallback")
-                    onEngineSwitchFailed("Video never started (black screen)")
-                }
-                // A skipped/expired watchdog must not keep the slot occupied —
-                // rearmFirstFrameWatchdog() + the next isPlaying=true need a
-                // null job to arm a fresh one for the swapped engine.
-                firstFrameWatchdogJob = null
-            }
-        }
-        // Controls should auto-hide once real playback resumes after a pause.
         if (isPlaying && !_uiState.value.isPaused && _uiState.value.showControls) {
             scheduleControlsHide()
         }
-        // Durably capture the exact spot when playback halts (pause/stall/stop) —
-        // this runs while the VM is alive, so resume is reliable even if the
-        // fire-and-forget exit write doesn't complete during teardown.
         if (!isPlaying) {
             maybeRecordPosition(_uiState.value.position, _uiState.value.duration, force = true)
         }
+    }
+
+    fun onFirstVideoFrameRendered() {
+        playbackSessionManager.reportActiveVideoEvent("first_frame")
     }
 
     /** Called when buffering state changes. */
@@ -1424,26 +1264,17 @@ class PlayerViewModel(
     }
 
     /** Select a subtitle track (-1 to disable). */
-    /**
-     * Secondary subtitle pick (iOS parity): requires a primary selection,
-     * can never equal the primary, and null turns it off.
-     */
-    fun onSelectSecondarySubtitle(index: Int?) {
-        val state = _uiState.value
-        if (!state.supportsSecondarySubtitles) return
-        if (index != null && (state.selectedSubtitleIndex < 0 || index == state.selectedSubtitleIndex)) return
-        _uiState.update { it.copy(selectedSecondarySubtitleIndex = index) }
-    }
-
     fun onSelectSubtitle(index: Int) {
         persistNextSubtitleSelection = true
         _uiState.update {
-            it.copy(
-                selectedSubtitleIndex = index,
-                // Primary off or moved onto the secondary's track: drop the
-                // secondary (iOS gates the secondary on a primary selection).
-                selectedSecondarySubtitleIndex = it.selectedSecondarySubtitleIndex
-                    ?.takeIf { sec -> index >= 0 && sec != index },
+            it.copy(selectedSubtitleIndex = index)
+        }
+        val state = _uiState.value
+        if (state.sessionId != null) {
+            startProtocolV3Replan(
+                classification = "subtitle_track_changed",
+                notice = "Applying subtitle selection.",
+                state = state,
             )
         }
     }
@@ -1465,47 +1296,15 @@ class PlayerViewModel(
 
     /** Select an audio track (may require server-side switch). */
     fun onSelectAudio(index: Int) {
-        val currentState = _uiState.value
-        val sessionId = currentState.sessionId ?: return
-
         _uiState.update { it.copy(selectedAudioIndex = index) }
-
-        viewModelScope.launch {
-            val result = playbackSessionManager.changeAudio(sessionId, index, currentState.position)
-            when (result) {
-                is ApiResult.Success -> {
-                    val response = result.data
-                    persistAudioTrackSelection(response.audioTrackIndex)
-                    // If the server provided a new stream URL (the switch forced
-                    // a transcode), update the state. The remount is keyed on
-                    // streamUrl, so startPosition must move to the playhead the
-                    // server cut at — leaving the original start makes playback
-                    // jump backwards after the switch. The plan is kept: nulling
-                    // it degraded any later recovery straight to full transcode.
-                    if (response.streamUrl != currentState.streamUrl) {
-                        // The switch request carried currentState.position as
-                        // the cut point; the response has no position field,
-                        // so resume exactly there.
-                        val resumeAt = currentState.position
-                        _uiState.update {
-                            it.copy(
-                                streamUrl = response.streamUrl,
-                                playMethod = response.playMethod,
-                                delivery = null,
-                                selectedAudioIndex = response.audioTrackIndex,
-                                startPosition = resumeAt,
-                                position = resumeAt,
-                            )
-                        }
-                    }
-                }
-                is ApiResult.Error -> {
-                    Log.e(TAG, "Failed to change audio: ${result.message}")
-                }
-                is ApiResult.NetworkError -> {
-                    Log.e(TAG, "Network error changing audio", result.exception)
-                }
-            }
+        persistAudioTrackSelection(index)
+        val state = _uiState.value
+        if (state.sessionId != null) {
+            startProtocolV3Replan(
+                classification = "audio_track_changed",
+                notice = "Applying audio selection.",
+                state = state,
+            )
         }
     }
 
@@ -2125,159 +1924,17 @@ class PlayerViewModel(
      * flag, not by a sentinel.
      */
     private fun startVersionPlayback(index: Int, isRecovery: Boolean = false) {
-        val currentState = _uiState.value
-        val versions = currentState.versions
-        if (index < 0 || index >= versions.size) return
-        if (!isRecovery && index == currentState.selectedVersionIndex) return
-
-        val previousVersionIndex = currentState.selectedVersionIndex
-        val currentPosition = currentState.position
-        resetPlaybackRecoveryState()
-
-        viewModelScope.launch {
-            val lifecycleSessionId = (sessionLifecycle.state.value as? SessionState.Active)
-                ?.session
-                ?.sessionId
-            currentState.sessionId?.let { sessionId ->
-                sessionLifecycle.stop()
-                if (sessionId != lifecycleSessionId) {
-                    playbackSessionManager.stopSession(sessionId)
-                }
-            }
-            // Cancel any in-flight intro skip countdown — we're loading a new version.
-            introAutoSkipController.reset()
-            engineSwitchFailureEngines.clear()
-
-            _uiState.update { it.copy(isLoading = true, selectedVersionIndex = index, sessionId = null) }
-
-            val version = versions[index]
-            val profileId = profileRepository.getActiveProfileId() ?: return@launch
-            // Snapshot ONCE so capabilities and context can't disagree if the
-            // setting flips mid-call (CodeRabbit PR#44).
-            val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
-            val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
-            val playbackContext = capabilityDetector.detectPlaybackContext(
-                formFactor = "mobile",
-                appVersion = BuildConfig.VERSION_NAME,
-                dolbyVision = dolbyVision,
-            )
-            val requestedPlayMethod = version.requestedOriginalPlaybackMethod(
-                playbackContext = playbackContext,
-                audioTrackIndex = currentState.selectedAudioIndex,
-            )
-            val preserveDirectSelection = requestedPlayMethod == PlayMethod.DIRECT
-
-            val result = playbackSessionManager.startSessionV2(
-                fileId = version.fileId,
-                profileId = profileId,
-                capabilities = capabilities,
-                audioTrackIndex = currentState.selectedAudioIndex,
-                subtitleTrackIndex = currentState.selectedSubtitleIndex,
-                startPosition = currentPosition,
-                clientPlaybackContext = playbackContext,
-                preserveDirectAudioSelection = preserveDirectSelection,
-                playMethod = requestedPlayMethod,
-            )
-
-            when (result) {
-                is ApiResult.Success -> {
-                    val session = result.data
-                    val immediateFallbackMode = session.playbackPlan?.immediateServerFallbackMode()
-                    val resolved = when {
-                        session.canPlayResolvedStreamDirectly() && immediateFallbackMode == null -> session
-                        immediateFallbackMode != null ||
-                            session.playMethod == PlayMethod.REMUX ||
-                            session.playMethod == PlayMethod.TRANSCODE -> {
-                            val mode = immediateFallbackMode ?: if (session.playMethod == PlayMethod.REMUX) {
-                                PlaybackSessionManager.TranscodeMode.REMUX
-                            } else {
-                                PlaybackSessionManager.TranscodeMode.FULL
-                            }
-                            when (val fallback = playbackSessionManager.startTranscodeFallback(
-                                session = session,
-                                seekSeconds = currentPosition,
-                                resolution = version.resolution.orEmpty(),
-                                mode = mode,
-                                audioTrackIndex = session.audioTrackIndex,
-                                subtitleTrackIndex = currentState.selectedSubtitleIndex,
-                            )) {
-                                is ApiResult.Success -> fallback.data
-                                is ApiResult.Error -> {
-                                    failVersionSwitch(previousVersionIndex, fallback.message, isRecovery)
-                                    return@launch
-                                }
-                                is ApiResult.NetworkError -> {
-                                    failVersionSwitch(
-                                        previousVersionIndex,
-                                        fallback.exception.message ?: "Network error",
-                                        isRecovery,
-                                    )
-                                    return@launch
-                                }
-                            }
-                        }
-                        else -> session
-                    }
-                    val resolvedDelivery = resolved.resolvedPlaybackDelivery()
-                    val resolvedStreamUrl = resolved.playbackPlan?.stream?.url
-                        ?.takeIf { it.isNotBlank() }
-                        ?: resolved.streamUrl
-                    val resolvedStartPosition = if (
-                        resolved.sessionId != session.sessionId ||
-                        resolved.playMethod != session.playMethod
-                    ) {
-                        resolved.position.takeIf { it.isFinite() && it >= 0.0 } ?: currentPosition
-                    } else {
-                        currentPosition
-                    }
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            sessionId = resolved.sessionId,
-                            playMethod = resolved.playMethod,
-                            playbackPlan = resolved.playbackPlan,
-                            delivery = resolvedDelivery,
-                            streamUrl = resolvedStreamUrl,
-                            container = version.container,
-                            startPosition = resolvedStartPosition,
-                            position = resolvedStartPosition,
-                            duration = resolved.durationSeconds ?: version.duration,
-                            audioTracks = version.audioTracks ?: emptyList(),
-                            selectedAudioIndex = resolved.audioTrackIndex,
-                            subtitleTracks = resolved.subtitleUrls ?: emptyList(),
-                            chapters = version.chapters.orEmpty(),
-                        )
-                    }
-                    // Restart lifecycle reporting against the active session
-                    // without creating another server playback session.
-                    sessionLifecycle.adoptActiveSession(
-                        params = StartParams(
-                            contentId = currentState.contentId,
-                            fileId = version.fileId,
-                            capabilities = capabilities,
-                            audioTrackIndex = resolved.audioTrackIndex,
-                            subtitleTrackIndex = currentState.selectedSubtitleIndex,
-                            qualityPreference = null,
-                            startPosition = resolvedStartPosition,
-                            clientPlaybackContext = playbackContext,
-                            preserveDirectAudioSelection = preserveDirectSelection,
-                            playMethod = requestedPlayMethod,
-                        ),
-                        session = resolved,
-                    )
-                    // Resume the intro auto-skip observer; the introKey now embeds the new
-                    // sessionId/fileId so any prior cancellation does not carry over.
-                    startIntroAutoSkipObserver()
-                }
-                is ApiResult.Error -> failVersionSwitch(previousVersionIndex, result.message, isRecovery)
-                is ApiResult.NetworkError ->
-                    failVersionSwitch(
-                        previousVersionIndex,
-                        result.exception.message ?: "Network error",
-                        isRecovery,
-                    )
-            }
-        }
+        val state = _uiState.value
+        val version = state.versions.getOrNull(index) ?: return
+        if (!isRecovery && index == state.selectedVersionIndex) return
+        loadContent(
+            contentId = state.contentId,
+            preferredFileId = version.fileId,
+            initialAudioTrackIndex = state.selectedAudioIndex,
+            initialSubtitleTrackIndex = state.selectedSubtitleIndex,
+            resumePositionOverride = state.position,
+            suppressResumeRewind = true,
+        )
     }
 
     /**

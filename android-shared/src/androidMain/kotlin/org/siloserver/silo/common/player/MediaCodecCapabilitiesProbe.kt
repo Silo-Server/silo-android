@@ -48,7 +48,8 @@ object MediaCodecCapabilitiesProbe {
         var hdr10p = false
         var hlg = false
         val dv = sortedSetOf<Int>()
-        var dvP7MultiInstance = false
+        var dvP7DecoderMultiInstance = false
+        var hevcMultiInstance = false
         var hevcHdrCapable = false
 
         for (info in list.codecInfos) {
@@ -64,6 +65,8 @@ object MediaCodecCapabilitiesProbe {
                 when {
                     type.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true) -> {
                         track("hevc")
+                        hevcMultiInstance = runCatching { caps.maxSupportedInstances >= 2 }
+                            .getOrDefault(false)
                         for (pl in caps.profileLevels) when (pl.profile) {
                             CodecProfileLevel.HEVCProfileMain10HDR10 -> {
                                 hdr10 = true
@@ -83,11 +86,11 @@ object MediaCodecCapabilitiesProbe {
                         for (pl in caps.profileLevels) {
                             when (pl.profile) {
                                 CodecProfileLevel.DolbyVisionProfileDvheStn -> dv += 5
-                                CodecProfileLevel.DolbyVisionProfileDvheDtr,
-                                CodecProfileLevel.DolbyVisionProfileDvheDth,
+                                CodecProfileLevel.DolbyVisionProfileDvheDtr -> dv += 4
+                                CodecProfileLevel.DolbyVisionProfileDvheDth -> dv += 6
                                 CodecProfileLevel.DolbyVisionProfileDvheDtb -> {
                                     dv += 7
-                                    if (multiInstance) dvP7MultiInstance = true
+                                    if (multiInstance) dvP7DecoderMultiInstance = true
                                 }
                                 CodecProfileLevel.DolbyVisionProfileDvheSt -> dv += 8
                             }
@@ -118,7 +121,8 @@ object MediaCodecCapabilitiesProbe {
 
         // DV P7 strictly requires multi-instance HEVC. Strip the "7" claim if
         // the only DV decoder reported it without enough concurrent instances.
-        val dvProfiles = if (dvP7MultiInstance || !dv.contains(7)) dv.toList()
+        val dvP7Supported = dvP7DecoderMultiInstance && hevcMultiInstance
+        val dvProfiles = if (dvP7Supported || !dv.contains(7)) dv.toList()
         else dv.filterNot { it == 7 }
 
         val overallMaxH = videoMaxHeights.values.maxOrNull() ?: 0
@@ -164,7 +168,7 @@ object MediaCodecCapabilitiesProbe {
                 dolbyVisionProfiles = dvProfiles,
             ),
             maxResolution = claimedBucket,
-            supportsDvProfile7 = dvP7MultiInstance,
+            supportsDvProfile7 = dvP7Supported,
         )
     }
 

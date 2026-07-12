@@ -29,17 +29,6 @@ interface VideoPlaybackBackend {
         selectedIndex: Int,
     ): Boolean
 
-    /**
-     * Simultaneous second subtitle track (iOS parity). [selectedIndex] is an
-     * index into [subtitles]; null turns the secondary off. Backends without
-     * dual-track rendering report failure and the UI never offers the picker
-     * (see [VideoBackendCapabilities.supportsSecondarySubtitles]).
-     */
-    fun selectSecondarySubtitle(
-        subtitles: List<PlayerSubtitleInfo>,
-        selectedIndex: Int?,
-    ): Boolean = false
-
     fun selectAudioTrack(track: VideoPlayerTrackEntry)
 
     fun applyTrackSelection(

@@ -70,6 +70,7 @@ fun PlayerSettingsSheet(
     stats: PlayerStatsSnapshot = PlayerStatsSnapshot(),
     onOpenPlaybackStats: () -> Unit = {},
     audioDelayMs: Int = 0,
+    audioDelayEnabled: Boolean = true,
     onSetAudioDelay: (Int) -> Unit = {},
     subtitleDelayMs: Int = 0,
     onSetSubtitleDelay: (Int) -> Unit = {},
@@ -187,8 +188,9 @@ fun PlayerSettingsSheet(
                 SectionHeader(text = "Sync")
 
                 DelaySpinnerRow(
-                    label = "Audio delay",
+                    label = "Audio delay (PCM only)",
                     valueMs = audioDelayMs,
+                    enabled = audioDelayEnabled,
                     stepMs = 50,
                     minMs = -5000,
                     maxMs = 5000,
@@ -497,6 +499,7 @@ private fun DelaySpinnerRow(
     stepMs: Int,
     minMs: Int,
     maxMs: Int,
+    enabled: Boolean = true,
     onChange: (Int) -> Unit,
 ) {
     Row(
@@ -507,17 +510,18 @@ private fun DelaySpinnerRow(
     ) {
         Text(
             text = label,
-            color = Color.White,
+            color = if (enabled) Color.White else Color.White.copy(alpha = 0.45f),
             fontSize = 15.sp,
             modifier = Modifier.weight(1f),
         )
         SpinnerButton(
             label = "−",
+            enabled = enabled,
             onClick = { onChange((valueMs - stepMs).coerceIn(minMs, maxMs)) },
         )
         Text(
             text = formatDelayMs(valueMs),
-            color = Color.White,
+            color = if (enabled) Color.White else Color.White.copy(alpha = 0.45f),
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             modifier = Modifier
@@ -526,23 +530,24 @@ private fun DelaySpinnerRow(
         )
         SpinnerButton(
             label = "+",
+            enabled = enabled,
             onClick = { onChange((valueMs + stepMs).coerceIn(minMs, maxMs)) },
         )
     }
 }
 
 @Composable
-private fun SpinnerButton(label: String, onClick: () -> Unit) {
+private fun SpinnerButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     val shape = RoundedCornerShape(8.dp)
     Box(
         modifier = Modifier
-            .background(color = Color.White.copy(alpha = 0.10f), shape = shape)
-            .clickable(onClick = onClick)
+            .background(color = Color.White.copy(alpha = if (enabled) 0.10f else 0.04f), shape = shape)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 6.dp),
     ) {
         Text(
             text = label,
-            color = Color.White,
+            color = if (enabled) Color.White else Color.White.copy(alpha = 0.35f),
             fontSize = 18.sp,
             fontWeight = FontWeight.Medium,
         )

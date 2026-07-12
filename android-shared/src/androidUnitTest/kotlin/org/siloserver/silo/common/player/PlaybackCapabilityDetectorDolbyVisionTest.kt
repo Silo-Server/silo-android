@@ -8,13 +8,13 @@ import kotlin.test.assertTrue
 class PlaybackCapabilityDetectorDolbyVisionTest {
 
     @Test
-    fun profile8DirectPlayIsAllowedEvenWithoutNativeDolbyVisionOutput() {
-        assertTrue(
+    fun profile8DirectPlayRequiresAValidatedNativeOutputRoute() {
+        assertFalse(
             isDirectPlayableDolbyVisionProfile(
                 profile = 8,
                 supportedHdr = HdrCapabilities(),
             ),
-            "Dolby Vision Profile 8 has a renderable base layer; do not force a server fallback just because the display probe lacks native DV.",
+            "A Profile 8 base layer is not safe to assume without server-supplied variant and range metadata.",
         )
     }
 
@@ -25,7 +25,7 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
                 profile = 7,
                 supportedHdr = HdrCapabilities(dolbyVisionProfiles = listOf(5, 8)),
             ),
-            "Without a native dual-layer DV decoder, Media3 cannot direct-play P7 — recovery must route to mpv or transcode instead.",
+            "Without a native dual-layer DV decoder, Media3 cannot direct-play P7; the server must provide a compatible route.",
         )
     }
 

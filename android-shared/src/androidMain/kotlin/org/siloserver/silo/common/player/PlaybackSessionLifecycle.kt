@@ -16,8 +16,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -54,6 +57,9 @@ class PlaybackSessionLifecycle(
     private val _notice = MutableStateFlow<PlayerNotice?>(null)
     val notice: StateFlow<PlayerNotice?> = _notice.asStateFlow()
 
+    private val _missingSessionEvents = MutableSharedFlow<Double>(extraBufferCapacity = 1)
+    val missingSessionEvents: SharedFlow<Double> = _missingSessionEvents.asSharedFlow()
+
     /**
      * Mutex protects the small set of mutable transitions we make from
      * different coroutine paths (start, recovery, outage). State transitions
@@ -69,6 +75,7 @@ class PlaybackSessionLifecycle(
     @Volatile private var recoveringFromMissingSession: String? = null
     @Volatile private var flushProgressOnStop: Boolean = true
     @Volatile private var stopActiveSessionOnStop: Boolean = true
+    @Volatile private var renewMissingSessionWithLegacyStart: Boolean = true
 
     private var reporterJob: Job? = null
     private var recoveryJob: Job? = null
@@ -99,6 +106,7 @@ class PlaybackSessionLifecycle(
         session: PlaybackSessionResponse,
         manageProgress: Boolean = true,
         stopSessionOnStop: Boolean = true,
+        renewMissingSessionWithLegacyStart: Boolean = true,
     ) {
         mutex.withLock {
             cancelRecoveryJobs()
@@ -112,6 +120,7 @@ class PlaybackSessionLifecycle(
             recoveringFromMissingSession = null
             flushProgressOnStop = manageProgress
             stopActiveSessionOnStop = stopSessionOnStop
+            this.renewMissingSessionWithLegacyStart = renewMissingSessionWithLegacyStart
             _state.value = SessionState.Active(session)
             if (manageProgress) {
                 startProgressReporter()
@@ -125,6 +134,7 @@ class PlaybackSessionLifecycle(
         lastStartParams = params
         flushProgressOnStop = true
         stopActiveSessionOnStop = true
+        renewMissingSessionWithLegacyStart = true
 
         val profileId = profileRepository.getActiveProfileId()
         if (profileId == null) {
@@ -234,6 +244,7 @@ class PlaybackSessionLifecycle(
         recoveringFromMissingSession = null
         flushProgressOnStop = true
         stopActiveSessionOnStop = true
+        renewMissingSessionWithLegacyStart = true
         _notice.value = null
         _state.value = SessionState.Idle
     }
@@ -290,6 +301,10 @@ class PlaybackSessionLifecycle(
         val params = lastStartParams ?: return
 
         recoveringFromMissingSession = staleSessionId
+        if (!renewMissingSessionWithLegacyStart) {
+            _missingSessionEvents.tryEmit(lastReportedPosition ?: params.startPosition ?: 0.0)
+            return
+        }
         recoveryJob?.cancel()
         recoveryJob = scope.launch {
             mutex.withLock {

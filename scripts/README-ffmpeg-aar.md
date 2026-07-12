@@ -1,8 +1,8 @@
-# Rebuilding `media3-decoder-ffmpeg-1.10.0.aar`
+# Rebuilding `media3-decoder-ffmpeg-1.10.1.aar`
 
 This directory ships `scripts/build-ffmpeg-aar.sh`, which produces the Media3
 FFmpeg audio-decoder AAR checked in at
-`android-shared/libs/media3-decoder-ffmpeg-1.10.0.aar`.
+`android-shared/libs/media3-decoder-ffmpeg-1.10.1.aar`.
 
 Google never publishes this extension as a Maven artifact — FFmpeg's LGPL has
 distribution requirements Google opted out of. The AAR is therefore built
@@ -24,7 +24,7 @@ You only need to re-run this script when:
 | Android NDK | **r26d** (`26.3.11579264`) | `sdkmanager --install "ndk;26.3.11579264"` |
 | Android SDK CMake | **3.22.1+** | `sdkmanager --install "cmake;3.22.1"` |
 | FFmpeg source | **n6.0** | Cloned automatically by the script |
-| androidx/media source | **1.10.0** | Cloned automatically by the script |
+| androidx/media source | **1.10.1** | Cloned automatically by the script |
 | Java | **JDK 21+** | Homebrew: `brew install openjdk@21` |
 | `git`, `make`, `python3`, `unzip`, `shasum` | any recent | System tools |
 | Disk headroom | **~25 GB** | For the working directory |
@@ -32,7 +32,7 @@ You only need to re-run this script when:
 
 The NDK version is not negotiable — r26d is the minimum for Android 15+ 16 KB
 page-aligned `.so` output. Older NDKs produce AARs that crash on Pixel 9+
-devices at JNI load. Newer NDKs (r27+) are untested against Media3 1.10.0's
+devices at JNI load. Newer NDKs (r27+) are untested against Media3 1.10.1's
 `build_ffmpeg.sh`.
 
 ---
@@ -52,7 +52,7 @@ bash scripts/build-ffmpeg-aar.sh
 On completion the script prints:
 
 ```
-  AAR:      /path/to/android-shared/libs/media3-decoder-ffmpeg-1.10.0.aar
+  AAR:      /path/to/android-shared/libs/media3-decoder-ffmpeg-1.10.1.aar
   Size:     12345678 bytes (11.77 MiB)
   SHA-256:  <hex digest>
   Decoders: ac3 eac3 mlp truehd dca
@@ -61,7 +61,7 @@ On completion the script prints:
 To confirm the AAR contains the native libs and JNI classes:
 
 ```sh
-unzip -l android-shared/libs/media3-decoder-ffmpeg-1.10.0.aar \
+unzip -l android-shared/libs/media3-decoder-ffmpeg-1.10.1.aar \
     | grep -E '(\.so|FfmpegAudioRenderer)'
 ```
 
@@ -103,7 +103,7 @@ Edit `scripts/build-ffmpeg-aar.sh`:
   3. `docs/plans/ffmpeg-audio-extension-plan.md` — the codec table
 - **`SKIP_ABIS`** — ABIs to remove from the upstream build. Default is
   `x86` (no target device uses 32-bit x86; our emulator is x86_64).
-- **`MEDIA3_TAG`** / **`FFMPEG_TAG`** — source versions. Media3 1.10.0's
+- **`MEDIA3_TAG`** / **`FFMPEG_TAG`** — source versions. Media3 1.10.1's
   upstream README pins FFmpeg 6.0 with a note that n7.x breaks the JNI
   glue. Don't bump FFmpeg without checking upstream first.
 
@@ -139,7 +139,7 @@ Your `ANDROID_NDK_HOME` points at the wrong version. Confirm with
 `Pkg.Revision = 26.3.11579264`.
 
 **`./gradlew` inside the Media3 workdir fails with "No signature of method"**
-Media3 1.10.0's Gradle requires JDK 21. If Gradle detects JDK 11 or 17
+Media3 1.10.1's Gradle requires JDK 21. If Gradle detects JDK 11 or 17
 it'll fall over with cryptic Groovy errors. Double-check `$JAVA_HOME`.
 
 **Build succeeds but the AAR is missing an ABI's `.so`**

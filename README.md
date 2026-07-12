@@ -32,7 +32,7 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 | **Apps** | Android phone · Android TV |
 | **Application ID** | `org.siloserver.silo` (shared by phone + TV — one Play listing) |
 | **Language / UI** | Kotlin 2.1.20 · Jetpack Compose (Material 3) · Compose for TV (`androidx.tv`) |
-| **Playback** | AndroidX **Media3 / ExoPlayer** 1.10.0 (+ optional FFmpeg audio extension, optional MPV backend path) |
+| **Playback** | AndroidX **Media3 / ExoPlayer** 1.10.1 with a pinned FFmpeg audio fallback extension |
 | **Networking** | **Ktor** 3.1.2 client · kotlinx.serialization · WebSockets for realtime |
 | **DI** | **Koin** 4.1.0 |
 | **Persistence** | AndroidX DataStore · EncryptedSharedPreferences (tokens) · WorkManager (downloads) |
@@ -41,8 +41,7 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 
 The clients talk to a Silo server over its `/api/v1/*` REST + WebSocket API. The server owns the library, scanning, metadata, transcoding decisions, and auth; the clients render it and drive playback.
 
-Android 7.0 and 7.1 (API 24/25) are supported on both phone and Android TV. Those devices use the Media3 playback path;
-the optional MPV backend remains gated to API 26+ devices because the bundled `dev.jdtech.mpv:libmpv` artifact declares a higher runtime floor.
+Android 7.0 and 7.1 (API 24/25) are supported on both phone and Android TV. Video and audiobook playback use the same Media3 service on every supported Android version.
 
 ---
 
@@ -144,7 +143,7 @@ Three library layers under two app shells. Dependencies only point downward.
 Each app computes a start destination from registry/token/profile/offline state (`ServerSetup → Login → ProfileSelection → main`), then runs a Compose nav graph. The phone uses an Apple-aligned bottom shell (`Home`, `Libraries`, `For You`, `Calendar`, and conditional `Downloads`). The TV uses a tvOS-aligned top menu (`Home`, available media-type tabs, `Calendar`, plus search/profile actions). Deep links handle device pairing through `silo://device?...` and supported HTTPS `/device` or `/auth/device` URLs.
 
 ### Playback pipeline
-The UI never owns the player directly — a `MediaController` drives the shared `SiloPlaybackService` (a Media3 `MediaSessionService`), so there's exactly one session for system controls. `PlaybackSessionManager` negotiates the play method with the server, `PlaybackSessionLifecycle` handles progress reporting and outage/`404` recovery, and capability probes decide what's advertised. Offline playback bypasses the server entirely via a local `file://` URI.
+The UI never owns the player directly — a `MediaController` drives the shared `SiloPlaybackService` (a Media3 `MediaSessionService`), so there is exactly one player and system session. For video, `PlaybackSessionManager` sends protocol-v3 capabilities and executes the server's direct/remux/transcode plan; classified failures and track/output changes use the v3 replan endpoint. `PlaybackSessionLifecycle` owns progress and outage handling. Offline playback bypasses the server through a local `file://` URI. The normative contract is in [`docs/playback`](docs/playback/README.md).
 
 ### Persistence
 Per-profile/device player settings live in DataStore (debounced, flushed on `onStop`), tokens in `EncryptedSharedPreferences`, reader/audiobook local state in scoped stores or Room-backed projections, and downloaded bytes in public `MediaStore`/Downloads paths with original filenames and formats.
@@ -160,7 +159,7 @@ silo-android/
 ├── androidApp/        # Phone app (Jetpack Compose, Material 3)
 ├── androidTvApp/      # TV app (Compose for TV, D-pad)
 ├── docs/
-│   ├── media3/        # Android playback notes
+│   ├── playback/      # Normative Media3-only playback architecture and validation
 │   └── superpowers/   # Design specs + implementation plans (specs/, plans/)
 ├── scripts/           # Utility scripts, incl. FFmpeg AAR helpers
 ├── gradle/            # Version catalog (libs.versions.toml)

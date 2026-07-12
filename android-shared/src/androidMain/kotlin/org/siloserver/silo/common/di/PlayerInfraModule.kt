@@ -41,7 +41,6 @@ import org.koin.dsl.module
  */
 val playerInfraModule = module {
     // Shares the active session Player with the in-process UI so the video
-    // SurfaceView can bind directly to it (proper surface lifecycle for MPV).
     single { ActivePlayerHolder() }
 
     single { SiloPictureInPictureCoordinator() }

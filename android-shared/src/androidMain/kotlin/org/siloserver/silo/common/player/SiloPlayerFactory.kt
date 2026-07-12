@@ -28,7 +28,7 @@ import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
 import org.siloserver.silo.common.BuildConfig
 import org.siloserver.silo.common.player.audio.DelayAudioProcessor
-import org.siloserver.silo.common.player.mpv.MpvPlayer
+import org.siloserver.silo.common.player.audio.PassthroughSuppressingAudioSink
 import org.siloserver.silo.common.player.subtitle.OffsetSubtitleParserFactory
 import org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder
 import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
@@ -63,12 +63,19 @@ class SiloPlayerFactory(
     val isTv: Boolean = TvModeDetector.isTv(context)
 
     private var serverUrl: String = ""
+    private data class RequestHeaderScope(
+        val streamUri: android.net.Uri,
+        val headers: Map<String, String>,
+    )
+
+    @Volatile private var requestHeaderScope: RequestHeaderScope? = null
 
     private val dataSourceFactory = AuthenticatedDataSourceFactory(
         context = context,
         okHttpClient = okHttpClient,
         tokenManager = tokenManager,
         serverUrlProvider = { serverUrl },
+        requestHeadersProvider = ::requestHeadersFor,
     )
 
     private val subtitleParserFactory = OffsetSubtitleParserFactory(subtitleOffsetHolder)
@@ -116,7 +123,7 @@ class SiloPlayerFactory(
         // making it impossible to cleanly bisect an FFmpeg-specific
         // regression against a pre-FFmpeg baseline.
         val extensionMode = if (preferFfmpegAudio) {
-            DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+            DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
         } else {
             DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
         }
@@ -126,11 +133,11 @@ class SiloPlayerFactory(
         // across players because Koin gives us a single DelayAudioProcessor
         // instance; in practice SiloPlaybackService creates exactly
         // one ExoPlayer per process so there's no contention.
-        val audioSink: AudioSink = DefaultAudioSink.Builder(context)
+        val audioSink: AudioSink = PassthroughSuppressingAudioSink(DefaultAudioSink.Builder(context)
             .setAudioProcessorChain(
                 DefaultAudioSink.DefaultAudioProcessorChain(delayProcessor),
             )
-            .build()
+            .build())
 
         val renderersFactory = object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(
@@ -223,7 +230,6 @@ class SiloPlayerFactory(
         //  - handleAudioBecomingNoisy pauses on ACTION_AUDIO_BECOMING_NOISY,
         //    which is really the phone "headphones unplugged" behavior applied
         //    to the wrong form factor — a transient ARC route change would
-        //    pause playback with no user action (and the MPV engine has no
         //    such handling, so gating it also keeps the two engines aligned).
         //  - suppressPlaybackOnUnsuitableOutput is a Media3 no-op on TV below
         //    API 35 (Wear-gated), but on API 35+ TVs a transient "no suitable
@@ -254,35 +260,6 @@ class SiloPlayerFactory(
             isLowRamDevice = activityManager?.isLowRamDevice == true,
         )
     }
-
-    /**
-     * Builds an [MpvPlayer] with auth headers pre-fetched on the calling
-     * coroutine. The suspend call resolves credentials before player
-     * construction begins, so the synchronous [MpvPlayer.Builder.build] path
-     * never blocks a thread waiting for I/O — eliminating the ANR risk that
-     * a blocking call would introduce on slow Android-7 CPUs.
-     */
-    suspend fun createMpvPlayer(): Player {
-        val headers = buildMpvHttpHeaderFields()
-        return MpvPlayer.Builder(context)
-            .setHttpHeaderFieldsProvider { headers }
-            .setSeekBackIncrementMs(10_000)
-            .setSeekForwardIncrementMs(30_000)
-            .build()
-    }
-
-    private suspend fun buildMpvHttpHeaderFields(): List<Pair<String, String>> =
-        buildList {
-            tokenManager.getAccessToken()?.takeIf { it.isNotBlank() }?.let { accessToken ->
-                add("Authorization" to "Bearer $accessToken")
-            }
-            tokenManager.getProfileId()?.takeIf { it.isNotBlank() }?.let { profileId ->
-                add("X-Profile-Id" to profileId)
-            }
-            tokenManager.getProfileToken()?.takeIf { it.isNotBlank() }?.let { profileToken ->
-                add("X-Profile-Token" to profileToken)
-            }
-        }
 
     /**
      * Apply capability-aware track selection presets to [player]. Call at
@@ -342,9 +319,13 @@ class SiloPlayerFactory(
         subtitle: String? = null,
         artworkUrl: String? = null,
         durationMs: Long? = null,
+        requestHeaders: Map<String, String> = emptyMap(),
     ): MediaItem {
         this.serverUrl = serverUrl
         val absoluteUrl = buildAbsoluteUrl(serverUrl, streamUrl)
+        requestHeaderScope = requestHeaders.takeIf { it.isNotEmpty() }?.let {
+            RequestHeaderScope(android.net.Uri.parse(absoluteUrl), it)
+        }
         val subtitleConfigurations =
             subtitleManager.buildSubtitleConfigurations(subtitles, serverUrl)
 
@@ -373,6 +354,30 @@ class SiloPlayerFactory(
         mediaItemMimeType(playMethod, container, delivery)?.let { builder.setMimeType(it) }
 
         return builder.build()
+    }
+
+    /**
+     * Plan headers are scoped to the issued stream/session path. The factory is
+     * process-wide and also serves audiobook/offline MediaItems, so blindly
+     * retaining the last video's headers would leak them into unrelated media.
+     * HLS child playlists and segments are allowed within the same directory.
+     */
+    private fun requestHeadersFor(uri: android.net.Uri): Map<String, String> {
+        val scope = requestHeaderScope ?: return emptyMap()
+        val issued = scope.streamUri
+        if (!uri.scheme.equals(issued.scheme, ignoreCase = true) ||
+            !uri.host.equals(issued.host, ignoreCase = true) ||
+            uri.port != issued.port
+        ) return emptyMap()
+        val issuedPath = issued.path.orEmpty()
+        val issuedDirectory = issuedPath.substringBeforeLast('/', missingDelimiterValue = issuedPath)
+            .trimEnd('/') + "/"
+        val candidatePath = uri.path.orEmpty()
+        return if (candidatePath == issuedPath || candidatePath.startsWith(issuedDirectory)) {
+            scope.headers
+        } else {
+            emptyMap()
+        }
     }
 
     private fun buildAbsoluteUrl(serverUrl: String, streamUrl: String): String =

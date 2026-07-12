@@ -1,7 +1,6 @@
 package org.siloserver.silo.common.player
 
 import android.util.Log
-import org.siloserver.silo.model.playback.ChangeAudioResponse
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlayMethod
@@ -10,13 +9,30 @@ import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackRouteFamily
 import org.siloserver.silo.model.playback.PlaybackStreamRequest
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
-import org.siloserver.silo.model.playback.PlaybackRouteEventRequest
 import org.siloserver.silo.model.playback.PlaybackTimeline
 import org.siloserver.silo.model.playback.TranscodeStartRequest
 import org.siloserver.silo.model.playback.TranscodeStartResponse
+import org.siloserver.silo.model.playback.PlaybackStartRequestV3
+import org.siloserver.silo.model.playback.PlaybackV3Validation
+import org.siloserver.silo.model.playback.SubtitleFidelityPreference
+import org.siloserver.silo.model.playback.planAttemptKey
+import org.siloserver.silo.model.playback.validateForMedia3
+import org.siloserver.silo.model.playback.PlaybackFailureV3
+import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
+import org.siloserver.silo.model.playback.PlaybackRouteEventV3
+import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
+import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.PlaybackRepository
+import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.siloserver.silo.common.player.audio.PassthroughSuppressionRegistry
 
 /**
  * Manages the playback session lifecycle: creation, progress reporting,
@@ -28,6 +44,366 @@ open class PlaybackSessionManager(
     private val playbackRepository: PlaybackRepository,
     private val tokenManager: TokenManager,
 ) {
+    private data class ActiveVideoAttempt(
+        val fileId: Int,
+        val profileId: String,
+        val capabilities: ClientCodecCapabilities,
+        val context: ClientPlaybackContext,
+        val playbackAttemptId: String,
+        val qualityPreference: String,
+        val sessionId: String,
+        val plan: org.siloserver.silo.model.playback.PlaybackPlanV3,
+        val planAttemptId: String,
+        val planAttemptKey: String,
+        val localMutations: List<String>,
+        val attemptedPlanKeys: List<String>,
+        val attemptCount: Int,
+    )
+
+    private val videoAttemptMutex = Mutex()
+    private val telemetryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var activeVideoAttempt: ActiveVideoAttempt? = null
+
+    suspend fun startVideoSessionV3(
+        fileId: Int,
+        profileId: String,
+        capabilities: ClientCodecCapabilities,
+        clientPlaybackContext: ClientPlaybackContext,
+        audioTrackIndex: Int?,
+        subtitleTrackIndex: Int?,
+        qualityPreference: String?,
+        startPosition: Double?,
+        subtitleFidelityPreference: SubtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
+    ): ApiResult<VideoSessionStartV3> {
+        val playbackAttemptId = UUID.randomUUID().toString()
+        val request = PlaybackStartRequestV3(
+            fileId = fileId,
+            profileId = profileId,
+            playbackAttemptId = playbackAttemptId,
+            qualityPreference = qualityPreference?.lowercase() ?: "auto",
+            subtitleFidelityPreference = subtitleFidelityPreference,
+            startPosition = startPosition,
+            audioTrackId = audioTrackIndex?.let { stableTrackId(fileId, "audio", it) },
+            audioTrackIndex = audioTrackIndex,
+            subtitleTrackId = subtitleTrackIndex?.takeIf { it >= 0 }
+                ?.let { stableTrackId(fileId, "subtitle", it) },
+            subtitleTrackIndex = subtitleTrackIndex,
+            outputRouteGeneration = clientPlaybackContext.output.outputRouteGeneration,
+            capabilities = capabilities,
+            clientPlaybackContext = clientPlaybackContext,
+        )
+        return when (val result = playbackRepository.startPlaybackV3(request)) {
+            is ApiResult.Success -> when (val validated = result.data.validateForMedia3()) {
+                is PlaybackV3Validation.Playable -> {
+                    val planAttemptId = UUID.randomUUID().toString()
+                    val planAttemptKey = validated.plan.planAttemptKey(request.outputRouteGeneration)
+                    activeVideoAttempt = ActiveVideoAttempt(
+                        fileId = fileId,
+                        profileId = profileId,
+                        capabilities = capabilities,
+                        context = clientPlaybackContext,
+                        playbackAttemptId = playbackAttemptId,
+                        qualityPreference = request.qualityPreference,
+                        sessionId = validated.sessionId,
+                        plan = validated.plan,
+                        planAttemptId = planAttemptId,
+                        planAttemptKey = planAttemptKey,
+                        localMutations = emptyList(),
+                        attemptedPlanKeys = listOf(planAttemptKey),
+                        attemptCount = 1,
+                    )
+                    PassthroughSuppressionRegistry.beginAttempt(planAttemptKey)
+                    reportActiveVideoEvent("plan_selected")
+                    ApiResult.Success(
+                        VideoSessionStartV3.Ready(
+                            session = validated.plan.toSessionResponse(validated.sessionId, profileId, fileId),
+                            plan = validated.plan,
+                            playbackAttemptId = playbackAttemptId,
+                            planAttemptId = planAttemptId,
+                            planAttemptKey = planAttemptKey,
+                        ),
+                    )
+                }
+                is PlaybackV3Validation.Terminal -> {
+                    activeVideoAttempt = null
+                    emitRouteEvent(
+                        PlaybackRouteEventV3(
+                            playbackAttemptId = playbackAttemptId,
+                            sessionId = result.data.sessionId,
+                            event = "terminal",
+                            fallbackReason = validated.reason,
+                            outputRouteGeneration = request.outputRouteGeneration,
+                        ),
+                    )
+                    (result.data.playbackPlan?.sessionId ?: result.data.sessionId)
+                        ?.let { playbackRepository.stopPlayback(it) }
+                    ApiResult.Success(
+                        VideoSessionStartV3.Terminal(validated.reason, validated.message, validated.retryable),
+                    )
+                }
+                is PlaybackV3Validation.Incompatible -> {
+                    activeVideoAttempt = null
+                    validated.allocatedSessionId?.let { playbackRepository.stopPlayback(it) }
+                    ApiResult.Success(VideoSessionStartV3.ServerUpgradeRequired)
+                }
+                is PlaybackV3Validation.ReplanRequired -> {
+                    // Decode stale engine enums, but never execute them. Preserve
+                    // the allocated session and give the v3 planner exactly one
+                    // opportunity to replace the route with a Media3 plan.
+                    val planAttemptId = UUID.randomUUID().toString()
+                    val key = validated.plan.planAttemptKey(request.outputRouteGeneration)
+                    activeVideoAttempt = ActiveVideoAttempt(
+                        fileId = fileId,
+                        profileId = profileId,
+                        capabilities = capabilities,
+                        context = clientPlaybackContext,
+                        playbackAttemptId = playbackAttemptId,
+                        qualityPreference = request.qualityPreference,
+                        sessionId = validated.sessionId,
+                        plan = validated.plan,
+                        planAttemptId = planAttemptId,
+                        planAttemptKey = key,
+                        localMutations = emptyList(),
+                        attemptedPlanKeys = listOf(key),
+                        attemptCount = 1,
+                    )
+                    PassthroughSuppressionRegistry.beginAttempt(key)
+                    replanActiveVideoSession(
+                        classification = validated.reason,
+                        message = "The server returned a legacy player route.",
+                        positionSeconds = startPosition ?: 0.0,
+                        audioTrackIndex = audioTrackIndex,
+                        subtitleTrackIndex = subtitleTrackIndex,
+                    )
+                }
+            }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
+    }
+
+    suspend fun replanActiveVideoSession(
+        classification: String,
+        message: String? = null,
+        positionSeconds: Double,
+        audioTrackIndex: Int?,
+        subtitleTrackIndex: Int?,
+        decoderName: String? = null,
+        qualityPreference: String? = null,
+        capabilities: ClientCodecCapabilities? = null,
+        clientPlaybackContext: ClientPlaybackContext? = null,
+    ): ApiResult<VideoSessionStartV3> = videoAttemptMutex.withLock {
+        val active = activeVideoAttempt ?: return@withLock ApiResult.Error(
+            code = 409,
+            error = "playback_attempt_not_active",
+            message = "No protocol-v3 playback attempt is active.",
+        )
+        val currentCapabilities = capabilities ?: active.capabilities
+        val currentContext = clientPlaybackContext ?: active.context
+        val failedKey = active.planAttemptKey
+        val attemptedKeys = (active.attemptedPlanKeys + failedKey).distinct()
+        val invalidation = classification in setOf(
+            "audio_track_changed",
+            "subtitle_track_changed",
+            "quality_changed",
+            "output_route_changed",
+        )
+        emitRouteEvent(
+            PlaybackRouteEventV3(
+                playbackAttemptId = active.playbackAttemptId,
+                sessionId = active.sessionId,
+                planId = active.plan.planId,
+                planAttemptId = active.planAttemptId,
+                planAttemptKey = failedKey,
+                event = if (invalidation) "plan_invalidated" else "plan_failed",
+                failureClassification = classification,
+                outputRouteGeneration = currentContext.output.outputRouteGeneration,
+                diagnostics = mapOfNotNull("message" to message, "decoder_name" to decoderName),
+            ),
+        )
+        val request = PlaybackReplanRequestV3(
+            playbackAttemptId = active.playbackAttemptId,
+            replanRequestId = UUID.randomUUID().toString(),
+            failedPlanId = active.plan.planId,
+            planAttemptId = active.planAttemptId,
+            planAttemptKey = failedKey,
+            attemptedPlanKeys = attemptedKeys,
+            attemptCount = active.attemptCount,
+            qualityPreference = qualityPreference?.lowercase() ?: active.qualityPreference,
+            positionSeconds = positionSeconds,
+            outputRouteGeneration = currentContext.output.outputRouteGeneration,
+            selectedTracks = SelectedPlaybackTracksV3(
+                audio = selectedTrackIdentity(active, "audio", audioTrackIndex, active.plan.selectedTracks.audio),
+                subtitle = subtitleTrackIndex?.takeIf { it >= 0 }
+                    ?.let { selectedTrackIdentity(active, "subtitle", it, active.plan.selectedTracks.subtitle) },
+            ),
+            failure = PlaybackFailureV3(classification, message, decoderName),
+            capabilities = currentCapabilities,
+            clientPlaybackContext = currentContext,
+        )
+        when (val result = playbackRepository.replanPlaybackV3(active.sessionId, request)) {
+            is ApiResult.Success -> when (val validated = result.data.validateForMedia3()) {
+                is PlaybackV3Validation.Playable -> {
+                    val nextKey = validated.plan.planAttemptKey(currentContext.output.outputRouteGeneration)
+                    if (nextKey in attemptedKeys) {
+                        if (validated.sessionId != active.sessionId) {
+                            playbackRepository.stopPlayback(validated.sessionId)
+                        }
+                        activeVideoAttempt = null
+                        return@withLock ApiResult.Success(
+                            VideoSessionStartV3.Terminal(
+                                "replan_loop_detected",
+                                "The server returned a playback plan that already failed on this output route.",
+                                false,
+                            ),
+                        )
+                    }
+                    val nextAttemptId = UUID.randomUUID().toString()
+                    val next = active.copy(
+                        sessionId = validated.sessionId,
+                        plan = validated.plan,
+                        planAttemptId = nextAttemptId,
+                        planAttemptKey = nextKey,
+                        localMutations = emptyList(),
+                        attemptedPlanKeys = attemptedKeys + nextKey,
+                        attemptCount = active.attemptCount + 1,
+                        qualityPreference = request.qualityPreference,
+                        capabilities = currentCapabilities,
+                        context = currentContext,
+                    )
+                    activeVideoAttempt = next
+                    PassthroughSuppressionRegistry.beginAttempt(nextKey)
+                    if (validated.sessionId != active.sessionId) playbackRepository.stopPlayback(active.sessionId)
+                    emitRouteEvent(
+                        PlaybackRouteEventV3(
+                            playbackAttemptId = active.playbackAttemptId,
+                            sessionId = validated.sessionId,
+                            planId = validated.plan.planId,
+                            planAttemptId = nextAttemptId,
+                            planAttemptKey = nextKey,
+                            event = "plan_selected",
+                            fallbackReason = classification,
+                            outputRouteGeneration = currentContext.output.outputRouteGeneration,
+                        ),
+                    )
+                    ApiResult.Success(
+                        VideoSessionStartV3.Ready(
+                            session = validated.plan.toSessionResponse(validated.sessionId, active.profileId, active.fileId),
+                            plan = validated.plan,
+                            playbackAttemptId = active.playbackAttemptId,
+                            planAttemptId = nextAttemptId,
+                            planAttemptKey = nextKey,
+                        ),
+                    )
+                }
+                is PlaybackV3Validation.Terminal -> {
+                    reportActiveVideoEvent(
+                        event = "terminal",
+                        diagnostics = mapOf("reason" to validated.reason),
+                    )
+                    activeVideoAttempt = null
+                    listOfNotNull(active.sessionId, result.data.sessionId).distinct()
+                        .forEach { playbackRepository.stopPlayback(it) }
+                    ApiResult.Success(VideoSessionStartV3.Terminal(validated.reason, validated.message, validated.retryable))
+                }
+                is PlaybackV3Validation.Incompatible -> {
+                    activeVideoAttempt = null
+                    validated.allocatedSessionId?.let { playbackRepository.stopPlayback(it) }
+                    ApiResult.Success(VideoSessionStartV3.ServerUpgradeRequired)
+                }
+                is PlaybackV3Validation.ReplanRequired -> {
+                    activeVideoAttempt = null
+                    listOf(active.sessionId, validated.sessionId).distinct()
+                        .forEach { playbackRepository.stopPlayback(it) }
+                    ApiResult.Success(
+                        VideoSessionStartV3.Terminal(
+                            "unsupported_legacy_engine",
+                            "The server could not provide a Media3 playback route.",
+                            false,
+                        ),
+                    )
+                }
+            }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
+    }
+
+    private fun mapOfNotNull(vararg values: Pair<String, String?>): Map<String, String> =
+        values.mapNotNull { (key, value) -> value?.let { key to it } }.toMap()
+
+    private fun emitRouteEvent(event: PlaybackRouteEventV3) {
+        telemetryScope.launch {
+            playbackRepository.reportRouteEventV3(event)
+        }
+    }
+
+    @Synchronized
+    fun reportActiveVideoEvent(
+        event: String,
+        diagnostics: Map<String, String> = emptyMap(),
+    ) {
+        val active = activeVideoAttempt ?: return
+        emitRouteEvent(
+            PlaybackRouteEventV3(
+                playbackAttemptId = active.playbackAttemptId,
+                sessionId = active.sessionId,
+                planId = active.plan.planId,
+                planAttemptId = active.planAttemptId,
+                planAttemptKey = active.planAttemptKey,
+                event = event,
+                outputRouteGeneration = active.context.output.outputRouteGeneration,
+                diagnostics = diagnostics,
+            ),
+        )
+    }
+
+    private fun stableTrackId(fileId: Int, kind: String, index: Int): String =
+        "file:$fileId:$kind:$index"
+
+    private fun selectedTrackIdentity(
+        active: ActiveVideoAttempt,
+        kind: String,
+        index: Int?,
+        selected: PlaybackTrackIdentityV3?,
+    ): PlaybackTrackIdentityV3? {
+        if (index == null) return null
+        return selected?.takeIf { it.index == index }
+            ?: PlaybackTrackIdentityV3(stableTrackId(active.fileId, kind, index), index)
+    }
+
+    @Synchronized
+    fun trySingleLocalPcmRetry(mime: String, channels: Int): Boolean {
+        val active = activeVideoAttempt ?: return false
+        val mutation = "pcm:${mime.lowercase()}:${channels.coerceAtLeast(0)}"
+        if (active.localMutations.any { it.startsWith("pcm:") }) return false
+        val mutations = active.localMutations + mutation
+        val key = active.plan.planAttemptKey(active.context.output.outputRouteGeneration, mutations)
+        activeVideoAttempt = active.copy(
+            planAttemptKey = key,
+            localMutations = mutations,
+            attemptedPlanKeys = (active.attemptedPlanKeys + key).distinct(),
+        )
+        PassthroughSuppressionRegistry.beginAttempt(key)
+        return PassthroughSuppressionRegistry.suppressForSinglePcmRetry(mime, channels)
+    }
+
+    @Synchronized
+    fun recordTransportReopen(): Boolean {
+        val active = activeVideoAttempt ?: return false
+        val mutation = "transport_reopen"
+        if (mutation in active.localMutations) return false
+        val mutations = active.localMutations + mutation
+        val key = active.plan.planAttemptKey(active.context.output.outputRouteGeneration, mutations)
+        activeVideoAttempt = active.copy(
+            planAttemptKey = key,
+            localMutations = mutations,
+            attemptedPlanKeys = (active.attemptedPlanKeys + key).distinct(),
+        )
+        PassthroughSuppressionRegistry.beginAttempt(key)
+        return true
+    }
+
     /**
      * Starts a new playback session for the given file.
      * The server decides the play method (direct, remux, transcode).
@@ -148,8 +524,13 @@ open class PlaybackSessionManager(
      * Stops an active playback session.
      * Must be called when exiting the player or when playback completes.
      */
-    open suspend fun stopSession(sessionId: String): ApiResult<Unit> =
-        playbackRepository.stopPlayback(sessionId)
+    open suspend fun stopSession(sessionId: String): ApiResult<Unit> {
+        if (activeVideoAttempt?.sessionId == sessionId) {
+            reportActiveVideoEvent("stopped")
+            activeVideoAttempt = null
+        }
+        return playbackRepository.stopPlayback(sessionId)
+    }
 
     /**
      * Requests transcoding with specific parameters.
@@ -158,27 +539,6 @@ open class PlaybackSessionManager(
      */
     suspend fun startTranscode(request: TranscodeStartRequest): ApiResult<TranscodeStartResponse> =
         playbackRepository.startTranscode(request)
-
-    /**
-     * Switches the audio track mid-stream.
-     * May trigger a new transcode if the server needs to re-mux.
-     *
-     * [position] is the current playback position in seconds. For TRANSCODE
-     * sessions the server uses it as the re-seek point; omitting it would cause
-     * the transcode to restart from 0.
-     */
-    suspend fun changeAudio(
-        sessionId: String,
-        audioTrackIndex: Int,
-        position: Double? = null,
-    ): ApiResult<ChangeAudioResponse> =
-        playbackRepository.changeAudio(sessionId, audioTrackIndex, position)
-
-    suspend fun reportRouteEvent(
-        sessionId: String,
-        request: PlaybackRouteEventRequest,
-    ): ApiResult<Unit> =
-        playbackRepository.reportRouteEvent(sessionId, request)
 
     /** Returns the current access token for stream authentication. */
     suspend fun getAccessToken(): String? = tokenManager.getAccessToken()
@@ -226,10 +586,6 @@ open class PlaybackSessionManager(
                 isRemux = isRemux,
                 subtitleTrackIndex = subtitleTrackIndex,
                 subtitleCodec = session.playbackPlan?.source?.subtitleCodec,
-                mpvSupportedOnDevice = org.siloserver.silo.common.player.backend.MpvDeviceFloor.isMpvSupported(
-                    sdkInt = android.os.Build.VERSION.SDK_INT,
-                    supportedAbis = android.os.Build.SUPPORTED_ABIS?.toList().orEmpty(),
-                ),
             ),
         )
         Log.i(
@@ -350,19 +706,14 @@ internal fun ApiResult<*>.isPlaybackSessionMissingError(): Boolean {
 }
 
 /**
- * G5 (Apple parity): devices below the MPV floor have no libass path, so a
- * styled (ASS/SSA) source going through a FULL transcode only keeps its
- * authored look via server burn-in. Strictly additive: remuxes have no video
- * encode to burn into, MPV-capable devices keep client-side libass, and plain
- * text tracks stay client-rendered so toggling them never needs a restart.
+ * A styled subtitle selected for a full server transcode is burned in. Remux
+ * has no video encode surface, and plain text stays client-rendered.
  */
 internal fun shouldBurnStyledSubtitle(
     isRemux: Boolean,
     subtitleTrackIndex: Int?,
     subtitleCodec: String?,
-    mpvSupportedOnDevice: Boolean,
 ): Boolean =
     !isRemux &&
         subtitleTrackIndex != null &&
-        subtitleCodec?.trim()?.lowercase() in setOf("ass", "ssa") &&
-        !mpvSupportedOnDevice
+        subtitleCodec?.trim()?.lowercase() in setOf("ass", "ssa")

@@ -108,179 +108,59 @@ class PlayerViewModelSharedCoordinatorTest {
     }
 
     @Test
-    fun mobileVersionSwitchStopsLifecycleBeforeReplacingSession() {
-        val onSelectVersionBody = viewModelSource
-            .substringAfter("fun onSelectVersion(")
-            .substringBefore("fun onPlaybackSpeedChanged")
-        val lifecycleStopIndex = onSelectVersionBody.indexOf("sessionLifecycle.stop()")
-        val directStopIndex = onSelectVersionBody.indexOf("playbackSessionManager.stopSession(")
-        val startIndex = onSelectVersionBody.indexOf("playbackSessionManager.startSessionV2(")
-
-        assertTrue(lifecycleStopIndex >= 0, "version switch must stop lifecycle ownership first")
-        assertTrue(startIndex >= 0, "version switch must still start the selected version through v2 planning")
-        assertTrue(
-            lifecycleStopIndex < startIndex,
-            "version switch must cancel the old lifecycle session before starting the new one",
-        )
-        assertTrue(
-            directStopIndex < 0 || lifecycleStopIndex < directStopIndex,
-            "direct session stop must not race the lifecycle owner",
-        )
-        assertTrue(
-            onSelectVersionBody.contains("val resolvedStartPosition = if (") &&
-                onSelectVersionBody.contains("resolved.sessionId != session.sessionId") &&
-                onSelectVersionBody.contains("startPosition = resolvedStartPosition"),
-            "version switch fallback sessions must use the returned player start position",
-        )
-        assertTrue(
-            onSelectVersionBody.contains("requestedOriginalPlaybackMethod(") &&
-                onSelectVersionBody.contains("audioTrackIndex = currentState.selectedAudioIndex"),
-            "version switch direct-play requests must consider the currently selected audio track",
-        )
-        assertTrue(
-            onSelectVersionBody.contains("playMethod = requestedPlayMethod"),
-            "version switch must pass the resolved direct-play preference to session planning",
-        )
+    fun mobileVersionSwitchRestartsThroughTheV3Coordinator() {
+        val body = viewModelSource
+            .substringAfter("private fun startVersionPlayback(")
+            .substringBefore("/**\n     * Handles a failed quality/version switch.")
+        assertTrue(body.contains("loadContent("))
+        assertTrue(body.contains("preferredFileId = version.fileId"))
+        assertTrue(body.contains("resumePositionOverride = state.position"))
+        assertTrue(body.contains("suppressResumeRewind = true"))
+        assertFalse(body.contains("startSessionV2("))
+        assertFalse(body.contains("startTranscodeFallback("))
     }
 
     @Test
-    fun mobileUnsupportedFallbackAdoptsReturnedSessionIntoLifecycle() {
-        val unsupportedBody = viewModelSource
-            .substringAfter("fun onUnsupportedPlayback(")
-            .substringBefore("/** Called by the player when the current position changes. */")
-
-        assertTrue(
-            unsupportedBody.contains("startTranscodeFallbackRecoveringMissingSession("),
-            "unsupported direct play fallback must renew stale playback sessions before surfacing an error",
-        )
-        assertTrue(
-            unsupportedBody.contains("sessionLifecycle.adoptActiveSession("),
-            "fallback success must re-home lifecycle progress/stop ownership to the returned session",
-        )
-        assertTrue(
-            unsupportedBody.contains("StartParams("),
-            "fallback lifecycle adoption must preserve restart parameters for 404 recovery",
-        )
-        assertTrue(
-            unsupportedBody
-                .substringAfter("val renewStartParams = StartParams(")
-                .substringBefore("when (val r = playbackSessionManager.startTranscodeFallbackRecoveringMissingSession")
-                .contains("preserveDirectAudioSelection = true"),
-            "fallback session renewal must preserve the selected direct audio track like TV does",
-        )
+    fun mobileUnsupportedPlaybackUsesV3ReplanAndAdoptsReplacement() {
+        val body = viewModelSource
+            .substringAfter("private fun startProtocolV3Replan(")
+            .substringBefore("private fun Playability.failureClassification")
+        assertTrue(body.contains("replanActiveVideoSession("))
+        assertTrue(body.contains("sessionLifecycle.adoptActiveSession("))
+        assertTrue(body.contains("decision.plan.stream.headers"))
+        assertFalse(body.contains("startTranscodeFallback"))
     }
 
     @Test
-    fun mobileServerRecoveryCannotOutliveSelectedPlaybackContext() {
-        val loadContentBody = viewModelSource
-            .substringAfter("fun loadContent(")
-            .substringBefore("private fun startIntroAutoSkipObserver")
-        val fallbackBody = viewModelSource
-            .substringAfter("private fun startServerRecoveryFallback(")
-            .substringBefore("fun onEngineSwitchFailed")
-        val versionSwitchBody = viewModelSource
-            .substringAfter("fun onSelectVersion(")
-            .substringBefore("/** Toggle controls visibility. */")
-        val exitBody = viewModelSource
-            .substringAfter("fun onExit()")
-            .substringBefore("fun onOpenSettings")
-        val clearedBody = viewModelSource
-            .substringAfter("override fun onCleared()")
-            .substringBefore("private suspend fun resolveDownloadScope")
-
-        assertTrue(viewModelSource.contains("private data class ServerRecoveryIdentity"))
-        assertTrue(
-            fallbackBody.contains("val recoveryIdentity = state.serverRecoveryIdentityFor(version) ?: return"),
-            "server fallback must capture the content/session/version/file it belongs to",
-        )
-        assertTrue(
-            fallbackBody.contains("isCurrentServerRecovery(recoveryIdentity)") &&
-                fallbackBody.contains("current.matchesServerRecovery(recoveryIdentity)"),
-            "server fallback must drop stale coroutine completions before mutating player state",
-        )
-        assertTrue(
-            loadContentBody.contains("resetPlaybackRecoveryState()"),
-            "loading a new item must cancel in-flight recovery and clear retry bookkeeping",
-        )
-        assertTrue(
-            versionSwitchBody.contains("resetPlaybackRecoveryState()") &&
-                versionSwitchBody.indexOf("resetPlaybackRecoveryState()") < versionSwitchBody.indexOf("viewModelScope.launch"),
-            "switching versions must reset recovery state before the async restart begins",
-        )
-        assertTrue(
-            exitBody.contains("resetPlaybackRecoveryState()"),
-            "exiting playback must cancel any in-flight server fallback before state is cleared",
-        )
-        assertTrue(
-            clearedBody.contains("resetPlaybackRecoveryState()"),
-            "ViewModel teardown must cancel in-flight server fallback jobs",
-        )
+    fun mobileRecoveryIsSingleFlightAndAttemptScoped() {
+        val body = viewModelSource
+            .substringAfter("private fun startProtocolV3Replan(")
+            .substringBefore("private fun Playability.failureClassification")
+        assertTrue(body.contains("if (recoveryJob?.isActive == true) return"))
+        assertTrue(body.contains("clientPlaybackContext = playbackContext"))
+        assertTrue(body.contains("capabilities = capabilities"))
+        assertTrue(body.contains("positionSeconds = state.position"))
+        assertTrue(body.contains("audioTrackIndex = state.selectedAudioIndex"))
+        assertTrue(body.contains("subtitleTrackIndex = state.selectedSubtitleIndex"))
     }
 
     @Test
-    fun mobilePlaybackStarterOwnsRemoteStartupAlgorithm() {
-        val starterFile = java.io.File(
+    fun mobilePlaybackStarterOwnsProtocolV3Startup() {
+        val starterSource = java.io.File(
             "src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/player/MobileVideoPlaybackStarter.kt",
-        )
-        assertTrue(
-            starterFile.exists(),
-            "Mobile remote playback startup algorithm must live in MobileVideoPlaybackStarter",
-        )
-        val starterSource = starterFile.readText()
-
-        assertTrue(
-            starterSource.contains("class MobileVideoPlaybackStarter"),
-            "Mobile starter must expose MobileVideoPlaybackStarter",
-        )
-        assertTrue(
-            starterSource.contains("startSessionV2("),
-            "Mobile starter must start plan-aware playback sessions",
-        )
-        assertTrue(
-            starterSource.contains("detectPlaybackContext(") &&
-                starterSource.contains("formFactor = \"mobile\""),
-            "Mobile starter must send a mobile client playback context for route planning",
-        )
-        assertTrue(
-            starterSource.contains("subtitleTrackIndex = request.subtitleTrackIndex"),
-            "Mobile starter must pass subtitle selection into playback planning",
-        )
-        assertTrue(
-            starterSource.contains("startTranscodeFallback("),
-            "Mobile starter must preserve remux/transcode fallback",
-        )
-        assertTrue(
-            starterSource.contains("playbackPlan = resolved.playbackPlan"),
-            "Mobile starter must return the server playback plan to the player UI",
-        )
-        assertTrue(
-            starterSource.contains("session.canPlayResolvedStreamDirectly()") &&
-                starterSource.contains("delivery = resolvedDelivery"),
-            "Mobile starter must direct-play legacy progressive remux sessions without HLS fallback",
-        )
-        assertTrue(
-            starterSource.contains("preserveDirectSelection") &&
-                starterSource.contains("requestedPlayMethod == PlayMethod.DIRECT") &&
-                starterSource.contains("audioTrackIndex = request.audioTrackIndex") &&
-                starterSource.contains("preserveDirectAudioSelection = preserveDirectSelection"),
-            "Mobile starter must preserve client-side audio selection when requesting original direct playback",
-        )
-        assertTrue(
-            starterSource.contains("resolvePlaybackStartPosition("),
-            "Mobile starter must preserve resolved resume/start position semantics",
-        )
-        assertTrue(
-            starterSource.contains("resolvePlaybackStartRequestPosition("),
-            "Mobile starter must preserve explicit Start Over request semantics",
-        )
-        assertTrue(
-            starterSource.contains("adoptActiveSession("),
-            "Mobile starter must adopt the initial session into PlaybackSessionLifecycle",
-        )
-        assertFalse(
-            starterSource.contains("manageProgress = false"),
-            "Mobile starter must use lifecycle-managed progress/recovery adoption",
-        )
+        ).readText()
+        assertTrue(starterSource.contains("startVideoSessionV3("))
+        assertTrue(starterSource.contains("detectPlaybackContext("))
+        assertTrue(starterSource.contains("formFactor = \"mobile\""))
+        assertTrue(starterSource.contains("subtitleTrackIndex = request.subtitleTrackIndex"))
+        assertTrue(starterSource.contains("VideoSessionStartV3.ServerUpgradeRequired"))
+        assertTrue(starterSource.contains("playbackPlanV3 = readyV3.plan"))
+        assertTrue(starterSource.contains("requestHeaders = readyV3.plan.stream.headers"))
+        assertFalse(starterSource.contains("startSessionV2("))
+        assertFalse(starterSource.contains("startTranscodeFallback("))
+        assertFalse(starterSource.contains("playMethod = PlayMethod.DIRECT"))
+        assertTrue(starterSource.contains("resolvePlaybackStartPosition("))
+        assertTrue(starterSource.contains("adoptActiveSession("))
     }
 
     @Test

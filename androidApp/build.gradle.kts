@@ -175,7 +175,7 @@ android {
         release {
             // Launch-prep: full R8 + resource shrinking. Keep rules for this
             // reflection/JNI-heavy stack live in the shared root proguard-rules.pro
-            // (Koin, kotlinx.serialization, Media3 FFmpeg, libmpv JNI, BouncyCastle,
+            // (Koin, kotlinx.serialization, Media3 FFmpeg, BouncyCastle,
             // Room, Coil3, zxing, Ktor). R8 breakage is runtime-only, so a minified
             // install must be smoke-tested on device before shipping.
             isMinifyEnabled = true

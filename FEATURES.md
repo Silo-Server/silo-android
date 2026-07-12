@@ -19,20 +19,19 @@ File pointers are repository-relative.
 |---|:---:|:---:|---|
 | Media3/ExoPlayer engine via shared `MediaSessionService` | ✅ | ✅ | One session per process; UI drives it via `MediaController`. `android-shared/.../player/SiloPlaybackService.kt` |
 | Direct Play | ✅ | ✅ | Progressive HTTP; server-selected from advertised capabilities |
-| Remux (HLS, container/audio re-mux) | ✅ | ✅ | `PlaybackSessionManager.startTranscodeFallback` |
-| Transcode (HLS full re-encode) | ✅ | ✅ | Server-chosen or runtime fallback |
-| Runtime preflight fallback (undecodable track → transcode) | ✅ | ✅ | `PlaybackPreflightListener` |
-| Mid-stream audio-track switch | ✅ | ✅ | May trigger server re-mux |
+| Remux (HLS or progressive container/audio re-mux) | ✅ | ✅ | Server-selected protocol-v3 plan |
+| Transcode (HLS full re-encode) | ✅ | ✅ | Server-selected plan or classified v3 replan |
+| Runtime recovery (undecodable track/stall/error → replan) | ✅ | ✅ | `PlaybackPreflightListener` + `PlaybackSessionManager.replanActiveVideoSession` |
+| Mid-stream audio/subtitle-track switch | ✅ | ✅ | Protocol-v3 replan; may change delivery |
 | Hardware decoder enumeration (H.264/HEVC/AV1/VP9/DV) | ✅ | ✅ | `MediaCodecCapabilitiesProbe` |
-| Dolby Vision profiles 5 / 7 / 8 | ✅ | ✅ | P7: native DV on multi-instance-HEVC hardware, MPV base-layer HDR10 elsewhere (recovery-planned); needs on-device route validation. Server P7→8.1 remux delivers true DV on non-DV-decoder devices. |
+| Dolby Vision profiles 5 / 7 / 8 | 🟡 | 🟡 | Advertised only from codec + display probes; P7 additionally requires concurrent DV and HEVC decoder instances. 4K DV output still requires fixture validation on a DV display. |
 | Panel HDR probe (HDR10, HDR10+, HLG, DV) + per-profile HDR toggle | ✅ | ✅ | `DisplayHdrProbe` |
 | Audio passthrough (E-AC3 JOC/Atmos, TrueHD, DTS-HD) | ✅ | ✅ | TV prioritizes passthrough; `AudioCapabilityManager` |
-| FFmpeg audio extension (lossless fallback) | ✅ | ✅ | Build-flag gated; `FfmpegAudioSupport` |
+| FFmpeg audio extension (lossless fallback) | ✅ | ✅ | Media3 1.10.1-aligned, build-flag gated; `FfmpegAudioSupport` |
 | Staged playback buffer | ✅ | ✅ | `PlaybackBufferPolicy` currently defaults to Smooth Playback |
-| Optional MPV backend path | 🟡 | 🟡 | Auto-selected only for supported device/session cases; falls back to Media3 |
 | Refresh-rate matching | ✅ | ➖ | Phone display mode; TV defers to HDMI sink |
 | HDMI EDID-driven display mode | ➖ | ✅ | `HdrDisplayController` |
-| Subtitle selection + styling (font/bg/position) | ✅ | ✅ | `SubtitleManager` (Media3) + MPV `sub-*` translation; authored ASS renders as-authored |
+| Subtitle selection + styling (font/bg/position) | ✅ | ✅ | Media3 `SubtitleManager`; server plans render, convert, or burn-in fidelity |
 | Subtitle sync offset (±10s) / audio sync (±5s) | ✅ | ✅ | Per-profile |
 | Subtitle provider search + download | ✅ | ✅ | |
 | AI subtitle transcription / translation (quota-tracked) | ✅ | ✅ | TV: `TvAiTranslateDialog` |

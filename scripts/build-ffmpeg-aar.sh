@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# build-ffmpeg-aar.sh — Produce media3-decoder-ffmpeg-1.10.0.aar from source.
+# build-ffmpeg-aar.sh — Produce media3-decoder-ffmpeg-1.10.1.aar from source.
 #
-# Output: android-shared/libs/media3-decoder-ffmpeg-1.10.0.aar
+# Output: android-shared/libs/media3-decoder-ffmpeg-1.10.1.aar
 #
 # Why this script exists:
 #   Google never publishes the Media3 decoder_ffmpeg extension as a binary
@@ -13,8 +13,8 @@
 #   android-shared/libs/ and consumed as a local file dependency.
 #
 # Build design:
-#   * Pinned to Media3 tag `1.10.0` and FFmpeg tag `n6.0`. The
-#     libraries/decoder_ffmpeg/README.md in Media3 1.10.0 recommends
+#   * Pinned to Media3 tag `1.10.1` and FFmpeg tag `n6.0`. The
+#     libraries/decoder_ffmpeg/README.md in Media3 1.10.1 recommends
 #     FFmpeg 6.0 specifically — n7.x has ABI changes that break the JNI
 #     glue.
 #   * LGPL-only. No --enable-gpl. Every codec we want is in the LGPL
@@ -41,7 +41,7 @@
 #   WORKDIR          — scratch dir; defaults to a per-run mktemp dir.
 #                      Pass a persistent path to speed up re-runs (keeps
 #                      Media3 + FFmpeg clones warm).
-#   MEDIA3_TAG       — override the pinned `1.10.0`
+#   MEDIA3_TAG       — override the pinned `1.10.1`
 #   FFMPEG_TAG       — override the pinned `n6.0`
 #
 # Usage:
@@ -57,7 +57,7 @@ set -euo pipefail
 # Config
 # ---------------------------------------------------------------------------
 
-MEDIA3_TAG=${MEDIA3_TAG:-1.10.0}
+MEDIA3_TAG=${MEDIA3_TAG:-1.10.1}
 FFMPEG_TAG=${FFMPEG_TAG:-n6.0}
 ANDROID_API_LEVEL=21            # FFmpeg NDK floor; Silo's app minSdk is 24
 ENABLED_DECODERS=(ac3 eac3 mlp truehd dca)
@@ -159,7 +159,7 @@ fi
 # ---------------------------------------------------------------------------
 # Patch upstream build_ffmpeg.sh to skip excluded ABIs
 #
-# Upstream 1.10.0 hardcodes four per-ABI blocks (armeabi-v7a / arm64-v8a /
+# Upstream 1.10.1 hardcodes four per-ABI blocks (armeabi-v7a / arm64-v8a /
 # x86 / x86_64). It takes ENABLED_DECODERS as positional args, so the
 # decoder list is handled at invocation time — we only need to patch to
 # skip ABIs. Each block starts with `./configure \` and ends with
@@ -208,15 +208,28 @@ PY
     # only invokes ninja for the ABIs we cross-compiled above.
     KEEP_ABIS=(armeabi-v7a arm64-v8a x86_64)
     log "Patching decoder_ffmpeg/build.gradle abiFilters to: ${KEEP_ABIS[*]}"
-    python3 - "$EXT_MODULE/build.gradle" "${KEEP_ABIS[@]}" <<'PY'
+    python3 - "$EXT_MODULE/build.gradle" "$ndk_version" "${KEEP_ABIS[@]}" <<'PY'
 import pathlib, re, sys
 
 script_path = pathlib.Path(sys.argv[1])
-keep_abis   = sys.argv[2:]
+ndk_version = sys.argv[2]
+keep_abis   = sys.argv[3:]
 text        = script_path.read_text()
 
+if "ndkVersion" not in text:
+    text, n = re.subn(
+        r"(android\s*\{\n\s*namespace\s+'androidx\.media3\.decoder\.ffmpeg'\n)",
+        rf"\1    ndkVersion '{ndk_version}'\n",
+        text,
+        count=1,
+    )
+    if n != 1:
+        sys.stderr.write("Could not pin decoder_ffmpeg ndkVersion.\n")
+        sys.exit(2)
+
 if "abiFilters" in text:
-    print("  abiFilters already present — leaving as-is.")
+    script_path.write_text(text)
+    print(f"  Pinned NDK {ndk_version}; abiFilters already present.")
     sys.exit(0)
 
 snippet = (
@@ -239,7 +252,7 @@ if n != 1:
     sys.stderr.write("Could not find android { namespace ... } to inject abiFilters into.\n")
     sys.exit(2)
 script_path.write_text(new_text)
-print(f"  Injected abiFilters into {script_path}")
+print(f"  Pinned NDK {ndk_version} and injected abiFilters into {script_path}")
 PY
 fi
 
@@ -276,6 +289,10 @@ log "Assembling :lib-decoder-ffmpeg:assembleRelease (Kotlin/JNI compile + AAR pa
 
 # Point Gradle at the Android SDK's CMake so externalNativeBuild finds it.
 export ANDROID_HOME=${ANDROID_HOME:-}
+if [[ -z "$ANDROID_HOME" ]]; then
+    # Derive the SDK root from the required side-by-side NDK path first.
+    export ANDROID_HOME=$(cd "$ANDROID_NDK_HOME/../.." && pwd)
+fi
 if [[ -z "$ANDROID_HOME" ]]; then
     # Last-ditch default for macOS Homebrew; scripts/README-ffmpeg-aar.md
     # covers the Linux default.

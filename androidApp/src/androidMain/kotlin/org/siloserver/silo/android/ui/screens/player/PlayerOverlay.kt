@@ -455,9 +455,6 @@ fun PlayerOverlay(
         selectedSubtitleIndex = state.selectedSubtitleIndex,
         onSelectAudio = onSelectAudio,
         onSelectSubtitle = onSelectSubtitle,
-        supportsSecondarySubtitles = state.supportsSecondarySubtitles,
-        selectedSecondarySubtitleIndex = state.selectedSecondarySubtitleIndex,
-        onSelectSecondarySubtitle = viewModel::onSelectSecondarySubtitle,
         onDismiss = { tracksSheetVisible = false },
         showSearchAction = subtitleToolsAvailable,
         showTranslateAction = subtitleToolsAvailable &&
@@ -550,6 +547,7 @@ fun PlayerOverlay(
             statsSheetVisible = true
         },
         audioDelayMs = viewModel.audioDelayMs.collectAsState().value,
+        audioDelayEnabled = state.playbackPlan?.claims?.audio?.passthrough != true,
         onSetAudioDelay = viewModel::onSetAudioDelay,
         subtitleDelayMs = viewModel.subtitleDelayMs.collectAsState().value,
         onSetSubtitleDelay = viewModel::onSetSubtitleDelay,

@@ -83,14 +83,14 @@ class TvPlayerViewModelSharedCoordinatorTest {
             starterSource.contains("class TvVideoPlaybackStarter"),
             "TV starter must expose TvVideoPlaybackStarter",
         )
-        assertTrue(
-            starterSource.contains("startSessionV2("),
-            "TV starter must start playback sessions",
-        )
-        assertTrue(
-            starterSource.contains("startTranscodeFallback("),
-            "TV starter must preserve remux/transcode fallback",
-        )
+        assertTrue(starterSource.contains("startVideoSessionV3("))
+        assertTrue(starterSource.contains("detectPlaybackContext("))
+        assertTrue(starterSource.contains("formFactor = \"tv\""))
+        assertTrue(starterSource.contains("VideoSessionStartV3.ServerUpgradeRequired"))
+        assertTrue(starterSource.contains("playbackPlanV3 = readyV3.plan"))
+        assertTrue(starterSource.contains("requestHeaders = readyV3.plan.stream.headers"))
+        assertFalse(starterSource.contains("startSessionV2("))
+        assertFalse(starterSource.contains("startTranscodeFallback("))
         assertTrue(
             starterSource.contains("resolvePlaybackStartPosition("),
             "TV starter must preserve resolved resume/start position semantics",
@@ -123,17 +123,6 @@ class TvPlayerViewModelSharedCoordinatorTest {
             starterSource.contains("fileResolution = version.resolution"),
             "TV starter must preserve the selected version resolution for later recovery fallbacks",
         )
-        assertTrue(
-            starterSource.contains("requestedOriginalPlaybackMethod(") &&
-                starterSource.contains("audioTrackIndex = request.audioTrackIndex") &&
-                starterSource.contains("playMethod = requestedPlayMethod"),
-            "TV starter must request original direct playback only after checking the selected audio track",
-        )
-        assertTrue(
-            starterSource.contains("preserveDirectSelection") &&
-                starterSource.contains("preserveDirectAudioSelection = preserveDirectSelection"),
-            "TV starter must preserve client-side audio selection when direct-original playback is requested",
-        )
         assertFalse(
             starterSource.contains("manageProgress = false"),
             "TV starter must let PlaybackSessionLifecycle own progress reporting and resume persistence",
@@ -145,15 +134,12 @@ class TvPlayerViewModelSharedCoordinatorTest {
     }
 
     @Test
-    fun tvUnsupportedFallbackAdoptsReturnedSessionIntoLifecycle() {
+    fun tvUnsupportedPlaybackUsesV3ReplanAndAdoptsReplacement() {
         val unsupportedBody = viewModelSource
             .substringAfter("fun onUnsupportedPlayback(")
             .substringBefore("fun onPositionChanged(positionMs: Long, durationMs: Long)")
 
-        assertTrue(
-            unsupportedBody.contains("startTranscodeFallbackRecoveringMissingSession("),
-            "unsupported direct play fallback must renew stale playback sessions before surfacing an error",
-        )
+        assertTrue(unsupportedBody.contains("replanActiveVideoSession("))
         assertTrue(
             unsupportedBody.contains("sessionLifecycle.adoptActiveSession("),
             "fallback success must re-home lifecycle progress/stop ownership to the returned session",
@@ -170,14 +156,8 @@ class TvPlayerViewModelSharedCoordinatorTest {
             viewModelSource.contains("fun onVideoQualitySelectionApplied(resolution: String?)"),
             "runtime quality switches must update the selected source resolution",
         )
-        assertTrue(
-            unsupportedBody.contains("resolution = state.selectedFileResolution.orEmpty()"),
-            "runtime fallback must pass the selected source resolution instead of an empty target hint",
-        )
-        assertFalse(
-            unsupportedBody.contains("resolution = \"\""),
-            "runtime fallback must not ask the server for an unspecified full transcode",
-        )
+        assertTrue(unsupportedBody.contains("decision.plan.stream.headers"))
+        assertFalse(unsupportedBody.contains("startTranscodeFallback"))
         assertTrue(
             viewModelSource.contains("private val capabilityDetector: PlaybackCapabilityDetector"),
             "TV fallback lifecycle adoption needs real device capabilities for recovery restarts",

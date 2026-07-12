@@ -23,9 +23,8 @@ class AndroidManifestPolicyTest {
     }
 
     @Test
-    fun mobileDocumentsMpvOverrideForAndroid7Media3Fallback() {
-        assertTrue(manifest.contains("""tools:overrideLibrary="dev.jdtech.mpv""""))
-        assertTrue(manifest.contains("libmpv declares minSdk 26"))
-        assertTrue(manifest.contains("uses Media3 on Android 7/API 24-25"))
+    fun mobileHasNoRemovedNativePlayerManifestOverride() {
+        assertFalse(manifest.contains("dev.jdtech"))
+        assertFalse(manifest.contains("overrideLibrary"))
     }
 }

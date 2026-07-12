@@ -106,6 +106,101 @@ class PlaybackStartupStallDetectorTest {
     }
 
     @Test
+    fun queuedInputWithZeroOutputIsClassifiedAsDecoderHang() {
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 1_000)
+        detector.onMounted("decoder", PlayMethod.DIRECT, 0, 0)
+        val stalled = detector.sample(
+            sessionKey = "decoder",
+            nowMs = 1_001,
+            playWhenReady = true,
+            isPlaying = false,
+            isBuffering = true,
+            currentPositionMs = 0,
+            bufferedPositionMs = 5_000,
+            decoderInputBufferCount = 4,
+            decoderRenderedOutputBufferCount = 0,
+            decoderSkippedOutputBufferCount = 0,
+            decoderDroppedBufferCount = 0,
+        )
+        assertEquals("decoder_no_output", stalled?.classification)
+    }
+
+    @Test
+    fun noDecoderInputIsClassifiedAsTransportStall() {
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 1_000)
+        detector.onMounted("transport", PlayMethod.DIRECT, 0, 0)
+        val stalled = detector.sample(
+            sessionKey = "transport",
+            nowMs = 1_001,
+            playWhenReady = true,
+            isPlaying = false,
+            isBuffering = true,
+            currentPositionMs = 0,
+            bufferedPositionMs = 0,
+        )
+        assertEquals("transport_stall", stalled?.classification)
+    }
+
+    @Test
+    fun audioProgressDoesNotDisarmVideoDecoderStartupDeadline() {
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 1_000)
+        detector.onMounted("black-video", PlayMethod.DIRECT, 0, 0)
+
+        assertNull(
+            detector.sample(
+                sessionKey = "black-video",
+                nowMs = 100,
+                playWhenReady = true,
+                isPlaying = true,
+                isBuffering = false,
+                currentPositionMs = 100,
+                bufferedPositionMs = 5_000,
+                decoderInputBufferCount = 1,
+            ),
+        )
+        val stalled = detector.sample(
+            sessionKey = "black-video",
+            nowMs = 1_101,
+            playWhenReady = true,
+            isPlaying = true,
+            isBuffering = false,
+            currentPositionMs = 1_101,
+            bufferedPositionMs = 5_000,
+            decoderInputBufferCount = 8,
+        )
+        assertEquals("decoder_no_output", stalled?.classification)
+    }
+
+    @Test
+    fun firstFrameDisarmsIndependentDecoderDeadline() {
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 1_000)
+        detector.onMounted("rendered", PlayMethod.DIRECT, 0, 0)
+        detector.sample(
+            sessionKey = "rendered",
+            nowMs = 100,
+            playWhenReady = true,
+            isPlaying = true,
+            isBuffering = false,
+            currentPositionMs = 100,
+            bufferedPositionMs = 5_000,
+            decoderInputBufferCount = 1,
+        )
+        detector.onFirstFrameRendered()
+        assertNull(
+            detector.sample(
+                sessionKey = "rendered",
+                nowMs = 2_000,
+                playWhenReady = true,
+                isPlaying = true,
+                isBuffering = false,
+                currentPositionMs = 2_000,
+                bufferedPositionMs = 5_000,
+                decoderInputBufferCount = 10,
+            ),
+        )
+    }
+
+    @Test
     fun pausedStartupDoesNotTriggerFallback() {
         // playWhenReady=false (user paused) never triggers, even past the grace.
         val detector = PlaybackStartupStallDetector(startupGraceMs = 10_000)

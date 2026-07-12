@@ -64,9 +64,11 @@ data class PlayerSubtitleInfo(
  * version selection.
  *
  * Dolby Vision profile numbers map to MediaCodec constants:
- *   - 5 = `DolbyVisionProfileDvheStn` / `DvheSt`
- *   - 7 = `DolbyVisionProfileDvheDtb` / `DvheDtr` (BL+EL — needs codec multi-instance)
- *   - 8 = `DolbyVisionProfileDvheSt4k` / `DvavSe`
+ *   - 4 = `DolbyVisionProfileDvheDtr`
+ *   - 5 = `DolbyVisionProfileDvheStn`
+ *   - 6 = `DolbyVisionProfileDvheDth`
+ *   - 7 = `DolbyVisionProfileDvheDtb` (BL+EL; requires DV and HEVC concurrency)
+ *   - 8 = `DolbyVisionProfileDvheSt`
  */
 @Serializable
 data class HdrCapabilities(
@@ -93,10 +95,8 @@ data class AudioPassthroughCapabilities(
 @Serializable
 data class ClientCodecCapabilities(
     @SerialName("codecs_video") val codecsVideo: List<String> = emptyList(),
-    // Hardware-decodable subset of codecsVideo. codecsVideo may additionally
-    // carry MPV software-tail codecs (Apple codec-tail parity); the client's
-    // backend selector uses this list to know when a DIRECT file needs MPV
-    // software decode. The server ignores this field.
+    // Hardware-decodable subset. In the Media3-only protocol this currently
+    // equals codecsVideo; it remains on the wire for older server readers.
     @SerialName("codecs_video_hardware") val codecsVideoHardware: List<String> = emptyList(),
     @SerialName("codecs_audio") val codecsAudio: List<String> = emptyList(),
     val containers: List<String> = emptyList(),
@@ -176,7 +176,7 @@ internal object TolerantPlaybackPlanSerializer : KSerializer<PlaybackExecutionPl
         return try {
             jsonDecoder.json.decodeFromJsonElement(delegate, element)
         } catch (e: SerializationException) {
-            logger.log("Dropping malformed playback_plan; falling back to V1 routing: ${e.message}")
+            logger.log("Dropping malformed legacy playback_plan: ${e.message}")
             null
         }
     }
@@ -282,32 +282,9 @@ data class PlaybackDegradationWarning(
 )
 
 @Serializable
-data class PlaybackPlanResponse(
-    @SerialName("playback_plan")
-    @Serializable(with = TolerantPlaybackPlanSerializer::class)
-    val playbackPlan: PlaybackExecutionPlan? = null,
-)
-
-@Serializable
-data class PlaybackRouteEventRequest(
-    @SerialName("plan_id") val planId: String? = null,
-    @SerialName("from_engine") val fromEngine: PlaybackEngineKind? = null,
-    @SerialName("to_engine") val toEngine: PlaybackEngineKind? = null,
-    @SerialName("delivery") val delivery: PlaybackDelivery? = null,
-    @SerialName("route_family") val routeFamily: PlaybackRouteFamily? = null,
-    @SerialName("fallback_reason") val fallbackReason: String? = null,
-    @SerialName("error_class") val errorClass: String? = null,
-    @SerialName("decoder_name") val decoderName: String? = null,
-    @SerialName("dropped_frames") val droppedFrames: Int? = null,
-    @SerialName("audio_underruns") val audioUnderruns: Int? = null,
-    @SerialName("subtitle_renderer") val subtitleRenderer: String? = null,
-    val claims: PlaybackValidationClaims? = null,
-    val blockers: List<String> = emptyList(),
-)
-
-@Serializable
 data class ClientPlaybackContext(
-    @SerialName("protocol_version") val protocolVersion: Int = 2,
+    @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
+    val features: List<String> = listOf(PLAYBACK_PLAN_V3_FEATURE, MEDIA3_ONLY_FEATURE),
     val platform: String = "android",
     @SerialName("form_factor") val formFactor: String,
     @SerialName("app_version") val appVersion: String,
@@ -329,6 +306,7 @@ data class PlaybackOutputContext(
     @SerialName("hdr_details") val hdrDetails: HdrCapabilities? = null,
     @SerialName("audio_passthrough") val audioPassthrough: AudioPassthroughCapabilities? = null,
     @SerialName("current_sink") val currentSink: String? = null,
+    @SerialName("output_route_generation") val outputRouteGeneration: Long = 0,
 )
 
 @Serializable
@@ -419,13 +397,4 @@ data class TranscodeStartResponse(
     @SerialName("stream_origin_seconds") val streamOriginSeconds: Double = 0.0,
     @SerialName("timeline_offset_seconds") val timelineOffsetSeconds: Double = 0.0,
     @SerialName("can_seek_anywhere") val canSeekAnywhere: Boolean = false
-)
-
-@Serializable
-data class ChangeAudioResponse(
-    @SerialName("audio_track_index") val audioTrackIndex: Int,
-    @SerialName("play_method") val playMethod: PlayMethod,
-    @SerialName("stream_url") val streamUrl: String,
-    @SerialName("switch_mode") val switchMode: String? = null,
-    @SerialName("playback_info") val playbackInfo: PlaybackInfo? = null
 )

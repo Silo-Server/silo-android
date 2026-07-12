@@ -63,9 +63,6 @@ fun TracksSheet(
     onSelectAudio: (Int) -> Unit,
     onSelectSubtitle: (Int) -> Unit,
     onDismiss: () -> Unit,
-    supportsSecondarySubtitles: Boolean = false,
-    selectedSecondarySubtitleIndex: Int? = null,
-    onSelectSecondarySubtitle: (Int?) -> Unit = {},
     showSearchAction: Boolean = false,
     showTranslateAction: Boolean = false,
     onSearchSubtitles: () -> Unit = {},
@@ -153,34 +150,6 @@ fun TracksSheet(
                 )
             }
 
-            // Secondary subtitles (iOS parity): only offered once a primary
-            // is selected, on backends that can render two tracks at once.
-            // The row matching the primary is disabled so the same track
-            // can't be picked twice.
-            if (supportsSecondarySubtitles && selectedSubtitleIndex >= 0 && subtitles.size > 1) {
-                SectionHeader("Secondary Subtitles")
-                TrackRow(
-                    label = "Off",
-                    isSelected = selectedSecondarySubtitleIndex == null,
-                    onClick = {
-                        onSelectSecondarySubtitle(null)
-                        scope.launch { sheetState.hide() }
-                        onDismiss()
-                    },
-                )
-                subtitles.forEachIndexed { index, sub ->
-                    TrackRow(
-                        label = subtitleTrackLabel(sub, index),
-                        isSelected = index == selectedSecondarySubtitleIndex,
-                        enabled = index != selectedSubtitleIndex,
-                        onClick = {
-                            onSelectSecondarySubtitle(index)
-                            scope.launch { sheetState.hide() }
-                            onDismiss()
-                        },
-                    )
-                }
-            }
 
             // Non-selecting action rows (web SubtitleMenu parity). Each
             // dismisses this sheet first — Material 3 sheets can't nest —

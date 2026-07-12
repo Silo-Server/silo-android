@@ -44,11 +44,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
-import androidx.media3.session.SessionCommand
-import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
-import android.os.Bundle
-import org.siloserver.silo.common.player.backend.PlaybackEngineCommand
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.navigation.NavHostController
@@ -66,11 +62,8 @@ import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
-import org.siloserver.silo.common.player.backend.VideoPlaybackFormFactor
-import org.siloserver.silo.common.player.backend.isLikelyAdaptiveHlsStreamUrl
 import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
-import org.siloserver.silo.common.player.video.isMpvPreferredOriginalPlaybackContainer
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackSourceMetadata
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
@@ -81,8 +74,6 @@ import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 import kotlin.math.roundToInt
 import org.koin.compose.koinInject
 import androidx.compose.foundation.clickable
@@ -243,11 +234,9 @@ fun PlayerScreen(
     // resolves when the service binds. We hold the controller in a compose
     // state so downstream effects can re-run once it's ready.
     var mediaController by remember { mutableStateOf<MediaController?>(null) }
-    // The real session Player (ExoPlayer/MpvPlayer), published by the playback
     // service. The video PlayerView binds its SurfaceView directly to this (NOT the
     // MediaController) so the engine receives proper surface-lifecycle callbacks
     // (surfaceCreated/Changed/Destroyed) and recovers across seek/recreate/rotation
-    // — fixing MPV black-on-seek. Transport stays on the MediaController (same
     // underlying player). Re-binds automatically when the engine swaps.
     val sessionPlayer by activePlayerHolder.player.collectAsState()
     val videoBackend = remember(
@@ -267,21 +256,7 @@ fun PlayerScreen(
         (sessionPlayer ?: mediaController)?.let { player ->
             backendFactory.create(
                 player = player,
-                request = VideoPlaybackBackendRequest(
-                    contentId = contentId,
-                    fileId = initialFileId,
-                    playMethod = uiState.playMethod,
-                    delivery = delivery,
-                    plannedEngine = plan?.engine,
-                    routeFamily = plan?.routeFamily,
-                    formFactor = VideoPlaybackFormFactor.Mobile,
-                    hasHardContainer = uiState.playMethod == PlayMethod.DIRECT &&
-                        isHardPlaybackContainer(uiState.container),
-                    hasStyledSubtitles = uiState.subtitleTracks.any { it.isStyledSubtitle() },
-                    hasSoftwareOnlyVideoCodec = uiState.softwareOnlyVideoCodec,
-                    hasDolbyVisionVideo = hasDolbyVisionSource(plan?.source),
-                    isAdaptiveHlsStream = isLikelyAdaptiveHlsStreamUrl(uiState.streamUrl),
-                ),
+                request = VideoPlaybackBackendRequest(),
             )
         }
     }
@@ -490,43 +465,15 @@ fun PlayerScreen(
             startPositionSeconds = uiState.startPosition,
             durationSeconds = uiState.duration,
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
+            requestHeaders = uiState.requestHeaders,
         )
         if (localUri == null && uiState.sessionId != null) {
             startupStallDetector.onMounted(
-                sessionKey = "${uiState.sessionId}:$effectiveStreamUrl",
+                sessionKey = "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:${plan?.decisionTrace?.size ?: 0}",
                 playMethod = playMethod,
                 startPositionMs = mediaSpec.startPositionMs,
                 nowMs = SystemClock.elapsedRealtime(),
             )
-        }
-        // Tell the playback service which engine to own for this media (Track A
-        // Task 0). ASS/SSA subtitles route to MPV (libass fidelity); the service
-        // resolves device-floor + route intent and rebinds + transfers state, so
-        // the order relative to mount is safe.
-        mediaController?.let { controller ->
-            val engineRequest = VideoPlaybackBackendRequest(
-                contentId = contentId,
-                fileId = activeFileId ?: initialFileId,
-                playMethod = mediaSpec.playMethod,
-                delivery = delivery,
-                plannedEngine = plan?.engine,
-                routeFamily = plan?.routeFamily,
-                formFactor = VideoPlaybackFormFactor.Mobile,
-                hasHardContainer = mediaSpec.playMethod == PlayMethod.DIRECT &&
-                    isHardPlaybackContainer(uiState.container),
-                hasStyledSubtitles = uiState.subtitleTracks.any { it.isStyledSubtitle() },
-                hasSoftwareOnlyVideoCodec = uiState.softwareOnlyVideoCodec,
-                hasDolbyVisionVideo = hasDolbyVisionSource(plan?.source),
-                isAdaptiveHlsStream = isLikelyAdaptiveHlsStreamUrl(effectiveStreamUrl),
-            )
-            val switchResult = controller.awaitEngineSwitch(engineRequest)
-            if (!switchResult.success) {
-                viewModel.onEngineSwitchFailed("Playback engine could not be prepared for this route.")
-                return@LaunchedEffect
-            }
-            if (switchResult.swapped) {
-                return@LaunchedEffect
-            }
         }
         backend.mount(mediaSpec)
     }
@@ -577,32 +524,8 @@ fun PlayerScreen(
             } else {
                 emptyList()
             },
+            requestHeaders = if (localUri == null) uiState.requestHeaders else emptyMap(),
         )
-        mediaController?.let { controller ->
-            val engineRequest = VideoPlaybackBackendRequest(
-                contentId = contentId,
-                fileId = activeFileId ?: initialFileId,
-                playMethod = mediaSpec.playMethod,
-                delivery = delivery,
-                plannedEngine = plan?.engine,
-                routeFamily = plan?.routeFamily,
-                formFactor = VideoPlaybackFormFactor.Mobile,
-                hasHardContainer = mediaSpec.playMethod == PlayMethod.DIRECT &&
-                    isHardPlaybackContainer(uiState.container),
-                hasStyledSubtitles = uiState.subtitleTracks.any { it.isStyledSubtitle() },
-                hasSoftwareOnlyVideoCodec = uiState.softwareOnlyVideoCodec,
-                hasDolbyVisionVideo = hasDolbyVisionSource(plan?.source),
-                isAdaptiveHlsStream = isLikelyAdaptiveHlsStreamUrl(effectiveStreamUrl),
-            )
-            val switchResult = controller.awaitEngineSwitch(engineRequest)
-            if (!switchResult.success) {
-                viewModel.onEngineSwitchFailed("Playback engine could not be prepared for this route.")
-                return@LaunchedEffect
-            }
-            if (switchResult.swapped) {
-                return@LaunchedEffect
-            }
-        }
         backend.refresh(mediaSpec)
     }
 
@@ -645,6 +568,7 @@ fun PlayerScreen(
                 }
 
                 override fun onRenderedFirstFrame() {
+                    startupStallDetector.onFirstFrameRendered()
                     viewModel.onFirstVideoFrameRendered()
                 }
 
@@ -716,13 +640,22 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(mediaController, uiState.sessionId, uiState.streamUrl, uiState.playMethod) {
+    LaunchedEffect(
+        mediaController,
+        uiState.sessionId,
+        uiState.streamUrl,
+        uiState.playMethod,
+        uiState.playbackPlan?.planId,
+        uiState.playbackPlan?.decisionTrace?.size,
+    ) {
         val controller = mediaController ?: return@LaunchedEffect
         val sessionId = uiState.sessionId ?: return@LaunchedEffect
         val streamUrl = uiState.streamUrl ?: return@LaunchedEffect
-        val sessionKey = "$sessionId:$streamUrl"
+        val sessionKey = "$sessionId:$streamUrl:${uiState.playbackPlan?.planId.orEmpty()}:" +
+            "${uiState.playbackPlan?.decisionTrace?.size ?: 0}"
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
+                val decoderCounters = (sessionPlayer as? androidx.media3.exoplayer.ExoPlayer)?.videoDecoderCounters
                 val reason = startupStallDetector.sample(
                     sessionKey = sessionKey,
                     nowMs = SystemClock.elapsedRealtime(),
@@ -731,6 +664,10 @@ fun PlayerScreen(
                     isBuffering = controller.playbackState == Player.STATE_BUFFERING,
                     currentPositionMs = controller.currentPosition.coerceAtLeast(0L),
                     bufferedPositionMs = controller.bufferedPosition.coerceAtLeast(0L),
+                    decoderInputBufferCount = decoderCounters?.queuedInputBufferCount ?: 0,
+                    decoderRenderedOutputBufferCount = decoderCounters?.renderedOutputBufferCount ?: 0,
+                    decoderSkippedOutputBufferCount = decoderCounters?.skippedOutputBufferCount ?: 0,
+                    decoderDroppedBufferCount = decoderCounters?.droppedBufferCount ?: 0,
                 )
                 if (reason != null) {
                     Log.i(TAG, "Startup stall fallback: $reason")
@@ -767,13 +704,6 @@ fun PlayerScreen(
         if (backend.selectSubtitle(subtitleTrackEntry(uiState.subtitleTracks, uiState.selectedSubtitleIndex))) {
             viewModel.onSubtitleSelectionApplied(uiState.selectedSubtitleIndex)
         }
-    }
-
-    // Secondary subtitle (iOS parity, MPV route only). Re-applied whenever the
-    // track list or selection changes; the backend no-ops when unsupported.
-    LaunchedEffect(videoBackend, uiState.subtitleTracks, uiState.selectedSecondarySubtitleIndex) {
-        val backend = videoBackend ?: return@LaunchedEffect
-        backend.selectSecondarySubtitle(uiState.subtitleTracks, uiState.selectedSecondarySubtitleIndex)
     }
 
     // Notify the ViewModel we're leaving the screen.
@@ -857,10 +787,6 @@ fun PlayerScreen(
             // is a child added on first inflation, so the apply must happen at
             // least once after the AndroidView factory runs.
             LaunchedEffect(playerViewRef, subtitleAppearance, sessionPlayer, resizeMode, uiState.selectedSubtitleIndex) {
-                // MPV renders subtitles itself (libass on its own surface) —
-                // push the same appearance into it; authored ASS stays intact.
-                (sessionPlayer as? org.siloserver.silo.common.player.mpv.MpvSubtitleStyleController)
-                    ?.applySubtitleAppearance(subtitleAppearance)
                 val pv = playerViewRef ?: return@LaunchedEffect
                 subtitleManager.applyAppearance(pv, subtitleAppearance)
             }
@@ -881,7 +807,6 @@ fun PlayerScreen(
                     },
                     update = { view ->
                         // Bind the SurfaceView directly to the real session player
-                        // (not the MediaController) so MPV gets surface-lifecycle
                         // callbacks; re-binds automatically when the engine swaps.
                         view.player = sessionPlayer
                         view.resizeMode = resizeMode
@@ -994,47 +919,6 @@ private fun produceRoomClosedState(
     return (controller?.closedReason ?: soloClosedReason).collectAsState()
 }
 
-private data class EngineSwitchResult(
-    val success: Boolean,
-    val swapped: Boolean,
-)
-
-private suspend fun MediaController.awaitEngineSwitch(request: VideoPlaybackBackendRequest): EngineSwitchResult =
-    suspendCancellableCoroutine { continuation ->
-        val future = sendCustomCommand(
-            SessionCommand(PlaybackEngineCommand.SET_ENGINE, Bundle.EMPTY),
-            Bundle().apply {
-                putString(PlaybackEngineCommand.ARG_REQUEST_JSON, PlaybackEngineCommand.encode(request))
-            },
-        )
-        future.addListener(
-            {
-                val switchResult = runCatching {
-                    val result = future.get()
-                    EngineSwitchResult(
-                        success = result.resultCode == SessionResult.RESULT_SUCCESS,
-                        swapped = result.extras.getBoolean(PlaybackEngineCommand.RESULT_SWAPPED, false),
-                    )
-                }.getOrDefault(EngineSwitchResult(success = false, swapped = false))
-                if (continuation.isActive) {
-                    continuation.resume(switchResult)
-                }
-            },
-            MoreExecutors.directExecutor(),
-        )
-        continuation.invokeOnCancellation { future.cancel(false) }
-    }
-
-private fun PlayerSubtitleInfo.isStyledSubtitle(): Boolean {
-    val normalizedCodec = codec
-        ?.trim()
-        ?.lowercase()
-        ?.replace('_', '-')
-    val normalizedUrl = url.substringBefore('?').substringBefore('#').lowercase()
-    return normalizedCodec in setOf("ass", "ssa", "text/x-ssa") ||
-        normalizedUrl.endsWith(".ass") ||
-        normalizedUrl.endsWith(".ssa")
-}
 
 private fun PlaybackExecutionPlan?.validatedPassthroughCodecs(): List<String> {
     val plan = this ?: return emptyList()
@@ -1043,23 +927,3 @@ private fun PlaybackExecutionPlan?.validatedPassthroughCodecs(): List<String> {
         ?.let { listOf(it) }
         .orEmpty()
 }
-
-private fun isHardPlaybackContainer(container: String?): Boolean =
-    isMpvPreferredOriginalPlaybackContainer(container)
-
-/**
- * True when the planned source carries Dolby Vision. Feeds
- * [VideoPlaybackBackendRequest.hasDolbyVisionVideo] so Auto routes DV to
- * MPV — Media3 has no phone-side DV handling and can play audio+subtitles
- * over a permanently black video surface. Plain HDR10/HDR10+/HLG stays on
- * Media3, which plays it correctly (device A/B 2026-07-09); MPV's
- * slurp-then-idle streaming makes it the worse default for those. The
- * catalog version list has no per-format field, so plan-less legacy
- * sessions fall back to Media3 and the failure detectors cover the rest.
- */
-private fun hasDolbyVisionSource(source: PlaybackSourceMetadata?): Boolean =
-    DolbyVisionDetection.isDolbyVision(
-        dolbyVisionProfile = source?.dolbyVisionProfile,
-        hdrFormat = source?.hdrFormat,
-        videoCodec = source?.videoCodec,
-    )

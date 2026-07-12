@@ -45,8 +45,6 @@ kotlin {
             // SubtitleManager.applyAppearance reaches into PlayerView.subtitleView
             // and CaptionStyleCompat — both live in media3-ui.
             implementation(libs.media3.ui)
-            implementation(libs.libmpv)
-
             // Media3 FFmpeg audio decoder extension. Shipped as a private
             // AAR built by scripts/build-ffmpeg-aar.sh — Google doesn't
             // publish this one on Maven (LGPL distribution compliance).
@@ -55,7 +53,7 @@ kotlin {
             // internal extension-renderer reflection; the compile-time
             // BuildConfig.FFMPEG_AUDIO_ENABLED flag gates whether we *prefer*
             // it over platform decoders.
-            implementation(files("libs/media3-decoder-ffmpeg-1.10.0.aar"))
+            implementation(files("libs/media3-decoder-ffmpeg-1.10.1.aar"))
 
             // Coroutines
             implementation(libs.kotlinx.coroutines.android)

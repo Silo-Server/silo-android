@@ -154,6 +154,7 @@ fun TvPlayerHud(
     autoPlayNext: Boolean,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     audioDelayMs: Int,
+    audioDelayEnabled: Boolean,
     onAudioDelayChanged: (Int) -> Unit,
     subtitleDelayMs: Int,
     onSubtitleDelayChanged: (Int) -> Unit,
@@ -344,6 +345,7 @@ fun TvPlayerHud(
                         audioTracks = audioTracks,
                         onSelectAudio = onSelectAudio,
                         audioDelayMs = audioDelayMs,
+                        audioDelayEnabled = audioDelayEnabled,
                         onAudioDelayChanged = onAudioDelayChanged,
                         enabled = activePicker == null,
                         onPresentPicker = presentPicker,
@@ -1095,6 +1097,7 @@ private fun HudAudioPane(
     audioTracks: List<PlayerTrackEntry>,
     onSelectAudio: (Int) -> Unit,
     audioDelayMs: Int,
+    audioDelayEnabled: Boolean,
     onAudioDelayChanged: (Int) -> Unit,
     enabled: Boolean,
     onPresentPicker: (HudPickerPresentation) -> Unit,
@@ -1132,9 +1135,9 @@ private fun HudAudioPane(
                 )
 
                 HudFocusedSettingRow(
-                    label = "Delay",
-                    value = delayLabel(audioDelayMs),
-                    enabled = enabled,
+                    label = "Delay (PCM only)",
+                    value = if (audioDelayEnabled) delayLabel(audioDelayMs) else "Unavailable during passthrough",
+                    enabled = enabled && audioDelayEnabled,
                     onActivate = {
                         onPresentPicker(
                             delayPicker(

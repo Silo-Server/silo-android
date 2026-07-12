@@ -18,8 +18,6 @@ class MobilePictureInPictureSourceTest {
     fun mobileActivityDeclaresPictureInPictureWithoutLosingAndroid7Support() {
         assertTrue(manifest.contains("""android:supportsPictureInPicture="true""""))
         assertTrue(manifest.contains("smallestScreenSize"))
-        assertTrue(manifest.contains("minSdk 26"))
-        assertTrue(manifest.contains("uses Media3 on Android 7/API 24-25"))
     }
 
     @Test

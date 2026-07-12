@@ -4,7 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * Guards against the `media3-decoder-ffmpeg-1.10.0.aar` being dropped from
+ * Guards against the `media3-decoder-ffmpeg-1.10.1.aar` being dropped from
  * `android-shared/libs/` or the `implementation(files(...))` line being
  * removed from `android-shared/build.gradle.kts`. Either regression would
  * silently revert this module to the pre-FFmpeg state (platform decoders
@@ -21,7 +21,7 @@ class FfmpegClasspathTest {
         assertTrue(
             result.isSuccess,
             "media3-decoder-ffmpeg AAR is missing from the classpath. " +
-                "Check android-shared/libs/media3-decoder-ffmpeg-1.10.0.aar " +
+                "Check android-shared/libs/media3-decoder-ffmpeg-1.10.1.aar " +
                 "and the implementation(files(\"libs/...\")) dependency in " +
                 "android-shared/build.gradle.kts.",
         )

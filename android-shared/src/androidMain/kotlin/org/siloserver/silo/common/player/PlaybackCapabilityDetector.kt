@@ -8,11 +8,8 @@ import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import org.siloserver.silo.common.player.backend.MpvDeviceFloor
 import org.siloserver.silo.player.DolbyVisionPolicy
-import org.siloserver.silo.common.player.video.directOriginalPlaybackContainers
 import org.siloserver.silo.common.player.video.media3OriginalPlaybackContainers
-import org.siloserver.silo.common.player.video.mpvOriginalPlaybackContainers
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.EngineCapabilityEnvelope
@@ -20,6 +17,7 @@ import org.siloserver.silo.model.playback.EngineSubtitleCapabilities
 import org.siloserver.silo.model.playback.PlaybackDeviceContext
 import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackOutputContext
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Orchestrates the three probes — [MediaCodecCapabilitiesProbe] (video + HDR),
@@ -38,6 +36,7 @@ class PlaybackCapabilityDetector(
     private val context: Context,
     private val audioCapabilityManager: AudioCapabilityManager,
 ) {
+    val outputRouteGeneration: StateFlow<Long> = audioCapabilityManager.outputRouteGeneration
     // Platform software-audio decoders are static for the process; cache the
     // MediaCodecList enumeration so back-to-back detect()/detectPlaybackContext()
     // calls per playback start don't re-run it.
@@ -153,35 +152,16 @@ class PlaybackCapabilityDetector(
         val softwareAudio = detectSoftwareAudioCodecs(ffmpegAvailable)
         val passthrough = audioCapabilityManager.capabilities.value
         val mergedAudio = (softwareAudio + passthrough.passthroughCodecs).distinct()
-        val supportedAbis = Build.SUPPORTED_ABIS?.toList().orEmpty()
-        val mpvSupported = MpvDeviceFloor.isMpvSupported(
-            sdkInt = Build.VERSION.SDK_INT,
-            supportedAbis = supportedAbis,
-        )
-        val directContainers = if (mpvSupported) {
-            directOriginalPlaybackContainers
-        } else {
-            media3OriginalPlaybackContainers
-        }
-
         val hasAnyHdr = intersectedHdr.hdr10 ||
             intersectedHdr.hdr10Plus ||
             intersectedHdr.hlg ||
             intersectedHdr.dolbyVisionProfiles.isNotEmpty()
 
-        // Apple codec-tail parity: when MPV is available, also advertise the
-        // codecs its FFmpeg build software-decodes (AV1/VP9/legacy) so the
-        // server DIRECTs those files; the backend selector routes them to MPV.
-        val advertisedVideo = if (mpvSupported) {
-            (codecProbe.videoCodecs + org.siloserver.silo.common.player.video.mpvSoftwareVideoCodecs).distinct()
-        } else {
-            codecProbe.videoCodecs.toList()
-        }
         return ClientCodecCapabilities(
-            codecsVideo = advertisedVideo,
+            codecsVideo = codecProbe.videoCodecs.toList(),
             codecsVideoHardware = codecProbe.videoCodecs.toList(),
             codecsAudio = mergedAudio,
-            containers = directContainers,
+            containers = media3OriginalPlaybackContainers,
             maxResolution = codecProbe.maxResolution,
             hdr = hasAnyHdr,
             hdrDetails = intersectedHdr,
@@ -197,14 +177,9 @@ class PlaybackCapabilityDetector(
     ): ClientPlaybackContext {
         val caps = detect(ffmpegAvailable, dolbyVision)
         val supportedAbis = Build.SUPPORTED_ABIS?.toList().orEmpty()
-        val mpvSupported = MpvDeviceFloor.isMpvSupported(
-            sdkInt = Build.VERSION.SDK_INT,
-            supportedAbis = supportedAbis,
-        )
         val passthrough = caps.audioPassthrough
         val decodeAudio = detectSoftwareAudioCodecs(ffmpegAvailable)
         val media3Audio = decodeAudio
-        val mpvAudio = decodeAudio
         return ClientPlaybackContext(
             formFactor = formFactor,
             appVersion = appVersion,
@@ -218,6 +193,7 @@ class PlaybackCapabilityDetector(
                 hdrDetails = caps.hdrDetails,
                 audioPassthrough = passthrough,
                 currentSink = if (passthrough?.passthroughCodecs?.isNotEmpty() == true) "passthrough_sink" else "local_output",
+                outputRouteGeneration = audioCapabilityManager.outputRouteGeneration.value,
             ),
             engines = mapOf(
                 PlaybackEngineKind.MEDIA3_DIRECT to EngineCapabilityEnvelope(
@@ -239,28 +215,6 @@ class PlaybackCapabilityDetector(
                     ),
                     features = listOf("track_switching", "audio_delay", "subtitle_delay", "buffer_reporting"),
                     authHeaderRefresh = true,
-                    validatedClaims = emptyList(),
-                ),
-                PlaybackEngineKind.MPV_DIRECT to EngineCapabilityEnvelope(
-                    enabled = mpvSupported,
-                    supportedOnDevice = mpvSupported,
-                    failureReason = if (mpvSupported) null else "mpv_device_floor_not_met",
-                    containers = mpvOriginalPlaybackContainers,
-                    videoCodecs = caps.codecsVideo,
-                    audioDecodeCodecs = mpvAudio,
-                    audioPassthroughCodecs = passthrough?.passthroughCodecs.orEmpty(),
-                    maxChannels = passthrough?.maxChannels,
-                    hdrDetails = caps.hdrDetails,
-                    subtitles = EngineSubtitleCapabilities(
-                        embeddedText = true,
-                        sidecarText = true,
-                        assStyling = true,
-                        embeddedBitmap = false,
-                        sidecarBitmap = false,
-                        fontAttachments = true,
-                    ),
-                    features = listOf("libass", "track_switching", "subtitle_delay", "hard_containers"),
-                    authHeaderRefresh = false,
                     validatedClaims = emptyList(),
                 ),
                 PlaybackEngineKind.MEDIA3_PROGRESSIVE_REMUX to EngineCapabilityEnvelope(
@@ -351,22 +305,7 @@ private fun Tracks.Group.selectedFormat() =
 internal fun isDirectPlayableDolbyVisionProfile(
     profile: Int,
     supportedHdr: org.siloserver.silo.model.playback.HdrCapabilities,
-): Boolean = when (profile) {
-    // Profile 8 carries a renderable base layer. Do not force a server fallback
-    // merely because the display probe lacks native Dolby Vision/HDR; let the
-    // player-error path recover if the actual decoder route fails.
-    8 -> true
-    // Profile 7 (dual-layer BL+EL) and Profile 5 (no compatible base layer)
-    // need a native Dolby Vision decoder on the Media3 route.
-    // MediaCodecCapabilitiesProbe already gates the P7 claim on multi-instance
-    // HEVC (the enhancement layer needs a second concurrent decode), so
-    // membership in the intersected profile list is the whole test — the same
-    // model jellyfin-androidtv ships (DvheDtb + maxSupportedInstances >= 2).
-    // When this returns false, PlaybackRecoveryPlanner now prefers an
-    // alternate direct engine (mpv decodes the P7/P8 HDR10 base layer and
-    // tone-maps P5) before conceding a server transcode.
-    else -> supportedHdr.dolbyVisionProfiles.contains(profile)
-}
+): Boolean = supportedHdr.dolbyVisionProfiles.contains(profile)
 
 internal fun isSoftwareDecodableAudioMime(
     mime: String,

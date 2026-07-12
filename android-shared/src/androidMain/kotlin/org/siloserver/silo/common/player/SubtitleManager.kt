@@ -140,7 +140,6 @@ class SubtitleManager {
 
     /**
      * Resolves the backend track id (Format.id) for the [subtitleIndex]-th
-     * app subtitle row — used by the MPV backend to address a secondary
      * subtitle track (`secondary-sid`) without going through Media3's
      * single-text-override selection parameters.
      */
@@ -236,7 +235,6 @@ class SubtitleManager {
         // (12.5% of the text size) of horizontal breathing room, whereas
         // backgroundColor is a per-line BackgroundColorSpan that hugs the
         // glyphs (QA 2026-07-08: "SRT subtitles with box should have more
-        // padding"). The MPV route pads via MpvSubtitleStyle's border-size
         // floor instead.
         return CaptionStyleCompat(
             foreground,

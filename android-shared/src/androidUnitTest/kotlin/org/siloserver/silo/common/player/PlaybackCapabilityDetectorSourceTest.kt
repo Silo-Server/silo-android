@@ -10,21 +10,14 @@ class PlaybackCapabilityDetectorSourceTest {
     ).readText()
 
     @Test
-    fun detectorAdvertisesDirectContainersConsistentlyAcrossLegacyAndV2Payloads() {
+    fun detectorAdvertisesOnlyMedia3ValidatedContainersAndEngines() {
         assertTrue(
-            source.contains("containers = directContainers"),
-            "legacy capabilities should advertise all direct-capable containers for the current device",
+            source.contains("containers = media3OriginalPlaybackContainers"),
+            "capabilities must use the Media3 extractor policy",
         )
         assertTrue(
-            source.contains("if (mpvSupported)") &&
-                source.contains("directOriginalPlaybackContainers") &&
-                source.contains("media3OriginalPlaybackContainers"),
-            "legacy direct containers must account for the MPV device floor",
-        )
-        assertTrue(
-            source.contains("containers = media3OriginalPlaybackContainers") &&
-                source.contains("containers = mpvOriginalPlaybackContainers"),
-            "v2 engine envelopes should keep Media3 and MPV direct containers separate",
+            !source.contains("MPV_DIRECT") && !source.contains("mpvOriginalPlaybackContainers"),
+            "the outgoing capability map must not advertise removed engines",
         )
     }
 }

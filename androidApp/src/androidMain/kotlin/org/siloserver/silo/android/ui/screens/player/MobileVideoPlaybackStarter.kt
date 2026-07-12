@@ -5,19 +5,15 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.StartParams
+import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
-import org.siloserver.silo.common.player.video.canPlayResolvedStreamDirectly
-import org.siloserver.silo.common.player.video.immediateServerFallbackMode
-import org.siloserver.silo.common.player.video.requestedOriginalPlaybackMethod
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.android.BuildConfig
 import org.siloserver.silo.model.catalog.WatchDetail
-import org.siloserver.silo.model.playback.PlayMethod
-import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
@@ -76,12 +72,6 @@ class MobileVideoPlaybackStarter(
                 appVersion = BuildConfig.VERSION_NAME,
                 dolbyVision = dolbyVision,
             )
-            val requestedPlayMethod = version.requestedOriginalPlaybackMethod(
-                playbackContext = playbackContext,
-                audioTrackIndex = request.audioTrackIndex,
-            )
-            val preserveDirectSelection = request.audioTrackIndex != null ||
-                requestedPlayMethod == PlayMethod.DIRECT
             // Skip-back-on-resume: nudge a genuine resume back a few seconds.
             // Suppressed for Start Over / retry (request flag) and Watch Together
             // (roomId — all participants must land on the synced anchor). The same
@@ -105,18 +95,16 @@ class MobileVideoPlaybackStarter(
                 ),
             )
 
-            val session = when (
-                val r = playbackSessionManager.startSessionV2(
+            val v3Start = when (
+                val r = playbackSessionManager.startVideoSessionV3(
                     fileId = version.fileId,
                     profileId = profileId,
                     capabilities = capabilities,
+                    clientPlaybackContext = playbackContext,
                     audioTrackIndex = request.audioTrackIndex,
                     subtitleTrackIndex = request.subtitleTrackIndex,
                     qualityPreference = preferredQuality,
                     startPosition = startRequestPosition,
-                    clientPlaybackContext = playbackContext,
-                    preserveDirectAudioSelection = preserveDirectSelection,
-                    playMethod = requestedPlayMethod,
                 )
             ) {
                 is ApiResult.Success -> r.data
@@ -127,59 +115,19 @@ class MobileVideoPlaybackStarter(
                     r.exception,
                 )
             }
-
-            val immediateFallbackMode = session.playbackPlan?.immediateServerFallbackMode()
-            val resolved: PlaybackSessionResponse = when {
-                session.canPlayResolvedStreamDirectly() && immediateFallbackMode == null -> session
-                immediateFallbackMode != null -> {
-                    when (val r = playbackSessionManager.startTranscodeFallback(
-                        session = session,
-                        seekSeconds = startRequestPosition ?: 0.0,
-                        resolution = version.resolution.orEmpty(),
-                        mode = immediateFallbackMode,
-                        audioTrackIndex = session.audioTrackIndex,
-                        subtitleTrackIndex = request.subtitleTrackIndex,
-                    )) {
-                        is ApiResult.Success -> r.data
-                        is ApiResult.Error -> return failure(
-                            request.contentId,
-                            "Failed to start playback fallback: ${r.message}",
-                        )
-                        is ApiResult.NetworkError -> return failure(
-                            request.contentId,
-                            "Network error starting fallback: ${r.exception.message}",
-                            r.exception,
-                        )
-                    }
-                }
-                session.playMethod == PlayMethod.REMUX || session.playMethod == PlayMethod.TRANSCODE -> {
-                    val mode = if (session.playMethod == PlayMethod.REMUX) {
-                        PlaybackSessionManager.TranscodeMode.REMUX
-                    } else {
-                        PlaybackSessionManager.TranscodeMode.FULL
-                    }
-                    when (val r = playbackSessionManager.startTranscodeFallback(
-                        session = session,
-                        seekSeconds = startRequestPosition ?: 0.0,
-                        resolution = version.resolution.orEmpty(),
-                        mode = mode,
-                        audioTrackIndex = session.audioTrackIndex,
-                        subtitleTrackIndex = request.subtitleTrackIndex,
-                    )) {
-                        is ApiResult.Success -> r.data
-                        is ApiResult.Error -> return failure(
-                            request.contentId,
-                            "Failed to start transcode: ${r.message}",
-                        )
-                        is ApiResult.NetworkError -> return failure(
-                            request.contentId,
-                            "Network error starting transcode: ${r.exception.message}",
-                            r.exception,
-                        )
-                    }
-                }
-                else -> session
+            val readyV3 = when (v3Start) {
+                is VideoSessionStartV3.Ready -> v3Start
+                is VideoSessionStartV3.Terminal -> return failure(
+                    request.contentId,
+                    "Playback unavailable (${v3Start.reason}): ${v3Start.message}",
+                )
+                VideoSessionStartV3.ServerUpgradeRequired -> return failure(
+                    request.contentId,
+                    "This Silo server must be updated to support the Media3 playback protocol.",
+                )
             }
+            val session = readyV3.session
+            val resolved = session
             val resolvedDelivery = resolved.resolvedPlaybackDelivery()
             val resolvedStreamUrl = resolved.playbackPlan?.stream?.url
                 ?.takeIf { it.isNotBlank() }
@@ -207,10 +155,9 @@ class MobileVideoPlaybackStarter(
                     qualityPreference = preferredQuality,
                     startPosition = startPos,
                     clientPlaybackContext = playbackContext,
-                    preserveDirectAudioSelection = preserveDirectSelection,
-                    playMethod = requestedPlayMethod,
                 ),
                 session = resolved,
+                renewMissingSessionWithLegacyStart = false,
             )
 
             VideoPlaybackStartResult.Ready(
@@ -220,11 +167,10 @@ class MobileVideoPlaybackStarter(
                 streamUrl = resolvedStreamUrl,
                 playMethod = resolved.playMethod,
                 playbackPlan = resolved.playbackPlan,
+                playbackPlanV3 = readyV3.plan,
+                requestHeaders = readyV3.plan.stream.headers,
                 delivery = resolvedDelivery,
                 container = version.container,
-                softwareOnlyVideoCodec = resolved.playMethod == org.siloserver.silo.model.playback.PlayMethod.DIRECT &&
-                    org.siloserver.silo.common.player.video.isMpvSoftwareDecodableVideoCodec(version.codecVideo) &&
-                    version.codecVideo?.trim()?.lowercase() !in capabilities.codecsVideoHardware,
                 title = watchDetail.title,
                 subtitle = buildSubtitle(watchDetail).takeIf { it.isNotBlank() },
                 artworkUrl = watchDetail.posterUrl?.takeIf { it.isNotBlank() }

@@ -12,7 +12,7 @@ class SiloPlaybackServiceSubtitleSyncSourceTest {
     @Test
     fun subtitleSyncChangesReparseCurrentMediaItemAtSamePosition() {
         assertTrue(
-            // Call site now sources the engine from activePlayer (engine-swap support);
+            // Call site sources the sole service-owned player;
             // the reparse still reprepares the current item to rebuild sidecar cues.
             source.contains("reparseCurrentMediaItemAtCurrentPosition(p, offsetMs)"),
             "subtitle sync changes must reprepare the current item so parsed sidecar cue timestamps are rebuilt",
@@ -20,27 +20,6 @@ class SiloPlaybackServiceSubtitleSyncSourceTest {
         assertTrue(source.contains("player.setMediaItems(mediaItems, currentIndex, positionMs)"))
         assertTrue(source.contains("player.prepare()"))
         assertTrue(source.contains("player.playWhenReady = playWhenReady"))
-    }
-
-    @Test
-    fun syncOffsetsAreForwardedToMpvInsteadOfMedia3OnlyProcessors() {
-        assertTrue(source.contains("import org.siloserver.silo.common.player.mpv.MpvPlayer"))
-        assertTrue(source.contains("(p as? MpvPlayer)?.setAudioDelayMs(delayMs)"))
-        assertTrue(source.contains("(p as? MpvPlayer)?.setSubtitleDelayMs(offsetMs)"))
-    }
-
-    @Test
-    fun savedSyncOffsetsAreAppliedWhenBindingMpvAfterEngineSwap() {
-        val bindNewPlayerBody = source.substringAfter("private fun bindNewPlayer(")
-            .substringBefore("} catch (t: Throwable)")
-
-        assertTrue(
-            bindNewPlayerBody.contains("applyCurrentSyncOffsetsToMpv(newPlayer)"),
-            "binding a newly-created MPV player must push already-saved sync offsets even when settings flows do not emit again",
-        )
-        assertTrue(source.contains("val mpvPlayer = player as? MpvPlayer ?: return"))
-        assertTrue(source.contains("mpvPlayer.setAudioDelayMs(delayProcessor.getActiveDelayMs())"))
-        assertTrue(source.contains("mpvPlayer.setSubtitleDelayMs(subtitleOffsetHolder.getOffsetMs())"))
     }
 
     @Test

@@ -5,7 +5,7 @@ import androidx.media3.common.MimeTypes
 /**
  * Shared probe + constants for the Media3 FFmpeg audio decoder extension.
  *
- * The `media3-decoder-ffmpeg-1.10.0.aar` is checked in under
+ * The `media3-decoder-ffmpeg-1.10.1.aar` is checked in under
  * `android-shared/libs/` (see `scripts/build-ffmpeg-aar.sh` for provenance).
  * We never ship build flavors that omit the AAR, but consumers of this
  * helper must *still* gate runtime behavior on [isAvailable] rather than

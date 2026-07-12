@@ -14,5 +14,9 @@ sealed class Playability {
     data class UnsupportedDvProfile(val profile: Int) : Playability()
     data class UnsupportedAudioCodec(val mimeType: String) : Playability()
     data class UnsupportedChannelCount(val codec: String, val channels: Int) : Playability()
-    data class StartupStalled(val bufferedAheadMs: Long, val stalledForMs: Long) : Playability()
+    data class StartupStalled(
+        val bufferedAheadMs: Long,
+        val stalledForMs: Long,
+        val classification: String = "transport_stall",
+    ) : Playability()
 }

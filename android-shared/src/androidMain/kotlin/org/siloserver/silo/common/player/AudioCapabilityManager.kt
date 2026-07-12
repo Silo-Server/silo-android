@@ -5,6 +5,9 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.Spatializer
+import android.hardware.display.DisplayManager
+import android.os.Handler
+import android.os.Looper
 import android.os.Build
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -15,6 +18,7 @@ import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Tracks the current [AudioCapabilities] of the active audio sink (built-in
@@ -44,10 +48,38 @@ class AudioCapabilityManager(
 
     private val _capabilities = MutableStateFlow(AudioPassthroughCapabilities())
     val capabilities: StateFlow<AudioPassthroughCapabilities> = _capabilities.asStateFlow()
+    private val generationCounter = AtomicLong(0)
+    private val _outputRouteGeneration = MutableStateFlow(0L)
+    val outputRouteGeneration: StateFlow<Long> = _outputRouteGeneration.asStateFlow()
+
+    private fun publishCapabilities(next: AudioPassthroughCapabilities) {
+        if (_capabilities.value == next) return
+        _capabilities.value = next
+        _outputRouteGeneration.value = generationCounter.incrementAndGet()
+    }
+
+    private fun bumpOutputRouteGeneration() {
+        _outputRouteGeneration.value = generationCounter.incrementAndGet()
+    }
+
+    private var lastDisplayHdr = DisplayHdrProbe.probe(appContext)
+
+    private fun publishDisplayCapabilitiesIfChanged() {
+        val next = DisplayHdrProbe.probe(appContext)
+        if (next == lastDisplayHdr) return
+        lastDisplayHdr = next
+        bumpOutputRouteGeneration()
+    }
+
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = publishDisplayCapabilitiesIfChanged()
+        override fun onDisplayRemoved(displayId: Int) = publishDisplayCapabilitiesIfChanged()
+        override fun onDisplayChanged(displayId: Int) = publishDisplayCapabilitiesIfChanged()
+    }
 
     private val receiver = AudioCapabilitiesReceiver(
         appContext,
-        AudioCapabilitiesReceiver.Listener { caps -> _capabilities.value = mapCapabilities(caps) },
+        AudioCapabilitiesReceiver.Listener { caps -> publishCapabilities(mapCapabilities(caps)) },
         mediaAttrs,
         /* routedDevice = */ null,
     )
@@ -66,7 +98,7 @@ class AudioCapabilityManager(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S_V2 && spatializer != null) {
             object : Spatializer.OnSpatializerStateChangedListener {
                 override fun onSpatializerEnabledChanged(sp: Spatializer, enabled: Boolean) {
-                    _capabilities.value = _capabilities.value.copy(spatializerEnabled = enabled)
+                    publishCapabilities(_capabilities.value.copy(spatializerEnabled = enabled))
                 }
                 override fun onSpatializerAvailableChanged(sp: Spatializer, available: Boolean) {
                     // Available but disabled == user has turned spatialization off —
@@ -79,6 +111,8 @@ class AudioCapabilityManager(
         // register() fires the listener synchronously with the current state,
         // so the StateFlow is populated immediately.
         receiver.register()
+        (appContext.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
+            ?.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         val sp = spatializer
         val spl = spatializerListener
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S_V2 && sp != null && spl != null) {
@@ -112,7 +146,7 @@ class AudioCapabilityManager(
 
         // Per-encoding channel cap probe using `AudioTrack.isDirectPlaybackSupported`.
         // Iterate the passthrough encodings we announce × common channel counts
-        // (2 / 6 / 8 / 12 / 16) so we report the highest channel layout the sink
+        // (2 / 6 / 8) so we report the highest channel layout the sink
         // actually accepts for that encoding. Falls back to the aggregate
         // `maxChannelCount` on API < 29 where `isDirectPlaybackSupported` isn't
         // available.
@@ -130,7 +164,7 @@ class AudioCapabilityManager(
      * passthrough encoding we advertise. On API 29+ uses
      * [AudioTrack.isDirectPlaybackSupported]; older APIs fall back to the
      * aggregate `maxChannelCount` reported by Media3's [AudioCapabilities]
-     * (Media3 1.10.0 — previously this method carried a "Media3 1.6" note).
+     * (Media3 1.10.1 — previously this method carried a "Media3 1.6" note).
      */
     private fun probeMaxChannels(
         caps: AudioCapabilities,

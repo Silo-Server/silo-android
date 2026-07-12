@@ -5,6 +5,7 @@ import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 
 sealed interface VideoPlaybackStartResult {
@@ -18,11 +19,10 @@ sealed interface VideoPlaybackStartResult {
         val streamUrl: String,
         val playMethod: PlayMethod,
         val playbackPlan: PlaybackExecutionPlan? = null,
+        val playbackPlanV3: PlaybackPlanV3? = null,
+        val requestHeaders: Map<String, String> = emptyMap(),
         val delivery: PlaybackDelivery? = null,
         val container: String? = null,
-        // DIRECT file whose video codec has no hardware decoder here but MPV
-        // can software-decode (Apple codec-tail parity) — routes to MPV.
-        val softwareOnlyVideoCodec: Boolean = false,
         val title: String,
         val subtitle: String?,
         val artworkUrl: String?,

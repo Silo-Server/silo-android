@@ -1,0 +1,326 @@
+package org.siloserver.silo.model.playback
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.decodeFromJsonElement
+
+const val PLAYBACK_PROTOCOL_V3 = 3
+const val PLAYBACK_PLAN_V3_FEATURE = "playback_plan_v3"
+const val MEDIA3_ONLY_FEATURE = "media3_only"
+
+@Serializable
+enum class PlaybackDecisionOutcome {
+    @SerialName("playable") PLAYABLE,
+    @SerialName("adaptation_unavailable") ADAPTATION_UNAVAILABLE,
+}
+
+@Serializable
+enum class PlaybackStreamProtocol {
+    @SerialName("http_progressive") HTTP_PROGRESSIVE,
+    @SerialName("hls") HLS,
+}
+
+@Serializable
+enum class PlaybackHeaderRefreshMode {
+    @SerialName("none") NONE,
+    @SerialName("session") SESSION,
+    @SerialName("refresh_endpoint") REFRESH_ENDPOINT,
+}
+
+@Serializable
+enum class PlaybackSubtitleModeV3 {
+    @SerialName("off") OFF,
+    @SerialName("render") RENDER,
+    @SerialName("convert") CONVERT,
+    @SerialName("burn_in") BURN_IN,
+}
+
+@Serializable
+enum class SubtitleFidelityPreference {
+    @SerialName("preserve") PRESERVE,
+    @SerialName("compatible") COMPATIBLE,
+}
+
+@Serializable
+data class PlaybackDecisionResponseV3(
+    @SerialName("protocol_version") val protocolVersion: Int? = null,
+    @SerialName("server_features") val serverFeatures: List<String> = emptyList(),
+    val outcome: PlaybackDecisionOutcome? = null,
+    @SerialName("session_id") val sessionId: String? = null,
+    @Serializable(with = TolerantPlaybackPlanV3Serializer::class)
+    @SerialName("playback_plan") val playbackPlan: PlaybackPlanV3? = null,
+    val terminal: PlaybackTerminalV3? = null,
+)
+
+/**
+ * Keeps protocol negotiation readable when an older server returns its legacy
+ * playback_plan shape from the shared start endpoint. The response-level
+ * protocol/feature gate must decide compatibility before a malformed or old
+ * plan can turn an HTTP 200 into a transport error.
+ */
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+internal object TolerantPlaybackPlanV3Serializer : KSerializer<PlaybackPlanV3?> {
+    private val delegate = PlaybackPlanV3.serializer()
+    override val descriptor: SerialDescriptor = delegate.descriptor
+
+    override fun deserialize(decoder: Decoder): PlaybackPlanV3? {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: return runCatching { delegate.deserialize(decoder) }.getOrNull()
+        val element = jsonDecoder.decodeJsonElement()
+        if (element is JsonNull) return null
+        return try {
+            jsonDecoder.json.decodeFromJsonElement(delegate, element)
+        } catch (_: SerializationException) {
+            null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: PlaybackPlanV3?) {
+        if (value == null) encoder.encodeNull() else delegate.serialize(encoder, value)
+    }
+}
+
+@Serializable
+data class PlaybackPlanV3(
+    @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
+    @SerialName("plan_id") val planId: String,
+    @SerialName("session_id") val sessionId: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    val delivery: PlaybackDelivery,
+    val engine: PlaybackEngineKind,
+    val stream: PlaybackStreamV3,
+    val timeline: PlaybackTimelineV3 = PlaybackTimelineV3(),
+    @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracksV3 = SelectedPlaybackTracksV3(),
+    @SerialName("effective_recipe") val effectiveRecipe: PlaybackEffectiveRecipeV3 = PlaybackEffectiveRecipeV3(),
+    val claims: PlaybackValidationClaims = PlaybackValidationClaims(),
+    val subtitle: PlaybackSubtitleDecisionV3 = PlaybackSubtitleDecisionV3(),
+    val transformations: List<PlaybackTransformationV3> = emptyList(),
+    @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
+    @SerialName("decision_reason") val decisionReason: String,
+)
+
+@Serializable
+data class PlaybackStreamV3(
+    val url: String,
+    val protocol: PlaybackStreamProtocol,
+    val container: String? = null,
+    @SerialName("mime_type") val mimeType: String? = null,
+    val headers: Map<String, String> = emptyMap(),
+    @SerialName("header_refresh") val headerRefresh: PlaybackHeaderRefreshMode = PlaybackHeaderRefreshMode.SESSION,
+    @SerialName("header_refresh_url") val headerRefreshUrl: String? = null,
+)
+
+@Serializable
+data class PlaybackTimelineV3(
+    @SerialName("source_start_seconds") val sourceStartSeconds: Double = 0.0,
+    @SerialName("stream_origin_seconds") val streamOriginSeconds: Double = 0.0,
+    @SerialName("player_start_seconds") val playerStartSeconds: Double = 0.0,
+    @SerialName("timeline_offset_seconds") val timelineOffsetSeconds: Double = 0.0,
+    @SerialName("seek_window_start_seconds") val seekWindowStartSeconds: Double? = null,
+    @SerialName("seek_window_end_seconds") val seekWindowEndSeconds: Double? = null,
+    @SerialName("can_seek_anywhere") val canSeekAnywhere: Boolean = true,
+    @SerialName("seek_restoration") val seekRestoration: String = "player_position",
+)
+
+@Serializable
+data class PlaybackTrackIdentityV3(
+    val id: String,
+    val index: Int? = null,
+)
+
+@Serializable
+data class SelectedPlaybackTracksV3(
+    val audio: PlaybackTrackIdentityV3? = null,
+    val subtitle: PlaybackTrackIdentityV3? = null,
+)
+
+@Serializable
+data class PlaybackEffectiveRecipeV3(
+    @SerialName("video_codec") val videoCodec: String? = null,
+    @SerialName("audio_codec") val audioCodec: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    @SerialName("frame_rate") val frameRate: Double? = null,
+    @SerialName("bitrate_kbps") val bitrateKbps: Int? = null,
+    @SerialName("dynamic_range") val dynamicRange: String? = null,
+    @SerialName("audio_channels") val audioChannels: Int? = null,
+    @SerialName("audio_layout") val audioLayout: String? = null,
+)
+
+@Serializable
+data class PlaybackSubtitleArtifactV3(
+    val url: String,
+    @SerialName("mime_type") val mimeType: String,
+    val format: String,
+    @SerialName("timing_origin_seconds") val timingOriginSeconds: Double = 0.0,
+)
+
+@Serializable
+data class PlaybackSubtitleDecisionV3(
+    val mode: PlaybackSubtitleModeV3 = PlaybackSubtitleModeV3.OFF,
+    @SerialName("track_id") val trackId: String? = null,
+    val artifact: PlaybackSubtitleArtifactV3? = null,
+)
+
+@Serializable
+data class PlaybackTransformationV3(
+    val name: String,
+    @SerialName("validated_claims") val validatedClaims: List<String> = emptyList(),
+)
+
+@Serializable
+data class PlaybackTerminalV3(
+    val reason: String,
+    val message: String,
+    val retryable: Boolean = false,
+)
+
+@Serializable
+data class PlaybackStartRequestV3(
+    @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
+    @SerialName("client_features") val clientFeatures: List<String> = listOf(PLAYBACK_PLAN_V3_FEATURE, MEDIA3_ONLY_FEATURE),
+    @SerialName("file_id") val fileId: Int,
+    @SerialName("profile_id") val profileId: String,
+    @SerialName("playback_attempt_id") val playbackAttemptId: String,
+    @SerialName("quality_preference") val qualityPreference: String = "auto",
+    @SerialName("subtitle_fidelity_preference") val subtitleFidelityPreference: SubtitleFidelityPreference,
+    @SerialName("start_position") val startPosition: Double? = null,
+    @SerialName("audio_track_id") val audioTrackId: String? = null,
+    @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
+    @SerialName("subtitle_track_id") val subtitleTrackId: String? = null,
+    @SerialName("subtitle_track_index") val subtitleTrackIndex: Int? = null,
+    @SerialName("output_route_generation") val outputRouteGeneration: Long,
+    val metered: Boolean = false,
+    @SerialName("bandwidth_estimate_kbps") val bandwidthEstimateKbps: Int? = null,
+    @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
+    @SerialName("client_capabilities") val capabilities: ClientCodecCapabilities,
+    @SerialName("client_playback_context") val clientPlaybackContext: ClientPlaybackContext,
+)
+
+@Serializable
+data class PlaybackFailureV3(
+    val classification: String,
+    val message: String? = null,
+    @SerialName("decoder_name") val decoderName: String? = null,
+)
+
+@Serializable
+data class PlaybackReplanRequestV3(
+    @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
+    @SerialName("playback_attempt_id") val playbackAttemptId: String,
+    @SerialName("replan_request_id") val replanRequestId: String,
+    @SerialName("failed_plan_id") val failedPlanId: String,
+    @SerialName("plan_attempt_id") val planAttemptId: String,
+    @SerialName("plan_attempt_key") val planAttemptKey: String,
+    @SerialName("attempted_plan_keys") val attemptedPlanKeys: List<String>,
+    @SerialName("attempt_count") val attemptCount: Int,
+    @SerialName("quality_preference") val qualityPreference: String = "auto",
+    @SerialName("position_seconds") val positionSeconds: Double,
+    @SerialName("output_route_generation") val outputRouteGeneration: Long,
+    @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracksV3,
+    val failure: PlaybackFailureV3,
+    @SerialName("client_capabilities") val capabilities: ClientCodecCapabilities,
+    @SerialName("client_playback_context") val clientPlaybackContext: ClientPlaybackContext,
+)
+
+@Serializable
+data class PlaybackRouteEventV3(
+    @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
+    @SerialName("playback_attempt_id") val playbackAttemptId: String,
+    @SerialName("session_id") val sessionId: String? = null,
+    @SerialName("plan_id") val planId: String? = null,
+    @SerialName("plan_attempt_id") val planAttemptId: String? = null,
+    @SerialName("plan_attempt_key") val planAttemptKey: String? = null,
+    val event: String,
+    @SerialName("failure_classification") val failureClassification: String? = null,
+    @SerialName("fallback_reason") val fallbackReason: String? = null,
+    @SerialName("output_route_generation") val outputRouteGeneration: Long,
+    val diagnostics: Map<String, String> = emptyMap(),
+)
+
+fun PlaybackPlanV3.planAttemptKey(
+    outputRouteGeneration: Long,
+    localMutations: List<String> = emptyList(),
+): String {
+    val canonical = buildString {
+        append(planId)
+        append('|').append(delivery.name)
+        append('|').append(stream.protocol.name)
+        append('|').append(stream.container.orEmpty().lowercase())
+        append('|').append(effectiveRecipe.videoCodec.orEmpty().lowercase())
+        append('|').append(effectiveRecipe.audioCodec.orEmpty().lowercase())
+        append('|').append(effectiveRecipe.width ?: 0)
+        append('x').append(effectiveRecipe.height ?: 0)
+        append('|').append(effectiveRecipe.bitrateKbps ?: 0)
+        append('|').append(effectiveRecipe.dynamicRange.orEmpty().lowercase())
+        append('|').append(subtitle.mode.name)
+        append('|').append(transformations.sortedBy { it.name }.joinToString(",") { it.name })
+        append('|').append(outputRouteGeneration)
+        append('|').append(localMutations.sorted().joinToString(","))
+    }
+    var hash = 0xcbf29ce484222325uL
+    canonical.encodeToByteArray().forEach { byte ->
+        hash = hash xor byte.toUByte().toULong()
+        hash *= 0x100000001b3uL
+    }
+    return "v3:${hash.toString(16).padStart(16, '0')}"
+}
+
+sealed interface PlaybackV3Validation {
+    data class Playable(val plan: PlaybackPlanV3, val sessionId: String) : PlaybackV3Validation
+    data class Terminal(val reason: String, val message: String, val retryable: Boolean) : PlaybackV3Validation
+    data class Incompatible(val allocatedSessionId: String?) : PlaybackV3Validation
+    data class ReplanRequired(val reason: String, val plan: PlaybackPlanV3, val sessionId: String) : PlaybackV3Validation
+}
+
+fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
+    if (protocolVersion != PLAYBACK_PROTOCOL_V3 || PLAYBACK_PLAN_V3_FEATURE !in serverFeatures) {
+        return PlaybackV3Validation.Incompatible(sessionId)
+    }
+    if (outcome == PlaybackDecisionOutcome.ADAPTATION_UNAVAILABLE) {
+        val value = terminal ?: return PlaybackV3Validation.Terminal(
+            reason = "invalid_terminal_response",
+            message = "The server returned an incomplete playback terminal response.",
+            retryable = false,
+        )
+        return PlaybackV3Validation.Terminal(value.reason, value.message, value.retryable)
+    }
+    if (outcome != PlaybackDecisionOutcome.PLAYABLE) {
+        return PlaybackV3Validation.Terminal(
+            "invalid_playback_outcome",
+            "The server returned no recognized playback outcome.",
+            false,
+        )
+    }
+    val plan = playbackPlan
+        ?: return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned no executable playback plan.", false)
+    val resolvedSessionId = plan.sessionId ?: sessionId
+        ?: return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned no playback session identity.", false)
+    if (plan.protocolVersion != PLAYBACK_PROTOCOL_V3) {
+        return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned an unsupported plan version.", false)
+    }
+    if (plan.engine == PlaybackEngineKind.MPV_DIRECT ||
+        plan.engine == PlaybackEngineKind.CLIENT_LOCAL_LOOPBACK ||
+        plan.engine == PlaybackEngineKind.EXTERNAL_PLAYER
+    ) {
+        return PlaybackV3Validation.ReplanRequired("unsupported_legacy_engine", plan, resolvedSessionId)
+    }
+    if (plan.stream.url.isBlank()) {
+        return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned an empty stream URL.", false)
+    }
+    if (plan.stream.headerRefresh == PlaybackHeaderRefreshMode.REFRESH_ENDPOINT) {
+        return PlaybackV3Validation.Terminal(
+            "unsupported_header_refresh",
+            "This playback plan requires a header refresh mode the Android client cannot execute.",
+            false,
+        )
+    }
+    return PlaybackV3Validation.Playable(plan, resolvedSessionId)
+}

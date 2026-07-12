@@ -17,11 +17,10 @@ class VideoPlaybackBackendFactorySourceTest {
         assertTrue(text.contains("player: Player"))
         assertTrue(text.contains("request: VideoPlaybackBackendRequest = VideoPlaybackBackendRequest()"))
         assertTrue(text.contains("VideoPlaybackBackendSelector.select(request)"))
-        assertTrue(text.contains("player is MpvPlayer"))
         assertTrue(text.contains("Media3VideoPlaybackBackend("))
-        assertTrue(text.contains("MpvVideoPlaybackBackend("))
+        assertTrue(!text.contains("MpvVideoPlaybackBackend("))
         assertTrue(text.contains("VideoTrackSelectionCoordinator(subtitleManager)"))
         assertTrue(!text.contains("createPlayer("), "factory must wrap the bound MediaController, not create a service player")
-        assertTrue(!text.contains("Build.VERSION.SDK_INT"), "SDK level alone must not claim the controller is backed by MPV")
+        assertTrue(!text.contains("Build.VERSION.SDK_INT"))
     }
 }

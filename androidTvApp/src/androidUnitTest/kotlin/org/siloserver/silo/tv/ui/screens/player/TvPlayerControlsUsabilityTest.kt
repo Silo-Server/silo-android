@@ -261,15 +261,12 @@ class TvPlayerControlsUsabilityTest {
     }
 
     @Test
-    fun aspectSelectionAppliesToPlayerSurfaceAndMpvBackend() {
+    fun aspectSelectionAppliesToMedia3PlayerSurface() {
         assertTrue(screenSource.contains("applyPlayerViewVideoFillMode(view, state.videoFillMode)"))
-        assertTrue(screenSource.contains("applyMpvVideoScaleMode(sessionPlayer, state.videoFillMode)"))
         assertTrue(screenSource.contains("view.getVideoSurfaceView()"))
         assertTrue(screenSource.contains("fun resizeModeForVideoFillMode(mode: VideoFillMode): Int"))
         assertTrue(screenSource.contains("fun applyPlayerViewVideoFillMode(view: PlayerView, mode: VideoFillMode)"))
-        assertTrue(screenSource.contains("fun applyMpvVideoScaleMode(player: Player?, mode: VideoFillMode)"))
-        assertTrue(screenSource.contains("MpvVideoScaleMode.Zoom"))
-        assertTrue(screenSource.contains("MpvVideoScaleMode.Stretch"))
+        assertFalse(screenSource.contains("applyMpvVideoScaleMode"))
         assertFalse(screenSource.contains("CropLetterboxSurfaceScale"))
         assertFalse(screenSource.contains("videoSurface.scaleX = surfaceScale"))
     }
@@ -376,7 +373,7 @@ class TvPlayerControlsUsabilityTest {
             .substringAfter("val applyTvSubtitleSelection")
             .substringBefore("fun handleSkipIntroNow")
 
-        assertTrue(selectionBlock.contains("viewModel.onManualSubtitleSelectionIntent()"))
+        assertTrue(selectionBlock.contains("viewModel.onManualSubtitleSelectionIntent(idx)"))
         assertTrue(viewModelSource.contains("manualSubtitleSelectionApplied"))
         assertTrue(viewModelSource.contains("manualSubtitleSelectionApplied = true"))
         assertTrue(

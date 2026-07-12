@@ -38,7 +38,7 @@ class PlayerScreenStartPositionTest {
     }
 
     @Test
-    fun playerScreenAwaitsPlanAwareEngineSwitchBeforeMounting() {
+    fun playerScreenMountsMedia3WithoutAnEngineSwitchRoundTrip() {
         val mountEffect = source
             .substringAfter("// Set up the media item when stream URL becomes available")
             .substringBefore("// Mid-playback subtitle refresh")
@@ -46,29 +46,17 @@ class PlayerScreenStartPositionTest {
         assertTrue(
             mountEffect.contains("val delivery = if (localUri == null) plan?.delivery ?: uiState.delivery else null") &&
                 mountEffect.contains("delivery = delivery"),
-            "mobile engine requests must carry playback-plan or inferred delivery",
+            "mobile mounts must carry playback-plan or inferred delivery",
         )
-        assertTrue(
-            mountEffect.contains("plannedEngine = plan?.engine"),
-            "mobile engine requests must carry the server-planned engine",
-        )
-        assertTrue(
-            mountEffect.contains("hasHardContainer = mediaSpec.playMethod == PlayMethod.DIRECT"),
-            "mobile direct MKV/container routes must be visible to backend selection",
-        )
-        assertTrue(
-            mountEffect.contains("hasStyledSubtitles = uiState.subtitleTracks.any { it.isStyledSubtitle() }"),
-            "mobile styled subtitle routes must be visible to backend selection",
-        )
-        assertTrue(
-            mountEffect.contains("val switchResult = controller.awaitEngineSwitch(engineRequest)"),
-            "mobile player must wait for the service engine switch before mounting",
-        )
-        assertTrue(
-            mountEffect.contains("if (switchResult.swapped)") &&
-                mountEffect.contains("return@LaunchedEffect"),
-            "mobile player must let ActivePlayerHolder rebind before mounting after a swap",
-        )
+        assertFalse(mountEffect.contains("awaitEngineSwitch"))
+        assertFalse(mountEffect.contains("sendCustomCommand"))
+        assertTrue(mountEffect.contains("backend.mount(mediaSpec)"))
+    }
+
+    @Test
+    fun transportReopenRearmsSharedWatchdog() {
+        assertTrue(source.contains("uiState.playbackPlan?.decisionTrace?.size"))
+        assertTrue(source.contains("plan?.decisionTrace?.size ?: 0"))
     }
 
     @Test

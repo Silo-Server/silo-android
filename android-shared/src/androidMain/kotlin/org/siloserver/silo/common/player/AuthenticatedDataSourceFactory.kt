@@ -32,13 +32,20 @@ class AuthenticatedDataSourceFactory(
     private val okHttpClient: OkHttpClient,
     @Suppress("unused") private val tokenManager: TokenManager,
     private val serverUrlProvider: () -> String,
+    private val requestHeadersProvider: (Uri) -> Map<String, String> = { emptyMap() },
 ) : DataSource.Factory {
 
     override fun createDataSource(): DataSource {
         val http = OkHttpDataSource.Factory(okHttpClient).createDataSource()
         val file = FileDataSource()
         val content = ContentDataSource(context)
-        return RoutedDataSource(http = http, file = file, content = content, serverUrl = serverUrlProvider())
+        return RoutedDataSource(
+            http = http,
+            file = file,
+            content = content,
+            serverUrl = serverUrlProvider(),
+            requestHeadersProvider = requestHeadersProvider,
+        )
     }
 }
 
@@ -55,6 +62,7 @@ private class RoutedDataSource(
     private val file: DataSource,
     private val content: DataSource,
     private val serverUrl: String,
+    private val requestHeadersProvider: (Uri) -> Map<String, String>,
 ) : DataSource {
 
     /** Which downstream the most recent [open] call delegated to. Both
@@ -96,13 +104,22 @@ private class RoutedDataSource(
 
     private fun resolveDataSpec(dataSpec: DataSpec): DataSpec {
         val uri = dataSpec.uri
-        if (uri.scheme == null || uri.scheme!!.isEmpty()) {
+        val resolved = if (uri.scheme == null || uri.scheme!!.isEmpty()) {
             val absoluteUrl = resolveRoutedDataSourceUrl(serverUrl, uri.toString())
-            return dataSpec.buildUpon()
+            dataSpec.buildUpon()
                 .setUri(Uri.parse(absoluteUrl))
                 .build()
+        } else {
+            dataSpec
         }
-        return dataSpec
+        val headers = requestHeadersProvider(resolved.uri)
+        return if (headers.isEmpty()) {
+            resolved
+        } else {
+            resolved.buildUpon()
+                .setHttpRequestHeaders(resolved.httpRequestHeaders + headers)
+                .build()
+        }
     }
 }
 

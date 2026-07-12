@@ -21,6 +21,8 @@ class PlaybackStartupStallDetector(
     private var startPositionMs: Long = 0L
     private var started = false
     private var signaled = false
+    private var firstFrameRendered = false
+    private var decoderStartupAtMs: Long? = null
     // Last time playback made forward progress (or the mount time before it
     // starts). The stall is measured from here, so the same logic covers a
     // never-started session and a mid-stream freeze.
@@ -38,8 +40,15 @@ class PlaybackStartupStallDetector(
         this.startPositionMs = startPositionMs.coerceAtLeast(0L)
         this.started = false
         this.signaled = false
+        this.firstFrameRendered = false
+        this.decoderStartupAtMs = null
         this.lastProgressPositionMs = this.startPositionMs
         this.lastProgressAtMs = nowMs
+    }
+
+    fun onFirstFrameRendered() {
+        firstFrameRendered = true
+        decoderStartupAtMs = null
     }
 
     fun sample(
@@ -50,8 +59,39 @@ class PlaybackStartupStallDetector(
         isBuffering: Boolean,
         currentPositionMs: Long,
         bufferedPositionMs: Long,
+        decoderInputBufferCount: Int = 0,
+        decoderRenderedOutputBufferCount: Int = 0,
+        decoderSkippedOutputBufferCount: Int = 0,
+        decoderDroppedBufferCount: Int = 0,
     ): Playability.StartupStalled? {
         if (sessionKey != this.sessionKey) return null
+
+        val decoderOutputCount = decoderRenderedOutputBufferCount +
+            decoderSkippedOutputBufferCount + decoderDroppedBufferCount
+        if (!firstFrameRendered && decoderRenderedOutputBufferCount > 0) {
+            firstFrameRendered = true
+            decoderStartupAtMs = null
+        }
+
+        // Audio may advance the position and set isPlaying=true while video is
+        // wedged before its first output. This deadline is deliberately
+        // independent from the transport/buffering progress clock.
+        if (!signaled && !firstFrameRendered && playWhenReady && decoderInputBufferCount > 0) {
+            val decoderStart = decoderStartupAtMs ?: nowMs.also { decoderStartupAtMs = it }
+            val decoderStalledForMs = nowMs - decoderStart
+            if (decoderStalledForMs > startupGraceMs) {
+                signaled = true
+                return Playability.StartupStalled(
+                    bufferedAheadMs = (bufferedPositionMs - currentPositionMs).coerceAtLeast(0L),
+                    stalledForMs = decoderStalledForMs,
+                    classification = if (decoderOutputCount == 0) {
+                        "decoder_no_output"
+                    } else {
+                        "render_startup_failure"
+                    },
+                )
+            }
+        }
 
         // Forward progress (actively playing, or position advanced meaningfully)
         // re-anchors the stall clock and latches "started".
@@ -73,6 +113,14 @@ class PlaybackStartupStallDetector(
         return Playability.StartupStalled(
             bufferedAheadMs = (bufferedPositionMs - currentPositionMs).coerceAtLeast(0L),
             stalledForMs = stalledForMs,
+            classification = if (
+                decoderInputBufferCount > 0 &&
+                decoderOutputCount == 0
+            ) {
+                "decoder_no_output"
+            } else {
+                "transport_stall"
+            },
         )
     }
 
