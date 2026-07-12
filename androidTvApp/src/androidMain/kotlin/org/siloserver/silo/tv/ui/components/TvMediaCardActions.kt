@@ -13,7 +13,17 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 
 /**
  * Bundle of optional callbacks for the TV long-press / DPAD-center-hold
@@ -50,9 +60,25 @@ fun TvMediaCardContextMenu(
 ) {
     if (actions.isEmpty) return
 
+    // A TV Card reports its long-click while DPAD_CENTER is still held. The
+    // popup immediately focuses its first row, so the matching key-up would
+    // otherwise click that row as though it were a fresh selection. Swallow
+    // the remainder of the opening press, then arm the menu for the next one.
+    var awaitingOpeningPressRelease by remember(expanded) { mutableStateOf(expanded) }
+
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
+        modifier = Modifier.onPreviewKeyEvent { event ->
+            if (!awaitingOpeningPressRelease || event.key !in MenuSelectKeys) {
+                false
+            } else {
+                if (event.type == KeyEventType.KeyUp) {
+                    awaitingOpeningPressRelease = false
+                }
+                true
+            }
+        },
     ) {
         actions.onSetWatched?.let { setWatched ->
             TvMenuRow(
@@ -96,6 +122,8 @@ fun TvMediaCardContextMenu(
         }
     }
 }
+
+private val MenuSelectKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
 
 @Composable
 private fun TvMenuRow(text: String, icon: ImageVector, onClick: () -> Unit) {
