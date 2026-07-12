@@ -494,7 +494,6 @@ fun TvMainShell(
         } else if (route == TvMainRoute.Home.route || route == TvMainRoute.Video.route) {
             panelScope.launch {
                 runCatching { contentFocusRequester.requestFocus() }
-                withFrameNanos { }
                 runCatching { homeFirstRowContainerFocusRequester.requestFocus() }
             }
         } else {
