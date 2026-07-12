@@ -60,7 +60,8 @@ class TvPersonNavigationSourceTest {
             detailViewModelSource.contains("fun openPerson(member: CastMember, onOpenPerson: (Long) -> Unit)") &&
                 detailViewModelSource.contains("member.personId?.trim()?.toLongOrNull()?.let(onOpenPerson)") &&
                 detailViewModelSource.contains("catalogRepository.searchPeople(member.name)") &&
-                detailScreenSource.contains("viewModel.openPerson(member, onOpenPerson)") &&
+                detailScreenSource.contains("viewModel.openPerson(member) { personId ->") &&
+                detailScreenSource.contains("onOpenPerson(personId)") &&
                 !detailScreenSource.contains("member.personId?.toIntOrNull()?.let(onOpenPerson)"),
             "Cast-card selection should resolve people by name when person_id is absent or non-numeric instead of no-oping.",
         )

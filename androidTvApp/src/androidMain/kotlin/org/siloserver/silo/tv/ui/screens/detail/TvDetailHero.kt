@@ -163,14 +163,15 @@ internal fun TvDetailHero(
         // "Starring …" floats in the upper-right of the hero, right-aligned —
         // tvOS `.overlay(alignment: .trailing)` + `.padding(.bottom, heroHeight
         // * 0.45)` (the bottom padding on the vertically-centered overlay
-        // pushes the credit into the top-right region). maxWidth 460pt → 230dp,
-        // 2-line limit, 24pt regular → 12sp.
+        // pushes the credit into the top-right region). 2-line limit; sized up
+        // from the raw tvOS ~2x mapping (24pt → 12sp) per design review, with
+        // maxWidth widened to match so casts don't ellipsize sooner.
         starringText?.takeIf { it.isNotBlank() }?.let { line ->
             Text(
                 text = line,
                 fontWeight = FontWeight.Normal,
-                fontSize = 13.sp,
-                lineHeight = 16.sp,
+                fontSize = 16.sp,
+                lineHeight = 20.sp,
                 color = Color.White.copy(alpha = 0.8f),
                 textAlign = TextAlign.End,
                 maxLines = 2,
@@ -185,7 +186,7 @@ internal fun TvDetailHero(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .padding(end = Spacing.safeArea, bottom = heroHeight * 0.45f)
-                    .widthIn(max = 230.dp),
+                    .widthIn(max = 280.dp),
             )
         }
 
@@ -193,12 +194,12 @@ internal fun TvDetailHero(
         // inter-row gaps kept tight so the full stack (tagline → title →
         // synopsis → facts → actions → selector) fits within heroHeight on a
         // 540dp-tall canvas instead of overflowing and clipping the tagline off
-        // the top. (tvOS point values were ~2x these.) Bottom inset trimmed
-        // 28 → 16dp per design review so the stack sits lower in the hero.
+        // the top. (tvOS point values were ~2x these.) Bottom inset is part of
+        // the TvDetailSectionGap handoff math on the detail page.
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = 16.dp),
+                .padding(start = Spacing.safeArea, end = Spacing.safeArea, bottom = TvDetailHeroBottomInset),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             EditorialColumn(

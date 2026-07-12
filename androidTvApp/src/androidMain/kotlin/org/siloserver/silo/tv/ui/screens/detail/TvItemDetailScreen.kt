@@ -18,17 +18,22 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -53,6 +58,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -205,14 +211,39 @@ private fun TvDetailContent(
     // straight to Play.
     val selectorFocus = remember { FocusRequester() }
     val firstCastFocus = remember { FocusRequester() }
+    // Focus restore for the cast rail: remembers which cast card pushed the
+    // person page so the return trip lands back on it instead of Play.
+    // Saveable because the composable is recreated on back-stack pop.
+    val castReturnFocus = remember { FocusRequester() }
+    var pendingCastFocusIndex by rememberSaveable(detail.contentId) { mutableStateOf(-1) }
     val firstSimilarFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val isAudiobook = isAudiobookItemType(detail.type)
 
     // Default focus → Play (user-initiated), mirroring Apple's
-    // `defaultFocus($playFocused, true, priority: .userInitiated)`.
+    // `defaultFocus($playFocused, true, priority: .userInitiated)`. This
+    // re-runs whenever the page re-enters composition (fresh load, or
+    // returning from the player / a pushed detail): the saved LazyListState
+    // may restore the window at the episodes section while focus goes to
+    // Play, so snap the window back to the hero first to keep them in sync.
     LaunchedEffect(detail.contentId) {
+        // Returning from a person page opened via the cast rail: the saved
+        // LazyListState already restores the window at the cast section, so
+        // land focus back on the card that opened it instead of snapping to
+        // Play. The requester only attaches once the restored rail
+        // recomposes — retry across a few frames, then fall back to Play.
+        if (pendingCastFocusIndex >= 0) {
+            var restored = false
+            for (attempt in 0 until 20) {
+                restored = runCatching { castReturnFocus.requestFocus() }.isSuccess
+                if (restored) break
+                withFrameNanos { }
+            }
+            pendingCastFocusIndex = -1
+            if (restored) return@LaunchedEffect
+        }
+        listState.scrollToItem(0)
         runCatching { playFocus.requestFocus() }
     }
 
@@ -270,12 +301,26 @@ private fun TvDetailContent(
     // actions section.
     val returnToHero: () -> Boolean = {
         coroutineScope.launch {
-            listState.animateScrollToItemPaced(0)
             // Land on the selector row (the hero element directly above the
             // body) when it is composed; otherwise fall back to Play
-            // (audiobooks, or the next-up placeholder pill).
-            if (runCatching { selectorFocus.requestFocus() }.isFailure) {
-                runCatching { playFocus.requestFocus() }
+            // (audiobooks, or the next-up placeholder pill). Focus moves
+            // BEFORE the scroll so the highlight travels with the window
+            // instead of appearing only after it settles; when the hero has
+            // been disposed off-screen the requests fail and we re-focus
+            // after the scroll composes it again.
+            val focusedImmediately = runCatching { selectorFocus.requestFocus() }.isSuccess ||
+                runCatching { playFocus.requestFocus() }.isSuccess
+            if (focusedImmediately) {
+                // Let the focus system enqueue its automatic bring-into-view
+                // first, then cancel/replace that scroll with the paced
+                // return-to-top anchor.
+                withFrameNanos { }
+            }
+            listState.animateScrollToItemPaced(0)
+            if (!focusedImmediately) {
+                if (runCatching { selectorFocus.requestFocus() }.isFailure) {
+                    runCatching { playFocus.requestFocus() }
+                }
             }
         }
         true
@@ -308,18 +353,47 @@ private fun TvDetailContent(
             null
         }
 
+    // While focus is anywhere inside the hero (actions, selectors, synopsis)
+    // the window must stay put — every hero↔body transition already runs an
+    // explicit paced anchor scroll, so the only thing the automatic
+    // bring-into-view would add is a small gutter-correction jiggle when
+    // hopping Play ↔ selector row. Suppress it for hero-origin requests and
+    // keep the smooth spec for body rails.
+    val heroHasFocus = remember { mutableStateOf(false) }
+    val detailBringIntoViewSpec = remember(heroHasFocus) {
+        object : BringIntoViewSpec {
+            override val scrollAnimationSpec: AnimationSpec<Float> =
+                TvSmoothBringIntoViewSpec.scrollAnimationSpec
+
+            override fun calculateScrollDistance(
+                offset: Float,
+                size: Float,
+                containerSize: Float,
+            ): Float = if (heroHasFocus.value) {
+                0f
+            } else {
+                TvSmoothBringIntoViewSpec.calculateScrollDistance(offset, size, containerSize)
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+        CompositionLocalProvider(LocalBringIntoViewSpec provides detailBringIntoViewSpec) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
                 contentPadding = PaddingValues(bottom = 160.dp),
             ) {
                 item(key = "hero", contentType = "detail-hero") {
+                    Box(
+                        modifier = Modifier.onFocusChanged { focusState ->
+                            heroHasFocus.value = focusState.hasFocus
+                        },
+                    ) {
                     if (isAudiobook) {
                         TvAudiobookDetailHero(
                             detail = detail,
@@ -360,14 +434,18 @@ private fun TvDetailContent(
                             },
                         )
                     }
+                    }
                 }
 
                 // Keep a short hero→body handoff so the next section header
                 // peeks below the selectors and signals that more is available.
+                // Every gap derives from TvDetailSectionGap (the hero handoff
+                // adds only the remainder above its internal bottom inset), so
+                // the whole page's vertical rhythm changes with one value.
                 item(key = "body", contentType = "detail-body") {
                     Column(
-                        modifier = Modifier.padding(top = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(72.dp),
+                        modifier = Modifier.padding(top = TvDetailSectionGap - TvDetailHeroBottomInset),
+                        verticalArrangement = Arrangement.spacedBy(TvDetailSectionGap),
                     ) {
                         if (isAudiobook && audiobookParts.size > 1) {
                             TvAudiobookPartsSection(
@@ -490,11 +568,21 @@ private fun TvDetailContent(
                                 onSeasonSelected = { season ->
                                     viewModel.onSeasonSelected(season.seasonNumber)
                                 },
-                                // tvOS parity: OK navigates to the episode's own
-                                // detail page (version pick / mark watched / play)
-                                // rather than launching playback directly.
+                                // OK plays/resumes the episode immediately. The
+                                // episode's own detail page is pushed first so it
+                                // sits underneath the player in the back stack —
+                                // exiting playback lands on that episode's detail
+                                // rather than back on this page.
                                 onEpisodeSelected = { episode ->
                                     onItemDetail(episode.contentId)
+                                    onPlay(
+                                        episode.contentId,
+                                        null,
+                                        null,
+                                        null,
+                                        "episode",
+                                        episode.userData?.resumePositionSeconds(),
+                                    )
                                 },
                             )
                             }
@@ -509,8 +597,16 @@ private fun TvDetailContent(
                                 // episode rail or season chips above it; Up then
                                 // returns to the hero.
                                 onDirectionUp = if (hasEpisodeNavAbove) null else returnToHero,
-                                onCastMemberClick = { member ->
-                                    viewModel.openPerson(member, onOpenPerson)
+                                restoreFocusIndex = pendingCastFocusIndex,
+                                restoreFocusRequester = castReturnFocus,
+                                onCastMemberClick = { index, member ->
+                                    // Record the index only once navigation
+                                    // actually fires — openPerson can no-op when
+                                    // the person can't be resolved.
+                                    viewModel.openPerson(member) { personId ->
+                                        pendingCastFocusIndex = index
+                                        onOpenPerson(personId)
+                                    }
                                 },
                             )
                         }
@@ -991,42 +1087,50 @@ private fun EpisodesSection(
             )
         }
 
-        when {
-            // Spinner while a newly-selected season loads, instead of leaving the
-            // previous season's episodes under the new season header (T15b). The
-            // quiet refreshOnReturn reload does not set episodesLoading, so this
-            // never flashes on returning to the page.
-            state.episodesLoading -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = Spacing.safeArea, vertical = 24.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    CircularProgressIndicator()
+        // Reserve the rail's measured height while a newly-selected season
+        // loads (and for empty seasons), so the spinner/empty states don't
+        // collapse the section and flash Cast & Crew up into the viewport.
+        var railHeightPx by remember { mutableStateOf(0) }
+        val railMinHeight = with(LocalDensity.current) { railHeightPx.toDp() }
+        Box(modifier = Modifier.heightIn(min = railMinHeight)) {
+            when {
+                // Spinner while a newly-selected season loads, instead of leaving the
+                // previous season's episodes under the new season header (T15b). The
+                // quiet refreshOnReturn reload does not set episodesLoading, so this
+                // never flashes on returning to the page.
+                state.episodesLoading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.safeArea, vertical = 24.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 }
-            }
-            // A season that legitimately has zero episodes (or a load that failed
-            // and left nothing to show): keep the section and chips mounted and
-            // say so, rather than unmounting everything and stranding the user
-            // (T15a).
-            state.episodes.isEmpty() -> {
-                Text(
-                    text = "No episodes available",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
-                    color = Color.White.copy(alpha = 0.55f),
-                    modifier = Modifier.padding(horizontal = Spacing.safeArea, vertical = 8.dp),
-                )
-            }
-            else -> {
-                TvDetailEpisodeRail(
-                    episodes = state.episodes,
-                    currentContentId = currentEpisodeRailContentId(detail, state),
-                    onEpisodeSelected = onEpisodeSelected,
-                    // Up returns to the hero only when the season chips aren't above
-                    // the rail (the chips own the Up traversal when present).
-                    onDirectionUp = if (showsSeasonChips) null else onReturnToHero,
-                )
+                // A season that legitimately has zero episodes (or a load that failed
+                // and left nothing to show): keep the section and chips mounted and
+                // say so, rather than unmounting everything and stranding the user
+                // (T15a).
+                state.episodes.isEmpty() -> {
+                    Text(
+                        text = "No episodes available",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+                        color = Color.White.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(horizontal = Spacing.safeArea, vertical = 8.dp),
+                    )
+                }
+                else -> {
+                    TvDetailEpisodeRail(
+                        episodes = state.episodes,
+                        currentContentId = currentEpisodeRailContentId(detail, state),
+                        onEpisodeSelected = onEpisodeSelected,
+                        // Up returns to the hero only when the season chips aren't above
+                        // the rail (the chips own the Up traversal when present).
+                        onDirectionUp = if (showsSeasonChips) null else onReturnToHero,
+                        modifier = Modifier.onSizeChanged { railHeightPx = it.height },
+                    )
+                }
             }
         }
     }
@@ -1463,6 +1567,22 @@ private fun Double.formatHms(): String {
         "$minutes:${seconds.toString().padStart(2, '0')}"
     }
 }
+
+/**
+ * One knob for the detail page's vertical rhythm: every body section gap AND
+ * the hero → first-section handoff derive from this, so the selector row →
+ * Episodes gap matches Episodes → Cast & Crew, Cast & Crew → Details, etc.
+ * The hero already ends with [TvDetailHeroBottomInset] of internal padding
+ * below the selector row, so the body's top padding is the remainder.
+ */
+internal val TvDetailSectionGap = 28.dp
+
+/**
+ * Bottom inset inside the hero, below the action/selector cluster. Trimmed
+ * 28 → 16dp per design review so the stack sits lower in the hero. Part of
+ * the [TvDetailSectionGap] handoff math — keep them in sync.
+ */
+internal val TvDetailHeroBottomInset = 16.dp
 
 /**
  * Pacing for the hero ↔ episodes anchor scrolls — tvOS's detail focus

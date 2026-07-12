@@ -77,7 +77,13 @@ fun TvCastCrewSection(
     firstItemCardModifier: Modifier = Modifier,
     onDirectionDown: (() -> Boolean)? = null,
     onDirectionUp: (() -> Boolean)? = null,
-    onCastMemberClick: (CastMember) -> Unit = {},
+    /**
+     * Attaches [restoreFocusRequester] to the card at this index so the caller
+     * can put focus back on the cast member that pushed a person page.
+     */
+    restoreFocusIndex: Int = -1,
+    restoreFocusRequester: FocusRequester? = null,
+    onCastMemberClick: (index: Int, member: CastMember) -> Unit = { _, _ -> },
 ) {
     if (cast.isEmpty()) return
     val photoSize = 100.dp
@@ -132,8 +138,15 @@ fun TvCastCrewSection(
                     member = member,
                     photoSize = photoSize,
                     focusRequester = firstItemFocusRequester.takeIf { index == 0 },
-                    cardModifier = if (index == 0) firstItemCardModifier else Modifier,
-                    onClick = { onCastMemberClick(member) },
+                    cardModifier = (if (index == 0) firstItemCardModifier else Modifier)
+                        .then(
+                            if (restoreFocusRequester != null && index == restoreFocusIndex) {
+                                Modifier.focusRequester(restoreFocusRequester)
+                            } else {
+                                Modifier
+                            },
+                        ),
+                    onClick = { onCastMemberClick(index, member) },
                 )
             }
         }
