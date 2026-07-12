@@ -93,6 +93,19 @@ data class AudioPassthroughCapabilities(
 )
 
 @Serializable
+data class VideoDecodeCapability(
+    val codec: String,
+    val profiles: List<String> = emptyList(),
+    val levels: List<Int> = emptyList(),
+    @SerialName("bit_depths") val bitDepths: List<Int> = emptyList(),
+    @SerialName("max_width") val maxWidth: Int? = null,
+    @SerialName("max_height") val maxHeight: Int? = null,
+    @SerialName("max_frame_rate") val maxFrameRate: Double? = null,
+    @SerialName("max_bitrate_kbps") val maxBitrateKbps: Int? = null,
+    val hardware: Boolean,
+)
+
+@Serializable
 data class ClientCodecCapabilities(
     @SerialName("codecs_video") val codecsVideo: List<String> = emptyList(),
     // Hardware-decodable subset. In the Media3-only protocol this currently
@@ -104,6 +117,7 @@ data class ClientCodecCapabilities(
     val hdr: Boolean = false,
     @SerialName("hdr_details") val hdrDetails: HdrCapabilities? = null,
     @SerialName("audio_passthrough") val audioPassthrough: AudioPassthroughCapabilities? = null,
+    @SerialName("video_decode") val videoDecode: List<VideoDecodeCapability> = emptyList(),
 )
 
 @Serializable
@@ -284,7 +298,11 @@ data class PlaybackDegradationWarning(
 @Serializable
 data class ClientPlaybackContext(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
-    val features: List<String> = listOf(PLAYBACK_PLAN_V3_FEATURE, MEDIA3_ONLY_FEATURE),
+    val features: List<String> = listOf(
+        PLAYBACK_PLAN_V3_FEATURE,
+        MEDIA3_ONLY_FEATURE,
+        DETAILED_DECODE_CAPABILITIES_FEATURE,
+    ),
     val platform: String = "android",
     @SerialName("form_factor") val formFactor: String,
     @SerialName("app_version") val appVersion: String,

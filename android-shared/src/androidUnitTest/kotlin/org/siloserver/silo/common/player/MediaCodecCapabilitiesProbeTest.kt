@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.player
 
+import android.media.MediaCodecInfo.CodecProfileLevel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -88,5 +89,37 @@ class MediaCodecCapabilitiesProbeTest {
         assertEquals(0, MediaCodecCapabilitiesProbe.heightFloorForBucket("sd"))
         assertEquals(0, MediaCodecCapabilitiesProbe.heightFloorForBucket(""))
         assertEquals(0, MediaCodecCapabilitiesProbe.heightFloorForBucket("4k"))
+    }
+
+    @Test
+    fun `AVC evidence uses ffprobe profile and level vocabulary`() {
+        assertEquals(
+            "high",
+            MediaCodecCapabilitiesProbe.profileName("h264", CodecProfileLevel.AVCProfileHigh),
+        )
+        assertEquals(
+            8,
+            MediaCodecCapabilitiesProbe.profileBitDepth("h264", CodecProfileLevel.AVCProfileHigh),
+        )
+        assertEquals(
+            41,
+            MediaCodecCapabilitiesProbe.normalizedLevel("h264", CodecProfileLevel.AVCLevel41),
+        )
+    }
+
+    @Test
+    fun `HEVC evidence uses ffprobe profile and level vocabulary`() {
+        assertEquals(
+            "main 10",
+            MediaCodecCapabilitiesProbe.profileName("hevc", CodecProfileLevel.HEVCProfileMain10),
+        )
+        assertEquals(
+            10,
+            MediaCodecCapabilitiesProbe.profileBitDepth("hevc", CodecProfileLevel.HEVCProfileMain10),
+        )
+        assertEquals(
+            153,
+            MediaCodecCapabilitiesProbe.normalizedLevel("hevc", CodecProfileLevel.HEVCMainTierLevel51),
+        )
     }
 }

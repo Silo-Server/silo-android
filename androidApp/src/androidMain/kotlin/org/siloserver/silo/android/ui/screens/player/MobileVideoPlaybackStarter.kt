@@ -50,6 +50,7 @@ class MobileVideoPlaybackStarter(
             val serverUrl = playbackSessionManager.getServerUrl()
             val preferredQuality = request.preferredQualityOverride
                 ?: playerSettingsStore.preferredQualityFlow.first()
+            val playbackQualityIntent = request.playbackQualityIntent ?: "original"
             val preferredAudioLanguage = playerSettingsStore.audioLanguageFlow
                 .first().ifBlank { null }
             val version = request.preferredFileId
@@ -103,7 +104,7 @@ class MobileVideoPlaybackStarter(
                     clientPlaybackContext = playbackContext,
                     audioTrackIndex = request.audioTrackIndex,
                     subtitleTrackIndex = request.subtitleTrackIndex,
-                    qualityPreference = preferredQuality,
+                    qualityPreference = playbackQualityIntent,
                     startPosition = startRequestPosition,
                 )
             ) {
@@ -152,7 +153,7 @@ class MobileVideoPlaybackStarter(
                     capabilities = capabilities,
                     audioTrackIndex = request.audioTrackIndex ?: resolved.audioTrackIndex,
                     subtitleTrackIndex = request.subtitleTrackIndex,
-                    qualityPreference = preferredQuality,
+                    qualityPreference = playbackQualityIntent,
                     startPosition = startPos,
                     clientPlaybackContext = playbackContext,
                 ),

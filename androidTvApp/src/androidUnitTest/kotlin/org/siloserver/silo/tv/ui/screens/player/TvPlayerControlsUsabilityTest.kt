@@ -518,9 +518,10 @@ class TvPlayerControlsUsabilityTest {
         assertTrue(routeSource.contains("if (quality != null) add(\"quality=\${quality.routeEncode()}\")"))
         assertTrue(navigationSource.contains("TvRoute.Player(contentId = nextContentId, quality = nextQuality"))
         assertTrue(navigationSource.contains("preferredQuality = preferredQuality"))
-        // In-player Quality menu can pin a session override that wins over the
-        // launch/profile preference (TP3 transcode ladder).
-        assertTrue(viewModelSource.contains("preferredQualityOverride = qualityOverride ?: preferredQuality"))
+        // Source-version preference must stay separate from the explicit
+        // in-player transcode-quality intent.
+        assertTrue(viewModelSource.contains("preferredQualityOverride = preferredQuality"))
+        assertTrue(viewModelSource.contains("playbackQualityIntent = qualityOverride"))
         assertTrue(viewModelSource.contains("fun switchQuality(wireValue: String)"))
     }
 

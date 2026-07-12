@@ -49,6 +49,7 @@ class TvVideoPlaybackStarter(
             val serverUrl = playbackSessionManager.getServerUrl()
             val preferredQuality = request.preferredQualityOverride
                 ?: playerSettingsStore.preferredQualityFlow.first()
+            val playbackQualityIntent = request.playbackQualityIntent ?: "original"
             val version = request.preferredFileId
                 ?.let { id -> watchDetail.versions.firstOrNull { it.fileId == id } }
                 ?: selectPlaybackVersion(
@@ -101,7 +102,7 @@ class TvVideoPlaybackStarter(
                     clientPlaybackContext = playbackContext,
                     audioTrackIndex = request.audioTrackIndex,
                     subtitleTrackIndex = request.subtitleTrackIndex,
-                    qualityPreference = preferredQuality,
+                    qualityPreference = playbackQualityIntent,
                     startPosition = startRequestPosition,
                 )
             ) {
@@ -150,7 +151,7 @@ class TvVideoPlaybackStarter(
                     capabilities = capabilities,
                     audioTrackIndex = resolved.audioTrackIndex,
                     subtitleTrackIndex = request.subtitleTrackIndex,
-                    qualityPreference = preferredQuality,
+                    qualityPreference = playbackQualityIntent,
                     startPosition = startPos,
                     clientPlaybackContext = playbackContext,
                 ),

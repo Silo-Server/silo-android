@@ -5,6 +5,7 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
 import org.siloserver.silo.model.playback.HdrCapabilities
+import org.siloserver.silo.model.playback.VideoDecodeCapability
 
 /**
  * Probes the device's `MediaCodec` decoder list to determine which video
@@ -20,9 +21,20 @@ object MediaCodecCapabilitiesProbe {
 
     data class ProbeResult(
         val videoCodecs: Set<String>,
+        val videoDecodeCapabilities: List<VideoDecodeCapability>,
         val hdr: HdrCapabilities,
         val maxResolution: String,
         val supportsDvProfile7: Boolean,
+    )
+
+    private data class MutableVideoDecodeCapability(
+        val profiles: MutableSet<String> = sortedSetOf(),
+        val levels: MutableSet<Int> = sortedSetOf(),
+        val bitDepths: MutableSet<Int> = sortedSetOf(),
+        var maxWidth: Int = 0,
+        var maxHeight: Int = 0,
+        var maxFrameRate: Double = 0.0,
+        var maxBitrateKbps: Int = 0,
     )
 
     // Decoder/HDR support is static for the process lifetime; the MediaCodecList
@@ -44,6 +56,7 @@ object MediaCodecCapabilitiesProbe {
         // protocol has no way to express per-codec ceilings, so we filter
         // under-spec'd codecs out of the payload instead of lying.
         val videoMaxHeights = mutableMapOf<String, Int>()
+        val detailedVideo = mutableMapOf<String, MutableVideoDecodeCapability>()
         var hdr10 = false
         var hdr10p = false
         var hlg = false
@@ -57,6 +70,26 @@ object MediaCodecCapabilitiesProbe {
             for (type in info.supportedTypes) {
                 val caps = runCatching { info.getCapabilitiesForType(type) }.getOrNull() ?: continue
                 val height = caps.videoCapabilities?.supportedHeights?.upper ?: 0
+
+                codecName(type)?.takeIf { isHardwareDecoder(info) }?.let { codec ->
+                    val evidence = detailedVideo.getOrPut(codec) { MutableVideoDecodeCapability() }
+                    val video = caps.videoCapabilities
+                    evidence.maxWidth = maxOf(evidence.maxWidth, video?.supportedWidths?.upper ?: 0)
+                    evidence.maxHeight = maxOf(evidence.maxHeight, video?.supportedHeights?.upper ?: 0)
+                    evidence.maxFrameRate = maxOf(
+                        evidence.maxFrameRate,
+                        (video?.supportedFrameRates?.upper ?: 0.0).toDouble(),
+                    )
+                    evidence.maxBitrateKbps = maxOf(
+                        evidence.maxBitrateKbps,
+                        (video?.bitrateRange?.upper ?: 0) / 1_000,
+                    )
+                    caps.profileLevels.forEach { profileLevel ->
+                        profileName(codec, profileLevel.profile)?.let(evidence.profiles::add)
+                        profileBitDepth(codec, profileLevel.profile)?.let(evidence.bitDepths::add)
+                        normalizedLevel(codec, profileLevel.level)?.let(evidence.levels::add)
+                    }
+                }
 
                 fun track(name: String) {
                     videoMaxHeights.merge(name, height) { a, b -> maxOf(a, b) }
@@ -161,6 +194,21 @@ object MediaCodecCapabilitiesProbe {
         // whether the DV decoder was probed at all.
         return ProbeResult(
             videoCodecs = advertisedVideo,
+            videoDecodeCapabilities = advertisedVideo.mapNotNull { codec ->
+                detailedVideo[codec]?.let { evidence ->
+                    VideoDecodeCapability(
+                        codec = codec,
+                        profiles = evidence.profiles.toList(),
+                        levels = evidence.levels.toList(),
+                        bitDepths = evidence.bitDepths.toList(),
+                        maxWidth = evidence.maxWidth.takeIf { it > 0 },
+                        maxHeight = evidence.maxHeight.takeIf { it > 0 },
+                        maxFrameRate = evidence.maxFrameRate.takeIf { it > 0.0 },
+                        maxBitrateKbps = evidence.maxBitrateKbps.takeIf { it > 0 },
+                        hardware = true,
+                    )
+                }
+            }.sortedBy { it.codec },
             hdr = HdrCapabilities(
                 hdr10 = effectiveHdr10,
                 hdr10Plus = effectiveHdr10p,
@@ -171,6 +219,162 @@ object MediaCodecCapabilitiesProbe {
             supportsDvProfile7 = dvP7Supported,
         )
     }
+
+    private fun codecName(mimeType: String): String? = when {
+        mimeType.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true) -> "h264"
+        mimeType.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true) -> "hevc"
+        mimeType.equals(MediaFormat.MIMETYPE_VIDEO_VP9, ignoreCase = true) -> "vp9"
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            mimeType.equals(MediaFormat.MIMETYPE_VIDEO_AV1, ignoreCase = true) -> "av1"
+        else -> null
+    }
+
+    private fun isHardwareDecoder(info: android.media.MediaCodecInfo): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            info.isHardwareAccelerated
+        } else {
+            val name = info.name.lowercase()
+            !name.startsWith("omx.google.") && !name.startsWith("c2.android.")
+        }
+
+    internal fun profileName(codec: String, profile: Int): String? = when (codec) {
+        "h264" -> when (profile) {
+            CodecProfileLevel.AVCProfileBaseline -> "baseline"
+            CodecProfileLevel.AVCProfileMain -> "main"
+            CodecProfileLevel.AVCProfileExtended -> "extended"
+            CodecProfileLevel.AVCProfileHigh -> "high"
+            CodecProfileLevel.AVCProfileHigh10 -> "high 10"
+            CodecProfileLevel.AVCProfileHigh422 -> "high 4:2:2"
+            CodecProfileLevel.AVCProfileHigh444 -> "high 4:4:4 predictive"
+            else -> null
+        }
+        "hevc" -> when (profile) {
+            CodecProfileLevel.HEVCProfileMain -> "main"
+            CodecProfileLevel.HEVCProfileMain10,
+            CodecProfileLevel.HEVCProfileMain10HDR10,
+            CodecProfileLevel.HEVCProfileMain10HDR10Plus,
+            -> "main 10"
+            else -> null
+        }
+        "vp9" -> when (profile) {
+            CodecProfileLevel.VP9Profile0 -> "profile 0"
+            CodecProfileLevel.VP9Profile1 -> "profile 1"
+            CodecProfileLevel.VP9Profile2,
+            CodecProfileLevel.VP9Profile2HDR,
+            CodecProfileLevel.VP9Profile2HDR10Plus,
+            -> "profile 2"
+            CodecProfileLevel.VP9Profile3,
+            CodecProfileLevel.VP9Profile3HDR,
+            CodecProfileLevel.VP9Profile3HDR10Plus,
+            -> "profile 3"
+            else -> null
+        }
+        "av1" -> when (profile) {
+            CodecProfileLevel.AV1ProfileMain8 -> "main"
+            CodecProfileLevel.AV1ProfileMain10,
+            CodecProfileLevel.AV1ProfileMain10HDR10,
+            CodecProfileLevel.AV1ProfileMain10HDR10Plus,
+            -> "main"
+            else -> null
+        }
+        else -> null
+    }
+
+    internal fun profileBitDepth(codec: String, profile: Int): Int? = when (codec) {
+        "h264" -> when (profile) {
+            CodecProfileLevel.AVCProfileHigh10,
+            CodecProfileLevel.AVCProfileHigh422,
+            CodecProfileLevel.AVCProfileHigh444,
+            -> 10
+            else -> 8
+        }
+        "hevc" -> when (profile) {
+            CodecProfileLevel.HEVCProfileMain -> 8
+            CodecProfileLevel.HEVCProfileMain10,
+            CodecProfileLevel.HEVCProfileMain10HDR10,
+            CodecProfileLevel.HEVCProfileMain10HDR10Plus,
+            -> 10
+            else -> null
+        }
+        "vp9" -> when (profile) {
+            CodecProfileLevel.VP9Profile0, CodecProfileLevel.VP9Profile1 -> 8
+            CodecProfileLevel.VP9Profile2,
+            CodecProfileLevel.VP9Profile2HDR,
+            CodecProfileLevel.VP9Profile2HDR10Plus,
+            CodecProfileLevel.VP9Profile3,
+            CodecProfileLevel.VP9Profile3HDR,
+            CodecProfileLevel.VP9Profile3HDR10Plus,
+            -> 10
+            else -> null
+        }
+        "av1" -> when (profile) {
+            CodecProfileLevel.AV1ProfileMain8 -> 8
+            CodecProfileLevel.AV1ProfileMain10,
+            CodecProfileLevel.AV1ProfileMain10HDR10,
+            CodecProfileLevel.AV1ProfileMain10HDR10Plus,
+            -> 10
+            else -> null
+        }
+        else -> null
+    }
+
+    internal fun normalizedLevel(codec: String, level: Int): Int? = when (codec) {
+        "h264" -> AVC_LEVELS[level]
+        "hevc" -> HEVC_LEVELS[level]
+        else -> null
+    }
+
+    private val AVC_LEVELS = mapOf(
+        CodecProfileLevel.AVCLevel1 to 10,
+        CodecProfileLevel.AVCLevel1b to 9,
+        CodecProfileLevel.AVCLevel11 to 11,
+        CodecProfileLevel.AVCLevel12 to 12,
+        CodecProfileLevel.AVCLevel13 to 13,
+        CodecProfileLevel.AVCLevel2 to 20,
+        CodecProfileLevel.AVCLevel21 to 21,
+        CodecProfileLevel.AVCLevel22 to 22,
+        CodecProfileLevel.AVCLevel3 to 30,
+        CodecProfileLevel.AVCLevel31 to 31,
+        CodecProfileLevel.AVCLevel32 to 32,
+        CodecProfileLevel.AVCLevel4 to 40,
+        CodecProfileLevel.AVCLevel41 to 41,
+        CodecProfileLevel.AVCLevel42 to 42,
+        CodecProfileLevel.AVCLevel5 to 50,
+        CodecProfileLevel.AVCLevel51 to 51,
+        CodecProfileLevel.AVCLevel52 to 52,
+        CodecProfileLevel.AVCLevel6 to 60,
+        CodecProfileLevel.AVCLevel61 to 61,
+        CodecProfileLevel.AVCLevel62 to 62,
+    )
+
+    private val HEVC_LEVELS = mapOf(
+        CodecProfileLevel.HEVCMainTierLevel1 to 30,
+        CodecProfileLevel.HEVCHighTierLevel1 to 30,
+        CodecProfileLevel.HEVCMainTierLevel2 to 60,
+        CodecProfileLevel.HEVCHighTierLevel2 to 60,
+        CodecProfileLevel.HEVCMainTierLevel21 to 63,
+        CodecProfileLevel.HEVCHighTierLevel21 to 63,
+        CodecProfileLevel.HEVCMainTierLevel3 to 90,
+        CodecProfileLevel.HEVCHighTierLevel3 to 90,
+        CodecProfileLevel.HEVCMainTierLevel31 to 93,
+        CodecProfileLevel.HEVCHighTierLevel31 to 93,
+        CodecProfileLevel.HEVCMainTierLevel4 to 120,
+        CodecProfileLevel.HEVCHighTierLevel4 to 120,
+        CodecProfileLevel.HEVCMainTierLevel41 to 123,
+        CodecProfileLevel.HEVCHighTierLevel41 to 123,
+        CodecProfileLevel.HEVCMainTierLevel5 to 150,
+        CodecProfileLevel.HEVCHighTierLevel5 to 150,
+        CodecProfileLevel.HEVCMainTierLevel51 to 153,
+        CodecProfileLevel.HEVCHighTierLevel51 to 153,
+        CodecProfileLevel.HEVCMainTierLevel52 to 156,
+        CodecProfileLevel.HEVCHighTierLevel52 to 156,
+        CodecProfileLevel.HEVCMainTierLevel6 to 180,
+        CodecProfileLevel.HEVCHighTierLevel6 to 180,
+        CodecProfileLevel.HEVCMainTierLevel61 to 183,
+        CodecProfileLevel.HEVCHighTierLevel61 to 183,
+        CodecProfileLevel.HEVCMainTierLevel62 to 186,
+        CodecProfileLevel.HEVCHighTierLevel62 to 186,
+    )
 
     /**
      * Map the decoder's maximum supported height (in pixels) to the canonical

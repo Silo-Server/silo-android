@@ -166,6 +166,7 @@ class PlaybackCapabilityDetector(
             hdr = hasAnyHdr,
             hdrDetails = intersectedHdr,
             audioPassthrough = passthrough,
+            videoDecode = codecProbe.videoDecodeCapabilities,
         )
     }
 

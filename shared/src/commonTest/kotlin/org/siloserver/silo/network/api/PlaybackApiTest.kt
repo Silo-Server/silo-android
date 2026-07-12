@@ -77,7 +77,7 @@ class PlaybackApiTest {
         assertEquals(3, body["protocol_version"]!!.jsonPrimitive.int)
         assertEquals("file:42:audio:2", body["audio_track_id"]!!.jsonPrimitive.content)
         assertEquals(
-            listOf("playback_plan_v3", "media3_only"),
+            listOf("playback_plan_v3", "media3_only", "detailed_decode_capabilities"),
             body["client_features"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
     }

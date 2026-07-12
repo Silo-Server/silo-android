@@ -14,6 +14,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 const val PLAYBACK_PROTOCOL_V3 = 3
 const val PLAYBACK_PLAN_V3_FEATURE = "playback_plan_v3"
 const val MEDIA3_ONLY_FEATURE = "media3_only"
+const val DETAILED_DECODE_CAPABILITIES_FEATURE = "detailed_decode_capabilities"
 
 @Serializable
 enum class PlaybackDecisionOutcome {
@@ -185,7 +186,11 @@ data class PlaybackTerminalV3(
 @Serializable
 data class PlaybackStartRequestV3(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
-    @SerialName("client_features") val clientFeatures: List<String> = listOf(PLAYBACK_PLAN_V3_FEATURE, MEDIA3_ONLY_FEATURE),
+    @SerialName("client_features") val clientFeatures: List<String> = listOf(
+        PLAYBACK_PLAN_V3_FEATURE,
+        MEDIA3_ONLY_FEATURE,
+        DETAILED_DECODE_CAPABILITIES_FEATURE,
+    ),
     @SerialName("file_id") val fileId: Int,
     @SerialName("profile_id") val profileId: String,
     @SerialName("playback_attempt_id") val playbackAttemptId: String,
