@@ -21,8 +21,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,11 +36,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -99,6 +105,7 @@ import org.siloserver.silo.tv.ui.components.TvPillVariant
 import org.siloserver.silo.tv.ui.components.TvRowStyle
 import org.siloserver.silo.tv.ui.screens.audiobook.formatAudiobookTime
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.TvControlCorner
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -192,6 +199,11 @@ private fun TvDetailContent(
     onOpenPerson: (personId: Long) -> Unit,
 ) {
     val playFocus = remember { FocusRequester() }
+    // The playback selector row inside the hero action cluster. Hoisted here so
+    // an Up press from the body (episodes/season chips) can land on the
+    // selectors — the hero's bottom-most focus stop — instead of skipping
+    // straight to Play.
+    val selectorFocus = remember { FocusRequester() }
     val firstCastFocus = remember { FocusRequester() }
     val firstSimilarFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
@@ -258,8 +270,13 @@ private fun TvDetailContent(
     // actions section.
     val returnToHero: () -> Boolean = {
         coroutineScope.launch {
-            listState.animateScrollToItem(0)
-            runCatching { playFocus.requestFocus() }
+            listState.animateScrollToItemPaced(0)
+            // Land on the selector row (the hero element directly above the
+            // body) when it is composed; otherwise fall back to Play
+            // (audiobooks, or the next-up placeholder pill).
+            if (runCatching { selectorFocus.requestFocus() }.isFailure) {
+                runCatching { playFocus.requestFocus() }
+            }
         }
         true
     }
@@ -335,6 +352,7 @@ private fun TvDetailContent(
                                     state = state,
                                     viewModel = viewModel,
                                     playFocus = playFocus,
+                                    selectorFocus = selectorFocus,
                                     onPlay = onPlay,
                                     onSeriesClick = onSeriesClick,
                                     onSeasonClick = onSeasonClick,
@@ -429,36 +447,40 @@ private fun TvDetailContent(
 
                         if (showsEpisodesSection) {
                             // Anchor the window when focus ENTERS the episodes
-                            // section (chips or cards): both land the body at
-                            // the same scroll offset, so focusing "Season N"
+                            // section (chips or cards): both center the section
+                            // in the viewport (tvOS scrolls the episode section
+                            // with `anchor: .center`), so focusing "Season N"
                             // sits where an episode focus sits, and coming back
-                            // up from Cast & Crew restores the same position
-                            // (QA 2026-07-08).
+                            // up from Cast & Crew restores the same position.
                             var episodesSectionHasFocus by remember { mutableStateOf(false) }
+                            var episodesSectionCenterY by remember { mutableStateOf<Float?>(null) }
                             Box(
-                                modifier = Modifier.onFocusChanged { focusState ->
-                                    val nowFocused = focusState.hasFocus
-                                    if (nowFocused && !episodesSectionHasFocus) {
-                                        coroutineScope.launch {
-                                            // Episode-card focus naturally anchors
-                                            // the body item at the viewport top. A
-                                            // short season chip does not request enough
-                                            // movement on its own, so explicitly use
-                                            // that same body-item anchor.
-                                            // Let the focus system enqueue its
-                                            // automatic bring-into-view first,
-                                            // then cancel/replace that scroll with
-                                            // our shared season/episode anchor.
-                                            withFrameNanos { }
-                                            if (!episodesSectionHasFocus) return@launch
-                                            listState.animateScrollToItem(
-                                                index = 1,
-                                                scrollOffset = 0,
-                                            )
-                                        }
+                                modifier = Modifier
+                                    .onGloballyPositioned { coords ->
+                                        episodesSectionCenterY =
+                                            coords.positionInRoot().y + coords.size.height / 2f
                                     }
-                                    episodesSectionHasFocus = nowFocused
-                                },
+                                    .onFocusChanged { focusState ->
+                                        val nowFocused = focusState.hasFocus
+                                        if (nowFocused && !episodesSectionHasFocus) {
+                                            coroutineScope.launch {
+                                                // Let the focus system enqueue its
+                                                // automatic bring-into-view first,
+                                                // then cancel/replace that scroll
+                                                // with the centered section anchor.
+                                                withFrameNanos { }
+                                                if (!episodesSectionHasFocus) return@launch
+                                                val center = episodesSectionCenterY ?: return@launch
+                                                val viewportCenter =
+                                                    listState.layoutInfo.viewportSize.height / 2f
+                                                listState.animateScrollBy(
+                                                    value = center - viewportCenter,
+                                                    animationSpec = DetailAnchorScrollSpec,
+                                                )
+                                            }
+                                        }
+                                        episodesSectionHasFocus = nowFocused
+                                    },
                             ) {
                             EpisodesSection(
                                 detail = detail,
@@ -580,6 +602,7 @@ private fun HeroActionRow(
     state: TvItemDetailUiState,
     viewModel: TvItemDetailViewModel,
     playFocus: FocusRequester,
+    selectorFocus: FocusRequester,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, subtitleTrackIndex: Int?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
@@ -652,8 +675,9 @@ private fun HeroActionRow(
     // The effective playable version drives the inline playback selector row.
     val isAudiobook = isAudiobookItemType(detail.type)
     // Down from the action cluster lands on the selector row (when shown) rather
-    // than skipping into the body. Mirrors Apple's full-width `.focusSection()`.
-    val selectorFocus = remember { FocusRequester() }
+    // than skipping into the body — mirrors Apple's full-width `.focusSection()`.
+    // The selectorFocus requester itself is hoisted to the screen so body Up
+    // traversal can target the row too.
     // While the next-up playback detail is still loading we hold a placeholder in
     // the selector slot (Apple's `TVVersionPillPlaceholder`); once resolved the
     // real selector binds to the next-up versions/tracks.
@@ -675,6 +699,13 @@ private fun HeroActionRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .focusProperties {
+                    // Entering the cluster from outside (Down from the
+                    // synopsis/facts, Up from the selectors or body) always
+                    // lands on Play — geometric nearest-child search would
+                    // otherwise pick whichever toggle sits closest.
+                    enter = { playFocus }
+                }
                 .focusGroup()
                 .then(
                     if (showsSelectorRow) {
@@ -708,8 +739,10 @@ private fun HeroActionRow(
             )
 
             if (hasResume) {
+                // tvOS Start Over uses `backward.end.fill` (skip-to-start),
+                // not a circular replay arrow.
                 TvSecondaryPillButton(
-                    icon = Icons.Filled.Replay,
+                    icon = Icons.Filled.SkipPrevious,
                     title = "Start Over",
                     onClick = {
                         if (playReady) {
@@ -1025,32 +1058,37 @@ private fun episodeEyebrowLabel(detail: ItemDetail, state: TvItemDetailUiState):
  */
 @Composable
 private fun TvVersionPillPlaceholder(modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(12.dp)
+    // Matches the live selector pill geometry (TvAnchoredSelectorMenu trigger):
+    // squared TvControlCorner shape, 22×12 padding, 13dp glyph, 12sp value.
+    val shape = RoundedCornerShape(TvControlCorner)
     Row(
         modifier = modifier
             .background(Color.Black.copy(alpha = 0.42f), shape)
             .border(0.6.dp, Color.White.copy(alpha = 0.16f), shape)
-            .widthIn(min = 150.dp)
-            .padding(horizontal = 24.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 22.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = Icons.Filled.HighQuality,
+            imageVector = Icons.Filled.Tv,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.58f),
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(13.dp),
         )
         Text(
             text = "Version",
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontSize = 12.sp,
+                lineHeight = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            ),
             color = Color.White.copy(alpha = 0.58f),
         )
         Icon(
             imageVector = Icons.Filled.KeyboardArrowDown,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.35f),
-            modifier = Modifier.size(16.dp),
+            modifier = Modifier.size(9.5.dp),
         )
     }
 }
@@ -1423,5 +1461,31 @@ private fun Double.formatHms(): String {
         "$hours:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
     } else {
         "$minutes:${seconds.toString().padStart(2, '0')}"
+    }
+}
+
+/**
+ * Pacing for the hero ↔ episodes anchor scrolls — tvOS's detail focus
+ * choreography runs `easeInOut(0.45)` (`TVDetailFocusScroll.swift`); 260ms
+ * tuned on-device per design review.
+ */
+private val DetailAnchorScrollSpec = tween<Float>(durationMillis = 260, easing = EaseInOut)
+
+/**
+ * Paced anchor scroll used for the return-to-hero jump.
+ * `animateScrollToItem` animates with a fixed internal spec that can't be
+ * customized, so when the target item is already composed we animate the
+ * exact remaining distance with our own spec; otherwise (deep off-screen
+ * target) fall back to the stock jump.
+ */
+private suspend fun LazyListState.animateScrollToItemPaced(index: Int) {
+    val item = layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
+    if (item != null) {
+        animateScrollBy(
+            value = item.offset.toFloat(),
+            animationSpec = DetailAnchorScrollSpec,
+        )
+    } else {
+        animateScrollToItem(index)
     }
 }
