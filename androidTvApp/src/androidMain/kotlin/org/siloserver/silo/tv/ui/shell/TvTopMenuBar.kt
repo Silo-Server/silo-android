@@ -149,6 +149,9 @@ fun TvTopMenuBar(
     onSelectTab: (TvLibraryTabType) -> Unit = {},
     onSearchClick: () -> Unit,
     onProfileClick: () -> Unit,
+    onProfileDwell: () -> Unit,
+    onProfileBlur: () -> Unit,
+    onEnterProfileMenu: () -> Unit,
     onMoveDown: () -> Unit,
     isMenuFocused: Boolean,
     onMenuFocusChange: (Boolean) -> Unit,
@@ -247,6 +250,7 @@ fun TvTopMenuBar(
     // on first compose.
     LaunchedEffect(profileFocusRequest) {
         if (profileFocusRequest > 0) {
+            dwellSuppressedButton = TvTopMenuFocus.Profile
             runCatching { profileFocusRequester.requestFocus() }
         }
     }
@@ -276,6 +280,9 @@ fun TvTopMenuBar(
         } else if (focus is TvTopMenuFocus.ForYou) {
             delay(if (openPanel == null) TopMenuInitialPreviewDelayMillis else TopMenuPanelSwitchDelayMillis)
             onDwell(TvTopMenuPanel.Root(TvRootDestination.ForYou))
+        } else if (focus == TvTopMenuFocus.Profile) {
+            delay(TopMenuInitialPreviewDelayMillis)
+            onProfileDwell()
         } else if (focus != null) {
             // Moving to a non-panel bar item closes any dwell preview. A null
             // focus can mean focus is entering the open panel, so leave panel
@@ -336,7 +343,9 @@ fun TvTopMenuBar(
                         // panel (and focuses into it) instead of diving to content.
                         // Home/Calendar/Search keep the move-to-content behavior.
                         val panel = panelForFocus(focus)
-                        if (panel != null && dwellSuppressedButton == focus) {
+                        if (focus == TvTopMenuFocus.Profile) {
+                            onEnterProfileMenu()
+                        } else if (panel != null && dwellSuppressedButton == focus) {
                             // Back just dismissed this tab's panel. Treat the
                             // next Down as the user's intent to leave chrome
                             // and enter the first/remembered content row.
@@ -509,6 +518,7 @@ fun TvTopMenuBar(
                 focusRequester = profileFocusRequester,
                 onFocusChanged = { hasFocus ->
                     focusedButton = if (hasFocus) TvTopMenuFocus.Profile else focusedButton.takeUnless { it == TvTopMenuFocus.Profile }
+                    if (!hasFocus) onProfileBlur()
                 },
                 onClick = onProfileClick,
             )

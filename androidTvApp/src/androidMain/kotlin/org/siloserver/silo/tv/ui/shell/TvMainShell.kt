@@ -1103,7 +1103,10 @@ fun TvMainShell(
                 }
             },
             onSearchClick = onSearchPressed,
-            onProfileClick = { focusState.toggleProfileMenu() },
+            onProfileClick = {},
+            onProfileDwell = focusState::previewProfileMenu,
+            onProfileBlur = focusState::closeProfilePreview,
+            onEnterProfileMenu = focusState::enterProfileMenu,
             onMoveDown = { moveFocusToContent(currentRoute) },
             isMenuFocused = focusState.isMenuFocused,
             // setMenuFocused(true) also clears any stale "entered" flag: focus on
@@ -1247,6 +1250,8 @@ fun TvMainShell(
         if (focusState.profileMenuOpen) {
             TvProfileDropdown(
                 accountState = accountSnapshot,
+                entersMenu = focusState.profileMenuEntered,
+                focusEntryToken = focusState.profileMenuFocusEntryToken,
                 onSwitchProfile = closeMenuAnd(onSwitchProfile),
                 onWatchlist = closeMenuAnd {
                     navigateToSecondary(TvMainRoute.Watchlist.route)
@@ -1456,6 +1461,8 @@ private fun cascadePanelOffset(
 @Composable
 private fun TvProfileDropdown(
     accountState: TvAccountState,
+    entersMenu: Boolean,
+    focusEntryToken: Int,
     onSwitchProfile: () -> Unit,
     onWatchlist: () -> Unit,
     onFavorites: () -> Unit,
@@ -1469,8 +1476,11 @@ private fun TvProfileDropdown(
     modifier: Modifier = Modifier,
 ) {
     val firstFocus = remember { FocusRequester() }
-    // Opening focuses the first row; Back/Menu closes and returns to the avatar.
-    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    LaunchedEffect(entersMenu, focusEntryToken) {
+        if (entersMenu && focusEntryToken > 0) {
+            runCatching { firstFocus.requestFocus() }
+        }
+    }
 
     Column(
         modifier = modifier

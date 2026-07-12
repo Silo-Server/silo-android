@@ -40,7 +40,7 @@ sealed interface TvShellBackAction {
     /** A cascade panel (preview or entered) was open; it is now closed and focus returned to the bar. */
     data object ClosePanel : TvShellBackAction
 
-    /** The profile dropdown was open; it is now closed and focus returns to the avatar. */
+    /** The profile dropdown was open; it is now closed and focus returns to the appropriate bar item. */
     data object CloseProfileMenu : TvShellBackAction
 
     /**
@@ -143,6 +143,10 @@ class TvShellFocusState {
     /** True while the profile dropdown is open. */
     var profileMenuOpen by mutableStateOf(false)
         private set
+    var profileMenuEntered by mutableStateOf(false)
+        private set
+    var profileMenuFocusEntryToken by mutableIntStateOf(0)
+        private set
 
     /** The cascade panel currently previewed or entered, or null. */
     var openPanel by mutableStateOf<TvTopMenuPanel?>(null)
@@ -166,7 +170,7 @@ class TvShellFocusState {
      * dropdown owns focus, so D-pad input below cannot pull focus back up.
      */
     val isMenuFocusSuppressed: Boolean
-        get() = profileMenuOpen
+        get() = profileMenuEntered
 
     // --- Menu-bar focus signals -------------------------------------------------
 
@@ -184,14 +188,30 @@ class TvShellFocusState {
      */
     fun updateMenuFocused(focused: Boolean) {
         isMenuFocused = focused
-        if (focused) panelEntersFocus = false
+        if (focused) {
+            panelEntersFocus = false
+            if (profileMenuOpen && !profileMenuEntered) profileMenuOpen = false
+        }
     }
 
     // --- Profile dropdown -------------------------------------------------------
 
-    /** Toggle the profile dropdown (avatar tap). */
-    fun toggleProfileMenu() {
-        profileMenuOpen = !profileMenuOpen
+    /** Open the profile dropdown from avatar dwell without toggle semantics. */
+    fun previewProfileMenu() {
+        openPanel = null
+        panelEntersFocus = false
+        profileMenuOpen = true
+        profileMenuEntered = false
+    }
+
+    fun enterProfileMenu() {
+        profileMenuOpen = true
+        profileMenuEntered = true
+        profileMenuFocusEntryToken++
+    }
+
+    fun closeProfilePreview() {
+        if (!profileMenuEntered) profileMenuOpen = false
     }
 
     /**
@@ -201,11 +221,13 @@ class TvShellFocusState {
      */
     fun closeProfileMenuForContent() {
         profileMenuOpen = false
+        profileMenuEntered = false
     }
 
     /** Close the dropdown and return focus to the avatar that opened it (Back / dismiss). */
     fun dismissProfileMenu() {
         profileMenuOpen = false
+        profileMenuEntered = false
         profileFocusRequest++
     }
 
@@ -260,7 +282,13 @@ class TvShellFocusState {
         )
         when (action) {
             TvShellBackAction.ClosePanel -> closePanel(returnFocusToBar = true)
-            TvShellBackAction.CloseProfileMenu -> dismissProfileMenu()
+            TvShellBackAction.CloseProfileMenu -> {
+                // Keep the menu visible until Home actually accepts focus. This
+                // applies both to an avatar hover preview and focus inside a menu
+                // row, avoiding an intermediate hidden-menu/avatar-focus frame.
+                profileMenuEntered = false
+                requestMenuFocus(TvTopMenuPanel.Root(TvRootDestination.Home))
+            }
             TvShellBackAction.MoveFocusToMenu -> requestMenuFocus()
             TvShellBackAction.MenuBack,
             TvShellBackAction.DelegateToNav -> Unit
