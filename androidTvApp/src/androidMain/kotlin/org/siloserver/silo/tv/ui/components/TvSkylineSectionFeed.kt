@@ -80,6 +80,7 @@ fun TvSkylineSectionFeed(
      *  on the launch card with no intermediate wrong-card frame. */
     detailReturnCardFocusRequester: FocusRequester? = null,
     firstRowFocusRequester: FocusRequester? = null,
+    firstRowContainerRequester: FocusRequester? = null,
     onInitialContentFocus: () -> Unit = {},
     iconForSection: (ResolvedSection) -> ImageVector? = { null },
     onSeeAllClickForSection: (ResolvedSection) -> (() -> Unit)? = { null },
@@ -399,7 +400,7 @@ fun TvSkylineSectionFeed(
     // cancelled by the restorer's custom `enter` (it restores, cancels, and
     // the transaction rolls back), but a request ON the group itself is
     // honored — so the reset ladder below hops onto the row first.
-    val firstRowContainerFocusRequester = remember { FocusRequester() }
+    val firstRowContainerFocusRequester = firstRowContainerRequester ?: remember { FocusRequester() }
     // These consumption guards must survive the outer Main → ItemDetail → Main
     // round trip. Plain remember resets when the feed is disposed, replaying
     // both first-card effects after focusRestorer has correctly restored the

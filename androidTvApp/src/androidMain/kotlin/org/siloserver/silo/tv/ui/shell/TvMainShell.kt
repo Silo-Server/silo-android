@@ -284,6 +284,7 @@ fun TvMainShell(
     val focusManager = LocalFocusManager.current
     val contentFocusRequester = remember { FocusRequester() }
     val homeFirstItemFocusRequester = remember { FocusRequester() }
+    val homeFirstRowContainerFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
     // Opening an outer item-detail route pauses/removes this shell. Remember the
     // pending hand-back in the Main back-stack entry so it survives either form,
@@ -490,6 +491,12 @@ fun TvMainShell(
         focusState.closeProfileMenuForContent()
         if (route == TvMainRoute.Search.route) {
             runCatching { searchInputFocusRequester.requestFocus() }
+        } else if (route == TvMainRoute.Home.route || route == TvMainRoute.Video.route) {
+            panelScope.launch {
+                runCatching { contentFocusRequester.requestFocus() }
+                withFrameNanos { }
+                runCatching { homeFirstRowContainerFocusRequester.requestFocus() }
+            }
         } else {
             // Just request focus on the content group. The Box's
             // .focusRestorer() restores to the user's last-focused card
@@ -805,6 +812,7 @@ fun TvMainShell(
                         detailReturnFocusRequest = homeDetailReturnFocusRequest,
                         detailReturnCardFocusRequester = homeDetailReturnCardFocusRequester,
                         firstRowFocusRequester = homeFirstItemFocusRequester,
+                        firstRowContainerFocusRequester = homeFirstRowContainerFocusRequester,
                         shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -826,6 +834,7 @@ fun TvMainShell(
                         detailReturnFocusRequest = homeDetailReturnFocusRequest,
                         detailReturnCardFocusRequester = homeDetailReturnCardFocusRequester,
                         firstRowFocusRequester = homeFirstItemFocusRequester,
+                        firstRowContainerFocusRequester = homeFirstRowContainerFocusRequester,
                         shouldRefreshOnResume = { !suppressHomeRefreshAfterDetail },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
