@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -83,6 +84,10 @@ fun TvCastCrewSection(
      */
     restoreFocusIndex: Int = -1,
     restoreFocusRequester: FocusRequester? = null,
+    /** Fires when the restore-target card actually gains focus, so callers
+     *  can end their restore window immediately instead of holding it open
+     *  (and re-requesting) for a fixed number of frames. */
+    onRestoreCardFocused: (() -> Unit)? = null,
     onCastMemberClick: (index: Int, member: CastMember) -> Unit = { _, _ -> },
 ) {
     if (cast.isEmpty()) return
@@ -101,8 +106,14 @@ fun TvCastCrewSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusProperties {
-                    if (firstItemFocusRequester != null) {
-                        enter = { firstItemFocusRequester }
+                    // While a person-page return is pending, entry into the
+                    // rail (default focus, D-pad, programmatic) must land on
+                    // the launch card — the enter redirect otherwise sends
+                    // every entry to card 0 and silently rolls back direct
+                    // requests to other cards.
+                    val enterTarget = restoreFocusRequester ?: firstItemFocusRequester
+                    if (enterTarget != null) {
+                        enter = { enterTarget }
                     }
                 }
                 .then(
@@ -141,7 +152,11 @@ fun TvCastCrewSection(
                     cardModifier = (if (index == 0) firstItemCardModifier else Modifier)
                         .then(
                             if (restoreFocusRequester != null && index == restoreFocusIndex) {
-                                Modifier.focusRequester(restoreFocusRequester)
+                                Modifier
+                                    .focusRequester(restoreFocusRequester)
+                                    .onFocusChanged { state ->
+                                        if (state.isFocused) onRestoreCardFocused?.invoke()
+                                    }
                             } else {
                                 Modifier
                             },

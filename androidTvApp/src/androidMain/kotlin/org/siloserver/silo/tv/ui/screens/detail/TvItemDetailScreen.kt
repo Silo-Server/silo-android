@@ -216,6 +216,10 @@ private fun TvDetailContent(
     // Saveable because the composable is recreated on back-stack pop.
     val castReturnFocus = remember { FocusRequester() }
     var pendingCastFocusIndex by rememberSaveable(detail.contentId) { mutableStateOf(-1) }
+    // Flipped by the rail when the launch card genuinely gains focus — the
+    // restore loop exits on it instead of re-requesting for a fixed window,
+    // which held focus hostage on that card for ~a second after returning.
+    val castRestoreFocused = remember { mutableStateOf(false) }
     val firstSimilarFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -234,10 +238,19 @@ private fun TvDetailContent(
         // Play. The requester only attaches once the restored rail
         // recomposes — retry across a few frames, then fall back to Play.
         if (pendingCastFocusIndex >= 0) {
+            // requestFocus() can report success yet silently roll back when
+            // it crosses the rail's enter redirect, so don't trust the return
+            // value alone: keep the pending window open (the rail's enter
+            // targets the launch card while it is) across the pop transition,
+            // re-requesting every couple of frames.
             var restored = false
-            for (attempt in 0 until 20) {
-                restored = runCatching { castReturnFocus.requestFocus() }.isSuccess
-                if (restored) break
+            for (attempt in 0 until 40) {
+                if (castRestoreFocused.value) {
+                    restored = true
+                    break
+                }
+                restored = runCatching { castReturnFocus.requestFocus() }.isSuccess || restored
+                withFrameNanos { }
                 withFrameNanos { }
             }
             pendingCastFocusIndex = -1
@@ -598,13 +611,19 @@ private fun TvDetailContent(
                                 // returns to the hero.
                                 onDirectionUp = if (hasEpisodeNavAbove) null else returnToHero,
                                 restoreFocusIndex = pendingCastFocusIndex,
-                                restoreFocusRequester = castReturnFocus,
+                                // Only while the return is pending, so the
+                                // rail's enter redirect reverts to card 0 for
+                                // normal browsing afterwards.
+                                restoreFocusRequester = castReturnFocus
+                                    .takeIf { pendingCastFocusIndex >= 0 },
+                                onRestoreCardFocused = { castRestoreFocused.value = true },
                                 onCastMemberClick = { index, member ->
                                     // Record the index only once navigation
                                     // actually fires — openPerson can no-op when
                                     // the person can't be resolved.
                                     viewModel.openPerson(member) { personId ->
                                         pendingCastFocusIndex = index
+                                        castRestoreFocused.value = false
                                         onOpenPerson(personId)
                                     }
                                 },
