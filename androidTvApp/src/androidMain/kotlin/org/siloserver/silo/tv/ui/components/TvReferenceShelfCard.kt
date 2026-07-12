@@ -59,27 +59,30 @@ fun TvReferenceShelfCard(
 
     var menuExpanded by remember { mutableStateOf(false) }
 
-    Card(
-        onClick = onClick,
-        onLongClick = if (actions.isEmpty) null else { { menuExpanded = true } },
-        shape = CardDefaults.shape(shape = shape),
-        scale = focus.scale,
-        border = focus.border,
-        glow = focus.glow,
+    Box(
         modifier = modifier
             .width(width)
-            .aspectRatio(16f / 9f)
-            .then(cardModifier)
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
+            .aspectRatio(16f / 9f),
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            ThumbhashImage(
-                url = imageUrl,
-                thumbhash = imageThumbhash,
-                contentDescription = title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
+        Card(
+            onClick = onClick,
+            onLongClick = if (actions.isEmpty) null else { { menuExpanded = true } },
+            shape = CardDefaults.shape(shape = shape),
+            scale = focus.scale,
+            border = focus.border,
+            glow = focus.glow,
+            modifier = cardModifier
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                .fillMaxSize(),
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                ThumbhashImage(
+                    url = imageUrl,
+                    thumbhash = imageThumbhash,
+                    contentDescription = title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
 
             Box(
                 modifier = Modifier
@@ -161,14 +164,16 @@ fun TvReferenceShelfCard(
                 }
             }
 
-            TvMediaCardContextMenu(
-                expanded = menuExpanded,
-                onDismiss = { menuExpanded = false },
-                actions = actions,
-                isPlayed = userState?.played == true,
-                isFavorite = userState?.isFavorite == true,
-                isInWatchlist = userState?.inWatchlist == true,
-            )
+            }
         }
+
+        TvMediaCardContextMenu(
+            expanded = menuExpanded,
+            onDismiss = { menuExpanded = false },
+            actions = actions,
+            isPlayed = userState?.played == true,
+            isFavorite = userState?.isFavorite == true,
+            isInWatchlist = userState?.inWatchlist == true,
+        )
     }
 }

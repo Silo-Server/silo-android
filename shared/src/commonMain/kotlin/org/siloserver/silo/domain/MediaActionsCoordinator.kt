@@ -32,4 +32,7 @@ class MediaActionsCoordinator(
         progressUpdatedAt: String,
     ): ApiResult<Unit> =
         personalDataRepository.dismissContinueWatching(itemId, progressUpdatedAt)
+
+    suspend fun dismissNextUp(itemId: String, seriesId: String): ApiResult<Unit> =
+        personalDataRepository.dismissNextUp(itemId, seriesId)
 }

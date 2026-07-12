@@ -174,3 +174,8 @@ data class SetRatingRequest(
 data class ContinueWatchingDismissalRequest(
     @SerialName("progress_updated_at") val progressUpdatedAt: String
 )
+
+@Serializable
+data class NextUpDismissalRequest(
+    @SerialName("series_id") val seriesId: String
+)

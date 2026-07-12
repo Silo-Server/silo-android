@@ -211,6 +211,8 @@ fun TvSkylineSectionFeed(
     // the new bounds below in case rows were added/removed.
     var focusedRowIndex by remember { mutableIntStateOf(-1) }
     var focusedItemIndex by remember { mutableIntStateOf(-1) }
+    var focusedContentId by remember { mutableStateOf<String?>(null) }
+    var removalFocusRequest by remember { mutableIntStateOf(0) }
     // The (row, item) to restore focus to when this feed is recreated after
     // being removed from composition — saveable so it survives both the outer
     // Main → ItemDetail → Main round trip and inner-nav trips (Settings,
@@ -224,11 +226,23 @@ fun TvSkylineSectionFeed(
     // attachments (and the row restorer's enter-fallback redirect they imply).
     var detailReturnPending by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(rows) {
+        val previousContentId = focusedContentId
+        val focusedItemWasRemoved = previousContentId != null &&
+            rows.none { row -> row.items.any { it.contentId == previousContentId } }
         if (focusedRowIndex >= rows.size) {
             focusedRowIndex = (rows.size - 1).coerceAtLeast(-1)
         }
         if (focusedRowIndex in rows.indices && focusedItemIndex >= rows[focusedRowIndex].items.size) {
             focusedItemIndex = (rows[focusedRowIndex].items.size - 1).coerceAtLeast(-1)
+        }
+        if (focusedItemWasRemoved && focusedRowIndex in rows.indices) {
+            val targetRow = rows[focusedRowIndex]
+            if (targetRow.items.isNotEmpty()) {
+                returnRowIndex = focusedRowIndex
+                returnItemIndex = focusedItemIndex.coerceIn(0, targetRow.items.lastIndex)
+                detailReturnPending = true
+                removalFocusRequest += 1
+            }
         }
     }
     val focusManager = LocalFocusManager.current
@@ -239,6 +253,7 @@ fun TvSkylineSectionFeed(
         marquee.preview(item, rowTitle)
         focusedRowIndex = rowIndex
         focusedItemIndex = itemIndex
+        focusedContentId = item.contentId
         // Continuously mirror the browse position into the saveable return
         // slot and keep the restore armed. Any round trip that disposes this
         // feed — Settings, Search, an outer detail page — then recreates it on
@@ -405,6 +420,30 @@ fun TvSkylineSectionFeed(
 
     val lifecycleOwner = LocalLifecycleOwner.current
     val firstRowId = rows.firstOrNull()?.id
+
+    LaunchedEffect(removalFocusRequest) {
+        if (removalFocusRequest == 0 || !detailReturnPending) return@LaunchedEffect
+        val rowIndex = returnRowIndex
+        val itemIndex = returnItemIndex
+        if (rowIndex !in rows.indices || itemIndex !in rows[rowIndex].items.indices) {
+            detailReturnPending = false
+            return@LaunchedEffect
+        }
+        withFrameNanos { }
+        val rowRequester = if (rows[rowIndex].id == firstRowId) {
+            firstRowContainerFocusRequester
+        } else {
+            detailReturnRowContainerFocusRequester
+        }
+        runCatching { rowRequester.requestFocus() }
+        for (attempt in 0 until 8) {
+            withFrameNanos { }
+            if (focusedRowIndex == rowIndex && focusedItemIndex == itemIndex) break
+            runCatching { detailReturnItemFocusRequester.requestFocus() }
+        }
+        detailReturnPending = false
+    }
+
     fun requestFirstRowFocus(): Boolean {
         if (firstRowId == null) return false
         firstRowFocusRequest++

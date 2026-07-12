@@ -81,6 +81,7 @@ fun TvHomeScreen(
             onToggleFavorite = viewModel::toggleFavorite,
             onToggleWatchlist = viewModel::toggleWatchlist,
             onDismissContinueWatching = viewModel::dismissContinueWatching,
+            onDismissNextUp = viewModel::dismissNextUp,
         )
     }
 }
@@ -101,6 +102,7 @@ private fun TvHomeContent(
     onToggleFavorite: (String, Boolean) -> Unit = { _, _ -> },
     onToggleWatchlist: (String, Boolean) -> Unit = { _, _ -> },
     onDismissContinueWatching: (String, String) -> Unit = { _, _ -> },
+    onDismissNextUp: (String, String) -> Unit = { _, _ -> },
 ) {
     TvSkylineSectionFeed(
         sections = sections,
@@ -125,18 +127,21 @@ private fun TvHomeContent(
         },
         cardActions = { section, item ->
             val isProgressRow = section.isTvProgressRow()
+            val progressUpdatedAt = item.progressUpdatedAt
+            val seriesId = item.seriesId
             TvMediaCardActions(
                 onSetWatched = { watched -> onSetWatched(item.contentId, watched) },
                 onToggleFavorite = { fav -> onToggleFavorite(item.contentId, fav) },
                 onToggleWatchlist = { wl -> onToggleWatchlist(item.contentId, wl) },
-                onRemoveFromContinueWatching = if (isProgressRow && item.progressUpdatedAt != null) {
-                    {
-                        item.progressUpdatedAt?.let { ts ->
-                            onDismissContinueWatching(item.contentId, ts)
-                        }
+                onRemoveFromContinueWatching = when {
+                    !isProgressRow -> null
+                    progressUpdatedAt != null -> {
+                        { onDismissContinueWatching(item.contentId, progressUpdatedAt) }
                     }
-                } else {
-                    null
+                    seriesId != null -> {
+                        { onDismissNextUp(item.contentId, seriesId) }
+                    }
+                    else -> null
                 },
             )
         },

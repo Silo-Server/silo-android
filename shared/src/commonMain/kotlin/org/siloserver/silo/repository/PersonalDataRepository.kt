@@ -161,4 +161,7 @@ open class PersonalDataRepository(
     /** Undo a Continue Watching dismissal. */
     open suspend fun undismissContinueWatching(itemId: String): ApiResult<Unit> =
         personalDataApi.undismissContinueWatching(itemId)
+
+    open suspend fun dismissNextUp(itemId: String, seriesId: String): ApiResult<Unit> =
+        personalDataApi.dismissNextUp(itemId, seriesId)
 }

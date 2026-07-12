@@ -146,4 +146,12 @@ class PersonalDataApi(private val client: HttpClient) {
     suspend fun undismissContinueWatching(itemId: String): ApiResult<Unit> = safeApiCall {
         client.delete("/api/v1/home/dismissals/continue_watching/$itemId")
     }
+
+    /** Hide a Next Up episode that is presented inside a Continue Watching row. */
+    suspend fun dismissNextUp(itemId: String, seriesId: String): ApiResult<Unit> = safeApiCall {
+        client.put("/api/v1/home/dismissals/next_up/$itemId") {
+            contentType(ContentType.Application.Json)
+            setBody(NextUpDismissalRequest(seriesId))
+        }
+    }
 }

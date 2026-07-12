@@ -108,6 +108,15 @@ fun TvMediaCard(
             modifier.width(width)
         },
     ) {
+        TvMediaCardContextMenu(
+            expanded = menuExpanded,
+            onDismiss = { menuExpanded = false },
+            actions = actions,
+            isPlayed = userState?.played == true,
+            isFavorite = userState?.isFavorite == true,
+            isInWatchlist = userState?.inWatchlist == true,
+        )
+
         Card(
             onClick = onClick,
             onLongClick = if (actions.isEmpty) null else { { menuExpanded = true } },
@@ -218,14 +227,6 @@ fun TvMediaCard(
             )
         }
 
-        TvMediaCardContextMenu(
-            expanded = menuExpanded,
-            onDismiss = { menuExpanded = false },
-            actions = actions,
-            isPlayed = userState?.played == true,
-            isFavorite = userState?.isFavorite == true,
-            isInWatchlist = userState?.inWatchlist == true,
-        )
     }
 }
 

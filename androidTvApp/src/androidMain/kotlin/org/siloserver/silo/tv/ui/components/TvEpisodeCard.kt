@@ -86,8 +86,16 @@ fun TvEpisodeCard(
 
     Column(
         modifier = modifier.width(width),
-        verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
+        TvMediaCardContextMenu(
+            expanded = menuExpanded,
+            onDismiss = { menuExpanded = false },
+            actions = actions,
+            isPlayed = userState?.played == true,
+            isFavorite = userState?.isFavorite == true,
+            isInWatchlist = userState?.inWatchlist == true,
+        )
+
         Card(
             onClick = onClick,
             onLongClick = if (actions.isEmpty) null else { { menuExpanded = true } },
@@ -171,7 +179,9 @@ fun TvEpisodeCard(
         }
 
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 7.dp),
             horizontalAlignment = Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -203,14 +213,6 @@ fun TvEpisodeCard(
             }
         }
 
-        TvMediaCardContextMenu(
-            expanded = menuExpanded,
-            onDismiss = { menuExpanded = false },
-            actions = actions,
-            isPlayed = userState?.played == true,
-            isFavorite = userState?.isFavorite == true,
-            isInWatchlist = userState?.inWatchlist == true,
-        )
     }
 }
 
