@@ -51,6 +51,7 @@ import org.siloserver.silo.tv.ui.screens.player.TvPlayerViewModel
 import org.siloserver.silo.tv.ui.screens.player.TvVideoPlaybackStarter
 import org.siloserver.silo.tv.ui.screens.profiles.TvProfileSelectionViewModel
 import org.siloserver.silo.tv.ui.screens.search.TvSearchViewModel
+import org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore
 import org.siloserver.silo.tv.watchnext.WatchNextRepository
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import android.net.Uri
@@ -374,6 +375,9 @@ val androidTvModule = module {
             catalogRepository = get(),
             personId = params.get(),
             personalDataRepository = getOrNull(),
+            showAudiobooksProvider = {
+                get<TvLibraryScopeStore>().getShowAudiobooksTab()
+            },
         )
     }
     viewModel { TvLibrariesViewModel(get(), get(), get()) }
