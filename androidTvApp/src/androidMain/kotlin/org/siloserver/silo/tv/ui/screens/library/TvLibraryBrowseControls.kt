@@ -87,8 +87,13 @@ fun TvBrowseControlRow(
     filterCount: Int,
     onSort: () -> Unit,
     onFilter: () -> Unit,
+    onClearFilters: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // Clearing removes the Clear pill from composition; focus must hop to the
+    // Filter pill first or it would snap away to the nearest surviving scope.
+    val filterPillFocusRequester = remember { FocusRequester() }
+
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -121,7 +126,11 @@ fun TvBrowseControlRow(
             )
         }
 
-        BrowseControlPill(onClick = onFilter, active = filterCount > 0) { foreground ->
+        BrowseControlPill(
+            onClick = onFilter,
+            active = filterCount > 0,
+            modifier = Modifier.focusRequester(filterPillFocusRequester),
+        ) { foreground ->
             Icon(
                 imageVector = Icons.Filled.FilterList,
                 contentDescription = null,
@@ -152,6 +161,29 @@ fun TvBrowseControlRow(
                 }
             }
         }
+
+        if (filterCount > 0) {
+            BrowseControlPill(
+                onClick = {
+                    runCatching { filterPillFocusRequester.requestFocus() }
+                    onClearFilters()
+                },
+            ) { foreground ->
+                Icon(
+                    imageVector = Icons.Outlined.Cancel,
+                    contentDescription = null,
+                    tint = foreground,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = "Clear filters",
+                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp, lineHeight = 16.sp),
+                    color = foreground,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
@@ -160,6 +192,7 @@ fun TvBrowseControlRow(
 private fun BrowseControlPill(
     onClick: () -> Unit,
     active: Boolean = false,
+    modifier: Modifier = Modifier,
     content: @Composable (foreground: Color) -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -195,6 +228,7 @@ private fun BrowseControlPill(
                 shape = RoundedCornerShape(999.dp),
             ),
         ),
+        modifier = modifier,
     ) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),

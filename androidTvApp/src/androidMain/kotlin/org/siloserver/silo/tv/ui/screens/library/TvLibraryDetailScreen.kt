@@ -142,6 +142,7 @@ fun TvLibraryDetailScreen(
                 showBrowseControls = true,
                 onSortKeySelected = viewModel::onSortKeySelected,
                 onFacetSelectionApplied = viewModel::onFacetSelectionApplied,
+                onContentUpFallbackChanged = onContentUpFallbackChanged,
             )
             TvLibraryTab.Genres -> LibraryTab(
                 state = state,
@@ -297,6 +298,8 @@ private fun LibraryTab(
     showBrowseControls: Boolean = false,
     onSortKeySelected: (TvLibrarySortOption) -> Unit = {},
     onFacetSelectionApplied: (TvCatalogFacetSelection) -> Unit = {},
+    /** Shell hook for overriding D-pad Up while the A–Z rail holds focus. */
+    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
     onClearAudiobookGroup: (() -> Unit)? = null,
 ) {
     val firstGridItemFocusRequester = remember { FocusRequester() }
@@ -339,12 +342,17 @@ private fun LibraryTab(
                 showBrowseControls = showBrowseControls,
                 onOpenSortPanel = { openPanel = TvBrowsePanel.Sort },
                 onOpenFilterPanel = { openPanel = TvBrowsePanel.Filter },
+                onClearFilters = { onFacetSelectionApplied(TvCatalogFacetSelection()) },
             )
         }
-        if (showAlphabetRail) {
+        // The A–Z jump rail only makes sense for title-sorted browsing (the
+        // tvOS `showsAlphabetRail` contract); any other sort hides it so the
+        // right edge stays plain up/down grid navigation.
+        if (showAlphabetRail && state.browseFilter.sort == TvLibrarySortOption.Title.wireValue) {
             TvAlphabetRail(
                 selected = state.browseFilter.namePrefix,
                 onSelect = onNamePrefixChanged,
+                onUpFallbackChanged = onContentUpFallbackChanged,
                 modifier = Modifier.padding(end = Spacing.md),
             )
         }
@@ -385,6 +393,7 @@ private fun LibraryGrid(
     showBrowseControls: Boolean = false,
     onOpenSortPanel: () -> Unit = {},
     onOpenFilterPanel: () -> Unit = {},
+    onClearFilters: () -> Unit = {},
 ) {
     val gridState: LazyGridState = rememberLazyGridState()
 
@@ -418,6 +427,7 @@ private fun LibraryGrid(
     LaunchedEffect(state.browseFilter.namePrefix) {
         gridState.scrollToItem(0)
     }
+
 
     CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
         LazyVerticalGrid(
@@ -462,6 +472,7 @@ private fun LibraryGrid(
                         filterCount = state.browseFilter.facetSelection.activeFacetCount,
                         onSort = onOpenSortPanel,
                         onFilter = onOpenFilterPanel,
+                        onClearFilters = onClearFilters,
                         modifier = Modifier.onFocusChanged { controlsFocused = it.hasFocus },
                     )
                 }
