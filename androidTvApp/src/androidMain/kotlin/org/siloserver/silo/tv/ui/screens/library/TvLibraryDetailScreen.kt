@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -127,6 +128,8 @@ fun TvLibraryDetailScreen(
                 focusRequest = sectionRequestNonce,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
             )
+            // Browse is the tvOS `TVLibraryGridView` embed: Sort/Filter
+            // control row over the grid, with the A–Z rail always on.
             TvLibraryTab.Browse -> LibraryTab(
                 state = state,
                 onItemClick = onItemClick,
@@ -135,6 +138,10 @@ fun TvLibraryDetailScreen(
                 onLoadMore = viewModel::loadMoreBrowse,
                 onRetry = viewModel::retryBrowse,
                 onInitialContentFocus = onInitialContentFocus,
+                showAlphabetRail = true,
+                showBrowseControls = true,
+                onSortKeySelected = viewModel::onSortKeySelected,
+                onFacetSelectionApplied = viewModel::onFacetSelectionApplied,
             )
             TvLibraryTab.Genres -> LibraryTab(
                 state = state,
@@ -273,6 +280,9 @@ private fun RecommendedTab(
     }
 }
 
+/** Which browse overlay panel is open over the grid (tvOS `TVBrowsePanel`). */
+private enum class TvBrowsePanel { Sort, Filter }
+
 @Composable
 private fun LibraryTab(
     state: TvLibraryDetailViewModel.UiState,
@@ -284,10 +294,14 @@ private fun LibraryTab(
     onInitialContentFocus: () -> Unit,
     showAlphabetRail: Boolean = false,
     showGenreChips: Boolean = false,
+    showBrowseControls: Boolean = false,
+    onSortKeySelected: (TvLibrarySortOption) -> Unit = {},
+    onFacetSelectionApplied: (TvCatalogFacetSelection) -> Unit = {},
     onClearAudiobookGroup: (() -> Unit)? = null,
 ) {
     val firstGridItemFocusRequester = remember { FocusRequester() }
     var initialFocusRequested by remember { mutableStateOf(false) }
+    var openPanel by remember { mutableStateOf<TvBrowsePanel?>(null) }
 
     LaunchedEffect(state.browseItems.isNotEmpty()) {
         if (initialFocusRequested || state.browseItems.isEmpty()) return@LaunchedEffect
@@ -322,6 +336,9 @@ private fun LibraryTab(
                 showGenreChips = showGenreChips,
                 onGenreChanged = onGenreChanged,
                 onClearAudiobookGroup = onClearAudiobookGroup,
+                showBrowseControls = showBrowseControls,
+                onOpenSortPanel = { openPanel = TvBrowsePanel.Sort },
+                onOpenFilterPanel = { openPanel = TvBrowsePanel.Filter },
             )
         }
         if (showAlphabetRail) {
@@ -331,6 +348,27 @@ private fun LibraryTab(
                 modifier = Modifier.padding(end = Spacing.md),
             )
         }
+    }
+
+    when (openPanel) {
+        TvBrowsePanel.Sort -> TvBrowseSortPanel(
+            options = TvLibrarySortOption.availableFor(state.libraryType),
+            currentSort = state.browseFilter.sort,
+            order = state.browseFilter.order,
+            onSelect = { option ->
+                onSortKeySelected(option)
+                openPanel = null
+            },
+            onClose = { openPanel = null },
+        )
+        TvBrowsePanel.Filter -> TvBrowseFilterPanel(
+            libraryType = state.libraryType,
+            facetOptions = state.facetOptions,
+            initial = state.browseFilter.facetSelection,
+            onApply = onFacetSelectionApplied,
+            onClose = { openPanel = null },
+        )
+        null -> Unit
     }
 }
 
@@ -344,6 +382,9 @@ private fun LibraryGrid(
     showGenreChips: Boolean,
     onGenreChanged: (String?) -> Unit,
     onClearAudiobookGroup: (() -> Unit)?,
+    showBrowseControls: Boolean = false,
+    onOpenSortPanel: () -> Unit = {},
+    onOpenFilterPanel: () -> Unit = {},
 ) {
     val gridState: LazyGridState = rememberLazyGridState()
 
@@ -387,11 +428,45 @@ private fun LibraryGrid(
             verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
             contentPadding = PaddingValues(
                 start = Spacing.safeArea,
-                top = TvTopMenuLayout.contentTopInset,
+                // The control-row embed uses the taller tvOS library inset
+                // (`ContinuumTheme.Skyline.libraryContentTopInset`, 216pt → 108dp).
+                top = if (showBrowseControls) LibraryBrowseContentTopInset else TvTopMenuLayout.contentTopInset,
                 end = Spacing.md,
                 bottom = Spacing.xxxl,
             ),
         ) {
+            if (showBrowseControls) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "browse-controls") {
+                    val sortOption = TvLibrarySortOption.fromWire(state.browseFilter.sort)
+                    var controlsFocused by remember { mutableStateOf(false) }
+                    // Scrolling back up lands the pills via minimal
+                    // bring-into-view (pinned at the viewport top edge);
+                    // re-anchor to offset 0 so the row sits under the same
+                    // tvOS headroom as on entry. The effect loops while the
+                    // row holds focus because the focus-driven bring-into-view
+                    // scroll runs AFTER the focus event and would cancel a
+                    // single immediate animateScrollToItem on the shared
+                    // scrollable state.
+                    LaunchedEffect(controlsFocused) {
+                        while (controlsFocused &&
+                            (gridState.firstVisibleItemIndex > 0 || gridState.firstVisibleItemScrollOffset > 0)
+                        ) {
+                            kotlinx.coroutines.delay(80)
+                            if (!controlsFocused) break
+                            runCatching { gridState.animateScrollToItem(0) }
+                        }
+                    }
+                    TvBrowseControlRow(
+                        sortLabel = sortOption.label,
+                        sortDirection = sortOption.directionLabel(state.browseFilter.order),
+                        filterCount = state.browseFilter.facetSelection.activeFacetCount,
+                        onSort = onOpenSortPanel,
+                        onFilter = onOpenFilterPanel,
+                        modifier = Modifier.onFocusChanged { controlsFocused = it.hasFocus },
+                    )
+                }
+            }
+
             if (showGenreChips) {
                 item(span = { GridItemSpan(maxLineSpan) }, key = "genres") {
                     GenreChipCloud(
@@ -929,11 +1004,15 @@ private fun InlineLoadingState(verticalPadding: androidx.compose.ui.unit.Dp = 48
     }
 }
 
-// Catalog grid metrics, 1:1 with tvOS `TVCatalogGrid`: 6 columns, 40dp column
-// spacing, 60dp row spacing. The Browse grid drops to 5 columns to clear the
-// right-edge alphabet rail (tvOS shrinks the same way).
+// Catalog grid metrics, 1:1 with tvOS `TVCatalogGrid`: 6 columns (tvOS keeps
+// all 6 beside the A–Z rail — the rail collapses to an edge peek), 40pt→20dp
+// column spacing, 60pt→30dp row spacing.
 private const val LibraryGridColumns = 6
-private const val LibraryBrowseGridColumns = 5
+private const val LibraryBrowseGridColumns = 6
 private val LibraryGridColumnSpacing = 20.dp
 private val LibraryGridRowSpacing = 30.dp
 private const val LibraryGridLoadMoreRowsThreshold = 8
+
+// tvOS `ContinuumTheme.Skyline.libraryContentTopInset` (216pt) — the taller
+// clearance for the Browse pill's control-row embed.
+private val LibraryBrowseContentTopInset = 108.dp

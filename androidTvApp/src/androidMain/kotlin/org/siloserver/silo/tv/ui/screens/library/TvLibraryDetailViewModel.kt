@@ -49,17 +49,43 @@ data class TvCollectionSection(
     val collections: List<LibraryCollection>,
 )
 
+/**
+ * Sortable catalog fields for the library Browse grid, mirroring tvOS
+ * `CatalogSortKey` (labels, per-media-type availability, default order, and
+ * direction hints). Wire values are the canonical server sort fields.
+ */
 enum class TvLibrarySortOption(val label: String, val wireValue: String) {
     Title("Title", "title"),
     DateAdded("Date Added", "added_at"),
     // Server expects "year" for release-date sort (matches phone); the old
     // "release_date" value was unsupported.
-    ReleaseDate("Release Year", "year"),
-    Rating("Rating", "rating_imdb");
+    ReleaseDate("Year", "year"),
+    Rating("Rating", "rating_imdb"),
+    Runtime("Runtime", "runtime"),
+    Resolution("Resolution", "resolution"),
+    Author("Author", "author"),
+    Narrator("Narrator", "narrator"),
+    SeriesName("Series", "series");
+
+    /** Short hint for the active direction (tvOS `directionLabel`). */
+    fun directionLabel(order: String): String = when (this) {
+        Title, Author, Narrator, SeriesName -> if (order == "asc") "A–Z" else "Z–A"
+        ReleaseDate, DateAdded -> if (order == "asc") "Oldest" else "Newest"
+        Runtime -> if (order == "asc") "Shortest" else "Longest"
+        Rating, Resolution -> if (order == "asc") "Lowest" else "Highest"
+    }
 
     companion object {
         fun fromWire(value: String): TvLibrarySortOption =
             entries.firstOrNull { it.wireValue == value } ?: DateAdded
+
+        /** Sort keys offered for a library media type, in tvOS display order. */
+        fun availableFor(libraryType: String): List<TvLibrarySortOption> =
+            if (org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType(libraryType)) {
+                listOf(Title, Author, Narrator, SeriesName, DateAdded, Runtime)
+            } else {
+                listOf(Title, DateAdded, ReleaseDate, Rating, Runtime, Resolution)
+            }
     }
 }
 
@@ -73,6 +99,8 @@ data class TvLibraryBrowseFilter(
     val yearMin: Int? = null,
     val yearMax: Int? = null,
     val queryGroups: List<CatalogQueryGroup> = emptyList(),
+    /** Multi-facet selections from the Browse filter panel (tvOS parity). */
+    val facetSelection: TvCatalogFacetSelection = TvCatalogFacetSelection(),
 )
 
 class TvLibraryDetailViewModel(
@@ -91,6 +119,8 @@ class TvLibraryDetailViewModel(
         val recommendedLoading: Boolean = true,
         val recommendedError: String? = null,
         val genres: List<String> = emptyList(),
+        /** Full facet vocabulary for the Browse filter panel (lazy-loaded). */
+        val facetOptions: org.siloserver.silo.model.catalog.CatalogFiltersResponse? = null,
         val filtersLoading: Boolean = true,
         val browseItems: List<BrowseItem> = emptyList(),
         val browseHasMore: Boolean = false,
@@ -195,6 +225,26 @@ class TvLibraryDetailViewModel(
                 namePrefix = null,
             ),
         )
+    }
+
+    /**
+     * Sort panel behavior (tvOS `setSort`): picking the active key flips the
+     * direction; picking a different key selects it at its default order. The
+     * A–Z prefix survives — "Action / T" stays a valid composite state.
+     */
+    fun onSortKeySelected(sort: TvLibrarySortOption) {
+        val filter = _uiState.value.browseFilter
+        val next = if (filter.sort == sort.wireValue) {
+            filter.copy(order = if (filter.order == "asc") "desc" else "asc")
+        } else {
+            filter.copy(sort = sort.wireValue, order = sort.defaultOrder)
+        }
+        updateBrowseFilter(next)
+    }
+
+    /** Replaces the Browse panel's facet selections and reloads the grid. */
+    fun onFacetSelectionApplied(selection: TvCatalogFacetSelection) {
+        updateBrowseFilter(_uiState.value.browseFilter.copy(facetSelection = selection))
     }
 
     fun onNamePrefixChanged(prefix: String?) {
@@ -370,10 +420,14 @@ class TvLibraryDetailViewModel(
         loadedFilters = true
         viewModelScope.launch {
             _uiState.update { it.copy(filtersLoading = true) }
-            when (val filters = catalogRepository.getFilters(libraryId)) {
+            // include_technical adds the resolution / audio-language /
+            // subtitle-language vocabularies the filter panel offers (tvOS
+            // FacetLoader always requests them).
+            when (val filters = catalogRepository.getFilters(libraryId, includeTechnical = true)) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(
                         genres = filters.data.genres.sorted(),
+                        facetOptions = filters.data,
                         filtersLoading = false,
                     )
                 }
@@ -416,6 +470,7 @@ class TvLibraryDetailViewModel(
                 }
             }
 
+            val facetGroups = filter.facetSelection.toQueryGroups()
             val result = catalogRepository.browse(
                 source = "query",
                 mediaType = mediaTypeFor(libraryType),
@@ -429,7 +484,12 @@ class TvLibraryDetailViewModel(
                 yearMin = filter.yearMin,
                 yearMax = filter.yearMax,
                 snapshotAt = browseSnapshot,
-                queryGroups = filter.queryGroups,
+                queryGroups = filter.queryGroups + facetGroups,
+                match = if (facetGroups.isNotEmpty()) {
+                    if (filter.facetSelection.matchAll) "all" else "any"
+                } else {
+                    null
+                },
             )
 
             if (generation != browseGeneration) return@launch
@@ -646,24 +706,28 @@ class TvLibraryDetailViewModel(
         when (tab) {
             TvLibraryTab.Recommended,
             TvLibraryTab.Collections -> this
+            // Browse lands on the tvOS default view: Title A–Z, no facets.
             TvLibraryTab.Browse -> copy(
                 genre = null,
                 namePrefix = null,
-                sort = TvLibrarySortOption.DateAdded.wireValue,
-                order = "desc",
+                sort = TvLibrarySortOption.Title.wireValue,
+                order = "asc",
                 queryGroups = emptyList(),
+                facetSelection = TvCatalogFacetSelection(),
             )
             TvLibraryTab.Genres -> copy(
                 namePrefix = null,
                 sort = TvLibrarySortOption.Title.wireValue,
                 order = "asc",
                 queryGroups = emptyList(),
+                facetSelection = TvCatalogFacetSelection(),
             )
             TvLibraryTab.Alphabet -> copy(
                 genre = null,
                 sort = TvLibrarySortOption.Title.wireValue,
                 order = "asc",
                 queryGroups = emptyList(),
+                facetSelection = TvCatalogFacetSelection(),
             )
             TvLibraryTab.RecentlyAdded -> copy(
                 genre = null,
@@ -671,6 +735,7 @@ class TvLibraryDetailViewModel(
                 sort = TvLibrarySortOption.DateAdded.wireValue,
                 order = "desc",
                 queryGroups = emptyList(),
+                facetSelection = TvCatalogFacetSelection(),
             )
             TvLibraryTab.Authors -> copy(
                 genre = null,
@@ -678,6 +743,7 @@ class TvLibraryDetailViewModel(
                 sort = TvLibrarySortOption.Title.wireValue,
                 order = "asc",
                 queryGroups = emptyList(),
+                facetSelection = TvCatalogFacetSelection(),
             )
             TvLibraryTab.Series -> copy(
                 genre = null,
@@ -685,6 +751,7 @@ class TvLibraryDetailViewModel(
                 sort = TvLibrarySortOption.Title.wireValue,
                 order = "asc",
                 queryGroups = emptyList(),
+                facetSelection = TvCatalogFacetSelection(),
             )
         }
 }
@@ -703,10 +770,17 @@ private val TvLibraryTab.audiobookCatalogField: String?
         else -> null
     }
 
+// Mirrors the server's per-field natural direction (tvOS `defaultOrder`):
+// name-like fields ascend, magnitude/recency fields descend.
 private val TvLibrarySortOption.defaultOrder: String
     get() = when (this) {
-        TvLibrarySortOption.Title -> "asc"
+        TvLibrarySortOption.Title,
+        TvLibrarySortOption.Author,
+        TvLibrarySortOption.Narrator,
+        TvLibrarySortOption.SeriesName -> "asc"
         TvLibrarySortOption.DateAdded,
         TvLibrarySortOption.ReleaseDate,
-        TvLibrarySortOption.Rating -> "desc"
+        TvLibrarySortOption.Rating,
+        TvLibrarySortOption.Runtime,
+        TvLibrarySortOption.Resolution -> "desc"
     }
