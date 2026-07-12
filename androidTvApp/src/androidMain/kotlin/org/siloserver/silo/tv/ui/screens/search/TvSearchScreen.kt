@@ -584,8 +584,10 @@ private fun searchStatusText(
  * Search stays a live discovery surface: the field and filters are pinned,
  * while the grid below is the only scrolling region. This keeps the user's
  * query visible and avoids racing the platform IME with scroll corrections.
+ *
+ * TV_SEARCH_QUERY_MAX_LENGTH lives in TvSearchInputRules.kt (shared with
+ * TvRequestsScreen); a private duplicate here collided with it.
  */
-private const val TV_SEARCH_QUERY_MAX_LENGTH = 200
 
 private fun TvSearchMediaType.toRequestMediaType(): String = when (this) {
     TvSearchMediaType.All -> RequestMediaType.All
