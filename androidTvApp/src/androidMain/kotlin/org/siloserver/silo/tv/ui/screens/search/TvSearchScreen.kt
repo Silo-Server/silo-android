@@ -38,7 +38,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -72,6 +74,8 @@ fun TvSearchScreen(
     onOpenRequestDetail: (mediaType: String, tmdbId: Int) -> Unit,
     onOpenLibraryItem: (contentId: String) -> Unit,
     searchFieldFocusRequester: FocusRequester? = null,
+    backToSearchFieldRequest: Int = 0,
+    onSearchFieldFocusChanged: (Boolean) -> Unit = {},
     viewModel: TvSearchViewModel = koinViewModel(),
     requestSearchViewModel: RequestSearchViewModel = koinViewModel(),
 ) {
@@ -86,11 +90,13 @@ fun TvSearchScreen(
     val internalSearchFieldFocusRequester = remember { FocusRequester() }
     val searchGridState = rememberLazyGridState()
     val activeSearchFieldFocusRequester = searchFieldFocusRequester ?: internalSearchFieldFocusRequester
+    val keyboardController = LocalSoftwareKeyboardController.current
     var pendingSearchFocus by remember { mutableStateOf(false) }
     val requestMediaType = state.mediaType.toRequestMediaType()
     val visibleRequestResults = requestState.results
         .filterTvRequestResults()
         .filter { state.mediaType.allowsRequestResult(it) }
+        .filter { state.showAudiobooks || it.mediaType != RequestMediaType.Audiobook }
     val canSearchRequests = requestsEnabled && state.query.trim().length >= 2
     val shouldShowRequestSection = canSearchRequests &&
         (visibleRequestResults.isNotEmpty() ||
@@ -122,6 +128,13 @@ fun TvSearchScreen(
 
     LaunchedEffect(activeSearchFieldFocusRequester) {
         runCatching { activeSearchFieldFocusRequester.requestFocus() }
+    }
+    LaunchedEffect(backToSearchFieldRequest) {
+        if (backToSearchFieldRequest <= 0) return@LaunchedEffect
+        searchGridState.animateScrollToItem(0)
+        androidx.compose.runtime.withFrameNanos { }
+        runCatching { activeSearchFieldFocusRequester.requestFocus() }
+        keyboardController?.show()
     }
     LaunchedEffect(
         pendingSearchFocus,
@@ -158,35 +171,6 @@ fun TvSearchScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        SearchStage(
-            query = state.query,
-            mediaType = state.mediaType,
-            availableMediaTypes = state.availableMediaTypes,
-            resultStatus = searchStatusText(
-                query = state.query,
-                total = state.total,
-                isSearching = state.isLoading,
-                error = state.error,
-                isPartialCount = state.mediaType == TvSearchMediaType.All && state.hasMore,
-            ),
-            hasContentFocusTarget = hasContentFocusTarget,
-            searchFieldFocusRequester = activeSearchFieldFocusRequester,
-            firstFilterChipFocusRequester = firstFilterChipFocusRequester,
-            firstContentFocusRequester = firstContentFocusRequester,
-            onQueryChanged = viewModel::onQueryChanged,
-            onSearch = {
-                pendingSearchFocus = true
-                val query = state.query.trim()
-                if (requestsEnabled && query.length >= 2) {
-                    requestSearchViewModel.onMediaTypeChanged(requestMediaType)
-                    requestSearchViewModel.onQueryChanged(query)
-                    requestSearchViewModel.search()
-                }
-                viewModel.submitSearch()
-            },
-            onMediaTypeChanged = viewModel::onMediaTypeChanged,
-        )
-
         TvCatalogGrid(
             items = state.items,
             // Reset searches keep the existing grid stable and report progress
@@ -215,6 +199,40 @@ fun TvSearchScreen(
             // search field above and skip over the smaller chip row.
             firstItemCardModifier = Modifier.focusProperties {
                 up = firstFilterChipFocusRequester
+            },
+            header = {
+                SearchStage(
+                    query = state.query,
+                    mediaType = state.mediaType,
+                    availableMediaTypes = state.availableMediaTypes,
+                    resultStatus = searchStatusText(
+                        query = state.query,
+                        total = state.total,
+                        isSearching = state.isLoading,
+                        error = state.error,
+                        isPartialCount = state.mediaType == TvSearchMediaType.All && state.hasMore,
+                    ),
+                    hasContentFocusTarget = hasContentFocusTarget,
+                    searchFieldFocusRequester = activeSearchFieldFocusRequester,
+                    firstFilterChipFocusRequester = firstFilterChipFocusRequester,
+                    firstContentFocusRequester = firstContentFocusRequester,
+                    onSearchFieldFocusChanged = { focused ->
+                        onSearchFieldFocusChanged(focused)
+                        if (focused) keyboardController?.show()
+                    },
+                    onQueryChanged = viewModel::onQueryChanged,
+                    onSearch = {
+                        pendingSearchFocus = true
+                        val query = state.query.trim()
+                        if (requestsEnabled && query.length >= 2) {
+                            requestSearchViewModel.onMediaTypeChanged(requestMediaType)
+                            requestSearchViewModel.onQueryChanged(query)
+                            requestSearchViewModel.search()
+                        }
+                        viewModel.submitSearch()
+                    },
+                    onMediaTypeChanged = viewModel::onMediaTypeChanged,
+                )
             },
             footer = {
                 TvRequestSearchSection(
@@ -358,6 +376,7 @@ private fun SearchStage(
     searchFieldFocusRequester: FocusRequester,
     firstFilterChipFocusRequester: FocusRequester,
     firstContentFocusRequester: FocusRequester,
+    onSearchFieldFocusChanged: (Boolean) -> Unit,
     onQueryChanged: (String) -> Unit,
     onSearch: () -> Unit,
     onMediaTypeChanged: (TvSearchMediaType) -> Unit,
@@ -409,6 +428,7 @@ private fun SearchStage(
                 // the search field onto the All/Movies/Series filters,
                 // regardless of whether result cards are also rendered below.
                 .focusRequester(searchFieldFocusRequester)
+                .onFocusChanged { onSearchFieldFocusChanged(it.isFocused) }
                 .focusProperties { down = firstFilterChipFocusRequester },
             colors = tvOutlinedTextFieldColors(
                 focusedContainerColor = ElevatedSurface,

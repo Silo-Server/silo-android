@@ -286,6 +286,8 @@ fun TvMainShell(
     val homeFirstItemFocusRequester = remember { FocusRequester() }
     val homeFirstRowContainerFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
+    var searchInputHasFocus by remember { mutableStateOf(false) }
+    var searchBackToInputRequest by remember { mutableIntStateOf(0) }
     // Opening an outer item-detail route pauses/removes this shell. Remember the
     // pending hand-back in the Main back-stack entry so it survives either form,
     // then re-enter the existing content focusRestorer when Main resumes.
@@ -698,7 +700,10 @@ fun TvMainShell(
                         // the flat inner NavHost when there's history; otherwise
                         // fall through so the activity finishes the app.
                         TvShellBackAction.DelegateToNav -> {
-                            if (nestedNav.previousBackStackEntry != null) {
+                            if (currentRoute == TvMainRoute.Search.route && !searchInputHasFocus) {
+                                searchBackToInputRequest += 1
+                                true
+                            } else if (nestedNav.previousBackStackEntry != null) {
                                 // Focus restoration after the pop is owned by the
                                 // restored screen itself (the section feed re-targets
                                 // its last-focused card via its recreation ladder).
@@ -852,6 +857,8 @@ fun TvMainShell(
                         },
                         onOpenLibraryItem = onOpenItemDetail,
                         searchFieldFocusRequester = searchInputFocusRequester,
+                        backToSearchFieldRequest = searchBackToInputRequest,
+                        onSearchFieldFocusChanged = { searchInputHasFocus = it },
                     )
                 }
                 composable(TvMainRoute.Audio.route) {
