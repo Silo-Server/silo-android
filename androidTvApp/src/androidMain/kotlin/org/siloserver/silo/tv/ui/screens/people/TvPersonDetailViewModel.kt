@@ -8,6 +8,8 @@ import org.siloserver.silo.model.catalog.personWorksFiltersForTv
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,6 +68,11 @@ class TvPersonDetailViewModel(
     private val _uiState = MutableStateFlow(TvPersonDetailUiState())
     val uiState: StateFlow<TvPersonDetailUiState> = _uiState.asStateFlow()
 
+    // The chip row is the intersection of two independently-loaded gates;
+    // either may resolve first, so each stores its result and recomputes.
+    private var libraryGatedFilters: List<TvPersonMediaFilter> = TvPersonMediaFilters
+    private var filtersWithContent: Set<TvPersonMediaFilter>? = null
+
     init {
         // Gate the filmography filter chips by the libraries this profile can
         // actually see (QA 2026-07-08): a server with no audiobook/music
@@ -76,7 +83,7 @@ class TvPersonDetailViewModel(
             val result = repo.listUserLibraries()
             if (result !is org.siloserver.silo.network.ApiResult.Success) return@launch
             val types = result.data.map { it.type.lowercase() }.toSet()
-            val gated = TvPersonMediaFilters.filter { filter ->
+            libraryGatedFilters = TvPersonMediaFilters.filter { filter ->
                 when (filter) {
                     TvPersonMediaFilter.Audiobooks ->
                         types.any { org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType(it) }
@@ -85,7 +92,52 @@ class TvPersonDetailViewModel(
                     else -> true
                 }
             }
-            _uiState.update { it.copy(availableFilters = gated) }
+            recomputeAvailableFilters()
+        }
+    }
+
+    init {
+        // Hide media-type chips the person has no works for: probe each
+        // type's server-side total with limit=1. A failed probe keeps its
+        // chip (graceful degrade, same policy as the library gate).
+        viewModelScope.launch {
+            if (personId <= 0L) return@launch
+            val probed = TvPersonMediaFilters
+                .filter { it.mediaType != null }
+                .map { filter ->
+                    async {
+                        val result = catalogRepository.getPersonItems(
+                            personId = personId,
+                            mediaType = filter.mediaType,
+                            offset = 0,
+                            limit = 1,
+                            snapshotAt = null,
+                        )
+                        filter to (result as? ApiResult.Success)?.data?.total
+                    }
+                }
+                .awaitAll()
+            filtersWithContent = probed
+                .filter { (_, total) -> total == null || total > 0 }
+                .map { (filter, _) -> filter }
+                .toSet()
+            recomputeAvailableFilters()
+        }
+    }
+
+    private fun recomputeAvailableFilters() {
+        val withContent = filtersWithContent
+        val gated = libraryGatedFilters.filter { filter ->
+            filter == TvPersonMediaFilter.All || withContent == null || filter in withContent
+        }
+        _uiState.update { state ->
+            state.copy(
+                availableFilters = gated,
+                // The probes land before the user can reach the chips, but if
+                // the active filter does vanish, fall back to All rather than
+                // stranding the grid on a filter with no chip.
+                selectedFilter = if (state.selectedFilter in gated) state.selectedFilter else TvPersonMediaFilter.All,
+            )
         }
     }
 
