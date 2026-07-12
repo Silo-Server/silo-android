@@ -35,6 +35,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Initial app-loading animation shown before the root navigation graph is ready.
+ *
+ * [minVisibleMillis] keeps the splash up at least that long after playback
+ * starts; [maxVisibleMillis] (0 = uncapped) force-completes even if the video
+ * is still playing or stalled — mirroring StartupSplashView's 4s
+ * `maximumDisplayDuration` on Apple, where the splash never outlives the cap.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -43,6 +48,7 @@ fun StartupSplashVideo(
     resizeMode: StartupSplashResizeMode = StartupSplashResizeMode.Fit,
     backgroundColor: Color = Color.Black,
     minVisibleMillis: Long = 0L,
+    maxVisibleMillis: Long = 0L,
     onPlaybackComplete: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -69,6 +75,21 @@ fun StartupSplashVideo(
         if (!playbackFinished) return@LaunchedEffect
         val elapsed = (SystemClock.elapsedRealtime() - playbackVisibleStartedAt).coerceAtLeast(0L)
         val remaining = (minVisibleMillis - elapsed).coerceAtLeast(0L)
+        if (remaining > 0L) delay(remaining)
+        completionDispatched.dispatchOnce(currentOnPlaybackComplete.value)
+    }
+
+    // Hard cap: complete even if the video is still playing (or never started —
+    // a stalled prepare must not hold the app hostage). Re-anchors to the
+    // playback-visible timestamp once playback actually starts.
+    LaunchedEffect(maxVisibleMillis, playbackVisibleStartedAt) {
+        if (maxVisibleMillis <= 0L) return@LaunchedEffect
+        val elapsed = if (playbackVisibleStartedAt == 0L) {
+            0L
+        } else {
+            (SystemClock.elapsedRealtime() - playbackVisibleStartedAt).coerceAtLeast(0L)
+        }
+        val remaining = (maxVisibleMillis - elapsed).coerceAtLeast(0L)
         if (remaining > 0L) delay(remaining)
         completionDispatched.dispatchOnce(currentOnPlaybackComplete.value)
     }

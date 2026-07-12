@@ -16,6 +16,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,10 +61,21 @@ fun TvFocusMarquee(
             .padding(start = startPadding, bottom = bottomPadding),
         contentAlignment = Alignment.BottomStart,
     ) {
+        // tvOS first-frame parity: the FIRST content snaps in with no
+        // animation — a cold entry paints the finished marquee block instead
+        // of fading it up. Focus-driven swaps keep the crossfade.
+        var hasDisplayedContent by remember { mutableStateOf(false) }
+        val snapInitialContent = content != null && !hasDisplayedContent
+        LaunchedEffect(content != null) {
+            if (content != null) hasDisplayedContent = true
+        }
         if (animateTransition) {
             Crossfade(
                 targetState = content,
-                animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
+                animationSpec = tween(
+                    if (snapInitialContent) 0 else TvMarqueeCrossfadeMs,
+                    easing = TvMarqueeEasing,
+                ),
                 label = "tvFocusMarquee",
                 // Keep the transition viewport fixed. A wrapping Crossfade
                 // animates its own measured size between differently tall hero

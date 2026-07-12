@@ -13,8 +13,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
@@ -53,11 +56,27 @@ fun TvRootHeroBackdrop(
 ) {
     val tintState = LocalAmbientBackdropTint.current
     val ambientAccent = tintState.accent
+
+    // tvOS first-frame parity: the FIRST artwork/tint to arrive snaps in with
+    // no animation — a cold entry paints the finished hero instead of fading
+    // it up from the black background. Only content-to-content swaps (normal
+    // D-pad browsing) keep the ambient crossfade.
+    var hasDisplayedArtwork by remember { mutableStateOf(false) }
+    val snapInitialArtwork = content != null && !hasDisplayedArtwork
+    LaunchedEffect(content != null) {
+        if (content != null) hasDisplayedArtwork = true
+    }
+    var hasDisplayedTint by remember { mutableStateOf(false) }
+    val snapInitialTint = ambientAccent != null && !hasDisplayedTint
+    LaunchedEffect(ambientAccent != null) {
+        if (ambientAccent != null) hasDisplayedTint = true
+    }
+
     val targetAccent = ambientAccent ?: emptyWashColor ?: MaterialTheme.colorScheme.background
     val animatedTint by animateColorAsState(
         targetValue = targetAccent,
         animationSpec = tween(
-            durationMillis = TvMarqueeCrossfadeMs,
+            durationMillis = if (snapInitialTint) 0 else TvMarqueeCrossfadeMs,
             easing = TvMarqueeEasing,
         ),
         label = "tvRootHeroBackdropTint",
@@ -118,7 +137,10 @@ fun TvRootHeroBackdrop(
         if (animateTransition) {
             Crossfade(
                 targetState = content,
-                animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
+                animationSpec = tween(
+                    if (snapInitialArtwork) 0 else TvMarqueeCrossfadeMs,
+                    easing = TvMarqueeEasing,
+                ),
                 label = "tvRootHeroBackdropArt",
             ) { value ->
                 if (value?.heroBackdropUrl != null) {

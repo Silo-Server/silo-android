@@ -43,7 +43,9 @@ import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
+import org.siloserver.silo.common.startup.StartupArtworkPlan
 import org.siloserver.silo.common.startup.warmAuthenticatedStartup
+import org.siloserver.silo.common.startup.warmProfileSelectionStartup
 import org.siloserver.silo.common.ui.components.StartupSplashVideo
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
@@ -126,6 +128,9 @@ class MainActivity : ComponentActivity() {
                                     .width(videoWidth)
                                     .aspectRatio(16f / 9f),
                                 backgroundColor = Color.Black,
+                                // iOS parity: video end or 4s, whichever first
+                                // (StartupSplashView maximumDisplayDuration).
+                                maxVisibleMillis = 4_000L,
                                 onPlaybackComplete = {
                                     splashPlaybackComplete = true
                                     hasShownColdSplash = true
@@ -273,14 +278,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchAuthenticatedStartupWarmup(startRoute: String) {
+        // A launch that lands on profile selection still warms the profile
+        // list + avatar art so the grid paints finished after the splash
+        // (Apple's prefetchForInitialRoute(.needsProfile)).
+        if (startRoute == Route.ProfileSelection.route) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                warmProfileSelectionStartup(
+                    context = applicationContext,
+                    profileRepository = get(ProfileRepository::class.java),
+                    serverUrl = get<ServerRegistry>(ServerRegistry::class.java).activeEntry.value?.url,
+                )
+            }
+            return
+        }
         if (startRoute != Route.Home.route) return
         lifecycleScope.launch(Dispatchers.IO) {
             warmAuthenticatedStartup(
+                context = applicationContext,
                 authRepository = get(AuthRepository::class.java),
                 profileRepository = get(ProfileRepository::class.java),
                 personalDataRepository = get(PersonalDataRepository::class.java),
                 sectionRepository = get(SectionRepository::class.java),
                 homeCache = get(HomeCachePort::class.java),
+                serverUrl = get<ServerRegistry>(ServerRegistry::class.java).activeEntry.value?.url,
+                artworkPlan = StartupArtworkPlan.phone(),
             )
         }
     }

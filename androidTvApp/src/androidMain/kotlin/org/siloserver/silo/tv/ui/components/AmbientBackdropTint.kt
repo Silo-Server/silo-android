@@ -8,6 +8,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import android.graphics.Bitmap
+import android.util.LruCache
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import coil3.ImageLoader
@@ -95,6 +96,15 @@ fun rememberAmbientBackdropTintState(): AmbientBackdropTintState {
             return@LaunchedEffect
         }
 
+        // Memoized accent (tvOS HeroBackdropPalette.tintCache parity): a
+        // re-visit or feed recreation publishes the wash without re-decoding,
+        // so the tint paints alongside the restored artwork instead of
+        // lagging it by an extraction round-trip.
+        AmbientTintCache.get(url)?.let { cached ->
+            state.acceptAccent(url, cached)
+            return@LaunchedEffect
+        }
+
         val accent: Color? = withContext(Dispatchers.IO) {
             runCatching {
                 val loader: ImageLoader = SingletonImageLoader.get(context)
@@ -121,10 +131,17 @@ fun rememberAmbientBackdropTintState(): AmbientBackdropTintState {
                 averageTint(bitmap)
             }.getOrNull()
         }
+        if (accent != null) AmbientTintCache.put(url, accent)
         state.acceptAccent(url, accent)
     }
     return state
 }
+
+/**
+ * Process-wide memo of extracted accents keyed by sampled URL. Bounded small —
+ * entries are a boxed color; 256 covers several screens of heroes.
+ */
+private val AmbientTintCache = LruCache<String, Color>(256)
 
 /**
  * Average-colour tint, luminance-normalized — the Android port of tvOS

@@ -33,7 +33,9 @@ import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
+import org.siloserver.silo.common.startup.StartupArtworkPlan
 import org.siloserver.silo.common.startup.warmAuthenticatedStartup
+import org.siloserver.silo.common.startup.warmProfileSelectionStartup
 import org.siloserver.silo.common.ui.components.StartupSplashVideo
 import org.siloserver.silo.common.ui.components.StartupSplashResizeMode
 import org.siloserver.silo.network.ServerRegistry
@@ -90,54 +92,75 @@ class MainTvActivity : ComponentActivity() {
 
             SiloTvTheme {
                 val resolvedRoute = startRoute
-                if (resolvedRoute == null || !splashPlaybackComplete) {
-                    val splashFocus = remember { FocusRequester() }
-                    // PURE black — the splash video's encoded black is #000000, and any
-                    // off-black (the old 0xFF070509) reads as a visible box
-                    // around the small video layer (QA 2026-07-08).
-                    val splashBackground = Color.Black
-                    LaunchedEffect(Unit) { runCatching { splashFocus.requestFocus() } }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(splashBackground)
-                            .focusRequester(splashFocus)
-                            .focusable()
-                            .onPreviewKeyEvent {
-                                // Consume input during the splash so it never causes an
-                                // input-dispatch-timeout ANR.
-                                true
-                            },
-                    ) {
-                        if (!splashPlaybackComplete) {
-                            // tvOS StartupSplashView parity: the video plays in a
-                            // SMALL centered box — min(25% of screen width, 440pt
-                            // → 220dp at Android TV scale) — on black, NOT
-                            // full-bleed (full-bleed rendered the logo 4x too
-                            // large; QA 2026-07-08).
-                            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                                val videoWidth = minOf(maxWidth * 0.25f, 220.dp)
-                                StartupSplashVideo(
-                                    modifier = Modifier
-                                        .align(Alignment.Center)
-                                        .width(videoWidth)
-                                        .aspectRatio(16f / 9f),
-                                resizeMode = StartupSplashResizeMode.Fit,
-                                backgroundColor = splashBackground,
-                                minVisibleMillis = 5_200L,
-                                onPlaybackComplete = {
-                                    splashPlaybackComplete = true
-                                    hasShownColdSplash = true
-                                },
-                                )
+                val splashVisible = resolvedRoute == null || !splashPlaybackComplete
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onPreviewKeyEvent {
+                            // Consume ALL input at the root while the splash
+                            // overlay is up: no input-dispatch-timeout ANR, and
+                            // no keys leak into the app pre-rendering below —
+                            // even after its content grabs focus.
+                            splashVisible
+                        },
+                ) {
+                    if (resolvedRoute != null) {
+                        // Compose the real app UNDER the splash overlay so Home
+                        // fetches, paints its rows/hero art, and settles entry
+                        // focus while the animation plays. Lifting the overlay
+                        // then reveals a finished screen — no spinner, no
+                        // image fade-up — mirroring tvOS "paint Home fully on
+                        // first frame after startup splash".
+                        TvAppNavigation(
+                            startDestination = resolvedRoute,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    if (splashVisible) {
+                        val splashFocus = remember { FocusRequester() }
+                        // PURE black — the splash video's encoded black is #000000, and any
+                        // off-black (the old 0xFF070509) reads as a visible box
+                        // around the small video layer (QA 2026-07-08).
+                        val splashBackground = Color.Black
+                        // Holds key-event routing until the app UI below exists;
+                        // its content may later claim focus, which is fine — the
+                        // root gate above still swallows every event.
+                        LaunchedEffect(Unit) { runCatching { splashFocus.requestFocus() } }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(splashBackground)
+                                .focusRequester(splashFocus)
+                                .focusable(),
+                        ) {
+                            if (!splashPlaybackComplete) {
+                                // tvOS StartupSplashView parity: the video plays in a
+                                // SMALL centered box — min(25% of screen width, 440pt
+                                // → 220dp at Android TV scale) — on black, NOT
+                                // full-bleed (full-bleed rendered the logo 4x too
+                                // large; QA 2026-07-08).
+                                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                                    val videoWidth = minOf(maxWidth * 0.25f, 220.dp)
+                                    StartupSplashVideo(
+                                        modifier = Modifier
+                                            .align(Alignment.Center)
+                                            .width(videoWidth)
+                                            .aspectRatio(16f / 9f),
+                                        resizeMode = StartupSplashResizeMode.Fit,
+                                        backgroundColor = splashBackground,
+                                        // tvOS parity: the splash completes at video end
+                                        // or 4s, whichever comes first (StartupSplashView
+                                        // maximumDisplayDuration) — never a floor past it.
+                                        maxVisibleMillis = 4_000L,
+                                        onPlaybackComplete = {
+                                            splashPlaybackComplete = true
+                                            hasShownColdSplash = true
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
-                } else {
-                    TvAppNavigation(
-                        startDestination = resolvedRoute,
-                        modifier = Modifier.fillMaxSize(),
-                    )
                 }
             }
         }
@@ -258,6 +281,19 @@ class MainTvActivity : ComponentActivity() {
     }
 
     private fun launchAuthenticatedStartupWarmup(startRoute: String) {
+        // A launch that lands on profile selection still warms the profile
+        // list + avatar art so the grid paints finished after the splash
+        // (Apple's prefetchForInitialRoute(.needsProfile)).
+        if (startRoute == TvRoute.ProfileSelection.route) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                warmProfileSelectionStartup(
+                    context = applicationContext,
+                    profileRepository = get(ProfileRepository::class.java),
+                    serverUrl = get<ServerRegistry>(ServerRegistry::class.java).activeEntry.value?.url,
+                )
+            }
+            return
+        }
         if (startRoute != TvRoute.Main.route) return
         lifecycleScope.launch(Dispatchers.IO) {
             // Re-check the lifecycle before starting the cast receiver: a
@@ -276,11 +312,14 @@ class MainTvActivity : ComponentActivity() {
                 }
             }
             warmAuthenticatedStartup(
+                context = applicationContext,
                 authRepository = get(AuthRepository::class.java),
                 profileRepository = get(ProfileRepository::class.java),
                 personalDataRepository = get(PersonalDataRepository::class.java),
                 sectionRepository = get(SectionRepository::class.java),
                 homeCache = get(HomeCachePort::class.java),
+                serverUrl = get<ServerRegistry>(ServerRegistry::class.java).activeEntry.value?.url,
+                artworkPlan = StartupArtworkPlan.tv(),
             )
         }
     }
