@@ -100,7 +100,7 @@ object TvTopMenuLayout {
 /**
  * Identifies which menu button currently holds focus. Library-type tabs share
  * the [Tab] case keyed by [TvLibraryTabType]; the remaining cases are the
- * fixed Home/Calendar tabs plus the trailing Search icon and profile avatar.
+ * fixed Home/Calendar tabs plus the Search icon and trailing profile avatar.
  */
 private sealed class TvTopMenuFocus {
     data object Home : TvTopMenuFocus()
@@ -116,9 +116,11 @@ private sealed class TvTopMenuFocus {
  *
  * Layout (three zones):
  * - Leading: the **SILO** wordmark (heavy, tracked).
- * - Center: `Home` · one inverted-capsule tab per visible library-type ·
- *   `Calendar`, derived from [destinations] (the shell's `visibleRoots`).
- * - Trailing: a Search icon button + the profile avatar (with unread badge).
+ * - Center: Search icon · `Home` · one inverted-capsule tab per visible
+ *   library-type · `Calendar`, derived from [destinations] (the shell's
+ *   `visibleRoots`), with an invisible search-size twin trailing the tabs so
+ *   the tab group stays screen-centered (tvOS `tabCluster` parity).
+ * - Trailing: the profile avatar (with unread badge).
  *
  * Tab chrome (§5.1): a focused tab inverts to a solid white capsule with
  * background-colored text; a selected-but-unfocused tab carries a low-alpha
@@ -297,8 +299,8 @@ fun TvTopMenuBar(
     // trailing cluster). On non-tab routes (Search) we enter the search icon.
     val barEntryRequester = selectedEntryRequester()
 
-    // Single full-width Row (wordmark · flexible gap · centered tabs · flexible
-    // gap · trailing search+profile) so D-pad Left/Right traverse the whole bar
+    // Single full-width Row (wordmark · flexible gap · search+centered tabs ·
+    // flexible gap · trailing profile) so D-pad Left/Right traverse the whole bar
     // in one ordered focus group — the three-zone `align` layout couldn't be
     // crossed by Compose's 2D focus search (Right off the last tab, or Left off
     // search, escaped into content instead of moving along the bar).
@@ -375,12 +377,31 @@ fun TvTopMenuBar(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Center cluster: Home · library-type tabs · Calendar.
+        // Center cluster: Search · Home · library-type tabs · Calendar.
+        // tvOS parity (TVTopMenuBar.tabCluster): search sits just left of Home,
+        // and an invisible same-size twin at the trailing end keeps the tab
+        // group itself screen-centered.
         Row(
             modifier = Modifier.height(TvSkyline.barHeight),
             horizontalArrangement = Arrangement.spacedBy(TvSkyline.tabSpacing),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            TvTopMenuIconButton(
+                icon = Icons.Outlined.Search,
+                contentDescription = "Search",
+                isFocused = focusedButton == TvTopMenuFocus.Search,
+                canFocus = !isFocusSuppressed,
+                focusRequester = searchFocusRequester,
+                onFocusChanged = { hasFocus ->
+                    focusedButton = if (hasFocus) {
+                        TvTopMenuFocus.Search
+                    } else {
+                        focusedButton.takeUnless { it == TvTopMenuFocus.Search }
+                    }
+                },
+                onClick = onSearchClick,
+            )
+
             destinations.forEach { destination ->
                 when (destination) {
                     TvRootDestination.Home -> TvTopMenuTab(
@@ -465,11 +486,15 @@ fun TvTopMenuBar(
                     )
                 }
             }
+
+            // Invisible twin of the search button so the tab group stays
+            // centered on screen with search sitting to its left.
+            Spacer(modifier = Modifier.size(TvSkyline.barIconSize))
         }
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Trailing cluster: Search icon + profile avatar.
+        // Trailing cluster: profile avatar.
         Row(
             modifier = Modifier
                 .padding(end = TvSkyline.safeAreaX)
@@ -477,22 +502,6 @@ fun TvTopMenuBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(TvSkyline.barTrailingSpacing),
         ) {
-            TvTopMenuIconButton(
-                icon = Icons.Outlined.Search,
-                contentDescription = "Search",
-                isFocused = focusedButton == TvTopMenuFocus.Search,
-                canFocus = !isFocusSuppressed,
-                focusRequester = searchFocusRequester,
-                onFocusChanged = { hasFocus ->
-                    focusedButton = if (hasFocus) {
-                        TvTopMenuFocus.Search
-                    } else {
-                        focusedButton.takeUnless { it == TvTopMenuFocus.Search }
-                    }
-                },
-                onClick = onSearchClick,
-            )
-
             TvTopMenuProfileButton(
                 accountState = accountState,
                 isFocused = focusedButton == TvTopMenuFocus.Profile,
@@ -622,7 +631,7 @@ private fun TvTopMenuTab(
 }
 
 /**
- * Trailing search icon. Mirrors the tab capsule's inverted focus chrome: a
+ * Search icon (center cluster, left of Home). Mirrors the tab capsule's inverted focus chrome: a
  * solid `SiloOnSurface` circle with a background-colored glyph while
  * focused, bare otherwise.
  */

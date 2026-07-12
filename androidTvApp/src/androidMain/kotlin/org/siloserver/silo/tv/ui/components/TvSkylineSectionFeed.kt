@@ -211,6 +211,18 @@ fun TvSkylineSectionFeed(
     // the new bounds below in case rows were added/removed.
     var focusedRowIndex by remember { mutableIntStateOf(-1) }
     var focusedItemIndex by remember { mutableIntStateOf(-1) }
+    // The (row, item) to restore focus to when this feed is recreated after
+    // being removed from composition — saveable so it survives both the outer
+    // Main → ItemDetail → Main round trip and inner-nav trips (Settings,
+    // Search). Disposal drops the shell restorer's saved child NODE, so its
+    // default enter can land on the wrong card; these indices let the
+    // recreation ladder re-target it exactly. Updated continuously from card
+    // focus (and on detail launch, where the clicked card is the focused one).
+    var returnRowIndex by rememberSaveable { mutableIntStateOf(-1) }
+    var returnItemIndex by rememberSaveable { mutableIntStateOf(-1) }
+    // True while a restore target is armed. Gates the restore requester
+    // attachments (and the row restorer's enter-fallback redirect they imply).
+    var detailReturnPending by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(rows) {
         if (focusedRowIndex >= rows.size) {
             focusedRowIndex = (rows.size - 1).coerceAtLeast(-1)
@@ -227,6 +239,17 @@ fun TvSkylineSectionFeed(
         marquee.preview(item, rowTitle)
         focusedRowIndex = rowIndex
         focusedItemIndex = itemIndex
+        // Continuously mirror the browse position into the saveable return
+        // slot and keep the restore armed. Any round trip that disposes this
+        // feed — Settings, Search, an outer detail page — then recreates it on
+        // pop restores focus (and the hero) to this exact card via the
+        // recreation ladder below, instead of drifting to the first card while
+        // the band is still scrolled rows down. Re-arming on every focus event
+        // is safe: the ladder's first check sees the card already focused and
+        // breaks immediately whenever nothing was actually lost.
+        returnRowIndex = rowIndex
+        returnItemIndex = itemIndex
+        detailReturnPending = true
     }
 
     // Keep the two cards immediately before and after focus hot. Because this
@@ -368,17 +391,6 @@ fun TvSkylineSectionFeed(
     // previously entered card.
     var initialFocusRequested by rememberSaveable { mutableStateOf(false) }
     var firstRowFocusRequest by remember { mutableIntStateOf(0) }
-    // The (row, item) a card click launched a detail page from — saveable so
-    // it survives the Main → ItemDetail → Main round trip that removes this
-    // feed from composition. That disposal also drops the shell restorer's
-    // saved child NODE, so its default enter can land a row below the launch
-    // card; these indices let the detail-return effect re-target it exactly.
-    var returnRowIndex by rememberSaveable { mutableIntStateOf(-1) }
-    var returnItemIndex by rememberSaveable { mutableIntStateOf(-1) }
-    // True from card click until the detail-return restore consumes it. Gates
-    // the restore requester attachments (and the row restorer's enter-fallback
-    // redirect they imply) to the return window only.
-    var detailReturnPending by rememberSaveable { mutableStateOf(false) }
     val detailReturnRowContainerFocusRequester = remember { FocusRequester() }
     val detailReturnItemFocusRequester =
         detailReturnCardFocusRequester ?: remember { FocusRequester() }

@@ -693,6 +693,9 @@ fun TvMainShell(
                         // fall through so the activity finishes the app.
                         TvShellBackAction.DelegateToNav -> {
                             if (nestedNav.previousBackStackEntry != null) {
+                                // Focus restoration after the pop is owned by the
+                                // restored screen itself (the section feed re-targets
+                                // its last-focused card via its recreation ladder).
                                 nestedNav.popBackStack()
                                 true
                             } else {
