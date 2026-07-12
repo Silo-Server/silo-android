@@ -490,7 +490,7 @@ class TvSkylineTokenParityTest {
 
     @Test
     fun cascadeSelectorIncludesTvOsHeaderFooterAndDefaultFlyoutBehavior() {
-        assertTrue(cascadeSelector.contains("val CascadePanelHeaderSize = 13.sp"))
+        assertTrue(cascadeSelector.contains("val CascadePanelHeaderSize = 11.sp"))
         assertTrue(cascadeSelector.contains("val CascadeFlyoutHeaderSize = 13.sp"))
         assertTrue(cascadeSelector.contains("CascadePanelHeader(type.librariesHeader)"))
         assertTrue(cascadeSelector.contains("CascadePanelFooter(isSingleLibrary = false)"))

@@ -29,10 +29,10 @@ class TvSearchLayoutReadabilityTest {
     }
 
     @Test
-    fun searchKeepsItsControlsPinnedAboveTheScrollingGrid() {
+    fun searchMovesItsHeaderWithTheScrollingGrid() {
         assertTrue(source.contains("SearchStage("))
         assertTrue(source.contains(".weight(1f)"))
-        assertFalse(source.contains("header = {"))
+        assertTrue(source.contains("header = {"))
         assertFalse(source.contains("scrollToItem("))
     }
 

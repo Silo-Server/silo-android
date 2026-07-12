@@ -40,6 +40,7 @@ class TvTypographyReadabilityTest {
             "org/siloserver/silo/tv/ui/components/TvAlphabetRail.kt",
             "org/siloserver/silo/tv/ui/components/TvEpisodeCard.kt",
             "org/siloserver/silo/tv/ui/components/TvFullScreenPicker.kt",
+            "org/siloserver/silo/tv/ui/components/TvMediaCardActions.kt",
             "org/siloserver/silo/tv/ui/components/TvOptionDialog.kt",
             "org/siloserver/silo/tv/ui/components/TvPinEntryDialog.kt",
             "org/siloserver/silo/tv/ui/components/TvTextInputDialog.kt",

@@ -12,7 +12,6 @@ import org.siloserver.silo.common.di.playerInfraModule
 import org.siloserver.silo.common.di.playerModule
 import org.siloserver.silo.di.sharedModules
 import org.siloserver.silo.tv.di.androidTvModule
-import org.siloserver.silo.tv.notifications.NotificationsForegroundStarter
 import org.siloserver.silo.tv.watchnext.TvWorkerFactory
 import kotlinx.coroutines.launch
 import okio.Path.Companion.toOkioPath
@@ -35,17 +34,6 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
         val koinApp = startKoin {
             androidContext(this@SiloTvApplication)
             modules(sharedModules() + playerModule + playerInfraModule + androidTvModule)
-        }
-        // Notifications realtime: connect while foregrounded. Separate app
-        // module → own Koin start, so TV invokes the starter here (the phone app
-        // does the equivalent in SiloApplication). Guarded: it's a
-        // foreground accelerator, never load-bearing for cold start.
-        runCatching {
-            NotificationsForegroundStarter(
-                repository = koinApp.koin.get(),
-            ).register()
-        }.onFailure {
-            android.util.Log.w("SiloTvApplication", "Notifications realtime starter failed", it)
         }
         // Live-home socket (Apple realtime-updates spec). Guarded — a dead
         // socket just means Home refreshes on open only.

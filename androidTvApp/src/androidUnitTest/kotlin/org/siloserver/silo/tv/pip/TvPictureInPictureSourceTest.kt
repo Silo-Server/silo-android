@@ -15,17 +15,14 @@ class TvPictureInPictureSourceTest {
     ).readText()
 
     @Test
-    fun tvActivityDeclaresRuntimeGatedPictureInPicture() {
-        assertTrue(manifest.contains("""android:supportsPictureInPicture="true""""))
-        assertTrue(manifest.contains("smallestScreenSize"))
-        assertTrue(activity.contains("SiloPictureInPictureSurface.Tv"))
-        assertTrue(activity.contains("enterPictureInPictureIfEligible"))
+    fun tvActivityDisablesPictureInPicture() {
+        assertTrue(manifest.contains("""android:supportsPictureInPicture="false""""))
+        assertTrue(!activity.contains("enterPictureInPictureIfEligible"))
     }
 
     @Test
     fun tvPlayerKeepsPlaybackAliveAndHidesHudInPip() {
         assertTrue(player.contains("SiloPictureInPictureCoordinator"))
-        assertTrue(player.contains("pictureInPictureEnabledFlow"))
         assertTrue(player.contains("updatePlaybackState("))
         val pipEffect = player
             .substringAfter("LaunchedEffect(\n        context,")
@@ -38,7 +35,7 @@ class TvPictureInPictureSourceTest {
     }
 
     @Test
-    fun tvSettingsExposePipToggle() {
-        assertTrue(settings.contains("Picture-in-Picture"))
+    fun tvSettingsHidePipToggle() {
+        assertTrue(!settings.contains("Picture-in-Picture"))
     }
 }

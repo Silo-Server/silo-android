@@ -205,11 +205,9 @@ fun TvPlayerScreen(
     capabilityDetector: PlaybackCapabilityDetector = koinInject(),
     activePlayerHolder: ActivePlayerHolder = koinInject(),
     pictureInPictureCoordinator: SiloPictureInPictureCoordinator = koinInject(),
-    playerSettingsStore: org.siloserver.silo.common.settings.PlayerSettingsStore = koinInject(),
     siloCastReceiver: TvSiloCastReceiver = koinInject(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    val pictureInPictureEnabled by playerSettingsStore.pictureInPictureEnabledFlow.collectAsState(initial = true)
     val isInPictureInPictureMode by pictureInPictureCoordinator.isInPictureInPictureMode.collectAsState()
     // The real session player (ExoPlayer/MpvPlayer) the service publishes. The
     // PlayerView surface must bind to THIS, not the MediaController, so the
@@ -1228,7 +1226,6 @@ fun TvPlayerScreen(
     LaunchedEffect(
         context,
         mediaController,
-        pictureInPictureEnabled,
         state.streamUrl,
         state.isLoading,
         state.error,
@@ -1242,7 +1239,7 @@ fun TvPlayerScreen(
             activity = context as? Activity,
             surface = SiloPictureInPictureSurface.Tv,
             state = SiloPictureInPicturePlaybackState(
-                enabled = pictureInPictureEnabled,
+                enabled = false,
                 videoActive = state.streamUrl != null && !state.isLoading && state.error == null,
                 isPlaying = state.isPlaying && !state.isPaused,
                 videoWidth = pictureInPictureVideoWidth,

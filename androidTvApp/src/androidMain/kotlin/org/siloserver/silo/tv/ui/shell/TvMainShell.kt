@@ -671,6 +671,12 @@ fun TvMainShell(
                 if (ev.type == KeyEventType.KeyUp &&
                     (ev.key == Key.Back || ev.key == Key.Escape)
                 ) {
+                    // Settings owns a two-stage Back model (detail pane →
+                    // selected rail category → Home). Let its BackHandler see
+                    // the event instead of applying the shell-wide routing.
+                    if (currentRoute == TvMainRoute.Settings.route) {
+                        return@onPreviewKeyEvent false
+                    }
                     // Centralized shell Back. The 4-way priority (panel >
                     // profile menu > focused bar > nav) is decided by
                     // [TvShellFocusState.onBack], which also applies the state
@@ -1009,6 +1015,12 @@ fun TvMainShell(
                         onManageServers = onSwitchServer,
                         onSignedOut = onSignedOut,
                         onSwitchProfile = onSwitchProfile,
+                        onNavigateHome = {
+                            navigateToRoute(firstTvRoute())
+                            focusState.requestMenuFocus(
+                                TvTopMenuPanel.Root(TvRootDestination.Home),
+                            )
+                        },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }

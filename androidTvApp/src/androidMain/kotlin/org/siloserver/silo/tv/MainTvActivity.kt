@@ -2,7 +2,6 @@ package org.siloserver.silo.tv
 
 import android.annotation.SuppressLint
 import android.content.Intent
-import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
@@ -29,8 +28,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.lifecycle.lifecycleScope
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
-import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
-import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
 import org.siloserver.silo.common.startup.StartupArtworkPlan
@@ -240,21 +237,6 @@ class MainTvActivity : ComponentActivity() {
         get<TvSiloCastReceiver>(TvSiloCastReceiver::class.java).stop()
         val store = get<PlayerSettingsStore>(PlayerSettingsStore::class.java)
         lifecycleScope.launch { store.flushPendingDeviceSettings() }
-    }
-
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        get<SiloPictureInPictureCoordinator>(SiloPictureInPictureCoordinator::class.java)
-            .enterPictureInPictureIfEligible(this, SiloPictureInPictureSurface.Tv)
-    }
-
-    override fun onPictureInPictureModeChanged(
-        isInPictureInPictureMode: Boolean,
-        newConfig: Configuration,
-    ) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        get<SiloPictureInPictureCoordinator>(SiloPictureInPictureCoordinator::class.java)
-            .setInPictureInPictureMode(isInPictureInPictureMode)
     }
 
     /**

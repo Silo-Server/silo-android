@@ -9,7 +9,6 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.model.admin.shouldShowClientAdminSurface
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.auth.isActingAdmin
-import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.profile.UpdateProfileRequest
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
@@ -18,7 +17,6 @@ import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
-import org.siloserver.silo.repository.NotificationsRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
@@ -51,7 +49,6 @@ class TvSettingsViewModel(
     private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
     private val overlayPrefsStore: OverlayPrefsStore,
     private val legacyTvPrefsMigration: LegacyTvPrefsMigration,
-    private val notificationsRepository: NotificationsRepository,
     private val tvLibraryScopeStore: org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore? = null,
 ) : ViewModel() {
 
@@ -77,8 +74,8 @@ class TvSettingsViewModel(
         // Full subtitle appearance + whether the device-scoped override is on.
         // Mirrors iOS `subtitleAppearance` / `subtitleUsesDeviceAppearanceOverride`.
         val subtitleAppearance: SubtitleAppearance = SubtitleAppearance.DEFAULT,
+        val effectiveSubtitleAppearance: SubtitleAppearance = SubtitleAppearance.DEFAULT,
         val subtitleUsesDeviceOverride: Boolean = false,
-        val pictureInPictureEnabled: Boolean = true,
         val autoPlayNext: Boolean = true,
         val autoSkipIntro: Boolean = false,
         val matchContentFrameRate: Boolean = false,
@@ -94,17 +91,8 @@ class TvSettingsViewModel(
         // Seconds before the end of an episode to surface the Up-Next prompt
         // (0 = at the very end). Mirrors tvOS `nextUpPromptSeconds`.
         val nextUpPromptSeconds: Int = 10,
-        // Notifications (in-app). The section is hidden entirely unless the
-        // server reports in-app notifications are enabled AND preferences
-        // load — so no toggles (least of all push) ever render otherwise.
         // Client admin is hidden for now even when the server would accept acting-admin.
         val adminVisible: Boolean = false,
-        val notificationsVisible: Boolean = false,
-        val notificationsEnabled: Boolean = true,
-        val notifyFavorites: Boolean = true,
-        val notifyWatchlist: Boolean = true,
-        val notifyContinueWatching: Boolean = true,
-        val notifyNextUp: Boolean = true,
         val navAction: NavAction? = null,
     )
 
@@ -115,7 +103,6 @@ class TvSettingsViewModel(
         loadUser()
         loadSettings()
         observePlayerSettings()
-        loadNotificationPreferences()
     }
 
     /**
@@ -287,8 +274,8 @@ class TvSettingsViewModel(
             }
         }
         viewModelScope.launch {
-            playerSettingsStore.pictureInPictureEnabledFlow.collect { enabled ->
-                _uiState.update { it.copy(pictureInPictureEnabled = enabled) }
+            playerSettingsStore.effectiveSubtitleAppearanceFlow.collect { appearance ->
+                _uiState.update { it.copy(effectiveSubtitleAppearance = appearance) }
             }
         }
     }
@@ -305,109 +292,6 @@ class TvSettingsViewModel(
             .substringAfter("://", url)
             .substringBefore('/')
             .ifBlank { url }
-    }
-
-    /**
-     * Folds capability + preferences into UI state. The section is gated on
-     * the server reporting in-app notifications enabled (`in_app.enabled`, the
-     * server feature flag / "available" semantic — there is NO separate
-     * `available` field) AND preferences having loaded. A failed capability or
-     * preferences fetch leaves them null, so the section stays hidden and no
-     * push toggles are ever rendered. The user's on/off is the separate
-     * [NotificationPreferences.enabled] master toggle.
-     */
-    private fun loadNotificationPreferences() {
-        viewModelScope.launch {
-            combine(
-                notificationsRepository.capability,
-                notificationsRepository.preferences,
-            ) { capability, preferences ->
-                capability to preferences
-            }.collect { (capability, preferences) ->
-                val available = capability?.inApp?.enabled == true
-                _uiState.update { state ->
-                    if (!available || preferences == null) {
-                        state.copy(notificationsVisible = false)
-                    } else {
-                        state.copy(
-                            notificationsVisible = true,
-                            notificationsEnabled = preferences.enabled,
-                            notifyFavorites = preferences.notifyFavorites,
-                            notifyWatchlist = preferences.notifyWatchlist,
-                            notifyContinueWatching = preferences.notifyContinueWatching,
-                            notifyNextUp = preferences.notifyNextUp,
-                        )
-                    }
-                }
-            }
-        }
-
-        viewModelScope.launch { notificationsRepository.loadCapability() }
-        viewModelScope.launch { notificationsRepository.loadPreferences() }
-    }
-
-    fun onNotificationsEnabledChanged(value: Boolean) {
-        val previousValue = _uiState.value.notificationsEnabled
-        _uiState.update { it.copy(notificationsEnabled = value) }
-        updateNotificationPreferences(
-            NotificationPreferencesUpdate(enabled = value),
-        ) { it.copy(notificationsEnabled = previousValue) }
-    }
-
-    fun onNotifyFavoritesChanged(value: Boolean) {
-        val previousValue = _uiState.value.notifyFavorites
-        _uiState.update { it.copy(notifyFavorites = value) }
-        updateNotificationPreferences(
-            NotificationPreferencesUpdate(notifyFavorites = value),
-        ) { it.copy(notifyFavorites = previousValue) }
-    }
-
-    fun onNotifyWatchlistChanged(value: Boolean) {
-        val previousValue = _uiState.value.notifyWatchlist
-        _uiState.update { it.copy(notifyWatchlist = value) }
-        updateNotificationPreferences(
-            NotificationPreferencesUpdate(notifyWatchlist = value),
-        ) { it.copy(notifyWatchlist = previousValue) }
-    }
-
-    fun onNotifyContinueWatchingChanged(value: Boolean) {
-        val previousValue = _uiState.value.notifyContinueWatching
-        _uiState.update { it.copy(notifyContinueWatching = value) }
-        updateNotificationPreferences(
-            NotificationPreferencesUpdate(notifyContinueWatching = value),
-        ) { it.copy(notifyContinueWatching = previousValue) }
-    }
-
-    fun onNotifyNextUpChanged(value: Boolean) {
-        val previousValue = _uiState.value.notifyNextUp
-        _uiState.update { it.copy(notifyNextUp = value) }
-        updateNotificationPreferences(
-            NotificationPreferencesUpdate(notifyNextUp = value),
-        ) { it.copy(notifyNextUp = previousValue) }
-    }
-
-    /**
-     * Sends a partial PUT (one named field) for the optimistically-applied
-     * toggle. On failure, [revertField] restores ONLY the single field this
-     * call changed to its prior value — never a wholesale snapshot. Reverting
-     * just the changed field is race-free across distinct fields: two quick
-     * successive toggles of different fields no longer clobber each other (the
-     * first call's failure can't roll back the field the second call set). On
-     * success the repository's preferences flow re-folds the server truth back
-     * into state via [loadNotificationPreferences].
-     */
-    private fun updateNotificationPreferences(
-        update: NotificationPreferencesUpdate,
-        revertField: (UiState) -> UiState,
-    ) {
-        viewModelScope.launch {
-            when (notificationsRepository.updatePreferences(update)) {
-                is ApiResult.Success -> Unit
-                is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update(revertField)
-                }
-            }
-        }
     }
 
     fun onPlaybackQualityChanged(value: PlaybackQuality) {
@@ -550,10 +434,6 @@ class TvSettingsViewModel(
 
     fun onAutoSkipCreditsChanged(value: Boolean) {
         viewModelScope.launch { playerSettingsStore.setAutoSkipCredits(value) }
-    }
-
-    fun onPictureInPictureEnabledChanged(value: Boolean) {
-        viewModelScope.launch { playerSettingsStore.setPictureInPictureEnabled(value) }
     }
 
     fun onResumeRewindSecondsChanged(value: Int) {

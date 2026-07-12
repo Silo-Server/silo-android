@@ -8,7 +8,9 @@ plugins {
 val siloVersionName = providers
     .gradleProperty("siloVersionName")
     .orElse(providers.environmentVariable("SILO_VERSION_NAME"))
-    .orElse("0.2.6")
+    // Release builds override this from the validated Git tag in
+    // android-build.yml. Keep local/dev builds aligned with the latest release.
+    .orElse("0.3.11")
 
 val siloVersionCode = providers
     .gradleProperty("siloVersionCode")
