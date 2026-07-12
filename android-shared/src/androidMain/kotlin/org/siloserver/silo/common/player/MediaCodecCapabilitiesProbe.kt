@@ -27,16 +27,6 @@ object MediaCodecCapabilitiesProbe {
         val supportsDvProfile7: Boolean,
     )
 
-    private data class MutableVideoDecodeCapability(
-        val profiles: MutableSet<String> = sortedSetOf(),
-        val levels: MutableSet<Int> = sortedSetOf(),
-        val bitDepths: MutableSet<Int> = sortedSetOf(),
-        var maxWidth: Int = 0,
-        var maxHeight: Int = 0,
-        var maxFrameRate: Double = 0.0,
-        var maxBitrateKbps: Int = 0,
-    )
-
     // Decoder/HDR support is static for the process lifetime; the MediaCodecList
     // enumeration is expensive and was being run up to 4× per playback start
     // (detect() runs it twice and is itself called twice). Probe once, cache.
@@ -48,15 +38,12 @@ object MediaCodecCapabilitiesProbe {
 
     private fun computeProbe(): ProbeResult {
         val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
-        // Track the largest supported height PER codec rather than a single
-        // global max. Otherwise one beefy decoder (e.g. H.264 at 4K) lets us
-        // claim `maxResolution=2160p` for every other codec name we collect,
-        // including low-ceiling ones (e.g. emulator's software HEVC stopping
-        // at 1080p). The server's flat `codecs_video` + `max_resolution`
-        // protocol has no way to express per-codec ceilings, so we filter
-        // under-spec'd codecs out of the payload instead of lying.
+        // Keep per-codec limits. Android devices commonly have asymmetric
+        // decoders (for example 4K AVC/HEVC but 1080p VP9 or VC-1). Protocol V3
+        // carries these bounds, so a lower-ceiling codec must not be discarded
+        // merely because another decoder establishes a higher global bucket.
         val videoMaxHeights = mutableMapOf<String, Int>()
-        val detailedVideo = mutableMapOf<String, MutableVideoDecodeCapability>()
+        val detailedVideo = mutableListOf<VideoDecodeCapability>()
         var hdr10 = false
         var hdr10p = false
         var hlg = false
@@ -67,28 +54,13 @@ object MediaCodecCapabilitiesProbe {
 
         for (info in list.codecInfos) {
             if (info.isEncoder) continue
+            if (!isHardwareDecoder(info)) continue
             for (type in info.supportedTypes) {
                 val caps = runCatching { info.getCapabilitiesForType(type) }.getOrNull() ?: continue
                 val height = caps.videoCapabilities?.supportedHeights?.upper ?: 0
 
-                codecName(type)?.takeIf { isHardwareDecoder(info) }?.let { codec ->
-                    val evidence = detailedVideo.getOrPut(codec) { MutableVideoDecodeCapability() }
-                    val video = caps.videoCapabilities
-                    evidence.maxWidth = maxOf(evidence.maxWidth, video?.supportedWidths?.upper ?: 0)
-                    evidence.maxHeight = maxOf(evidence.maxHeight, video?.supportedHeights?.upper ?: 0)
-                    evidence.maxFrameRate = maxOf(
-                        evidence.maxFrameRate,
-                        (video?.supportedFrameRates?.upper ?: 0.0).toDouble(),
-                    )
-                    evidence.maxBitrateKbps = maxOf(
-                        evidence.maxBitrateKbps,
-                        (video?.bitrateRange?.upper ?: 0) / 1_000,
-                    )
-                    caps.profileLevels.forEach { profileLevel ->
-                        profileName(codec, profileLevel.profile)?.let(evidence.profiles::add)
-                        profileBitDepth(codec, profileLevel.profile)?.let(evidence.bitDepths::add)
-                        normalizedLevel(codec, profileLevel.level)?.let(evidence.levels::add)
-                    }
+                codecName(type)?.let { codec ->
+                    detailedVideo += buildVideoDecodeCapability(codec, info.name, caps)
                 }
 
                 fun track(name: String) {
@@ -98,8 +70,8 @@ object MediaCodecCapabilitiesProbe {
                 when {
                     type.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true) -> {
                         track("hevc")
-                        hevcMultiInstance = runCatching { caps.maxSupportedInstances >= 2 }
-                            .getOrDefault(false)
+                        hevcMultiInstance = hevcMultiInstance ||
+                            runCatching { caps.maxSupportedInstances >= 2 }.getOrDefault(false)
                         for (pl in caps.profileLevels) when (pl.profile) {
                             CodecProfileLevel.HEVCProfileMain10HDR10 -> {
                                 hdr10 = true
@@ -123,7 +95,7 @@ object MediaCodecCapabilitiesProbe {
                                 CodecProfileLevel.DolbyVisionProfileDvheDth -> dv += 6
                                 CodecProfileLevel.DolbyVisionProfileDvheDtb -> {
                                     dv += 7
-                                    if (multiInstance) dvP7DecoderMultiInstance = true
+                                    dvP7DecoderMultiInstance = dvP7DecoderMultiInstance || multiInstance
                                 }
                                 CodecProfileLevel.DolbyVisionProfileDvheSt -> dv += 8
                             }
@@ -143,6 +115,11 @@ object MediaCodecCapabilitiesProbe {
                     }
                     type.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true) -> track("h264")
                     type.equals(MediaFormat.MIMETYPE_VIDEO_VP9, ignoreCase = true) -> track("vp9")
+                    type.equals(MediaFormat.MIMETYPE_VIDEO_VP8, ignoreCase = true) -> track("vp8")
+                    type.equals(MediaFormat.MIMETYPE_VIDEO_MPEG2, ignoreCase = true) -> track("mpeg2video")
+                    type.equals(MediaFormat.MIMETYPE_VIDEO_MPEG4, ignoreCase = true) -> track("mpeg4")
+                    type.equals(MediaFormat.MIMETYPE_VIDEO_H263, ignoreCase = true) -> track("h263")
+                    isVc1Mime(type) -> track("vc1")
                 }
             }
         }
@@ -160,22 +137,10 @@ object MediaCodecCapabilitiesProbe {
 
         val overallMaxH = videoMaxHeights.values.maxOrNull() ?: 0
         val claimedBucket = resolutionBucket(overallMaxH)
-        val claimedFloor = heightFloorForBucket(claimedBucket)
+        val advertisedVideo = videoMaxHeights.keys
 
-        // Only advertise codecs whose per-codec ceiling reaches the claimed
-        // maxResolution — otherwise the server picks DIRECT for a file that
-        // the selected codec can't actually decode, and the MediaCodec
-        // pipeline crashes at runtime with NO_EXCEEDS_CAPABILITIES. When a
-        // codec is dropped, the server falls through to its alternate-file
-        // / transcode paths, which is always preferable to a decoder crash.
-        val advertisedVideo = videoMaxHeights
-            .filterValues { it >= claimedFloor }
-            .keys
-
-        // If HEVC dropped out of the advertised set, the HDR claim we picked
-        // up from its profileLevels is meaningless (nothing in `advertisedVideo`
-        // can decode HDR10 HEVC on this device). Clear it so the server
-        // doesn't route HDR content to a decoder we can't actually drive.
+        // An HDR profile from a non-video or unusable decoder is meaningless.
+        // Keep the claim only while its hardware codec survived the probe.
         val hdrSurvives = advertisedVideo.any {
             it == "av1" || it == "dolby_vision" || (it == "hevc" && hevcHdrCapable)
         }
@@ -183,32 +148,11 @@ object MediaCodecCapabilitiesProbe {
         val effectiveHdr10p = hdr10p && hdrSurvives
         val effectiveHlg = hlg && hdrSurvives
 
-        // Don't gate DV signaling on `advertisedVideo`. The bucket-filter
-        // upstream drops the DV codec when its supported height is below
-        // the global claimed bucket — but on phones that pair an 8K HEVC /
-        // AV1 decoder with a 4K-cap Dolby Vision decoder (S26 Ultra et al.)
-        // that strips legitimate DV Profile 8 support, the server then
-        // picks DIRECT for DV files anyway, and the preflight listener
-        // bounces every play into a transcode fallback the path can't
-        // recover from. `dvProfiles` / `dvP7MultiInstance` already reflect
-        // whether the DV decoder was probed at all.
         return ProbeResult(
             videoCodecs = advertisedVideo,
-            videoDecodeCapabilities = advertisedVideo.mapNotNull { codec ->
-                detailedVideo[codec]?.let { evidence ->
-                    VideoDecodeCapability(
-                        codec = codec,
-                        profiles = evidence.profiles.toList(),
-                        levels = evidence.levels.toList(),
-                        bitDepths = evidence.bitDepths.toList(),
-                        maxWidth = evidence.maxWidth.takeIf { it > 0 },
-                        maxHeight = evidence.maxHeight.takeIf { it > 0 },
-                        maxFrameRate = evidence.maxFrameRate.takeIf { it > 0.0 },
-                        maxBitrateKbps = evidence.maxBitrateKbps.takeIf { it > 0 },
-                        hardware = true,
-                    )
-                }
-            }.sortedBy { it.codec },
+            videoDecodeCapabilities = detailedVideo.sortedWith(
+                compareBy(VideoDecodeCapability::codec, VideoDecodeCapability::decoderName),
+            ),
             hdr = HdrCapabilities(
                 hdr10 = effectiveHdr10,
                 hdr10Plus = effectiveHdr10p,
@@ -220,22 +164,131 @@ object MediaCodecCapabilitiesProbe {
         )
     }
 
-    private fun codecName(mimeType: String): String? = when {
+    internal fun codecName(mimeType: String): String? = when {
         mimeType.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true) -> "h264"
         mimeType.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true) -> "hevc"
         mimeType.equals(MediaFormat.MIMETYPE_VIDEO_VP9, ignoreCase = true) -> "vp9"
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-            mimeType.equals(MediaFormat.MIMETYPE_VIDEO_AV1, ignoreCase = true) -> "av1"
+        mimeType.equals(MediaFormat.MIMETYPE_VIDEO_VP8, ignoreCase = true) -> "vp8"
+        mimeType.equals(MediaFormat.MIMETYPE_VIDEO_AV1, ignoreCase = true) -> "av1"
+        mimeType.equals(MediaFormat.MIMETYPE_VIDEO_MPEG2, ignoreCase = true) -> "mpeg2video"
+        mimeType.equals(MediaFormat.MIMETYPE_VIDEO_MPEG4, ignoreCase = true) -> "mpeg4"
+        mimeType.equals(MediaFormat.MIMETYPE_VIDEO_H263, ignoreCase = true) -> "h263"
+        isVc1Mime(mimeType) -> "vc1"
         else -> null
     }
 
+    internal fun isVc1Mime(mimeType: String): Boolean =
+        mimeType.equals("video/wvc1", ignoreCase = true) ||
+            mimeType.equals("video/x-ms-wmv", ignoreCase = true) ||
+            mimeType.equals("video/vc1", ignoreCase = true)
+
+    private fun buildVideoDecodeCapability(
+        codec: String,
+        decoderName: String,
+        caps: android.media.MediaCodecInfo.CodecCapabilities,
+    ): VideoDecodeCapability {
+        val profiles = sortedSetOf<String>()
+        val levels = sortedSetOf<Int>()
+        val bitDepths = sortedSetOf<Int>()
+        caps.profileLevels.forEach { profileLevel ->
+            profileName(codec, profileLevel.profile)?.let(profiles::add)
+            profileBitDepth(codec, profileLevel.profile)?.let(bitDepths::add)
+            normalizedLevel(codec, profileLevel.level)?.let(levels::add)
+        }
+        val video = caps.videoCapabilities
+        val limits = video?.let(::conservativeVideoLimits)
+        return VideoDecodeCapability(
+            codec = codec,
+            decoderName = decoderName,
+            profiles = profiles.toList(),
+            levels = levels.toList(),
+            bitDepths = bitDepths.toList(),
+            maxWidth = limits?.maxWidth?.takeIf { it > 0 },
+            maxHeight = limits?.maxHeight?.takeIf { it > 0 },
+            maxFrameRate = limits?.maxFrameRate?.takeIf { it > 0.0 },
+            maxBitrateKbps = ((video?.bitrateRange?.upper ?: 0) / 1_000).takeIf { it > 0 },
+            hardware = true,
+        )
+    }
+
+    /**
+     * Vendor frame-rate ranges are frequently global (one Amlogic decoder
+     * reports 960 fps even though its 4K performance point is 30 fps). Tie the
+     * claim to the largest standard size the decoder accepts and, on API 29+,
+     * cap it with the advertised performance points.
+     */
+    private fun conservativeVideoLimits(
+        video: android.media.MediaCodecInfo.VideoCapabilities,
+    ): ConservativeVideoLimits {
+        val largestSupportedSize = STANDARD_VIDEO_SIZES.firstOrNull { (width, height) ->
+            runCatching { video.isSizeSupported(width, height) }.getOrDefault(false)
+        }
+        val points = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching { video.supportedPerformancePoints }.getOrNull().orEmpty()
+        } else {
+            emptyList()
+        }
+        val performanceBoundedSize = points.takeIf { it.isNotEmpty() }?.let {
+            STANDARD_VIDEO_SIZES.firstOrNull { (width, height) ->
+                runCatching { video.isSizeSupported(width, height) }.getOrDefault(false) &&
+                    it.any { point ->
+                        point.covers(
+                            android.media.MediaCodecInfo.VideoCapabilities.PerformancePoint(
+                                width,
+                                height,
+                                24,
+                            ),
+                        )
+                    }
+            }
+        }
+        val rateSize = performanceBoundedSize ?: largestSupportedSize
+        val rangeUpper = rateSize?.let { (width, height) ->
+            runCatching { video.getSupportedFrameRatesFor(width, height).upper }.getOrNull()
+        } ?: video.supportedFrameRates?.upper?.toDouble() ?: 0.0
+        val performanceRate = if (points.isNotEmpty() && rateSize != null) {
+            STANDARD_FRAME_RATES.firstOrNull { rate ->
+                val requested = android.media.MediaCodecInfo.VideoCapabilities.PerformancePoint(
+                    rateSize.first,
+                    rateSize.second,
+                    rate,
+                )
+                points.any { point -> point.covers(requested) }
+            }?.toDouble()
+        } else {
+            null
+        }
+        return ConservativeVideoLimits(
+            maxWidth = performanceBoundedSize?.first ?: video.supportedWidths?.upper ?: 0,
+            maxHeight = performanceBoundedSize?.second ?: video.supportedHeights?.upper ?: 0,
+            maxFrameRate = performanceRate?.let { minOf(rangeUpper, it) } ?: rangeUpper,
+        )
+    }
+
+    private data class ConservativeVideoLimits(
+        val maxWidth: Int,
+        val maxHeight: Int,
+        val maxFrameRate: Double,
+    )
+
     private fun isHardwareDecoder(info: android.media.MediaCodecInfo): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            info.isHardwareAccelerated
+            info.isHardwareAccelerated && !info.isSoftwareOnly
         } else {
-            val name = info.name.lowercase()
-            !name.startsWith("omx.google.") && !name.startsWith("c2.android.")
+            !isLikelySoftwareDecoderName(info.name)
         }
+
+    internal fun isLikelySoftwareDecoderName(codecName: String): Boolean {
+        val name = codecName.lowercase()
+        return name.startsWith("omx.google.") ||
+            name.startsWith("c2.android.") ||
+            name.startsWith("c2.google.") ||
+            name.startsWith("omx.ffmpeg.") ||
+            name.startsWith("omx.pv.") ||
+            name.startsWith("omx.avcodec.") ||
+            ".software." in name ||
+            name.endsWith(".sw.decoder")
+    }
 
     internal fun profileName(codec: String, profile: Int): String? = when (codec) {
         "h264" -> when (profile) {
@@ -277,6 +330,52 @@ object MediaCodecCapabilitiesProbe {
             -> "main"
             else -> null
         }
+        "mpeg2video" -> when (profile) {
+            CodecProfileLevel.MPEG2ProfileSimple -> "simple"
+            CodecProfileLevel.MPEG2ProfileMain -> "main"
+            CodecProfileLevel.MPEG2Profile422 -> "4:2:2"
+            CodecProfileLevel.MPEG2ProfileSNR -> "snr scalable"
+            CodecProfileLevel.MPEG2ProfileSpatial -> "spatially scalable"
+            CodecProfileLevel.MPEG2ProfileHigh -> "high"
+            else -> null
+        }
+        "mpeg4" -> when (profile) {
+            CodecProfileLevel.MPEG4ProfileSimple -> "simple profile"
+            CodecProfileLevel.MPEG4ProfileSimpleScalable -> "simple scalable profile"
+            CodecProfileLevel.MPEG4ProfileCore -> "core profile"
+            CodecProfileLevel.MPEG4ProfileMain -> "main profile"
+            CodecProfileLevel.MPEG4ProfileNbit -> "n-bit profile"
+            CodecProfileLevel.MPEG4ProfileScalableTexture -> "scalable texture profile"
+            CodecProfileLevel.MPEG4ProfileSimpleFace -> "simple face animation profile"
+            CodecProfileLevel.MPEG4ProfileSimpleFBA -> "simple face animation profile"
+            CodecProfileLevel.MPEG4ProfileBasicAnimated -> "basic animated texture profile"
+            CodecProfileLevel.MPEG4ProfileHybrid -> "hybrid profile"
+            CodecProfileLevel.MPEG4ProfileAdvancedRealTime -> "advanced real time simple profile"
+            // FFmpeg exposes this historical profile string as "Code
+            // Scalable Profile"; match its wire vocabulary exactly.
+            CodecProfileLevel.MPEG4ProfileCoreScalable -> "code scalable profile"
+            CodecProfileLevel.MPEG4ProfileAdvancedCoding -> "advanced coding profile"
+            CodecProfileLevel.MPEG4ProfileAdvancedCore -> "advanced core profile"
+            CodecProfileLevel.MPEG4ProfileAdvancedScalable -> "advanced scalable texture profile"
+            CodecProfileLevel.MPEG4ProfileAdvancedSimple -> "advanced simple profile"
+            else -> null
+        }
+        "vp8" -> when (profile) {
+            CodecProfileLevel.VP8ProfileMain -> "main"
+            else -> null
+        }
+        "h263" -> when (profile) {
+            CodecProfileLevel.H263ProfileBaseline -> "baseline"
+            CodecProfileLevel.H263ProfileH320Coding -> "h320 coding"
+            CodecProfileLevel.H263ProfileBackwardCompatible -> "backward compatible"
+            CodecProfileLevel.H263ProfileISWV2 -> "iswv2"
+            CodecProfileLevel.H263ProfileISWV3 -> "iswv3"
+            CodecProfileLevel.H263ProfileHighCompression -> "high compression"
+            CodecProfileLevel.H263ProfileInternet -> "internet"
+            CodecProfileLevel.H263ProfileInterlace -> "interlace"
+            CodecProfileLevel.H263ProfileHighLatency -> "high latency"
+            else -> null
+        }
         else -> null
     }
 
@@ -286,7 +385,12 @@ object MediaCodecCapabilitiesProbe {
             CodecProfileLevel.AVCProfileHigh422,
             CodecProfileLevel.AVCProfileHigh444,
             -> 10
-            else -> 8
+            CodecProfileLevel.AVCProfileBaseline,
+            CodecProfileLevel.AVCProfileMain,
+            CodecProfileLevel.AVCProfileExtended,
+            CodecProfileLevel.AVCProfileHigh,
+            -> 8
+            else -> null
         }
         "hevc" -> when (profile) {
             CodecProfileLevel.HEVCProfileMain -> 8
@@ -315,6 +419,38 @@ object MediaCodecCapabilitiesProbe {
             -> 10
             else -> null
         }
+        "mpeg2video" -> when (profile) {
+            CodecProfileLevel.MPEG2ProfileSimple,
+            CodecProfileLevel.MPEG2ProfileMain,
+            CodecProfileLevel.MPEG2Profile422,
+            CodecProfileLevel.MPEG2ProfileSNR,
+            CodecProfileLevel.MPEG2ProfileSpatial,
+            CodecProfileLevel.MPEG2ProfileHigh,
+            -> 8
+            else -> null
+        }
+        "mpeg4" -> when (profile) {
+            CodecProfileLevel.MPEG4ProfileSimple,
+            CodecProfileLevel.MPEG4ProfileSimpleScalable,
+            CodecProfileLevel.MPEG4ProfileCore,
+            CodecProfileLevel.MPEG4ProfileMain,
+            CodecProfileLevel.MPEG4ProfileNbit,
+            CodecProfileLevel.MPEG4ProfileScalableTexture,
+            CodecProfileLevel.MPEG4ProfileSimpleFace,
+            CodecProfileLevel.MPEG4ProfileSimpleFBA,
+            CodecProfileLevel.MPEG4ProfileBasicAnimated,
+            CodecProfileLevel.MPEG4ProfileHybrid,
+            CodecProfileLevel.MPEG4ProfileAdvancedRealTime,
+            CodecProfileLevel.MPEG4ProfileCoreScalable,
+            CodecProfileLevel.MPEG4ProfileAdvancedCoding,
+            CodecProfileLevel.MPEG4ProfileAdvancedCore,
+            CodecProfileLevel.MPEG4ProfileAdvancedScalable,
+            CodecProfileLevel.MPEG4ProfileAdvancedSimple,
+            -> 8
+            else -> null
+        }
+        "vp8" -> if (profile == CodecProfileLevel.VP8ProfileMain) 8 else null
+        "h263" -> if (profileName("h263", profile) != null) 8 else null
         else -> null
     }
 
@@ -375,6 +511,19 @@ object MediaCodecCapabilitiesProbe {
         CodecProfileLevel.HEVCMainTierLevel62 to 186,
         CodecProfileLevel.HEVCHighTierLevel62 to 186,
     )
+
+    private val STANDARD_VIDEO_SIZES = listOf(
+        7680 to 4320,
+        4096 to 2160,
+        3840 to 2160,
+        2560 to 1440,
+        1920 to 1080,
+        1280 to 720,
+        720 to 576,
+        720 to 480,
+    )
+
+    private val STANDARD_FRAME_RATES = listOf(240, 200, 120, 100, 60, 50, 48, 30, 25, 24)
 
     /**
      * Map the decoder's maximum supported height (in pixels) to the canonical

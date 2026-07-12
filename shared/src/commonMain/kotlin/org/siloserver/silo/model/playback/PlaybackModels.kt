@@ -86,15 +86,25 @@ data class HdrCapabilities(
  * `AudioCapabilities.getCapabilities` / `AudioCapabilitiesReceiver`.
  */
 @Serializable
+data class AudioPassthroughEntry(
+    val codec: String,
+    @SerialName("channel_counts") val channelCounts: List<Int> = emptyList(),
+    val layouts: List<String> = emptyList(),
+)
+
+@Serializable
 data class AudioPassthroughCapabilities(
     @SerialName("passthrough_codecs") val passthroughCodecs: List<String> = emptyList(),
     @SerialName("spatializer_enabled") val spatializerEnabled: Boolean = false,
     @SerialName("max_channels") val maxChannels: Int = 2,
+    /** Exact encoded-audio layouts verified against the current output route. */
+    val entries: List<AudioPassthroughEntry> = emptyList(),
 )
 
 @Serializable
 data class VideoDecodeCapability(
     val codec: String,
+    @SerialName("decoder_name") val decoderName: String? = null,
     val profiles: List<String> = emptyList(),
     val levels: List<Int> = emptyList(),
     @SerialName("bit_depths") val bitDepths: List<Int> = emptyList(),
@@ -315,6 +325,11 @@ data class ClientPlaybackContext(
 data class PlaybackDeviceContext(
     val manufacturer: String? = null,
     val model: String? = null,
+    val brand: String? = null,
+    val device: String? = null,
+    val product: String? = null,
+    @SerialName("soc_manufacturer") val socManufacturer: String? = null,
+    @SerialName("soc_model") val socModel: String? = null,
     @SerialName("sdk_int") val sdkInt: Int? = null,
     val abis: List<String> = emptyList(),
 )

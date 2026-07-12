@@ -14,6 +14,10 @@ import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.EngineCapabilityEnvelope
 import org.siloserver.silo.model.playback.EngineSubtitleCapabilities
+import org.siloserver.silo.model.playback.DETAILED_DECODE_CAPABILITIES_FEATURE
+import org.siloserver.silo.model.playback.LAYOUT_AWARE_PASSTHROUGH_FEATURE
+import org.siloserver.silo.model.playback.MEDIA3_ONLY_FEATURE
+import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDeviceContext
 import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackOutputContext
@@ -151,7 +155,6 @@ class PlaybackCapabilityDetector(
 
         val softwareAudio = detectSoftwareAudioCodecs(ffmpegAvailable)
         val passthrough = audioCapabilityManager.capabilities.value
-        val mergedAudio = (softwareAudio + passthrough.passthroughCodecs).distinct()
         val hasAnyHdr = intersectedHdr.hdr10 ||
             intersectedHdr.hdr10Plus ||
             intersectedHdr.hlg ||
@@ -160,7 +163,10 @@ class PlaybackCapabilityDetector(
         return ClientCodecCapabilities(
             codecsVideo = codecProbe.videoCodecs.toList(),
             codecsVideoHardware = codecProbe.videoCodecs.toList(),
-            codecsAudio = mergedAudio,
+            // This list is decode-only. Encoded formats accepted by the
+            // current HDMI/USB route belong exclusively in audioPassthrough;
+            // mixing the two prevents the V3 server from proving passthrough.
+            codecsAudio = softwareAudio,
             containers = media3OriginalPlaybackContainers,
             maxResolution = codecProbe.maxResolution,
             hdr = hasAnyHdr,
@@ -181,12 +187,26 @@ class PlaybackCapabilityDetector(
         val passthrough = caps.audioPassthrough
         val decodeAudio = detectSoftwareAudioCodecs(ffmpegAvailable)
         val media3Audio = decodeAudio
+        val contextFeatures = buildList {
+            add(PLAYBACK_PLAN_V3_FEATURE)
+            add(MEDIA3_ONLY_FEATURE)
+            add(DETAILED_DECODE_CAPABILITIES_FEATURE)
+            if (!passthrough?.entries.isNullOrEmpty()) add(LAYOUT_AWARE_PASSTHROUGH_FEATURE)
+        }
         return ClientPlaybackContext(
+            features = contextFeatures,
             formFactor = formFactor,
             appVersion = appVersion,
             device = PlaybackDeviceContext(
                 manufacturer = Build.MANUFACTURER,
                 model = Build.MODEL,
+                brand = Build.BRAND,
+                device = Build.DEVICE,
+                product = Build.PRODUCT,
+                socManufacturer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    Build.SOC_MANUFACTURER
+                } else null,
+                socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else null,
                 sdkInt = Build.VERSION.SDK_INT,
                 abis = supportedAbis,
             ),

@@ -90,7 +90,9 @@ sealed class TvRoute(val route: String) {
             append("player/$contentId")
             val query = buildList {
                 if (fileId != null) add("fileId=$fileId")
-                if (quality != null) add("quality=${quality.routeEncode()}")
+                VideoPlayerRouteArgs.normalizeQuality(quality)?.let { value ->
+                    add("quality=${value.routeEncode()}")
+                }
                 if (roomId != null) add("roomId=${roomId.routeEncode()}")
                 if (audioTrackIndex != null) add("audioTrackIndex=$audioTrackIndex")
                 if (subtitleTrackIndex != null) add("subtitleTrackIndex=$subtitleTrackIndex")

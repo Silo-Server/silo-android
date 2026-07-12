@@ -129,6 +129,7 @@ sealed class Route(val route: String) {
     data class Player(
         val contentId: String,
         val fileId: Int? = null,
+        val quality: String? = null,
         val audioTrackIndex: Int? = null,
         val subtitleTrackIndex: Int? = null,
         val resumePositionSeconds: Double? = null,
@@ -138,6 +139,9 @@ sealed class Route(val route: String) {
             append("player/$contentId")
             val queryParams = listOfNotNull(
                 fileId?.let { "fileId=$it" },
+                // normalizeQuality is a closed wire-value set, so no URI
+                // escaping (or Android framework dependency) is needed here.
+                VideoPlayerRouteArgs.normalizeQuality(quality)?.let { "quality=$it" },
                 audioTrackIndex?.let { "audioTrackIndex=$it" },
                 subtitleTrackIndex?.let { "subtitleTrackIndex=$it" },
                 VideoPlayerRouteArgs.encodeResumePosition(resumePositionSeconds)
@@ -152,7 +156,7 @@ sealed class Route(val route: String) {
     ) {
         companion object {
             const val ROUTE =
-                "player/{contentId}?fileId={fileId}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}"
+                "player/{contentId}?fileId={fileId}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}"
         }
     }
 

@@ -138,4 +138,31 @@ class PlaybackProtocolV3Test {
         assertTrue(encoded.contains("\"protocol_version\":3"))
         assertTrue(encoded.contains("media3_only"))
     }
+
+    @Test
+    fun layoutAwarePassthroughSerializesExactRouteEvidence() {
+        val passthrough = AudioPassthroughCapabilities(
+            passthroughCodecs = listOf("truehd"),
+            maxChannels = 8,
+            entries = listOf(
+                AudioPassthroughEntry(
+                    codec = "truehd",
+                    channelCounts = listOf(2, 6, 8),
+                    layouts = listOf("stereo", "5.1(side)", "7.1"),
+                ),
+            ),
+        )
+        val encoded = SiloJson.encodeToString(
+            ClientPlaybackContext(
+                formFactor = "tv",
+                appVersion = "test",
+                features = listOf(LAYOUT_AWARE_PASSTHROUGH_FEATURE),
+                output = PlaybackOutputContext(audioPassthrough = passthrough),
+            ),
+        )
+
+        assertTrue(encoded.contains("layout_aware_passthrough"))
+        assertTrue(encoded.contains("\"channel_counts\":[2,6,8]"))
+        assertTrue(encoded.contains("\"layouts\":[\"stereo\",\"5.1(side)\",\"7.1\"]"))
+    }
 }

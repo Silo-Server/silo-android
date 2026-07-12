@@ -518,7 +518,8 @@ class TvPlayerControlsUsabilityTest {
         assertTrue(viewModelSource.contains("PlayNextRequest(next.contentId, nextAutoAdvanceCount, selectedQuality)"))
         assertTrue(screenSource.contains("onPlayNext(req.contentId, req.autoAdvanceCount, req.preferredQuality)"))
         assertTrue(routeSource.contains("val quality: String? = null"))
-        assertTrue(routeSource.contains("if (quality != null) add(\"quality=\${quality.routeEncode()}\")"))
+        assertTrue(routeSource.contains("VideoPlayerRouteArgs.normalizeQuality(quality)?.let { value ->"))
+        assertTrue(routeSource.contains("add(\"quality=\${value.routeEncode()}\")"))
         assertTrue(navigationSource.contains("TvRoute.Player(contentId = nextContentId, quality = nextQuality"))
         assertTrue(navigationSource.contains("preferredQuality = preferredQuality"))
         // The saved preference supplies the default ceiling; an explicit

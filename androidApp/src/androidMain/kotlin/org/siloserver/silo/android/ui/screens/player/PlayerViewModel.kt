@@ -529,6 +529,7 @@ class PlayerViewModel(
     fun loadContent(
         contentId: String,
         preferredFileId: Int? = null,
+        preferredQuality: String? = null,
         initialAudioTrackIndex: Int? = null,
         initialSubtitleTrackIndex: Int? = null,
         resumePositionOverride: Double? = null,
@@ -588,6 +589,7 @@ class PlayerViewModel(
                     VideoPlaybackStartRequest(
                         contentId = contentId,
                         preferredFileId = preferredFileId,
+                        preferredQualityOverride = preferredQuality,
                         roomId = null,
                         resumePositionOverride = resumePositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,

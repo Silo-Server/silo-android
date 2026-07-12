@@ -67,4 +67,46 @@ class TvAudiobookRoutingTest {
 
         assertFalse(route.contains("startPosition="))
     }
+
+    @Test
+    fun playbackDeepLinkCarriesValidatedVersionQualityAndTracks() {
+        val query = mapOf(
+            "fileId" to "121",
+            "quality" to "Original",
+            "audioTrackIndex" to "2",
+            "subtitleTrackIndex" to "-1",
+        )
+
+        val args = parseTvPlaybackDeepLinkArgs(query::get)
+
+        assertEquals(121, args.fileId)
+        assertEquals("original", args.quality)
+        assertEquals(2, args.audioTrackIndex)
+        assertEquals(-1, args.subtitleTrackIndex)
+        val route = tvPlayDestinationFor(
+            itemType = "movie",
+            contentId = "movie-121",
+            fileId = args.fileId,
+            resumePositionSeconds = null,
+            audioTrackIndex = args.audioTrackIndex,
+            subtitleTrackIndex = args.subtitleTrackIndex,
+            quality = args.quality,
+        )
+        assertContains(route, "fileId=121")
+        assertContains(route, "quality=original")
+        assertContains(route, "audioTrackIndex=2")
+        assertContains(route, "subtitleTrackIndex=-1")
+    }
+
+    @Test
+    fun playbackDeepLinkRejectsInvalidUntrustedValues() {
+        val query = mapOf(
+            "fileId" to "-5",
+            "quality" to "unlimited",
+            "audioTrackIndex" to "-2",
+            "subtitleTrackIndex" to "-9",
+        )
+
+        assertEquals(TvPlaybackDeepLinkArgs(), parseTvPlaybackDeepLinkArgs(query::get))
+    }
 }

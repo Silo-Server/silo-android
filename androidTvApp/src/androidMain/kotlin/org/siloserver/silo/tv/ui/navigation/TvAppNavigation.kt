@@ -157,11 +157,16 @@ fun TvAppNavigation(
                     // and falls through to [TvRoute.Player], preserving today's
                     // behavior for movie/episode tiles.
                     val itemType = uri.getQueryParameter("type")
+                    val playbackArgs = parseTvPlaybackDeepLinkArgs(uri::getQueryParameter)
                     navController.navigate(
                         tvPlayDestinationFor(
                             itemType = itemType,
                             contentId = contentId,
-                            fileId = null,
+                            fileId = playbackArgs.fileId,
+                            resumePositionSeconds = null,
+                            audioTrackIndex = playbackArgs.audioTrackIndex,
+                            subtitleTrackIndex = playbackArgs.subtitleTrackIndex,
+                            quality = playbackArgs.quality,
                         ),
                     )
                 }

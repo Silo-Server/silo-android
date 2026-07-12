@@ -95,6 +95,7 @@ private const val TAG = "PlayerScreen"
  *
  * @param contentId The content ID to play (passed via navigation argument)
  * @param initialFileId Optional explicit file selection from the detail screen
+ * @param initialQuality Optional explicit playback-quality ceiling from a deep link
  * @param initialAudioTrackIndex Optional explicit audio selection from the detail screen
  * @param initialSubtitleTrackIndex Optional explicit subtitle selection from the detail screen
  * @param resumePositionOverride Optional start position supplied by the launcher
@@ -105,6 +106,7 @@ private const val TAG = "PlayerScreen"
 fun PlayerScreen(
     contentId: String,
     initialFileId: Int? = null,
+    initialQuality: String? = null,
     initialAudioTrackIndex: Int? = null,
     initialSubtitleTrackIndex: Int? = null,
     resumePositionOverride: Double? = null,
@@ -340,10 +342,11 @@ fun PlayerScreen(
     }
 
     // Load content on first composition
-    LaunchedEffect(contentId, initialFileId, initialAudioTrackIndex, initialSubtitleTrackIndex, resumePositionOverride) {
+    LaunchedEffect(contentId, initialFileId, initialQuality, initialAudioTrackIndex, initialSubtitleTrackIndex, resumePositionOverride) {
         viewModel.loadContent(
             contentId = contentId,
             preferredFileId = initialFileId,
+            preferredQuality = initialQuality,
             initialAudioTrackIndex = initialAudioTrackIndex,
             initialSubtitleTrackIndex = initialSubtitleTrackIndex,
             resumePositionOverride = resumePositionOverride,

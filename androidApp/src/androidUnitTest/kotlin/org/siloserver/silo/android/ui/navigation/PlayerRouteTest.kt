@@ -40,6 +40,19 @@ class PlayerRouteTest {
     }
 
     @Test
+    fun playerRouteCarriesNormalizedQuality() {
+        assertEquals(
+            "player/movie-1?fileId=7&quality=1080p",
+            Route.Player(
+                contentId = "movie-1",
+                fileId = 7,
+                quality = " 1080P ",
+            ).route,
+        )
+        assertFalse(Route.Player(contentId = "movie-1", quality = "unlimited").route.contains("quality="))
+    }
+
+    @Test
     fun playerRouteOmitsInvalidResumePosition() {
         val route = Route.Player(
             contentId = "movie-1",

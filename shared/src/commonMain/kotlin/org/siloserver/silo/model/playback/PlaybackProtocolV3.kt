@@ -15,6 +15,7 @@ const val PLAYBACK_PROTOCOL_V3 = 3
 const val PLAYBACK_PLAN_V3_FEATURE = "playback_plan_v3"
 const val MEDIA3_ONLY_FEATURE = "media3_only"
 const val DETAILED_DECODE_CAPABILITIES_FEATURE = "detailed_decode_capabilities"
+const val LAYOUT_AWARE_PASSTHROUGH_FEATURE = "layout_aware_passthrough"
 
 @Serializable
 enum class PlaybackDecisionOutcome {

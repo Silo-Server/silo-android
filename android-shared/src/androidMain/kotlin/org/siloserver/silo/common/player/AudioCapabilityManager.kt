@@ -15,6 +15,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioCapabilities
 import androidx.media3.exoplayer.audio.AudioCapabilitiesReceiver
 import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
+import org.siloserver.silo.model.playback.AudioPassthroughEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -144,72 +145,101 @@ class AudioCapabilityManager(
 
         val spatializerEnabled = spatializer?.isEnabled ?: false
 
-        // Per-encoding channel cap probe using `AudioTrack.isDirectPlaybackSupported`.
-        // Iterate the passthrough encodings we announce × common channel counts
-        // (2 / 6 / 8) so we report the highest channel layout the sink
-        // actually accepts for that encoding. Falls back to the aggregate
-        // `maxChannelCount` on API < 29 where `isDirectPlaybackSupported` isn't
-        // available.
-        val maxChannels = probeMaxChannels(caps, codecs)
+        // Media3's aggregate maxChannelCount is not enough for route planning:
+        // an AVR can accept eight-channel TrueHD but only six-channel AC3, for
+        // example. Probe each encoded format and emit exact entries for V3.
+        val entries = probePassthroughEntries(caps, codecs)
+        val maxChannels = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            entries.flatMap(AudioPassthroughEntry::channelCounts).maxOrNull() ?: 2
+        } else {
+            caps.maxChannelCount.coerceAtLeast(2)
+        }
 
         return AudioPassthroughCapabilities(
             passthroughCodecs = codecs,
             spatializerEnabled = spatializerEnabled,
             maxChannels = maxChannels,
+            entries = entries,
         )
     }
 
     /**
-     * Probe the highest channel count the sink actually accepts for each
-     * passthrough encoding we advertise. On API 29+ uses
-     * [AudioTrack.isDirectPlaybackSupported]; older APIs fall back to the
-     * aggregate `maxChannelCount` reported by Media3's [AudioCapabilities]
-     * (Media3 1.10.1 — previously this method carried a "Media3 1.6" note).
+     * Probe the channel layouts the current sink accepts for every encoded
+     * format we advertise. Android before API 29 has no route-specific direct
+     * playback probe, so those devices intentionally omit layout entries and
+     * remain on the server's conservative compatibility path.
      */
-    private fun probeMaxChannels(
+    private fun probePassthroughEntries(
         caps: AudioCapabilities,
         codecs: List<String>,
-    ): Int {
+    ): List<AudioPassthroughEntry> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return caps.maxChannelCount.coerceAtLeast(2)
+            return emptyList()
         }
-        var best = 2
         val audioAttrs = android.media.AudioAttributes.Builder()
             .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
             .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
             .build()
         val encodingsToProbe = listOfNotNull(
-            "ac3".takeIf { it in codecs } to AudioFormat.ENCODING_AC3,
-            "eac3".takeIf { it in codecs } to AudioFormat.ENCODING_E_AC3,
-            "eac3_joc".takeIf { it in codecs } to AudioFormat.ENCODING_E_AC3_JOC,
-            "dts".takeIf { it in codecs } to AudioFormat.ENCODING_DTS,
+            ("ac3" to AudioFormat.ENCODING_AC3).takeIf { "ac3" in codecs },
+            ("eac3" to AudioFormat.ENCODING_E_AC3).takeIf { "eac3" in codecs },
+            ("eac3_joc" to AudioFormat.ENCODING_E_AC3_JOC).takeIf { "eac3_joc" in codecs },
+            ("dts" to AudioFormat.ENCODING_DTS).takeIf { "dts" in codecs },
             if ("dts_hd" in codecs && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
                 "dts_hd" to AudioFormat.ENCODING_DTS_HD else null,
             if ("truehd" in codecs && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1)
                 "truehd" to AudioFormat.ENCODING_DOLBY_TRUEHD else null,
             if ("ac4" in codecs && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
                 "ac4" to AudioFormat.ENCODING_AC4 else null,
-        ).mapNotNull { it }
-        val channelMasks = listOf(
-            2 to AudioFormat.CHANNEL_OUT_STEREO,
-            6 to AudioFormat.CHANNEL_OUT_5POINT1,
-            8 to AudioFormat.CHANNEL_OUT_7POINT1_SURROUND,
         )
-        for ((_, encoding) in encodingsToProbe) {
-            for ((ch, mask) in channelMasks) {
+        val layoutsToProbe = listOf(
+            AudioLayoutProbe(2, AudioFormat.CHANNEL_OUT_STEREO, listOf("stereo")),
+            // FFprobe commonly distinguishes 5.1 and 5.1(side), while
+            // Android exposes one encoded six-channel mask to AudioTrack.
+            AudioLayoutProbe(6, AudioFormat.CHANNEL_OUT_5POINT1, listOf("5.1", "5.1(side)")),
+            AudioLayoutProbe(8, AudioFormat.CHANNEL_OUT_7POINT1_SURROUND, listOf("7.1")),
+        )
+        return encodingsToProbe.mapNotNull { (codec, encoding) ->
+            val channelCounts = sortedSetOf<Int>()
+            val layouts = sortedSetOf<String>()
+            for (candidate in layoutsToProbe) {
                 val format = runCatching {
                     AudioFormat.Builder()
                         .setEncoding(encoding)
                         .setSampleRate(48_000)
-                        .setChannelMask(mask)
+                        .setChannelMask(candidate.channelMask)
                         .build()
                 }.getOrNull() ?: continue
-                val ok = runCatching {
-                    AudioTrack.isDirectPlaybackSupported(format, audioAttrs)
-                }.getOrDefault(false)
-                if (ok && ch > best) best = ch
+                val ok = supportsBitstreamOutput(format, audioAttrs)
+                if (ok) {
+                    channelCounts += candidate.channelCount
+                    layouts += candidate.layoutNames
+                }
             }
+            if (channelCounts.isEmpty() || layouts.isEmpty()) null else AudioPassthroughEntry(
+                codec = codec,
+                channelCounts = channelCounts.toList(),
+                layouts = layouts.toList(),
+            )
         }
-        return best.coerceAtLeast(2)
     }
+
+    @Suppress("DEPRECATION")
+    private fun supportsBitstreamOutput(
+        format: AudioFormat,
+        attributes: android.media.AudioAttributes,
+    ): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val support = AudioManager.getDirectPlaybackSupport(format, attributes)
+            support and AudioManager.DIRECT_PLAYBACK_BITSTREAM_SUPPORTED != 0
+        } else {
+            AudioTrack.isDirectPlaybackSupported(format, attributes)
+        }
+    }.getOrDefault(false)
+
+    private data class AudioLayoutProbe(
+        val channelCount: Int,
+        val channelMask: Int,
+        val layoutNames: List<String>,
+    )
 }
