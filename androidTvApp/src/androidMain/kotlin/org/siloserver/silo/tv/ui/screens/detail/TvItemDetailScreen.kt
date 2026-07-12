@@ -114,6 +114,7 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvControlCorner
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.compose.koinInject
@@ -723,6 +724,16 @@ private fun HeroActionRow(
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
 ) {
     var moreOpen by remember(detail.contentId) { mutableStateOf(false) }
+    var playLaunchPending by remember(detail.contentId) { mutableStateOf(false) }
+    LaunchedEffect(playLaunchPending) {
+        if (playLaunchPending) {
+            // Navigation is synchronous, but TV remotes can deliver a second
+            // Select activation while the destination is still settling.
+            // Keep the action latched briefly so one intent creates one player.
+            delay(750)
+            playLaunchPending = false
+        }
+    }
     // Series / season detail target the *next-up episode* rather than the
     // container itself (mirrors silo-apple's TVSeriesDetailView /
     // TVSeasonDetailView). For those types the hero Play button, the resume
@@ -842,7 +853,8 @@ private fun HeroActionRow(
                     resumePosition = resumePosition,
                 ),
                 onClick = {
-                    if (playReady) {
+                    if (playReady && !playLaunchPending) {
+                        playLaunchPending = true
                         onPlay(
                             playContentId, playFileId,
                             selectorAudioIndex, selectorSubtitleIndex,
@@ -860,7 +872,8 @@ private fun HeroActionRow(
                     icon = Icons.Filled.SkipPrevious,
                     title = "Start Over",
                     onClick = {
-                        if (playReady) {
+                        if (playReady && !playLaunchPending) {
+                            playLaunchPending = true
                             onPlay(
                                 playContentId, playFileId,
                                 selectorAudioIndex, selectorSubtitleIndex,

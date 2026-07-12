@@ -534,7 +534,13 @@ fun TvAppNavigation(
                             audioTrackIndex = audioTrackIndex,
                             subtitleTrackIndex = subtitleTrackIndex,
                         ),
-                    )
+                    ) {
+                        // A fast Select after entering detail can overlap the
+                        // route transition. Collapse an identical second Play
+                        // request instead of creating two player ViewModels and
+                        // two concurrent playback-session starts.
+                        launchSingleTop = true
+                    }
                 },
                 onItemDetail = { itemContentId ->
                     // launchSingleTop suppresses the exact double-tap dupe; a
