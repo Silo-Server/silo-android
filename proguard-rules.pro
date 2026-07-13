@@ -48,6 +48,17 @@
 -keep class androidx.media3.decoder.ffmpeg.** { *; }
 -dontwarn androidx.media3.decoder.ffmpeg.**
 
+# --- libass Media3 integration ------------------------------------------------
+# ass-media's Matroska extractor reads these Media3 internals by exact field
+# name so it can intercept ASS packets and MKV font attachments. Preserve the
+# names explicitly; a successful R8 build alone cannot prove reflective lookup
+# will still work on device.
+-keepclassmembers class androidx.media3.extractor.mkv.MatroskaExtractor {
+    androidx.media3.extractor.ExtractorOutput extractorOutput;
+    androidx.media3.common.util.ParsableByteArray subtitleSample;
+}
+-keep class io.github.peerless2012.ass.media.extractor.AssMatroskaExtractor { *; }
+
 # --- BouncyCastle (TLS-PSK LAN companion pairing) -----------------------------
 # Providers and algorithms are looked up by name through the JCA SPI; a stripped
 # provider class fails silently at handshake time. Keep the whole library — it's

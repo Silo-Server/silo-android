@@ -201,7 +201,7 @@ val androidModule = module {
     single { PushMessageHandler(presenter = get()) }
 
     // Player infrastructure
-    single { SubtitleManager() }
+    single { SubtitleManager(get()) }
     single { AudioTrackManager() }
     single {
         VideoPlaybackBackendFactory(
@@ -211,7 +211,7 @@ val androidModule = module {
         )
     }
     single { AudioCapabilityManager(androidContext()) }
-    single { PlaybackCapabilityDetector(androidContext(), get()) }
+    single { PlaybackCapabilityDetector(androidContext(), get(), get()) }
     single {
         SiloPlayerFactory(
             context = androidContext(),
@@ -220,6 +220,7 @@ val androidModule = module {
             okHttpClient = get(org.siloserver.silo.common.di.PLAYER_OKHTTP_QUALIFIER),
             delayProcessor = get(),
             subtitleOffsetHolder = get(),
+            libassBridge = get(),
         )
     }
     single { PlaybackSessionManager(get(), get()) }

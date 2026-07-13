@@ -18,9 +18,8 @@ import androidx.media3.extractor.text.SubtitleParser.OutputOptions
 @UnstableApi
 class OffsetSubtitleParserFactory(
     private val holder: SubtitleOffsetHolder,
+    private val delegate: SubtitleParser.Factory = DefaultSubtitleParserFactory(),
 ) : SubtitleParser.Factory {
-
-    private val delegate = DefaultSubtitleParserFactory()
 
     override fun supportsFormat(format: Format): Boolean = delegate.supportsFormat(format)
 

@@ -31,6 +31,7 @@ import org.siloserver.silo.common.player.audio.DelayAudioProcessor
 import org.siloserver.silo.common.player.audio.PassthroughSuppressingAudioSink
 import org.siloserver.silo.common.player.subtitle.OffsetSubtitleParserFactory
 import org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder
+import org.siloserver.silo.libass.LibassBridge
 import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
 import org.siloserver.silo.model.playback.HdrCapabilities
 import org.siloserver.silo.model.playback.PlayMethod
@@ -59,6 +60,7 @@ class SiloPlayerFactory(
     okHttpClient: okhttp3.OkHttpClient,
     private val delayProcessor: DelayAudioProcessor,
     private val subtitleOffsetHolder: SubtitleOffsetHolder,
+    private val libassBridge: LibassBridge,
 ) {
     val isTv: Boolean = TvModeDetector.isTv(context)
 
@@ -78,24 +80,29 @@ class SiloPlayerFactory(
         requestHeadersProvider = ::requestHeadersFor,
     )
 
-    private val subtitleParserFactory = OffsetSubtitleParserFactory(subtitleOffsetHolder)
+    private val subtitleParserFactory = OffsetSubtitleParserFactory(
+        holder = subtitleOffsetHolder,
+        delegate = libassBridge.parserFactory,
+    )
 
-    private fun configuredExtractorsFactory() = DefaultExtractorsFactory()
-        // Media3 1.10 expects parsed cue samples by default. Forcing raw
-        // subtitle payloads here makes SRT/ASS tracks crash the text renderer
-        // on Android TV with "Legacy decoding is disabled". The offset wrapper
-        // delegates to DefaultSubtitleParserFactory and shifts cue start times
-        // by the per-profile subtitle-sync value (A.3f).
-        .setSubtitleParserFactory(subtitleParserFactory)
-        // HDMV DTS streams (Blu-ray-sourced M2TS) use a stream type the TS
-        // payload reader skips by default, so DTS tracks vanish from
-        // Blu-ray-remux transport streams without this flag.
-        .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
-        // The default PCR search window is too small for high-bitrate 4K
-        // remux/transcode TS segments with sparse PTS — startup then fails
-        // with "timestamp not found" (androidx/media #8571-class failures).
-        // 1500 packets matches what battle-tested players ship.
-        .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
+    private fun configuredExtractorsFactory() = libassBridge.wrapExtractors(
+        DefaultExtractorsFactory()
+            // Media3 1.10 expects parsed cue samples by default. Forcing raw
+            // subtitle payloads here makes SRT/ASS tracks crash the text renderer
+            // on Android TV with "Legacy decoding is disabled". The offset wrapper
+            // delegates to libass for ASS/SSA and Media3 for other text formats.
+            .setSubtitleParserFactory(subtitleParserFactory)
+            // HDMV DTS streams (Blu-ray-sourced M2TS) use a stream type the TS
+            // payload reader skips by default, so DTS tracks vanish from
+            // Blu-ray-remux transport streams without this flag.
+            .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
+            // The default PCR search window is too small for high-bitrate 4K
+            // remux/transcode TS segments with sparse PTS — startup then fails
+            // with "timestamp not found" (androidx/media #8571-class failures).
+            // 1500 packets matches what battle-tested players ship.
+            .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE),
+        subtitleParserFactory,
+    )
 
     private val hlsExtractorFactory = DefaultHlsExtractorFactory(
         // HLS uses a separate extractor path from progressive TS. Keep the DTS
@@ -139,7 +146,7 @@ class SiloPlayerFactory(
             )
             .build())
 
-        val renderersFactory = object : DefaultRenderersFactory(context) {
+        val media3RenderersFactory = object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(
                 context: Context,
                 enableFloatOutput: Boolean,
@@ -169,6 +176,10 @@ class SiloPlayerFactory(
                 }
             }
         }
+        val renderersFactory = libassBridge.wrapRenderers(
+            media3RenderersFactory,
+            subtitleOffsetHolder::getOffsetUs,
+        )
 
         val trackSelector = DefaultTrackSelector(context).apply {
             parameters = buildUponParameters()
@@ -256,7 +267,7 @@ class SiloPlayerFactory(
             C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS,
         )
 
-        return builder.build()
+        return builder.build().also(libassBridge::initialize)
     }
 
     private fun playbackBufferDeviceProfile(): PlaybackBufferDeviceProfile {

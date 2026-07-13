@@ -133,7 +133,7 @@ fun PlayerScreen(
     val downloadStorage: org.siloserver.silo.common.downloads.DownloadStorage = koinInject()
     val serverRegistry: org.siloserver.silo.network.ServerRegistry = koinInject()
     val profileRepository: org.siloserver.silo.repository.ProfileRepository = koinInject()
-    val subtitleManager = remember { SubtitleManager() }
+    val subtitleManager: SubtitleManager = koinInject()
     val displayHdr = remember { DisplayHdrProbe.probe(context) }
     val refreshRateMatcher = remember { RefreshRateMatcher() }
     val audioCaps by audioCapabilityManager.capabilities.collectAsState()

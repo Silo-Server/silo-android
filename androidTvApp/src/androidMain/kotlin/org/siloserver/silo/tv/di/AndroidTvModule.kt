@@ -132,7 +132,7 @@ val androidTvModule = module {
         AndroidDeviceMetadataProvider(androidContext(), platform = "android-tv")
     }
     // Player infrastructure (duplicate-for-now; extract to :android-player later).
-    single { SubtitleManager() }
+    single { SubtitleManager(get()) }
     single { AudioTrackManager() }
     single {
         VideoPlaybackBackendFactory(
@@ -142,7 +142,7 @@ val androidTvModule = module {
         )
     }
     single { AudioCapabilityManager(androidContext()) }
-    single { PlaybackCapabilityDetector(androidContext(), get()) }
+    single { PlaybackCapabilityDetector(androidContext(), get(), get()) }
     single {
         SiloPlayerFactory(
             context = androidContext(),
@@ -151,6 +151,7 @@ val androidTvModule = module {
             okHttpClient = get(org.siloserver.silo.common.di.PLAYER_OKHTTP_QUALIFIER),
             delayProcessor = get(),
             subtitleOffsetHolder = get(),
+            libassBridge = get(),
         )
     }
     single { PlaybackSessionManager(get(), get()) }

@@ -12,13 +12,21 @@ class SiloPlayerFactorySubtitleParserTest {
     @Test
     fun sidecarSubtitleMediaSourcesUseNormalizingParserFactory() {
         assertTrue(
-            source.contains("val subtitleParserFactory = OffsetSubtitleParserFactory(subtitleOffsetHolder)"),
-            "SiloPlayerFactory should share one OffsetSubtitleParserFactory instance.",
+            source.contains("delegate = libassBridge.parserFactory"),
+            "SiloPlayerFactory should compose the libass parser with Silo's offset parser.",
         )
         assertTrue(
             source.contains(".setSubtitleParserFactory(subtitleParserFactory)"),
             "DefaultMediaSourceFactory must use the normalizing parser for sidecar subtitles.",
         )
+    }
+
+    @Test
+    fun libassUsesTheSharedParserExtractorRendererAndLifecycle() {
+        assertTrue(source.contains("libassBridge.wrapExtractors("))
+        assertTrue(source.contains("libassBridge.wrapRenderers("))
+        assertTrue(source.contains("subtitleOffsetHolder::getOffsetUs"))
+        assertTrue(source.contains("builder.build().also(libassBridge::initialize)"))
     }
 
     @Test

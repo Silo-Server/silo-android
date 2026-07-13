@@ -28,6 +28,7 @@ import org.siloserver.silo.model.playback.PlaybackTransformationExecutor
 import org.siloserver.silo.model.playback.PlaybackTransformationV3
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import kotlinx.coroutines.flow.StateFlow
+import org.siloserver.silo.libass.LibassBridge
 
 /**
  * Orchestrates the three probes — [MediaCodecCapabilitiesProbe] (video + HDR),
@@ -45,6 +46,7 @@ import kotlinx.coroutines.flow.StateFlow
 class PlaybackCapabilityDetector(
     private val context: Context,
     private val audioCapabilityManager: AudioCapabilityManager,
+    private val libassBridge: LibassBridge,
 ) {
     val outputRouteGeneration: StateFlow<Long> = audioCapabilityManager.outputRouteGeneration
     // Platform software-audio decoders are static for the process; cache the
@@ -193,6 +195,9 @@ class PlaybackCapabilityDetector(
         val passthrough = caps.audioPassthrough
         val decodeAudio = detectSoftwareAudioCodecs(ffmpegAvailable)
         val media3Audio = decodeAudio
+        val libassRendering = libassBridge.isRenderingSupported
+        val libassEmbeddedFonts = libassBridge.isEmbeddedFontsSupported
+        val libassDirectFidelity = libassRendering && libassEmbeddedFonts
         val contextFeatures = buildList {
             add(PLAYBACK_PLAN_V3_FEATURE)
             add(MEDIA3_ONLY_FEATURE)
@@ -266,12 +271,15 @@ class PlaybackCapabilityDetector(
                     subtitles = EngineSubtitleCapabilities(
                         embeddedText = true,
                         sidecarText = true,
-                        assStyling = false,
+                        assStyling = libassDirectFidelity,
                         embeddedBitmap = false,
                         sidecarBitmap = false,
-                        fontAttachments = false,
+                        fontAttachments = libassEmbeddedFonts,
                     ),
-                    features = listOf("track_switching", "audio_delay", "subtitle_delay", "buffer_reporting"),
+                    features = buildList {
+                        addAll(listOf("track_switching", "audio_delay", "subtitle_delay", "buffer_reporting"))
+                        if (libassDirectFidelity) add("libass_subtitles")
+                    },
                     transformations = clientVideoTransformations,
                     authHeaderRefresh = true,
                     validatedClaims = emptyList(),
@@ -306,8 +314,12 @@ class PlaybackCapabilityDetector(
                     subtitles = EngineSubtitleCapabilities(
                         embeddedText = true,
                         sidecarText = true,
+                        assStyling = libassRendering,
                     ),
-                    features = listOf("hls", "track_switching", "buffer_reporting"),
+                    features = buildList {
+                        addAll(listOf("hls", "track_switching", "buffer_reporting"))
+                        if (libassRendering) add("libass_subtitles")
+                    },
                     authHeaderRefresh = true,
                     validatedClaims = emptyList(),
                 ),

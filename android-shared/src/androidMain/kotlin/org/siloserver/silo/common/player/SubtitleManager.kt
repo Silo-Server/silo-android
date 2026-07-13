@@ -22,6 +22,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import org.siloserver.silo.libass.LibassBridge
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
@@ -38,7 +39,9 @@ import kotlin.math.roundToInt
  * This manager builds subtitle configurations and applies track selection.
  */
 @UnstableApi
-class SubtitleManager {
+class SubtitleManager(
+    private val libassBridge: LibassBridge? = null,
+) {
 
     private val videoRectSyncs = WeakHashMap<PlayerView, SubtitleVideoRectSync>()
 
@@ -163,13 +166,13 @@ class SubtitleManager {
      * font scale), and [androidx.media3.ui.SubtitleView.setBottomPaddingFraction]
      * (vertical position within the surface).
      *
-     * Embedded WebVTT/ASS styling is disabled so user preferences win uniformly
-     * across track formats. **Caveat:** image-based subtitles (PGS, DVD) are
-     * pre-rendered bitmaps and ignore CaptionStyleCompat — they will display
-     * with their authored appearance regardless of these settings.
+     * Media3-rendered text uses the user's appearance. ASS/SSA is rendered by
+     * libass and deliberately preserves the script's authored typesetting,
+     * animation, positioning, and embedded fonts, matching the Apple player.
      */
     fun applyAppearance(playerView: PlayerView, appearance: SubtitleAppearance) {
         val subtitleView = playerView.subtitleView ?: return
+        libassBridge?.attachTo(subtitleView)
         val safe = appearance.sanitized()
 
         val captionStyle = try {
@@ -203,6 +206,7 @@ class SubtitleManager {
      * reacts to later layout and video-size callbacks.
      */
     fun syncSubtitleVideoBounds(playerView: PlayerView) {
+        playerView.subtitleView?.let { libassBridge?.attachTo(it) }
         val existing = videoRectSyncs[playerView]
         val sync = if (existing?.isDisposed == true || existing == null) {
             SubtitleVideoRectSync(playerView).also { videoRectSyncs[playerView] = it }
@@ -479,6 +483,11 @@ private class SubtitleVideoRectSync(playerView: PlayerView) :
     Player.Listener {
 
     private val playerViewRef = WeakReference(playerView)
+    private val contentFrameRef = WeakReference(
+        playerView.findViewById<AspectRatioFrameLayout>(
+            androidx.media3.ui.R.id.exo_content_frame
+        )
+    )
     private var observedPlayer: Player? = null
 
     var isDisposed: Boolean = false
@@ -487,6 +496,11 @@ private class SubtitleVideoRectSync(playerView: PlayerView) :
     init {
         playerView.addOnLayoutChangeListener(this)
         playerView.addOnAttachStateChangeListener(this)
+        // PlayerView itself remains full-screen when FIT changes the measured
+        // content frame (for example, 4:3 video on a 16:9 TV). Observe that
+        // child as well so an early full-screen subtitle measurement cannot
+        // survive after the video frame narrows and shift authored ASS cues.
+        contentFrameRef.get()?.addOnLayoutChangeListener(this)
     }
 
     fun update() {
@@ -588,6 +602,7 @@ private class SubtitleVideoRectSync(playerView: PlayerView) :
         val playerView = (view as? PlayerView) ?: playerViewRef.get()
         playerView?.removeOnLayoutChangeListener(this)
         playerView?.removeOnAttachStateChangeListener(this)
+        contentFrameRef.get()?.removeOnLayoutChangeListener(this)
         isDisposed = true
     }
 }

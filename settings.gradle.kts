@@ -15,6 +15,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "SiloAndroid"
 include(":shared")
+include(":libass-bridge")
 include(":android-shared")
 include(":androidApp")
 include(":androidTvApp")

@@ -1,11 +1,13 @@
 package org.siloserver.silo.common.di
 
+import android.os.Build
 import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.common.player.MediaAuthInterceptor
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.player.audio.DelayAudioProcessor
 import org.siloserver.silo.common.player.buildPlayerOkHttpClient
 import org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder
+import org.siloserver.silo.libass.LibassBridge
 import okhttp3.OkHttpClient
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -39,4 +41,7 @@ val playerModule = module {
     single { DelayAudioProcessor() }
 
     single { SubtitleOffsetHolder() }
+
+    @OptIn(UnstableApi::class)
+    single { LibassBridge(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) }
 }

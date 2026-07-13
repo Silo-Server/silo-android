@@ -20,6 +20,11 @@ kotlin {
     sourceSets {
         androidMain.dependencies {
             implementation(project(":shared"))
+            // Public player constructors accept LibassBridge, so downstream
+            // phone/TV DI modules need the Java bridge type on their compile
+            // classpaths. ass-media itself remains an implementation detail of
+            // :libass-bridge and is not exposed to Kotlin compilation.
+            api(project(":libass-bridge"))
 
             // DataStore (per-profile player settings store)
             implementation(libs.datastore.preferences)

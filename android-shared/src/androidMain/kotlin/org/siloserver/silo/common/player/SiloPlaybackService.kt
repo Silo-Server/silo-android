@@ -142,11 +142,11 @@ class SiloPlaybackService : MediaSessionService() {
         }
 
         // Mirror the per-profile SubtitleSyncMs preference into the active
-        // SubtitleOffsetHolder. OffsetSubtitleParserFactory reads the holder
-        // on every parse. Sidecar subtitles are commonly parsed up front, so
-        // changing the holder alone cannot retime already-built cue timestamps.
-        // Reprepare the current item at the same position so the parser rebuilds
-        // cues with the new offset while preserving play/pause intent.
+        // SubtitleOffsetHolder. The libass renderer reads this value live;
+        // Media3 text sidecars are commonly parsed up front, so changing the
+        // holder alone cannot retime their already-built cue timestamps.
+        // Reprepare at the same position to rebuild those cues while preserving
+        // play/pause intent (the libass clock remains continuous across it).
         subtitleSyncJob = scope.launch {
             playerSettingsStore.subtitleSyncMsFlow
                 .distinctUntilChanged()

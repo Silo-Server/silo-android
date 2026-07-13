@@ -20,4 +20,14 @@ class PlaybackCapabilityDetectorSourceTest {
             "the outgoing capability map must not advertise removed engines",
         )
     }
+
+    @Test
+    fun detectorOnlyAdvertisesLibassCapabilitiesAfterRuntimeProbes() {
+        assertTrue(source.contains("val libassRendering = libassBridge.isRenderingSupported"))
+        assertTrue(source.contains("val libassEmbeddedFonts = libassBridge.isEmbeddedFontsSupported"))
+        assertTrue(source.contains("val libassDirectFidelity = libassRendering && libassEmbeddedFonts"))
+        assertTrue(source.contains("assStyling = libassDirectFidelity"))
+        assertTrue(source.contains("assStyling = libassRendering"))
+        assertTrue(source.contains("fontAttachments = libassEmbeddedFonts"))
+    }
 }
