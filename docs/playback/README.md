@@ -32,6 +32,7 @@ and [migration guide](https://developer.android.com/media/media3/exoplayer/migra
 | [Reference review](03-reference-implementation-review.md) | Source-pinned Wholphin/Plezy observations. It is evidence, not another implementation plan. |
 | [Implementation status](04-implementation-status-and-dv-handoff.md) | Code, automated proof, dev-server v3 status, and the 4K Dolby Vision handoff checklist. |
 | [Shield 1080p capability audit](05-shield-1080p-playback-capability-audit.md) | Live protocol-v3 route matrix, catalog coverage, current direct-play gaps, and prioritized causes. |
+| [Device-correction evidence and design](06-device-quirk-evidence-and-design.md) | Current Jellyfin Android TV, Jellyfin Android, Wholphin, Plezy, Android platform, and issue evidence for the server/client quirk layer. |
 
 Requirements are defined once in their owning document. Other documents link to
 that section instead of restating it; this prevents future agents from treating
