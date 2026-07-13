@@ -415,6 +415,7 @@ private fun SettingsRail(
     onNavigateToAdmin: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var railActionHasFocus by remember { mutableStateOf(false) }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -437,10 +438,11 @@ private fun SettingsRail(
         TvSettingsCategory.entries.forEach { category ->
             SettingsRailCategoryRow(
                 category = category,
-                selected = category == selectedCategory,
+                selected = category == selectedCategory && !railActionHasFocus,
                 onClick = { onEnterCategory(category) },
                 // tvOS parity: focusing a category live-swaps the detail pane.
                 onFocused = {
+                    railActionHasFocus = false
                     onRailCategoryFocused()
                     onCategorySelected(category)
                 },
@@ -457,16 +459,17 @@ private fun SettingsRail(
             icon = Icons.AutoMirrored.Filled.Logout,
             onClick = onRequestSignOut,
             destructive = true,
+            onFocused = { railActionHasFocus = true },
         )
         Text(
             text = "Silo ${BuildConfig.VERSION_NAME}",
             style = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
+                fontSize = 12.sp,
                 letterSpacing = 1.sp,
             ),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-            modifier = Modifier.padding(start = 10.dp, top = 6.dp),
+            modifier = Modifier.padding(start = 12.dp, top = 6.dp),
         )
     }
 }
@@ -550,6 +553,7 @@ private fun SettingsRailActionRow(
     icon: ImageVector,
     onClick: () -> Unit,
     destructive: Boolean = false,
+    onFocused: () -> Unit = {},
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -574,7 +578,8 @@ private fun SettingsRailActionRow(
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         modifier = Modifier
             .fillMaxWidth()
-            .height(38.dp),
+            .height(38.dp)
+            .onFocusChanged { if (it.isFocused) onFocused() },
     ) {
         Row(
             modifier = Modifier
