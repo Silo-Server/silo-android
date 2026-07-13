@@ -105,8 +105,12 @@ fun PlayerOverlay(
     val gatedSeek: (Double) -> Unit = { pos -> if (seekEnabled) onSeek(pos) }
     val gatedSkipForward: () -> Unit = {
         if (seekEnabled) {
-            if (inRoom) gatedSeek((state.position + 10.0).coerceAtMost(state.duration))
-            else viewModel.onSkipBy(10.0)
+            if (inRoom) {
+                val forward = state.position + 10.0
+                gatedSeek(if (state.duration > 0.0) forward.coerceAtMost(state.duration) else forward)
+            } else {
+                viewModel.onSkipBy(10.0)
+            }
         }
     }
     val gatedSkipBackward: () -> Unit = {
