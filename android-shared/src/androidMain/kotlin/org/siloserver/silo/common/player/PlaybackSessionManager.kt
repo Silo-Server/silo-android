@@ -31,6 +31,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.PlaybackRepository
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -70,10 +71,12 @@ open class PlaybackSessionManager(
         val firstFrameReported: Boolean,
     )
 
+    // Suspendable plan operations stay serialized, while synchronous Media3
+    // reporter callbacks use CAS below so they never block the playback thread
+    // or overwrite a newer plan published by one of those operations.
     private val videoAttemptMutex = Mutex()
     private val telemetryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    @Volatile
-    private var activeVideoAttempt: ActiveVideoAttempt? = null
+    private val activeVideoAttempt = AtomicReference<ActiveVideoAttempt?>()
 
     suspend fun startVideoSessionV3(
         fileId: Int,
@@ -111,7 +114,7 @@ open class PlaybackSessionManager(
                 is PlaybackV3Validation.Playable -> {
                     val planAttemptId = UUID.randomUUID().toString()
                     val planAttemptKey = validated.plan.planAttemptKey(request.outputRouteGeneration)
-                    activeVideoAttempt = ActiveVideoAttempt(
+                    val active = ActiveVideoAttempt(
                         fileId = fileId,
                         profileId = profileId,
                         capabilities = capabilities,
@@ -130,6 +133,7 @@ open class PlaybackSessionManager(
                         startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
                         firstFrameReported = false,
                     )
+                    videoAttemptMutex.withLock { activeVideoAttempt.set(active) }
                     PassthroughSuppressionRegistry.beginAttempt(planAttemptKey)
                     reportActiveVideoEvent("plan_selected", network.asRouteDiagnostics())
                     ApiResult.Success(
@@ -143,7 +147,7 @@ open class PlaybackSessionManager(
                     )
                 }
                 is PlaybackV3Validation.Terminal -> {
-                    activeVideoAttempt = null
+                    videoAttemptMutex.withLock { activeVideoAttempt.set(null) }
                     emitRouteEvent(
                         PlaybackRouteEventV3(
                             playbackAttemptId = playbackAttemptId,
@@ -160,7 +164,7 @@ open class PlaybackSessionManager(
                     )
                 }
                 is PlaybackV3Validation.Incompatible -> {
-                    activeVideoAttempt = null
+                    videoAttemptMutex.withLock { activeVideoAttempt.set(null) }
                     validated.allocatedSessionId?.let { playbackRepository.stopPlayback(it) }
                     ApiResult.Success(VideoSessionStartV3.ServerUpgradeRequired)
                 }
@@ -170,7 +174,7 @@ open class PlaybackSessionManager(
                     // opportunity to replace the route with a Media3 plan.
                     val planAttemptId = UUID.randomUUID().toString()
                     val key = validated.plan.planAttemptKey(request.outputRouteGeneration)
-                    activeVideoAttempt = ActiveVideoAttempt(
+                    val active = ActiveVideoAttempt(
                         fileId = fileId,
                         profileId = profileId,
                         capabilities = capabilities,
@@ -189,6 +193,7 @@ open class PlaybackSessionManager(
                         startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
                         firstFrameReported = false,
                     )
+                    videoAttemptMutex.withLock { activeVideoAttempt.set(active) }
                     PassthroughSuppressionRegistry.beginAttempt(key)
                     replanActiveVideoSession(
                         classification = validated.reason,
@@ -216,7 +221,7 @@ open class PlaybackSessionManager(
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
     ): ApiResult<VideoSessionStartV3> = videoAttemptMutex.withLock {
-        val active = activeVideoAttempt ?: return@withLock ApiResult.Error(
+        val active = activeVideoAttempt.get() ?: return@withLock ApiResult.Error(
             code = 409,
             error = "playback_attempt_not_active",
             message = "No protocol-v3 playback attempt is active.",
@@ -292,7 +297,7 @@ open class PlaybackSessionManager(
                         if (validated.sessionId != active.sessionId) {
                             playbackRepository.stopPlayback(validated.sessionId)
                         }
-                        activeVideoAttempt = null
+                        activeVideoAttempt.set(null)
                         return@withLock ApiResult.Success(
                             VideoSessionStartV3.Terminal(
                                 "replan_loop_detected",
@@ -318,7 +323,7 @@ open class PlaybackSessionManager(
                         startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
                         firstFrameReported = false,
                     )
-                    activeVideoAttempt = next
+                    activeVideoAttempt.set(next)
                     PassthroughSuppressionRegistry.beginAttempt(nextKey)
                     if (validated.sessionId != active.sessionId) playbackRepository.stopPlayback(active.sessionId)
                     emitRouteEvent(
@@ -350,18 +355,18 @@ open class PlaybackSessionManager(
                         event = "terminal",
                         diagnostics = mapOf("reason" to validated.reason),
                     )
-                    activeVideoAttempt = null
+                    activeVideoAttempt.set(null)
                     listOfNotNull(active.sessionId, result.data.sessionId).distinct()
                         .forEach { playbackRepository.stopPlayback(it) }
                     ApiResult.Success(VideoSessionStartV3.Terminal(validated.reason, validated.message, validated.retryable))
                 }
                 is PlaybackV3Validation.Incompatible -> {
-                    activeVideoAttempt = null
+                    activeVideoAttempt.set(null)
                     validated.allocatedSessionId?.let { playbackRepository.stopPlayback(it) }
                     ApiResult.Success(VideoSessionStartV3.ServerUpgradeRequired)
                 }
                 is PlaybackV3Validation.ReplanRequired -> {
-                    activeVideoAttempt = null
+                    activeVideoAttempt.set(null)
                     listOf(active.sessionId, validated.sessionId).distinct()
                         .forEach { playbackRepository.stopPlayback(it) }
                     ApiResult.Success(
@@ -383,7 +388,7 @@ open class PlaybackSessionManager(
         positionSeconds: Double,
         diagnostics: Map<String, String> = emptyMap(),
     ): ApiResult<VideoSessionStartV3> = videoAttemptMutex.withLock {
-        val active = activeVideoAttempt ?: return@withLock ApiResult.Error(
+        val active = activeVideoAttempt.get() ?: return@withLock ApiResult.Error(
             code = 409,
             error = "playback_attempt_not_active",
             message = "No protocol-v3 playback attempt is active.",
@@ -588,25 +593,25 @@ open class PlaybackSessionManager(
         )
     }
 
-    @Synchronized
     private fun adoptSeekReanchoredPlan(
         expected: ActiveVideoAttempt,
         plan: PlaybackPlanV3,
         serverFeatures: List<String>,
     ): ActiveVideoAttempt? {
-        val current = activeVideoAttempt ?: return null
+        val current = activeVideoAttempt.get() ?: return null
         if (current.playbackAttemptId != expected.playbackAttemptId ||
             current.sessionId != expected.sessionId ||
             current.plan.planId != expected.plan.planId
         ) {
             return null
         }
-        return current.copy(
+        val next = current.copy(
             plan = plan,
             serverFeatures = serverFeatures.toSet(),
             startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
             firstFrameReported = false,
-        ).also { activeVideoAttempt = it }
+        )
+        return next.takeIf { activeVideoAttempt.compareAndSet(current, next) }
     }
 
     /**
@@ -620,7 +625,7 @@ open class PlaybackSessionManager(
         decoderName: String? = null,
         diagnostics: Map<String, String> = emptyMap(),
     ): ApiResult<VideoSessionStartV3> = videoAttemptMutex.withLock {
-        val active = activeVideoAttempt ?: return@withLock ApiResult.Error(
+        val active = activeVideoAttempt.get() ?: return@withLock ApiResult.Error(
             code = 409,
             error = "playback_attempt_not_active",
             message = "No protocol-v3 playback attempt is active.",
@@ -812,7 +817,6 @@ open class PlaybackSessionManager(
         message = message,
     )
 
-    @Synchronized
     private fun adoptSeekRecoveryPlan(
         expected: ActiveVideoAttempt,
         plan: PlaybackPlanV3,
@@ -821,14 +825,14 @@ open class PlaybackSessionManager(
         planAttemptKey: String,
         attemptedPlanKeys: List<String>,
     ): ActiveVideoAttempt? {
-        val current = activeVideoAttempt ?: return null
+        val current = activeVideoAttempt.get() ?: return null
         if (current.playbackAttemptId != expected.playbackAttemptId ||
             current.sessionId != expected.sessionId ||
             current.plan.planId != expected.plan.planId
         ) {
             return null
         }
-        return current.copy(
+        val next = current.copy(
             plan = plan,
             serverFeatures = serverFeatures.toSet(),
             planAttemptId = planAttemptId,
@@ -838,7 +842,8 @@ open class PlaybackSessionManager(
             attemptCount = current.attemptCount + 1,
             startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
             firstFrameReported = false,
-        ).also { activeVideoAttempt = it }
+        )
+        return next.takeIf { activeVideoAttempt.compareAndSet(current, next) }
     }
 
     private fun mapOfNotNull(vararg values: Pair<String, String?>): Map<String, String> =
@@ -858,12 +863,19 @@ open class PlaybackSessionManager(
         }
     }
 
-    @Synchronized
     fun reportActiveVideoEvent(
         event: String,
         diagnostics: Map<String, String> = emptyMap(),
     ) {
-        val active = activeVideoAttempt ?: return
+        val active = activeVideoAttempt.get() ?: return
+        emitActiveVideoEvent(active, event, diagnostics)
+    }
+
+    private fun emitActiveVideoEvent(
+        active: ActiveVideoAttempt,
+        event: String,
+        diagnostics: Map<String, String> = emptyMap(),
+    ) {
         emitRouteEvent(
             PlaybackRouteEventV3(
                 playbackAttemptId = active.playbackAttemptId,
@@ -880,11 +892,11 @@ open class PlaybackSessionManager(
         )
     }
 
-    @Synchronized
     fun reportFirstVideoFrame(stats: PlayerStatsSnapshot) {
-        val active = activeVideoAttempt ?: return
+        val active = activeVideoAttempt.get() ?: return
         if (active.firstFrameReported) return
-        activeVideoAttempt = active.copy(firstFrameReported = true)
+        val reported = active.copy(firstFrameReported = true)
+        if (!activeVideoAttempt.compareAndSet(active, reported)) return
         val firstFrameMs = SystemClock.elapsedRealtime() - active.startedAtElapsedRealtimeMs
         emitRouteEvent(
             PlaybackRouteEventV3(
@@ -916,34 +928,34 @@ open class PlaybackSessionManager(
             ?: PlaybackTrackIdentityV3(stableTrackId(active.fileId, kind, index), index)
     }
 
-    @Synchronized
     fun trySingleLocalPcmRetry(mime: String, channels: Int): Boolean {
-        val active = activeVideoAttempt ?: return false
+        val active = activeVideoAttempt.get() ?: return false
         val mutation = "pcm:${mime.lowercase()}:${channels.coerceAtLeast(0)}"
         if (active.localMutations.any { it.startsWith("pcm:") }) return false
         val mutations = active.localMutations + mutation
         val key = active.plan.planAttemptKey(active.context.output.outputRouteGeneration, mutations)
-        activeVideoAttempt = active.copy(
+        val next = active.copy(
             planAttemptKey = key,
             localMutations = mutations,
             attemptedPlanKeys = (active.attemptedPlanKeys + key).distinct(),
         )
+        if (!activeVideoAttempt.compareAndSet(active, next)) return false
         PassthroughSuppressionRegistry.beginAttempt(key)
         return PassthroughSuppressionRegistry.suppressForSinglePcmRetry(mime, channels)
     }
 
-    @Synchronized
     fun recordTransportReopen(): Boolean {
-        val active = activeVideoAttempt ?: return false
+        val active = activeVideoAttempt.get() ?: return false
         val mutation = "transport_reopen"
         if (mutation in active.localMutations) return false
         val mutations = active.localMutations + mutation
         val key = active.plan.planAttemptKey(active.context.output.outputRouteGeneration, mutations)
-        activeVideoAttempt = active.copy(
+        val next = active.copy(
             planAttemptKey = key,
             localMutations = mutations,
             attemptedPlanKeys = (active.attemptedPlanKeys + key).distinct(),
         )
+        if (!activeVideoAttempt.compareAndSet(active, next)) return false
         PassthroughSuppressionRegistry.beginAttempt(key)
         return true
     }
@@ -1068,12 +1080,16 @@ open class PlaybackSessionManager(
      * Stops an active playback session.
      * Must be called when exiting the player or when playback completes.
      */
-    open suspend fun stopSession(sessionId: String): ApiResult<Unit> {
-        if (activeVideoAttempt?.sessionId == sessionId) {
-            reportActiveVideoEvent("stopped")
-            activeVideoAttempt = null
+    open suspend fun stopSession(sessionId: String): ApiResult<Unit> = videoAttemptMutex.withLock {
+        while (true) {
+            val active = activeVideoAttempt.get()
+            if (active?.sessionId != sessionId) break
+            if (activeVideoAttempt.compareAndSet(active, null)) {
+                emitActiveVideoEvent(active, "stopped")
+                break
+            }
         }
-        return playbackRepository.stopPlayback(sessionId)
+        playbackRepository.stopPlayback(sessionId)
     }
 
     /**

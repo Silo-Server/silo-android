@@ -2,7 +2,9 @@ package org.siloserver.silo.common.player.audio
 
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
-import java.io.File
+import androidx.media3.exoplayer.audio.AudioSink
+import java.lang.reflect.Proxy
+import kotlin.test.assertEquals
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -26,12 +28,20 @@ class PassthroughSuppressionRegistryTest {
 
     @Test
     fun suppressingSinkMarksEncodedFormatUnsupportedToForcePcmDecode() {
-        val source = File(
-            "src/androidMain/kotlin/org/siloserver/silo/common/player/audio/PassthroughSuppressionRegistry.kt",
-        ).readText()
-        val suppressedBranch = source.substringAfter("if (PassthroughSuppressionRegistry.isSuppressed(format))")
-            .substringBefore("} else")
-        assertTrue(suppressedBranch.contains("AudioSink.SINK_FORMAT_UNSUPPORTED"))
-        assertFalse(suppressedBranch.contains("SINK_FORMAT_SUPPORTED_WITH_TRANSCODING"))
+        val delegate = Proxy.newProxyInstance(
+            AudioSink::class.java.classLoader,
+            arrayOf(AudioSink::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getFormatSupport" -> AudioSink.SINK_FORMAT_SUPPORTED_WITH_TRANSCODING
+                else -> error("Unexpected delegate call: ${method.name}")
+            }
+        } as AudioSink
+        val sink = PassthroughSuppressingAudioSink(delegate)
+
+        PassthroughSuppressionRegistry.beginAttempt("sink-format-attempt")
+        assertTrue(PassthroughSuppressionRegistry.suppressForSinglePcmRetry(MimeTypes.AUDIO_TRUEHD, 8))
+        assertEquals(AudioSink.SINK_FORMAT_UNSUPPORTED, sink.getFormatSupport(trueHdEightChannel))
+        assertFalse(sink.supportsFormat(trueHdEightChannel))
     }
 }

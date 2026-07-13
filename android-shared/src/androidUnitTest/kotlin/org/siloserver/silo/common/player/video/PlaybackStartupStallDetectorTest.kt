@@ -277,6 +277,21 @@ class PlaybackStartupStallDetectorTest {
     }
 
     @Test
+    fun bufferedGrowthDoesNotMaskPostFirstFrameFreeze() {
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 10_000,
+            midStreamGraceMs = 1_000,
+            bufferedProgressMs = 100,
+        )
+        detector.onMounted("session", PlayMethod.DIRECT, 0, 0)
+        detector.sample("session", 100, true, true, false, 1_000, 5_000)
+        detector.onFirstFrameRendered()
+
+        assertNull(detector.sample("session", 900, true, false, true, 1_000, 6_000))
+        assertNotNull(detector.sample("session", 1_101, true, false, true, 1_000, 7_000))
+    }
+
+    @Test
     fun newMountResetsSignalState() {
         val detector = PlaybackStartupStallDetector(startupGraceMs = 10_000)
         detector.onMounted(

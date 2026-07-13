@@ -44,7 +44,7 @@ class MediaAuthInterceptorTest {
                     .build(),
             )
 
-            MediaAuthInterceptor(tokenManager).intercept(chain)
+            MediaAuthInterceptor(tokenManager, refreshClient = OkHttpClient()).intercept(chain)
 
             val request = chain.capturedRequest ?: error("request was not captured")
             assertEquals("Bearer access-token", request.header("Authorization"))

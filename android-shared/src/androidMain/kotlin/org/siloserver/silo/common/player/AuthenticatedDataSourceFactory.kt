@@ -188,6 +188,10 @@ private class RoutedDataSource(
         } else {
             dataSpec
         }
+        val isHttp = resolved.uri.scheme.equals("http", ignoreCase = true) ||
+            resolved.uri.scheme.equals("https", ignoreCase = true)
+        if (!isHttp) return resolved
+
         val headers = requestHeadersProvider(resolved.uri)
         return if (headers.isEmpty()) {
             resolved

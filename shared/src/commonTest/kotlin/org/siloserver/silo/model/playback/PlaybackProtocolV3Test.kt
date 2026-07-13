@@ -285,7 +285,7 @@ class PlaybackProtocolV3Test {
         ).validateForMedia3()
 
         assertEquals(
-            "unsupported_client_runtime_correction",
+            "unsupported_client_runtime_correction:future_runtime_fix",
             assertIs<PlaybackV3Validation.ReplanRequired>(response).reason,
         )
     }

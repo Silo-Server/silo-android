@@ -9,6 +9,7 @@ runtime_hits="$({
     android-shared/src/androidMain \
     androidApp/src/androidMain \
     androidTvApp/src/androidMain \
+    shared/src/commonMain \
     gradle/libs.versions.toml \
     android-shared/build.gradle.kts \
     proguard-rules.pro || true

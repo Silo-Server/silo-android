@@ -23,6 +23,7 @@ class PostResumeVideoStallDetector(
     private var sessionKey: String? = null
     private var firstFrameRendered = false
     private var pausedAfterFirstFrame = false
+    private var pausedDuringRecovery = false
     private var stage = Stage.IDLE
     private var stageStartedAtMs = 0L
     private var baselinePositionMs = 0L
@@ -33,6 +34,7 @@ class PostResumeVideoStallDetector(
         this.sessionKey = sessionKey
         firstFrameRendered = false
         pausedAfterFirstFrame = false
+        pausedDuringRecovery = false
         stage = Stage.IDLE
         stageStartedAtMs = 0L
         baselinePositionMs = 0L
@@ -52,12 +54,19 @@ class PostResumeVideoStallDetector(
     ) {
         if (sessionKey != this.sessionKey || !firstFrameRendered || stage == Stage.EXHAUSTED) return
         if (!isPlaying) {
-            if (stage == Stage.IDLE) pausedAfterFirstFrame = true
+            if (stage == Stage.IDLE) {
+                pausedAfterFirstFrame = true
+            } else {
+                pausedDuringRecovery = true
+            }
             return
         }
         if (pausedAfterFirstFrame && stage == Stage.IDLE && renderedOutputBufferCount != null) {
             pausedAfterFirstFrame = false
             beginStage(Stage.WATCHING_RESUME, nowMs, currentPositionMs, renderedOutputBufferCount)
+        } else if (pausedDuringRecovery && renderedOutputBufferCount != null) {
+            pausedDuringRecovery = false
+            beginStage(stage, nowMs, currentPositionMs, renderedOutputBufferCount)
         }
     }
 
@@ -108,6 +117,7 @@ class PostResumeVideoStallDetector(
 
     private fun beginStage(stage: Stage, nowMs: Long, positionMs: Long, renderedCount: Int) {
         this.stage = stage
+        pausedDuringRecovery = false
         stageStartedAtMs = nowMs
         baselinePositionMs = positionMs
         baselineRenderedCount = renderedCount

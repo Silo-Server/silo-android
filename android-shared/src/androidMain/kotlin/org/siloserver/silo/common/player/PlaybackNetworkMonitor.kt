@@ -72,6 +72,7 @@ class PlaybackNetworkMonitor(
 
     override fun snapshot(): PlaybackNetworkSnapshot = _state.value
 
+    @Synchronized
     override fun onBandwidthSample(elapsedMs: Int, bytesTransferred: Long, bitrateEstimate: Long) {
         if (elapsedMs <= 0 || bytesTransferred <= 0L || bitrateEstimate <= 0L) return
         measuredBitrateBps = bitrateEstimate

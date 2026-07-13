@@ -26,3 +26,16 @@ internal fun buildPlayerOkHttpClient(): OkHttpClient =
         .connectionPool(ConnectionPool(maxIdleConnections = 5, keepAliveDuration = 5, timeUnit = TimeUnit.MINUTES))
         .dispatcher(Dispatcher())
         .build()
+
+/**
+ * Bounded bootstrap client for the token-refresh RPC. It intentionally has no
+ * auth interceptor so a rejected refresh cannot recurse through the media
+ * authentication path.
+ */
+internal fun buildPlayerRefreshOkHttpClient(): OkHttpClient =
+    OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
+        .build()

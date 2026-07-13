@@ -53,8 +53,8 @@ fun reducePlayerStats(
     is PlaybackAnalyticsListener.Event.VideoFormatChanged -> current.copy(
         videoCodec = event.format.codecs ?: event.format.sampleMimeType,
         videoMimeType = event.format.sampleMimeType,
-        videoWidth = event.format.width.takeIf { it > 0 },
-        videoHeight = event.format.height.takeIf { it > 0 },
+        videoWidth = event.format.width.takeIf { it > 0 } ?: current.videoWidth,
+        videoHeight = event.format.height.takeIf { it > 0 } ?: current.videoHeight,
         resolution = if (event.format.width > 0 && event.format.height > 0) {
             "${event.format.width}x${event.format.height}"
         } else {

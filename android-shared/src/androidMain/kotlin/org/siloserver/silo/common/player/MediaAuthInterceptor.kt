@@ -29,7 +29,7 @@ class MediaAuthInterceptor(
 ) : Interceptor {
     constructor(
         tokenManager: TokenManager,
-        refreshClient: OkHttpClient = OkHttpClient(),
+        refreshClient: OkHttpClient,
         json: Json = Json { ignoreUnknownKeys = true },
     ) : this(MediaAuthSession(tokenManager, refreshClient, json))
 

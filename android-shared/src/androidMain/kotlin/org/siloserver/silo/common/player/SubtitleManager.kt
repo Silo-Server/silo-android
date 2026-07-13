@@ -749,7 +749,7 @@ private fun subtitleCodecFamily(codecOrMime: String?): String? {
         normalized.contains("pgs") -> "pgs"
         normalized.contains("vobsub") || normalized.contains("dvdsubtitle") -> "vobsub"
         normalized.contains("dvbsub") -> "dvbsub"
-        normalized.contains("subrip") || normalized == "srt" -> "subrip"
+        normalized.contains("subrip") || normalized.endsWith("srt") -> "subrip"
         normalized.contains("webvtt") || normalized.endsWith("vtt") -> "webvtt"
         normalized.contains("tx3g") || normalized.contains("movtext") -> "tx3g"
         normalized.contains("ssa") || normalized.contains("ass") -> "ssa"

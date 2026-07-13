@@ -129,30 +129,20 @@ class AudioCapabilityManager(
     }
 
     private fun mapCapabilities(caps: AudioCapabilities): AudioPassthroughCapabilities {
-        val codecs = mutableListOf<String>()
-        if (caps.supportsEncoding(AudioFormat.ENCODING_AC3)) codecs += "ac3"
-        if (caps.supportsEncoding(AudioFormat.ENCODING_E_AC3)) codecs += "eac3"
-        if (caps.supportsEncoding(AudioFormat.ENCODING_E_AC3_JOC)) codecs += "eac3_joc"
-        if (caps.supportsEncoding(AudioFormat.ENCODING_DTS)) codecs += "dts"
-        // ENCODING_DTS_HD is API 23+; ENCODING_DOLBY_TRUEHD is API 25+; ENCODING_AC4 is API 28+.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            caps.supportsEncoding(AudioFormat.ENCODING_DTS_HD)
-        ) codecs += "dts_hd"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1 &&
-            caps.supportsEncoding(AudioFormat.ENCODING_DOLBY_TRUEHD)
-        ) codecs += "truehd"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-            caps.supportsEncoding(AudioFormat.ENCODING_AC4)
-        ) codecs += "ac4"
+        val supportedEncodings = encodingSupport.filter { support ->
+            Build.VERSION.SDK_INT >= support.minSdk && caps.supportsEncoding(support.encoding)
+        }
+        val codecs = supportedEncodings.map(EncodingSupport::codec)
 
         val spatializerEnabled = spatializer?.isEnabled ?: false
 
         // Media3's aggregate maxChannelCount is not enough for route planning:
         // an AVR can accept eight-channel TrueHD but only six-channel AC3, for
         // example. Probe each encoded format and emit exact entries for V3.
-        val entries = probePassthroughEntries(caps, codecs)
+        val entries = probePassthroughEntries(supportedEncodings)
         val maxChannels = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            entries.flatMap(AudioPassthroughEntry::channelCounts).maxOrNull() ?: 2
+            entries.flatMap(AudioPassthroughEntry::channelCounts).maxOrNull()
+                ?: caps.maxChannelCount.coerceAtLeast(2)
         } else {
             caps.maxChannelCount.coerceAtLeast(2)
         }
@@ -229,8 +219,7 @@ class AudioCapabilityManager(
      * remain on the server's conservative compatibility path.
      */
     private fun probePassthroughEntries(
-        caps: AudioCapabilities,
-        codecs: List<String>,
+        encodings: List<EncodingSupport>,
     ): List<AudioPassthroughEntry> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             return emptyList()
@@ -239,18 +228,6 @@ class AudioCapabilityManager(
             .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
             .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
             .build()
-        val encodingsToProbe = listOfNotNull(
-            ("ac3" to AudioFormat.ENCODING_AC3).takeIf { "ac3" in codecs },
-            ("eac3" to AudioFormat.ENCODING_E_AC3).takeIf { "eac3" in codecs },
-            ("eac3_joc" to AudioFormat.ENCODING_E_AC3_JOC).takeIf { "eac3_joc" in codecs },
-            ("dts" to AudioFormat.ENCODING_DTS).takeIf { "dts" in codecs },
-            if ("dts_hd" in codecs && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                "dts_hd" to AudioFormat.ENCODING_DTS_HD else null,
-            if ("truehd" in codecs && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1)
-                "truehd" to AudioFormat.ENCODING_DOLBY_TRUEHD else null,
-            if ("ac4" in codecs && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
-                "ac4" to AudioFormat.ENCODING_AC4 else null,
-        )
         val layoutsToProbe = listOf(
             AudioLayoutProbe(2, AudioFormat.CHANNEL_OUT_STEREO, listOf("stereo")),
             // FFprobe commonly distinguishes 5.1 and 5.1(side), while
@@ -258,13 +235,13 @@ class AudioCapabilityManager(
             AudioLayoutProbe(6, AudioFormat.CHANNEL_OUT_5POINT1, listOf("5.1", "5.1(side)")),
             AudioLayoutProbe(8, AudioFormat.CHANNEL_OUT_7POINT1_SURROUND, listOf("7.1")),
         )
-        return encodingsToProbe.mapNotNull { (codec, encoding) ->
+        return encodings.mapNotNull { support ->
             val channelCounts = sortedSetOf<Int>()
             val layouts = sortedSetOf<String>()
             for (candidate in layoutsToProbe) {
                 val format = runCatching {
                     AudioFormat.Builder()
-                        .setEncoding(encoding)
+                        .setEncoding(support.encoding)
                         .setSampleRate(48_000)
                         .setChannelMask(candidate.channelMask)
                         .build()
@@ -276,7 +253,7 @@ class AudioCapabilityManager(
                 }
             }
             if (channelCounts.isEmpty() || layouts.isEmpty()) null else AudioPassthroughEntry(
-                codec = codec,
+                codec = support.codec,
                 channelCounts = channelCounts.toList(),
                 layouts = layouts.toList(),
             )
@@ -301,4 +278,22 @@ class AudioCapabilityManager(
         val channelMask: Int,
         val layoutNames: List<String>,
     )
+
+    private data class EncodingSupport(
+        val codec: String,
+        val encoding: Int,
+        val minSdk: Int = 1,
+    )
+
+    private companion object {
+        val encodingSupport = listOf(
+            EncodingSupport("ac3", AudioFormat.ENCODING_AC3),
+            EncodingSupport("eac3", AudioFormat.ENCODING_E_AC3),
+            EncodingSupport("eac3_joc", AudioFormat.ENCODING_E_AC3_JOC),
+            EncodingSupport("dts", AudioFormat.ENCODING_DTS),
+            EncodingSupport("dts_hd", AudioFormat.ENCODING_DTS_HD, Build.VERSION_CODES.M),
+            EncodingSupport("truehd", AudioFormat.ENCODING_DOLBY_TRUEHD, Build.VERSION_CODES.N_MR1),
+            EncodingSupport("ac4", AudioFormat.ENCODING_AC4, Build.VERSION_CODES.P),
+        )
+    }
 }

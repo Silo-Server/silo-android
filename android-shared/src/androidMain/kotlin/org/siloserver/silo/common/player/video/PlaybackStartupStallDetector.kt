@@ -104,11 +104,10 @@ class PlaybackStartupStallDetector(
             started = true
         }
 
-        // Downloading media is transport progress even before the first frame
-        // or while a rebuffer is filling. Re-anchor only the transport clock;
-        // the independent decoder-no-output deadline above must still fire if
-        // bytes arrive but the video decoder never produces a frame.
-        if ((decoderInputBufferCount == 0 || firstFrameRendered) &&
+        // Downloading media is transport progress before the first frame.
+        // After rendering starts, buffer growth alone must not hide a frozen
+        // decoder; only playback/output progress may re-anchor the clock.
+        if (!firstFrameRendered && decoderInputBufferCount == 0 &&
             bufferedPositionMs - lastBufferedPositionMs >= bufferedProgressMs
         ) {
             lastBufferedPositionMs = bufferedPositionMs

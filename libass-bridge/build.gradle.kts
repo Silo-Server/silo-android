@@ -27,5 +27,5 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.extractor)
     implementation(libs.media3.ui)
-    testImplementation("junit:junit:4.13.2")
+    testImplementation(libs.junit4)
 }

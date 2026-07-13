@@ -73,6 +73,20 @@ class PlayerStatsSnapshotReducerTest {
     }
 
     @Test
+    fun `unknown format dimensions preserve the last known video size`() {
+        val result = reducePlayerStats(
+            PlayerStatsSnapshot(videoWidth = 3840, videoHeight = 2160, resolution = "3840x2160"),
+            PlaybackAnalyticsListener.Event.VideoFormatChanged(
+                Format.Builder().setSampleMimeType("video/hevc").build(),
+            ),
+        )
+
+        assertEquals(3840, result.videoWidth)
+        assertEquals(2160, result.videoHeight)
+        assertEquals("3840x2160", result.resolution)
+    }
+
+    @Test
     fun `DroppedFrames accumulates across events`() {
         val initial = PlayerStatsSnapshot(droppedFrames = 3)
 

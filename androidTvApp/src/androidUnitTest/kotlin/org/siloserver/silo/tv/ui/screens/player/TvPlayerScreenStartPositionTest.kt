@@ -135,7 +135,18 @@ class TvPlayerScreenStartPositionTest {
 
     @Test
     fun transportReopenRearmsSharedWatchdog() {
-        assertTrue(source.contains("state.playbackPlan?.decisionTrace?.size"))
-        assertTrue(source.contains("plan?.decisionTrace?.size ?: 0"))
+        val watchdogEffect = source
+            .substringAfter(
+                "state.playbackPlan?.planId,\n        state.playbackPlan?.decisionTrace?.size,",
+            )
+            .substringBefore("// Prepare the player when a stream URL becomes available.")
+        val mountEffect = source
+            .substringAfter("// Prepare the player when a stream URL becomes available.")
+            .substringBefore("// Subtitle refresh")
+
+        assertTrue(watchdogEffect.contains("state.playbackPlan?.decisionTrace?.size ?: 0"))
+        assertTrue(watchdogEffect.contains("state.transportMountNonce"))
+        assertTrue(mountEffect.contains("plan?.decisionTrace?.size ?: 0"))
+        assertTrue(mountEffect.contains("state.transportMountNonce"))
     }
 }

@@ -50,7 +50,7 @@ class PlaybackBufferPolicyTest {
     }
 
     @Test
-    fun smoothPlaybackStartsQuicklyThenGrowsADeepForwardBuffer() {
+    fun smoothPlaybackPrioritizesDeepForwardBufferingOverQuickStartup() {
         val policy = PlaybackBufferPolicy.forMode(PlaybackBufferMode.SmoothPlayback)
 
         assertTrue(policy.bufferForPlaybackMs >= PlaybackBufferPolicy.forMode(PlaybackBufferMode.Balanced).bufferForPlaybackMs)

@@ -23,7 +23,7 @@ import java.io.IOException
  */
 class MediaAuthSession(
     private val tokenManager: TokenManager,
-    private val refreshClient: OkHttpClient = OkHttpClient(),
+    private val refreshClient: OkHttpClient,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) {
     private val refreshMutex = Mutex()

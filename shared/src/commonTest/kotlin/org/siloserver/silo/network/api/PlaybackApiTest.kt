@@ -11,6 +11,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -120,7 +121,7 @@ class PlaybackApiTest {
         val body = SiloJson.parseToJsonElement(captured.body).jsonObject
         assertEquals("key-1", body["plan_attempt_key"]!!.jsonPrimitive.content)
         assertEquals(2, body["attempted_plan_keys"]!!.jsonArray.size)
-        assertEquals(true, body["metered"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(true, body["metered"]!!.jsonPrimitive.boolean)
         assertEquals(18_500, body["bandwidth_estimate_kbps"]!!.jsonPrimitive.int)
         assertEquals(12_000, body["bandwidth_cap_kbps"]!!.jsonPrimitive.int)
     }

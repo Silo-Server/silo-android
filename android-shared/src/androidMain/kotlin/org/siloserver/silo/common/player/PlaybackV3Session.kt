@@ -9,6 +9,7 @@ import org.siloserver.silo.model.playback.PlaybackRouteFamily
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlaybackSourceMetadata
 import org.siloserver.silo.model.playback.PlaybackStreamRequest
+import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTimeline
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
@@ -84,7 +85,10 @@ internal fun PlaybackPlanV3.toSessionResponse(
         routeFamily = routeFamily,
         stream = PlaybackStreamRequest(
             url = stream.url,
-            streamType = if (stream.protocol.name == "HLS") "hls" else "progressive",
+            streamType = when (stream.protocol) {
+                PlaybackStreamProtocol.HLS -> "hls"
+                PlaybackStreamProtocol.HTTP_PROGRESSIVE -> "progressive"
+            },
             playMethod = playMethod,
         ),
         timeline = PlaybackTimeline(

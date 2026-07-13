@@ -12,6 +12,7 @@ import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackNetworkMonitor
 import org.siloserver.silo.common.player.audio.DelayAudioProcessor
 import org.siloserver.silo.common.player.buildPlayerOkHttpClient
+import org.siloserver.silo.common.player.buildPlayerRefreshOkHttpClient
 import org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder
 import org.siloserver.silo.libass.LibassBridge
 import okhttp3.OkHttpClient
@@ -31,7 +32,7 @@ val PLAYER_HTTP_DATA_SOURCE_FACTORY_QUALIFIER = named("player-http-data-source-f
 val playerModule = module {
     // Lightweight bootstrap client for the refresh RPC — no interceptors so a
     // 401 on the refresh call can't loop back through MediaAuthInterceptor.
-    single(named("player-refresh-okhttp")) { OkHttpClient() }
+    single(named("player-refresh-okhttp")) { buildPlayerRefreshOkHttpClient() }
 
     single { MediaAuthSession(tokenManager = get(), refreshClient = get(named("player-refresh-okhttp"))) }
     single { MediaAuthInterceptor(authSession = get()) }

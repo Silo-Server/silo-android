@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.nullable
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonDecoder
@@ -81,7 +82,7 @@ data class PlaybackDecisionResponseV3(
 @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 internal object TolerantPlaybackPlanV3Serializer : KSerializer<PlaybackPlanV3?> {
     private val delegate = PlaybackPlanV3.serializer()
-    override val descriptor: SerialDescriptor = delegate.descriptor
+    override val descriptor: SerialDescriptor = delegate.descriptor.nullable
 
     override fun deserialize(decoder: Decoder): PlaybackPlanV3? {
         val jsonDecoder = decoder as? JsonDecoder
@@ -392,7 +393,7 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
     }
     if (unsupportedRuntimeCorrection != null) {
         return PlaybackV3Validation.ReplanRequired(
-            "unsupported_client_runtime_correction",
+            "unsupported_client_runtime_correction:$unsupportedRuntimeCorrection",
             plan,
             resolvedSessionId,
         )
