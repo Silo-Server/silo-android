@@ -80,7 +80,7 @@ class SiloPlayerFactory(
 
     private val subtitleParserFactory = OffsetSubtitleParserFactory(subtitleOffsetHolder)
 
-    private val extractorsFactory = DolbyVisionColorInfoExtractorsFactory(DefaultExtractorsFactory()
+    private fun configuredExtractorsFactory() = DefaultExtractorsFactory()
         // Media3 1.10 expects parsed cue samples by default. Forcing raw
         // subtitle payloads here makes SRT/ASS tracks crash the text renderer
         // on Android TV with "Legacy decoding is disabled". The offset wrapper
@@ -95,7 +95,7 @@ class SiloPlayerFactory(
         // remux/transcode TS segments with sparse PTS — startup then fails
         // with "timestamp not found" (androidx/media #8571-class failures).
         // 1500 packets matches what battle-tested players ship.
-        .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE))
+        .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
 
     private val hlsExtractorFactory = DefaultHlsExtractorFactory(
         // HLS uses a separate extractor path from progressive TS. Keep the DTS
@@ -182,7 +182,11 @@ class SiloPlayerFactory(
             .build()
 
         val mediaLoadErrorHandlingPolicy = SiloMediaLoadErrorHandlingPolicy()
-        val defaultMediaSourceFactory = DefaultMediaSourceFactory(context, extractorsFactory)
+        fun defaultMediaSourceFactory(mode: DolbyVisionTransformMode) =
+            DefaultMediaSourceFactory(
+                context,
+                DolbyVisionColorInfoExtractorsFactory(configuredExtractorsFactory(), mode),
+            )
             .setDataSourceFactory(dataSourceFactory)
             .setSubtitleParserFactory(subtitleParserFactory)
             .setLoadErrorHandlingPolicy(mediaLoadErrorHandlingPolicy)
@@ -191,7 +195,9 @@ class SiloPlayerFactory(
             .setSubtitleParserFactory(subtitleParserFactory)
             .setLoadErrorHandlingPolicy(mediaLoadErrorHandlingPolicy)
         val mediaSourceFactory = SiloMediaSourceFactory(
-            defaultFactory = defaultMediaSourceFactory,
+            defaultFactory = defaultMediaSourceFactory(DolbyVisionTransformMode.DISABLED),
+            dv81Factory = defaultMediaSourceFactory(DolbyVisionTransformMode.PROFILE7_TO_PROFILE81),
+            hdr10Factory = defaultMediaSourceFactory(DolbyVisionTransformMode.PROFILE7_TO_HDR10),
             hlsFactory = hlsMediaSourceFactory,
         )
 
@@ -320,6 +326,7 @@ class SiloPlayerFactory(
         artworkUrl: String? = null,
         durationMs: Long? = null,
         requestHeaders: Map<String, String> = emptyMap(),
+        transformations: List<String> = emptyList(),
     ): MediaItem {
         this.serverUrl = serverUrl
         val absoluteUrl = buildAbsoluteUrl(serverUrl, streamUrl)
@@ -332,6 +339,17 @@ class SiloPlayerFactory(
         val builder = MediaItem.Builder()
             .setUri(absoluteUrl)
             .setSubtitleConfigurations(subtitleConfigurations)
+            .setTag(
+                SiloMediaTransformTag(
+                    when {
+                        org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81 in transformations ->
+                            DolbyVisionTransformMode.PROFILE7_TO_PROFILE81
+                        org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10 in transformations ->
+                            DolbyVisionTransformMode.PROFILE7_TO_HDR10
+                        else -> DolbyVisionTransformMode.DISABLED
+                    },
+                ),
+            )
 
         // Now Playing metadata — drives the system media notification + lock
         // screen via MediaSession. Title/subtitle/artwork are all optional so
@@ -385,12 +403,16 @@ class SiloPlayerFactory(
 
     private class SiloMediaSourceFactory(
         private val defaultFactory: MediaSource.Factory,
+        private val dv81Factory: MediaSource.Factory,
+        private val hdr10Factory: MediaSource.Factory,
         private val hlsFactory: MediaSource.Factory,
     ) : MediaSource.Factory {
         override fun setDrmSessionManagerProvider(
             drmSessionManagerProvider: DrmSessionManagerProvider,
         ): MediaSource.Factory {
             defaultFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
+            dv81Factory.setDrmSessionManagerProvider(drmSessionManagerProvider)
+            hdr10Factory.setDrmSessionManagerProvider(drmSessionManagerProvider)
             hlsFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
             return this
         }
@@ -399,6 +421,8 @@ class SiloPlayerFactory(
             loadErrorHandlingPolicy: LoadErrorHandlingPolicy,
         ): MediaSource.Factory {
             defaultFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+            dv81Factory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+            hdr10Factory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
             hlsFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
             return this
         }
@@ -419,7 +443,11 @@ class SiloPlayerFactory(
             return if (contentType == C.CONTENT_TYPE_HLS && !hasExternalSubtitleSidecars) {
                 hlsFactory.createMediaSource(mediaItem)
             } else {
-                defaultFactory.createMediaSource(mediaItem)
+                when ((localConfiguration.tag as? SiloMediaTransformTag)?.dolbyVisionMode) {
+                    DolbyVisionTransformMode.PROFILE7_TO_PROFILE81 -> dv81Factory.createMediaSource(mediaItem)
+                    DolbyVisionTransformMode.PROFILE7_TO_HDR10 -> hdr10Factory.createMediaSource(mediaItem)
+                    else -> defaultFactory.createMediaSource(mediaItem)
+                }
             }
         }
     }

@@ -98,6 +98,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
             subtitleCodec = subtitle.artifact?.format,
         ),
         claims = claims,
+        transformations = transformations,
         degradationWarnings = degradationWarnings,
         decisionTrace = listOf(decisionReason),
         requestedMediaFileId = requestedMediaFileId ?: mediaFileId,

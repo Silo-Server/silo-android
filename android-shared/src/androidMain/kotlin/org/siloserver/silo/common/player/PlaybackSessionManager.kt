@@ -209,13 +209,18 @@ open class PlaybackSessionManager(
         val currentCapabilities = capabilities ?: active.capabilities
         val currentContext = clientPlaybackContext ?: active.context
         val failedKey = active.planAttemptKey
-        val attemptedKeys = (active.attemptedPlanKeys + failedKey).distinct()
         val invalidation = classification in setOf(
             "audio_track_changed",
             "subtitle_track_changed",
             "quality_changed",
             "output_route_changed",
         )
+        val attemptedKeys = if (invalidation) {
+            emptyList()
+        } else {
+            (active.attemptedPlanKeys + failedKey).distinct()
+        }
+        val requestAttemptCount = if (invalidation) 1 else active.attemptCount
         emitRouteEvent(
             PlaybackRouteEventV3(
                 playbackAttemptId = active.playbackAttemptId,
@@ -236,7 +241,7 @@ open class PlaybackSessionManager(
             planAttemptId = active.planAttemptId,
             planAttemptKey = failedKey,
             attemptedPlanKeys = attemptedKeys,
-            attemptCount = active.attemptCount,
+            attemptCount = requestAttemptCount,
             qualityPreference = qualityPreference?.lowercase() ?: active.qualityPreference,
             positionSeconds = positionSeconds,
             outputRouteGeneration = currentContext.output.outputRouteGeneration,
@@ -274,7 +279,7 @@ open class PlaybackSessionManager(
                         planAttemptKey = nextKey,
                         localMutations = emptyList(),
                         attemptedPlanKeys = attemptedKeys + nextKey,
-                        attemptCount = active.attemptCount + 1,
+                        attemptCount = if (invalidation) 1 else active.attemptCount + 1,
                         qualityPreference = request.qualityPreference,
                         capabilities = currentCapabilities,
                         context = currentContext,

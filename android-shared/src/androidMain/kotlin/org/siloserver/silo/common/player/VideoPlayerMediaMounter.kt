@@ -24,6 +24,7 @@ fun mountVideoMedia(
         artworkUrl = spec.artworkUrl,
         durationMs = spec.durationMs,
         requestHeaders = spec.requestHeaders,
+        transformations = spec.transformations,
     )
     player.setMediaItem(mediaItem, startPositionMs.coerceAtLeast(0L))
     player.prepare()
@@ -50,6 +51,7 @@ fun refreshMountedVideoMedia(
         artworkUrl = spec.artworkUrl,
         durationMs = spec.durationMs,
         requestHeaders = spec.requestHeaders,
+        transformations = spec.transformations,
     )
     player.setMediaItem(mediaItem, resumePositionMs)
     player.prepare()

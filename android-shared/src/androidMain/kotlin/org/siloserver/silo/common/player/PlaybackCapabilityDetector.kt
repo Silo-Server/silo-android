@@ -16,10 +16,16 @@ import org.siloserver.silo.model.playback.EngineCapabilityEnvelope
 import org.siloserver.silo.model.playback.EngineSubtitleCapabilities
 import org.siloserver.silo.model.playback.DETAILED_DECODE_CAPABILITIES_FEATURE
 import org.siloserver.silo.model.playback.LAYOUT_AWARE_PASSTHROUGH_FEATURE
+import org.siloserver.silo.model.playback.CLIENT_VIDEO_TRANSFORMATIONS_FEATURE
+import org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81
+import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
+import org.siloserver.silo.model.playback.CLIENT_DV_TRANSFORM_RECIPE_VERSION
 import org.siloserver.silo.model.playback.MEDIA3_ONLY_FEATURE
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDeviceContext
 import org.siloserver.silo.model.playback.PlaybackEngineKind
+import org.siloserver.silo.model.playback.PlaybackTransformationExecutor
+import org.siloserver.silo.model.playback.PlaybackTransformationV3
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import kotlinx.coroutines.flow.StateFlow
 
@@ -192,6 +198,37 @@ class PlaybackCapabilityDetector(
             add(MEDIA3_ONLY_FEATURE)
             add(DETAILED_DECODE_CAPABILITIES_FEATURE)
             if (!passthrough?.entries.isNullOrEmpty()) add(LAYOUT_AWARE_PASSTHROUGH_FEATURE)
+            add(CLIENT_VIDEO_TRANSFORMATIONS_FEATURE)
+        }
+        val clientVideoTransformations = buildList {
+            if (8 in caps.hdrDetails?.dolbyVisionProfiles.orEmpty() && NativeDolbyVisionRpuConverter.isAvailable) {
+                add(
+                    PlaybackTransformationV3(
+                        name = CLIENT_DV7_TO_DV81,
+                        executor = PlaybackTransformationExecutor.CLIENT,
+                        recipeVersion = CLIENT_DV_TRANSFORM_RECIPE_VERSION,
+                        validatedClaims = listOf(
+                            "profile7_rpu_converted_to_profile81",
+                            "hdr10_base_layer_preserved",
+                            "enhancement_layer_discarded",
+                        ),
+                    ),
+                )
+            }
+            if (caps.hdrDetails?.hdr10 == true) {
+                add(
+                    PlaybackTransformationV3(
+                        name = CLIENT_DV7_TO_HDR10,
+                        executor = PlaybackTransformationExecutor.CLIENT,
+                        recipeVersion = CLIENT_DV_TRANSFORM_RECIPE_VERSION,
+                        validatedClaims = listOf(
+                            "dolby_vision_metadata_removed",
+                            "hdr10_base_layer_preserved",
+                            "enhancement_layer_discarded",
+                        ),
+                    ),
+                )
+            }
         }
         return ClientPlaybackContext(
             features = contextFeatures,
@@ -235,12 +272,14 @@ class PlaybackCapabilityDetector(
                         fontAttachments = false,
                     ),
                     features = listOf("track_switching", "audio_delay", "subtitle_delay", "buffer_reporting"),
+                    transformations = clientVideoTransformations,
                     authHeaderRefresh = true,
                     validatedClaims = emptyList(),
                 ),
                 PlaybackEngineKind.MEDIA3_PROGRESSIVE_REMUX to EngineCapabilityEnvelope(
-                    enabled = true,
-                    supportedOnDevice = true,
+                    enabled = false,
+                    supportedOnDevice = false,
+                    failureReason = "disabled_pending_seekable_transport",
                     containers = listOf("mp4", "m4v", "webm", "mkv", "matroska"),
                     videoCodecs = caps.codecsVideo,
                     audioDecodeCodecs = media3Audio,

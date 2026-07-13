@@ -113,6 +113,88 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
+    fun unknownClientTransformationRequestsAReplan() {
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = 3,
+            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(
+                transformations = listOf(
+                    PlaybackTransformationV3(
+                        name = "client_future_transform",
+                        executor = PlaybackTransformationExecutor.CLIENT,
+                        recipeVersion = "99",
+                    ),
+                ),
+            ),
+        ).validateForMedia3()
+
+        assertEquals(
+            "unsupported_client_transformation:client_future_transform:99",
+            assertIs<PlaybackV3Validation.ReplanRequired>(result).reason,
+        )
+    }
+
+    @Test
+    fun clientTransformationRequiresDirectMedia3Engine() {
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = 3,
+            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(
+                engine = PlaybackEngineKind.MEDIA3_HLS,
+                transformations = listOf(
+                    PlaybackTransformationV3(
+                        name = CLIENT_DV7_TO_HDR10,
+                        executor = PlaybackTransformationExecutor.CLIENT,
+                        recipeVersion = CLIENT_DV_TRANSFORM_RECIPE_VERSION,
+                    ),
+                ),
+            ),
+        ).validateForMedia3()
+
+        assertEquals(
+            "client_transformation_requires_media3_direct",
+            assertIs<PlaybackV3Validation.ReplanRequired>(result).reason,
+        )
+    }
+
+    @Test
+    fun clientTransformationExecutionPreservesOwnershipAndRejectsConflicts() {
+        val reservedServerTransform = plan.copy(
+            transformations = listOf(
+                PlaybackTransformationV3(
+                    name = CLIENT_DV7_TO_DV81,
+                    executor = PlaybackTransformationExecutor.SERVER,
+                ),
+            ),
+        )
+        assertTrue(reservedServerTransform.executableMedia3ClientTransformations().isEmpty())
+
+        val conflicting = PlaybackDecisionResponseV3(
+            protocolVersion = 3,
+            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(
+                transformations = listOf(
+                    PlaybackTransformationV3(
+                        CLIENT_DV7_TO_DV81,
+                        PlaybackTransformationExecutor.CLIENT,
+                    ),
+                    PlaybackTransformationV3(
+                        CLIENT_DV7_TO_HDR10,
+                        PlaybackTransformationExecutor.CLIENT,
+                    ),
+                ),
+            ),
+        ).validateForMedia3()
+        assertEquals(
+            "conflicting_client_video_transformations",
+            assertIs<PlaybackV3Validation.ReplanRequired>(conflicting).reason,
+        )
+    }
+
+    @Test
     fun attemptKeyIsCanonicalAndOutputRouteAware() {
         val a = plan.copy(
             transformations = listOf(
@@ -129,6 +211,36 @@ class PlaybackProtocolV3Test {
         assertEquals(a, b)
         assertNotEquals(a, plan.planAttemptKey(8, listOf("pcm:truehd:8", "transport_reopen")))
         assertTrue(a.matches(Regex("v3:[0-9a-f]{16}")))
+    }
+
+    @Test
+    fun attemptKeyMatchesGoClientTransformationFixture() {
+        val fixture = plan.copy(
+            planId = "plan:dv81-fixture",
+            delivery = PlaybackDelivery.ORIGINAL_HTTP,
+            stream = plan.stream.copy(
+                protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
+                container = "mkv",
+            ),
+            effectiveRecipe = plan.effectiveRecipe.copy(
+                videoCodec = "hevc",
+                audioCodec = "truehd",
+                width = 3840,
+                height = 2160,
+                bitrateKbps = 65_000,
+                dynamicRange = "dolby_vision",
+            ),
+            subtitle = PlaybackSubtitleDecisionV3(mode = PlaybackSubtitleModeV3.OFF),
+            transformations = listOf(
+                PlaybackTransformationV3(
+                    name = CLIENT_DV7_TO_DV81,
+                    executor = PlaybackTransformationExecutor.CLIENT,
+                    recipeVersion = "1",
+                ),
+            ),
+        )
+
+        assertEquals("v3:2a88b5e686373440", fixture.planAttemptKey(9))
     }
 
     @Test

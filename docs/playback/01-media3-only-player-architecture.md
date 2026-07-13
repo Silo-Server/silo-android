@@ -1,6 +1,8 @@
 # Media3-Only Player Architecture
 
-Status: **implemented in Android; server Phase 0 and named hardware validation remain gated**.
+Status: **implemented in Android and validated against the dev-server v3 flow;
+the published minimum server revision and named hardware validation remain
+gated**.
 
 This document is normative for finished playback behaviour. Migration order,
 temporary compatibility code, release gates, and file-removal checklists belong

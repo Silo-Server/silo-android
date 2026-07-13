@@ -104,6 +104,7 @@ import org.siloserver.silo.cast.SiloCastTrack
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackSourceMetadata
+import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.model.settings.legacyPosition
@@ -988,6 +989,7 @@ fun TvPlayerScreen(
             durationSeconds = state.duration,
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,
+            transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
         )
         state.sessionId?.let { sessionId ->
             startupStallDetector.onMounted(
@@ -1026,6 +1028,7 @@ fun TvPlayerScreen(
             durationSeconds = state.duration,
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,
+            transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
         )
         backend.refresh(mediaSpec)
     }

@@ -2,6 +2,8 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.player.dolbyVisionTransformClassification
+
 import org.siloserver.silo.tv.BuildConfig
 
 import android.util.Log
@@ -1200,7 +1202,9 @@ class TvPlayerViewModel(
         org.siloserver.silo.common.player.Playability.Supported -> "none"
     }
 
-    private fun androidx.media3.common.PlaybackException.failureClassification(): String = when (errorCode) {
+    private fun androidx.media3.common.PlaybackException.failureClassification(): String =
+        dolbyVisionTransformClassification()?.let { return it }
+            ?: when (errorCode) {
         androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED,
         androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
         androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
@@ -1210,8 +1214,8 @@ class TvPlayerViewModel(
         -> "transport_stall"
         androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "http_failure"
         androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "source_unavailable"
-        else -> "player_failure"
-    }
+                else -> "player_failure"
+            }
 
     private fun String?.toAudioMimeType(): String? = when (this?.trim()?.lowercase()) {
         "aac" -> androidx.media3.common.MimeTypes.AUDIO_AAC

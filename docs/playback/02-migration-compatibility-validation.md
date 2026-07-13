@@ -1,6 +1,8 @@
 # Migration, Compatibility, and Validation
 
-Status: **Release B target implemented in Android; rollout remains blocked on Phase 0 server readiness**.
+Status: **Release B target and dev-server v3 flow implemented; rollout remains
+blocked on a published minimum server revision and the remaining Phase 0
+hardware fixtures**.
 
 The current source tree contains the Release B target (MPV behaviour and
 packaging are both removed). The A/B split below remains the recommended

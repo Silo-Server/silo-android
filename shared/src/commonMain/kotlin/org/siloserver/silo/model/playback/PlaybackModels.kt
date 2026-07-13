@@ -171,6 +171,7 @@ data class PlaybackExecutionPlan(
     val capabilities: RouteCapabilitySnapshot = RouteCapabilitySnapshot(),
     val requirements: RouteRequirements = RouteRequirements(),
     val claims: PlaybackValidationClaims = PlaybackValidationClaims(),
+    val transformations: List<PlaybackTransformationV3> = emptyList(),
     val fallbacks: List<PlaybackFallbackCandidate> = emptyList(),
     @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
     @SerialName("decision_trace") val decisionTrace: List<String> = emptyList(),
@@ -357,6 +358,7 @@ data class EngineCapabilityEnvelope(
     @SerialName("hdr_details") val hdrDetails: HdrCapabilities? = null,
     val subtitles: EngineSubtitleCapabilities = EngineSubtitleCapabilities(),
     val features: List<String> = emptyList(),
+    val transformations: List<PlaybackTransformationV3> = emptyList(),
     @SerialName("auth_header_refresh") val authHeaderRefresh: Boolean = false,
     @SerialName("validated_claims") val validatedClaims: List<String> = emptyList(),
 )

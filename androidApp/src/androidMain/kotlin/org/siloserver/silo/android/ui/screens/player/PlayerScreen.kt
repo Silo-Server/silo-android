@@ -68,6 +68,7 @@ import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackSourceMetadata
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.player.DolbyVisionDetection
 import com.google.common.util.concurrent.MoreExecutors
@@ -469,6 +470,7 @@ fun PlayerScreen(
             durationSeconds = uiState.duration,
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = uiState.requestHeaders,
+            transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
         )
         if (localUri == null && uiState.sessionId != null) {
             startupStallDetector.onMounted(
@@ -528,6 +530,7 @@ fun PlayerScreen(
                 emptyList()
             },
             requestHeaders = if (localUri == null) uiState.requestHeaders else emptyMap(),
+            transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
         )
         backend.refresh(mediaSpec)
     }

@@ -31,39 +31,77 @@ import java.nio.ByteOrder
 @UnstableApi
 internal class DolbyVisionColorInfoExtractorsFactory(
     private val delegate: ExtractorsFactory,
+    private val transformMode: DolbyVisionTransformMode = DolbyVisionTransformMode.DISABLED,
+    private val converter: DolbyVisionRpuConverter = NativeDolbyVisionRpuConverter,
 ) : ExtractorsFactory {
     override fun createExtractors(): Array<Extractor> =
-        delegate.createExtractors().map(::ColorInfoExtractor).toTypedArray()
+        delegate.createExtractors().map(::wrap).toTypedArray()
 
     override fun createExtractors(
         uri: Uri,
         responseHeaders: Map<String, List<String>>,
     ): Array<Extractor> = delegate.createExtractors(uri, responseHeaders)
-        .map(::ColorInfoExtractor)
+        .map(::wrap)
         .toTypedArray()
+
+    private fun wrap(extractor: Extractor): Extractor =
+        ColorInfoExtractor(extractor, transformMode, converter)
 
     private class ColorInfoExtractor(
         private val delegate: Extractor,
+        private val transformMode: DolbyVisionTransformMode,
+        private val converter: DolbyVisionRpuConverter,
     ) : Extractor by delegate {
+        private var output: ColorInfoExtractorOutput? = null
+
         override fun init(output: ExtractorOutput) {
-            delegate.init(ColorInfoExtractorOutput(output))
+            val wrapped = ColorInfoExtractorOutput(output, transformMode, converter)
+            this.output = wrapped
+            delegate.init(wrapped)
+        }
+
+        override fun seek(position: Long, timeUs: Long) {
+            output?.reset()
+            delegate.seek(position, timeUs)
+        }
+
+        override fun release() {
+            output?.reset()
+            output = null
+            delegate.release()
         }
     }
 
     private class ColorInfoExtractorOutput(
         private val delegate: ExtractorOutput,
+        private val transformMode: DolbyVisionTransformMode,
+        private val converter: DolbyVisionRpuConverter,
     ) : ExtractorOutput {
-        override fun track(id: Int, type: Int): TrackOutput =
-            ColorInfoTrackOutput(delegate.track(id, type))
+        private val tracks = mutableMapOf<Int, TrackOutput>()
+
+        override fun track(id: Int, type: Int): TrackOutput = tracks.getOrPut(id) {
+            val output = delegate.track(id, type)
+            if (type == C.TRACK_TYPE_VIDEO && transformMode != DolbyVisionTransformMode.DISABLED) {
+                DolbyVisionTransformingTrackOutput(output, transformMode, converter)
+            } else {
+                ColorInfoTrackOutput(output)
+            }
+        }
 
         override fun endTracks() = delegate.endTracks()
 
         override fun seekMap(seekMap: SeekMap) = delegate.seekMap(seekMap)
+
+        fun reset() {
+            tracks.values.filterIsInstance<DolbyVisionTransformingTrackOutput>().forEach { it.reset() }
+        }
     }
 
     private class ColorInfoTrackOutput(
         private val delegate: TrackOutput,
     ) : TrackOutput {
+        override fun durationUs(durationUs: Long) = delegate.durationUs(durationUs)
+
         override fun format(format: Format) {
             delegate.format(format.withDolbyVisionHdrColorInfo())
         }
@@ -95,6 +133,13 @@ internal class DolbyVisionColorInfoExtractorsFactory(
 internal fun Format.withDolbyVisionHdrColorInfo(): Format {
     if (sampleMimeType != MimeTypes.VIDEO_DOLBY_VISION) return this
     val current = colorInfo
+    // Do not rewrite a valid non-PQ base layer (notably Profile 8.4 HLG).
+    // This repair exists only for containers where Media3 emitted no usable
+    // color signaling before MediaCodec configuration.
+    if (current != null &&
+        current.colorTransfer != -1 &&
+        current.colorTransfer != C.COLOR_TRANSFER_ST2084
+    ) return this
     if (current != null &&
         current.colorSpace == C.COLOR_SPACE_BT2020 &&
         current.colorTransfer == C.COLOR_TRANSFER_ST2084 &&

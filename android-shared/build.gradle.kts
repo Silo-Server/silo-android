@@ -54,6 +54,9 @@ kotlin {
             // BuildConfig.FFMPEG_AUDIO_ENABLED flag gates whether we *prefer*
             // it over platform decoders.
             implementation(files("libs/media3-decoder-ffmpeg-1.10.1.aar"))
+            // Reproducibly built JNI bridge for client-side Dolby Vision
+            // Profile 7 RPU conversion. See scripts/build-dovi-aar.sh.
+            implementation(files("libs/silo-dovi-bridge-2.3.1.aar"))
 
             // Coroutines
             implementation(libs.kotlinx.coroutines.android)

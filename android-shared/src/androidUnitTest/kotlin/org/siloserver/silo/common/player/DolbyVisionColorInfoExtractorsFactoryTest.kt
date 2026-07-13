@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player
 
 import androidx.media3.common.C
+import androidx.media3.common.ColorInfo
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import kotlin.test.Test
@@ -33,5 +34,38 @@ class DolbyVisionColorInfoExtractorsFactoryTest {
 
         assertSame(source, result)
         assertNull(result.colorInfo)
+    }
+
+    @Test
+    fun completesMissingRangeForBt2020PqDolbyVision() {
+        val source = Format.Builder()
+            .setSampleMimeType(MimeTypes.VIDEO_DOLBY_VISION)
+            .setColorInfo(
+                ColorInfo.Builder()
+                    .setColorSpace(C.COLOR_SPACE_BT2020)
+                    .setColorTransfer(C.COLOR_TRANSFER_ST2084)
+                    .build(),
+            )
+            .build()
+
+        val repaired = source.withDolbyVisionHdrColorInfo()
+
+        assertEquals(C.COLOR_RANGE_LIMITED, repaired.colorInfo?.colorRange)
+    }
+
+    @Test
+    fun preservesKnownHlgBaseLayerSignaling() {
+        val source = Format.Builder()
+            .setSampleMimeType(MimeTypes.VIDEO_DOLBY_VISION)
+            .setColorInfo(
+                ColorInfo.Builder()
+                    .setColorSpace(C.COLOR_SPACE_BT2020)
+                    .setColorTransfer(C.COLOR_TRANSFER_HLG)
+                    .setColorRange(C.COLOR_RANGE_LIMITED)
+                    .build(),
+            )
+            .build()
+
+        assertSame(source, source.withDolbyVisionHdrColorInfo())
     }
 }

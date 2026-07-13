@@ -16,6 +16,10 @@ const val PLAYBACK_PLAN_V3_FEATURE = "playback_plan_v3"
 const val MEDIA3_ONLY_FEATURE = "media3_only"
 const val DETAILED_DECODE_CAPABILITIES_FEATURE = "detailed_decode_capabilities"
 const val LAYOUT_AWARE_PASSTHROUGH_FEATURE = "layout_aware_passthrough"
+const val CLIENT_VIDEO_TRANSFORMATIONS_FEATURE = "client_video_transformations_v1"
+const val CLIENT_DV7_TO_DV81 = "client_dv7_to_dv81"
+const val CLIENT_DV7_TO_HDR10 = "client_dv7_to_hdr10"
+const val CLIENT_DV_TRANSFORM_RECIPE_VERSION = "1"
 
 @Serializable
 enum class PlaybackDecisionOutcome {
@@ -176,8 +180,16 @@ data class PlaybackSubtitleDecisionV3(
 @Serializable
 data class PlaybackTransformationV3(
     val name: String,
+    val executor: PlaybackTransformationExecutor = PlaybackTransformationExecutor.SERVER,
+    @SerialName("recipe_version") val recipeVersion: String = "1",
     @SerialName("validated_claims") val validatedClaims: List<String> = emptyList(),
 )
+
+@Serializable
+enum class PlaybackTransformationExecutor {
+    @SerialName("client") CLIENT,
+    @SerialName("server") SERVER,
+}
 
 @Serializable
 data class PlaybackTerminalV3(
@@ -193,6 +205,7 @@ data class PlaybackStartRequestV3(
         PLAYBACK_PLAN_V3_FEATURE,
         MEDIA3_ONLY_FEATURE,
         DETAILED_DECODE_CAPABILITIES_FEATURE,
+        CLIENT_VIDEO_TRANSFORMATIONS_FEATURE,
     ),
     @SerialName("file_id") val fileId: Int,
     @SerialName("profile_id") val profileId: String,
@@ -269,7 +282,11 @@ fun PlaybackPlanV3.planAttemptKey(
         append('|').append(effectiveRecipe.bitrateKbps ?: 0)
         append('|').append(effectiveRecipe.dynamicRange.orEmpty().lowercase())
         append('|').append(subtitle.mode.name)
-        append('|').append(transformations.sortedBy { it.name }.joinToString(",") { it.name })
+        append('|').append(transformations.map {
+            "${it.executor.name.lowercase()}:${it.name}:${it.recipeVersion}"
+        }.sorted().joinToString(",") {
+            it
+        })
         append('|').append(outputRouteGeneration)
         append('|').append(localMutations.sorted().joinToString(","))
     }
@@ -330,5 +347,56 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
             false,
         )
     }
+    val unsupportedClientTransform = plan.transformations.firstOrNull {
+        it.executor == PlaybackTransformationExecutor.CLIENT &&
+            (it.recipeVersion != CLIENT_DV_TRANSFORM_RECIPE_VERSION ||
+                it.name !in setOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10))
+    }
+    if (unsupportedClientTransform != null) {
+        return PlaybackV3Validation.ReplanRequired(
+            "unsupported_client_transformation:${unsupportedClientTransform.name}:${unsupportedClientTransform.recipeVersion}",
+            plan,
+            resolvedSessionId,
+        )
+    }
+    val requestedClientVideoTransforms = plan.transformations.filter {
+        it.executor == PlaybackTransformationExecutor.CLIENT &&
+            it.name in setOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10)
+    }
+    if (requestedClientVideoTransforms.size > 1) {
+        return PlaybackV3Validation.ReplanRequired(
+            "conflicting_client_video_transformations",
+            plan,
+            resolvedSessionId,
+        )
+    }
+    if (plan.transformations.any { it.executor == PlaybackTransformationExecutor.CLIENT } &&
+        plan.engine != PlaybackEngineKind.MEDIA3_DIRECT
+    ) {
+        return PlaybackV3Validation.ReplanRequired(
+            "client_transformation_requires_media3_direct",
+            plan,
+            resolvedSessionId,
+        )
+    }
+    if (plan.delivery == PlaybackDelivery.ORIGINAL_HTTP &&
+        plan.transformations.any { it.executor == PlaybackTransformationExecutor.SERVER }
+    ) {
+        return PlaybackV3Validation.ReplanRequired("invalid_original_server_transformation", plan, resolvedSessionId)
+    }
     return PlaybackV3Validation.Playable(plan, resolvedSessionId)
 }
+
+fun PlaybackPlanV3.executableMedia3ClientTransformations(): List<String> =
+    transformations.executableMedia3ClientTransformations()
+
+fun PlaybackExecutionPlan.executableMedia3ClientTransformations(): List<String> =
+    transformations.executableMedia3ClientTransformations()
+
+private fun List<PlaybackTransformationV3>.executableMedia3ClientTransformations(): List<String> = this
+    .filter {
+        it.executor == PlaybackTransformationExecutor.CLIENT &&
+            it.recipeVersion == CLIENT_DV_TRANSFORM_RECIPE_VERSION &&
+            it.name in setOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10)
+    }
+    .map { it.name }

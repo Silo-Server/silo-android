@@ -18,6 +18,7 @@ data class VideoPlayerMediaSpec(
     val durationSeconds: Double = 0.0,
     val audioPassthroughCodecs: List<String> = emptyList(),
     val requestHeaders: Map<String, String> = emptyMap(),
+    val transformations: List<String> = emptyList(),
 ) {
     val startPositionMs: Long
         get() {

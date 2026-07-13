@@ -77,15 +77,19 @@ This proves install, startup, Media3 initialization, and hardware H.264 decode
 on this connection. It does not prove 4K output, HDR signaling, Dolby Vision
 preservation, or lossless audio passthrough.
 
-## External server gate
+## Dev-server v3 validation
 
-The Android client intentionally does not invent a v2 video fallback. Before
-video can be release-tested end to end, the deployed Silo server must implement
-and advertise the three canonical v3 endpoints from document 01, return
-complete executable plans/terminals, ingest attempt-scoped route events, and
-pass the Phase 0 direct/remux/transcode fixtures. Until then the correct client
-result is the server-upgrade error. Audiobook startup/transcode remains on its
-existing audio-scoped contract.
+The dev deployment now implements the canonical v3 start/replan/event flow,
+returns executable direct/remux/transcode plans, and records attempt-scoped
+route events. End-to-end Shield playback has confirmed original HTTP,
+progressive remux, HLS transcode, replanning, and first-frame ingestion.
+
+The live 1080p route matrix and remaining server/client capability gaps are in
+[the Shield capability audit](05-shield-1080p-playback-capability-audit.md).
+Production release still requires a named minimum server revision and the
+Phase 0 fixture gate from document 02. The Android client intentionally retains
+no v2 video fallback. Audiobook startup/transcode remains on its existing
+audio-scoped contract.
 
 ## 4K Dolby Vision TV handoff
 
