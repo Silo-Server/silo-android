@@ -15,6 +15,7 @@ import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileRepository
@@ -45,6 +46,7 @@ class TvSettingsViewModel(
     private val authRepository: AuthRepository,
     private val profileRepository: ProfileRepository,
     private val tokenManager: TokenManager,
+    private val serverRegistry: ServerRegistry,
     private val playerSettingsStore: PlayerSettingsStore,
     private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
     private val overlayPrefsStore: OverlayPrefsStore,
@@ -157,8 +159,16 @@ class TvSettingsViewModel(
 
     private fun loadSettings() {
         viewModelScope.launch {
-            val serverUrl = tokenManager.getServerUrl()
-            _uiState.update { it.copy(serverUrl = serverUrl, serverName = serverDisplayName(serverUrl)) }
+            val activeServer = serverRegistry.activeEntry.value
+            val serverUrl = activeServer?.url ?: tokenManager.getServerUrl()
+            _uiState.update {
+                it.copy(
+                    serverUrl = serverUrl,
+                    serverName = activeServer?.fetchedName?.takeIf { it.isNotBlank() }
+                        ?: activeServer?.displayName
+                        ?: serverDisplayName(serverUrl),
+                )
+            }
 
             // One-shot import of pre-server-sync TvPreferences values.
             // Idempotent — sentinel-gated inside the migration.
@@ -198,7 +208,7 @@ class TvSettingsViewModel(
                 playerSettingsStore.autoPlayNextFlow,
                 playerSettingsStore.autoSkipIntroFlow,
                 playerSettingsStore.autoSkipCreditsFlow,
-                playerSettingsStore.subtitleAppearanceFlow,
+                playerSettingsStore.savedCustomSubtitleAppearanceFlow,
                 playerSettingsStore.audioLanguageFlow,
                 playerSettingsStore.resumeRewindSecondsFlow,
                 playerSettingsStore.passOutThresholdFlow,
@@ -394,6 +404,12 @@ class TvSettingsViewModel(
     fun setSubtitleBackgroundColor(value: String) = editAppearance { it.copy(backgroundColor = value) }
 
     fun setSubtitlePosition(value: SubtitlePositionPreset) = editAppearance { it.copy(position = value) }
+
+    fun resetSubtitleAppearance() {
+        viewModelScope.launch {
+            playerSettingsStore.setSubtitleAppearance(SubtitleAppearance.DEFAULT)
+        }
+    }
 
     /** Toggle the device-level subtitle-appearance override (Custom Appearance). */
     fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {

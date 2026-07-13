@@ -164,6 +164,9 @@ import org.koin.compose.koinInject
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun TvMainShell(
+    returnToManageServers: Boolean = false,
+    onManageServersReturnFocusConsumed: () -> Unit = {},
+    onManageServers: () -> Unit,
     onOpenItemDetail: (contentId: String) -> Unit,
     onOpenLibraryCollectionDetail: (libraryId: Int, collectionId: String, title: String) -> Unit,
     onOpenCollectionDetail: (collectionId: String, title: String) -> Unit,
@@ -1010,16 +1013,13 @@ fun TvMainShell(
                             navigateToSecondary(TvMainRoute.AdminDashboard.route)
                             moveFocusToContent(TvMainRoute.AdminDashboard.route)
                         },
-                        onManageSessions = { navigateToSecondary(TvMainRoute.ManageSessions.route) },
-                        onPairDevice = onPairDevice,
-                        onManageServers = onSwitchServer,
+                        onManageServers = onManageServers,
+                        initialManageServersFocus = returnToManageServers,
+                        onManageServersReturnFocusConsumed = onManageServersReturnFocusConsumed,
                         onSignedOut = onSignedOut,
                         onSwitchProfile = onSwitchProfile,
                         onNavigateHome = {
                             navigateToRoute(firstTvRoute())
-                            focusState.requestMenuFocus(
-                                TvTopMenuPanel.Root(TvRootDestination.Home),
-                            )
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
@@ -1282,9 +1282,12 @@ fun TvMainShell(
                     navigateToSecondary(TvMainRoute.Requests.route)
                     moveFocusToContent(TvMainRoute.Requests.route)
                 },
-                onSettings = closeMenuAnd {
+                onSettings = {
+                    // Keep focus on the dropdown row through the route fade.
+                    // TvSettingsScreen closes the menu only after its General
+                    // rail requester is composed and ready, avoiding a flash of
+                    // the Home row restored by the shared content container.
                     navigateToRoute(TvMainRoute.Settings.route)
-                    moveFocusToContent(TvMainRoute.Settings.route)
                 },
                 onSwitchServer = closeMenuAnd(onSwitchServer),
                 onSignOut = closeMenuAnd(onSignedOut),

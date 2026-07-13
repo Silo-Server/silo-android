@@ -332,6 +332,32 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `disabling subtitle override retains last custom appearance locally`() = runTest {
+        val fallback = SubtitleAppearance.DEFAULT.copy(fontColor = "#00ff00")
+        val repo = SettingsRepository(
+            FakeSettingsApi(
+                effective = mapOf(
+                    PlaybackSettingsKeys.SubtitleAppearance to fallback.toJsonString(),
+                ),
+            ),
+        )
+        val store = newStore(repository = repo)
+        val custom = SubtitleAppearance.DEFAULT.copy(
+            fontSize = SubtitleFontSizePreset.XXLarge,
+            fontColor = "#ff0000",
+        )
+
+        store.setSubtitleAppearance(custom)
+        store.setSubtitleDeviceOverrideEnabled(false)
+
+        assertEquals(fallback, store.subtitleAppearanceFlow.first())
+        assertEquals(custom, store.savedCustomSubtitleAppearanceFlow.first())
+
+        store.setSubtitleDeviceOverrideEnabled(true)
+        assertEquals(custom, store.subtitleAppearanceFlow.first())
+    }
+
+    @Test
     fun `flushPendingDeviceSettings delegates to flusher flushNow`() = runTest {
         val store = newStore()
         store.flushPendingDeviceSettings()

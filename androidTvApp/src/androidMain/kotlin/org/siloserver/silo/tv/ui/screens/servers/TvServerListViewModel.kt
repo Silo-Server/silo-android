@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,12 +36,14 @@ data class TvServerListUiState(
 class TvServerListViewModel(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvServerListUiState())
     val uiState: StateFlow<TvServerListUiState> = _uiState.asStateFlow()
 
     init {
+        viewModelScope.launch { authRepository.refreshActiveServerName() }
         viewModelScope.launch {
             combine(
                 serverRegistry.entries,
@@ -129,10 +132,4 @@ class TvServerListViewModel(
         }
     }
 
-    /** Set a user override display name for a saved server (blank clears it). */
-    fun onRename(serverId: String, name: String) {
-        viewModelScope.launch {
-            serverRegistry.rename(serverId, name.trim().ifBlank { null })
-        }
-    }
 }

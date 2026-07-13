@@ -43,6 +43,9 @@ interface PlayerSettingsStore {
 
     // Composite
     val subtitleAppearanceFlow: Flow<SubtitleAppearance>
+    /** Last explicitly edited custom appearance, retained while its override is disabled. */
+    val savedCustomSubtitleAppearanceFlow: Flow<SubtitleAppearance>
+        get() = subtitleAppearanceFlow
 
     /**
      * Whether the user has enabled a device-scoped subtitle-appearance

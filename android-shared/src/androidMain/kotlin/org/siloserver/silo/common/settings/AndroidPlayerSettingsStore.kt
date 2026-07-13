@@ -220,6 +220,14 @@ class AndroidPlayerSettingsStore(
             SubtitleAppearance.decode(p.stringFor(s, PlaybackSettingsKeys.SubtitleAppearance, ""))
         }
 
+    override val savedCustomSubtitleAppearanceFlow: Flow<SubtitleAppearance> =
+        profileScopedFlow(SubtitleAppearance.DEFAULT) { p, s ->
+            SubtitleAppearance.decode(
+                p[stringPreferencesKey(s.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)]
+                    ?: p.stringFor(s, PlaybackSettingsKeys.SubtitleAppearance, ""),
+            )
+        }
+
     override val subtitleMatchesDeviceFlow: Flow<Boolean> =
         profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.SubtitleMatchesDevice, false) }
 
@@ -322,6 +330,7 @@ class AndroidPlayerSettingsStore(
         withScope { scope, store ->
             store.edit {
                 it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
+                it[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
                 // Setting an explicit appearance implicitly enables the
                 // device override (matches iOS `setSubtitleAppearance`).
                 it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
@@ -349,12 +358,14 @@ class AndroidPlayerSettingsStore(
 
             if (enabled) {
                 val appearance = SubtitleAppearance.decode(
-                    snapshot.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "")
+                    snapshot[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)]
+                        ?: snapshot.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "")
                 )
                 val json = appearance.sanitized().toJsonString()
                 store.edit {
                     it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
                     it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
+                    it[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
                 }
                 serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json)
                 serverSettingsFlusher.flushNow()
@@ -410,6 +421,10 @@ class AndroidPlayerSettingsStore(
             val subtitleEntry = effective[PlaybackSettingsKeys.SubtitleAppearance]
             prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] =
                 subtitleEntry?.hasDeviceOverride ?: false
+            if (subtitleEntry?.hasDeviceOverride == true) {
+                prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] =
+                    subtitleEntry.effectiveValue
+            }
         }
     }
 
@@ -510,6 +525,7 @@ class AndroidPlayerSettingsStore(
         scopedRead(scope, baseKey, default, ::stringPreferencesKey)
 
     private companion object {
+        const val SAVED_CUSTOM_SUBTITLE_APPEARANCE = "subtitle_appearance.saved_custom"
         const val MIGRATION_SENTINEL_LEGACY = "migration_v1"
         const val MISSING_SENTINEL = "__missing__"
         // F1/F2 local-only defaults (mirror DefaultResumeRewindSeconds=7.0 and

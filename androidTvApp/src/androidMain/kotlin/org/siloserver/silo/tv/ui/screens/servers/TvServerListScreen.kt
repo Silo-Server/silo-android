@@ -2,6 +2,8 @@ package org.siloserver.silo.tv.ui.screens.servers
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,13 +15,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Card
@@ -44,8 +48,10 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.tv.ui.components.TvDialogOption
 import org.siloserver.silo.tv.ui.components.TvOptionDialog
-import org.siloserver.silo.tv.ui.components.TvTextInputDialog
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.FocusedContainer
+import org.siloserver.silo.tv.ui.theme.FocusedContent
+import org.siloserver.silo.tv.ui.theme.InterFamily
 import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -66,7 +72,6 @@ fun TvServerListScreen(
     val state by viewModel.uiState.collectAsState()
     val firstFocus = remember { FocusRequester() }
     var confirmRemove by remember { mutableStateOf<ServerEntry?>(null) }
-    var renameTarget by remember { mutableStateOf<ServerEntry?>(null) }
 
     BackHandler(enabled = true) { onBack() }
 
@@ -102,49 +107,66 @@ fun TvServerListScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 64.dp, vertical = 40.dp),
+            .background(ServerSettingsBackground)
+            .padding(start = 44.dp, top = Spacing.safeArea, end = 44.dp, bottom = Spacing.xxxl),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-            Text(
-                text = "Servers",
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Text(
-                text = "Choose which Silo server to connect to.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Spacer(Modifier.height(Spacing.sm))
-
-            AddServerTile(
-                onClick = onAddServer,
-                modifier = Modifier.focusRequester(
-                    if (state.servers.isEmpty()) firstFocus else FocusRequester.Default,
-                ),
-            )
-
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
+        Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+            Column(
+                modifier = Modifier.width(200.dp),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
-                items(state.servers, key = { it.id }) { entry ->
-                    val rowModifier = if (entry == state.servers.firstOrNull()) {
-                        Modifier.focusRequester(firstFocus)
-                    } else Modifier
+                Text(
+                    text = "CONNECTION",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.55f),
+                )
+                Text(
+                    text = "Manage Servers",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                )
+                Text(
+                    text = "Choose, rename, add, or remove a Silo server.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.62f),
+                )
+            }
 
-                    ServerRow(
-                        entry = entry,
-                        isActive = entry.id == state.activeId,
-                        isPending = entry.id == state.pendingSwitchToId,
-                        onSelect = { viewModel.onSelect(entry.id) },
-                        onRename = { renameTarget = entry },
-                        onRemove = { confirmRemove = entry },
-                        modifier = rowModifier,
-                    )
+            Column(
+                modifier = Modifier.widthIn(max = ServerListMaxWidth),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Saved Servers",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.62f),
+                )
+                AddServerTile(
+                    onClick = onAddServer,
+                    modifier = Modifier.focusRequester(
+                        if (state.servers.isEmpty()) firstFocus else FocusRequester.Default,
+                    ),
+                )
+
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(state.servers, key = { it.id }) { entry ->
+                        val rowModifier = if (entry == state.servers.firstOrNull()) {
+                            Modifier.focusRequester(firstFocus)
+                        } else Modifier
+
+                        ServerRow(
+                            entry = entry,
+                            isActive = entry.id == state.activeId,
+                            isPending = entry.id == state.pendingSwitchToId,
+                            onSelect = { viewModel.onSelect(entry.id) },
+                            onRemove = { confirmRemove = entry },
+                            modifier = rowModifier,
+                        )
+                    }
                 }
             }
         }
@@ -185,24 +207,13 @@ fun TvServerListScreen(
         )
     }
 
-    renameTarget?.let { target ->
-        TvTextInputDialog(
-            title = "Rename server",
-            label = "Display name",
-            confirmLabel = "Save",
-            initialValue = target.displayName,
-            allowBlank = true,
-            onConfirm = { name ->
-                viewModel.onRename(target.id, name)
-                renameTarget = null
-            },
-            onDismiss = { renameTarget = null },
-        )
-    }
 }
 
 private const val TvInitialFocusRetryCount = 4
 private const val TvInitialFocusRetryDelayMs = 50L
+private val ServerSettingsBackground = Color(0xFF17181A)
+private val ServerListMaxWidth = 620.dp
+private val ServerRowShape = RoundedCornerShape(8.dp)
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -210,28 +221,37 @@ private fun AddServerTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val foreground = if (isFocused) FocusedContent else Color.White
     Card(
         onClick = onClick,
+        interactionSource = interactionSource,
         colors = CardDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            containerColor = Color.White.copy(alpha = 0.055f),
+            focusedContainerColor = FocusedContainer,
+            focusedContentColor = FocusedContent,
         ),
+        shape = CardDefaults.shape(shape = ServerRowShape),
+        scale = CardDefaults.scale(focusedScale = 1f),
         modifier = modifier.fillMaxWidth(),
     ) {
         Row(
-            modifier = Modifier.padding(Spacing.md),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = Icons.Default.Add,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(28.dp),
+                tint = foreground,
+                modifier = Modifier.size(20.dp),
             )
             Spacer(Modifier.width(Spacing.sm))
             Text(
                 text = "Add Server",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = InterFamily,
+                color = foreground,
             )
         }
     }
@@ -244,7 +264,6 @@ private fun ServerRow(
     isActive: Boolean,
     isPending: Boolean,
     onSelect: () -> Unit,
-    onRename: () -> Unit,
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -253,95 +272,86 @@ private fun ServerRow(
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val interactionSource = remember(entry.id) { MutableInteractionSource() }
+        val isFocused by interactionSource.collectIsFocusedAsState()
+        val foreground = if (isFocused) FocusedContent else Color.White
         Card(
             onClick = onSelect,
+            interactionSource = interactionSource,
             colors = CardDefaults.colors(
                 containerColor = if (isActive) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                    Color.White.copy(alpha = 0.10f)
                 } else {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    Color.White.copy(alpha = 0.055f)
                 },
+                focusedContainerColor = FocusedContainer,
+                focusedContentColor = FocusedContent,
             ),
+            shape = CardDefaults.shape(shape = ServerRowShape),
+            scale = CardDefaults.scale(focusedScale = 1f),
             // The TV Card is already focusable; adding .focusable() here creates
             // a dead second focus stop (no visual, OK does nothing). Keep only
             // the weight, matching AddServerTile.
             modifier = Modifier.weight(1f),
         ) {
             Row(
-                modifier = Modifier.padding(Spacing.md),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = entry.displayName,
-                        style = MaterialTheme.typography.titleMedium,
+                        text = entry.fetchedName?.takeIf { it.isNotBlank() } ?: entry.displayName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = InterFamily,
                         fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = foreground,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = entry.url,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = InterFamily,
+                        color = foreground.copy(alpha = if (isFocused) 0.68f else 0.62f),
                     )
                 }
                 if (isActive) {
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = "Active",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(28.dp),
+                        tint = foreground.copy(alpha = 0.72f),
+                        modifier = Modifier.size(20.dp),
                     )
                 } else if (isPending) {
                     Text(
                         text = "Switching…",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = foreground.copy(alpha = 0.72f),
                     )
                 }
             }
         }
 
         Surface(
-            onClick = onRename,
-            colors = ClickableSurfaceDefaults.colors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
-                focusedContentColor = MaterialTheme.colorScheme.onSurface,
-            ),
-        ) {
-            Box(
-                modifier = Modifier.size(width = 64.dp, height = 64.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Edit,
-                    contentDescription = "Rename",
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-        }
-
-        Surface(
             onClick = onRemove,
             colors = ClickableSurfaceDefaults.colors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                containerColor = Color.White.copy(alpha = 0.055f),
                 contentColor = MaterialTheme.colorScheme.error,
-                focusedContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.25f),
-                focusedContentColor = MaterialTheme.colorScheme.error,
+                focusedContainerColor = FocusedContainer,
+                focusedContentColor = FocusedContent,
             ),
+            shape = ClickableSurfaceDefaults.shape(shape = ServerRowShape),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         ) {
             Box(
                 modifier = Modifier
-                    .size(width = 64.dp, height = 64.dp),
+                    .size(width = 48.dp, height = 48.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
                     contentDescription = "Remove",
                     tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }

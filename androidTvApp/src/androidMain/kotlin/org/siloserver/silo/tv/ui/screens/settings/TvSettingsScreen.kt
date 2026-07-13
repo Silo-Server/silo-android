@@ -87,6 +87,7 @@ import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.koin.compose.viewmodel.koinViewModel
+import kotlinx.coroutines.delay
 
 /**
  * TV Settings — a tvOS-style split rail/detail surface modeled on
@@ -99,13 +100,13 @@ import org.koin.compose.viewmodel.koinViewModel
 @Composable
 fun TvSettingsScreen(
     onNavigateToAdmin: () -> Unit = {},
-    onManageSessions: () -> Unit = {},
-    onPairDevice: () -> Unit = {},
     onManageServers: () -> Unit = {},
     onSignedOut: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
     onNavigateHome: () -> Unit = {},
     onInitialContentFocus: () -> Unit = {},
+    initialManageServersFocus: Boolean = false,
+    onManageServersReturnFocusConsumed: () -> Unit = {},
     viewModel: TvSettingsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -118,13 +119,30 @@ fun TvSettingsScreen(
     }
     val detailFocusRequester = remember { FocusRequester() }
 
-    var selectedCategory by remember { mutableStateOf(TvSettingsCategory.General) }
+    var selectedCategory by remember {
+        mutableStateOf(
+            if (initialManageServersFocus) TvSettingsCategory.Server else TvSettingsCategory.General,
+        )
+    }
     var detailHasFocus by remember { mutableStateOf(false) }
     var detailFocusRequest by remember { mutableStateOf(0) }
     var showSignOutConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        runCatching { categoryFocusRequesters.getValue(TvSettingsCategory.General).requestFocus() }
+        val requester = if (initialManageServersFocus) {
+            detailFocusRequester
+        } else {
+            categoryFocusRequesters.getValue(TvSettingsCategory.General)
+        }
+        var focusRestored = false
+        for (attempt in 0 until 4) {
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
+                focusRestored = true
+                break
+            }
+            delay(50)
+        }
+        if (initialManageServersFocus && focusRestored) onManageServersReturnFocusConsumed()
         onInitialContentFocus()
     }
 
@@ -166,8 +184,6 @@ fun TvSettingsScreen(
             detailFocusRequest += 1
         },
         onSwitchProfile = viewModel::onSwitchProfile,
-        onManageSessions = onManageSessions,
-        onPairDevice = onPairDevice,
         onManageServers = onManageServers,
         onRequestSignOut = { showSignOutConfirm = true },
         onNavigateToAdmin = onNavigateToAdmin,
@@ -197,6 +213,7 @@ fun TvSettingsScreen(
         onSubtitleBackgroundOpacityChanged = viewModel::setSubtitleBackgroundOpacity,
         onSubtitleBackgroundColorChanged = viewModel::setSubtitleBackgroundColor,
         onSubtitlePositionChanged = viewModel::setSubtitlePosition,
+        onResetSubtitleAppearance = viewModel::resetSubtitleAppearance,
         onSubtitleDeviceOverrideEnabledChanged = viewModel::setSubtitleDeviceOverrideEnabled,
         onSubtitleMatchesDeviceChanged = viewModel::onSubtitleMatchesDeviceChanged,
         onShowAudiobooksTabChanged = viewModel::onShowAudiobooksTabChanged,
@@ -266,8 +283,6 @@ private fun SettingsSplitLayout(
     onEnterCategory: (TvSettingsCategory) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
     onSwitchProfile: () -> Unit,
-    onManageSessions: () -> Unit,
-    onPairDevice: () -> Unit,
     onManageServers: () -> Unit,
     onRequestSignOut: () -> Unit,
     onNavigateToAdmin: () -> Unit,
@@ -297,6 +312,7 @@ private fun SettingsSplitLayout(
     onSubtitleBackgroundOpacityChanged: (Int) -> Unit,
     onSubtitleBackgroundColorChanged: (String) -> Unit,
     onSubtitlePositionChanged: (SubtitlePositionPreset) -> Unit,
+    onResetSubtitleAppearance: () -> Unit,
     onSubtitleDeviceOverrideEnabledChanged: (Boolean) -> Unit,
     onSubtitleMatchesDeviceChanged: (Boolean) -> Unit,
 ) {
@@ -335,8 +351,6 @@ private fun SettingsSplitLayout(
             detailFocusRequester = detailFocusRequester,
             onDetailFocusChanged = onDetailFocusChanged,
             onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
-            onManageSessions = onManageSessions,
-            onPairDevice = onPairDevice,
             onManageServers = onManageServers,
             onQualityChanged = onQualityChanged,
             onAudioLanguageChanged = onAudioLanguageChanged,
@@ -364,6 +378,7 @@ private fun SettingsSplitLayout(
             onSubtitleBackgroundOpacityChanged = onSubtitleBackgroundOpacityChanged,
             onSubtitleBackgroundColorChanged = onSubtitleBackgroundColorChanged,
             onSubtitlePositionChanged = onSubtitlePositionChanged,
+            onResetSubtitleAppearance = onResetSubtitleAppearance,
             onSubtitleDeviceOverrideEnabledChanged = onSubtitleDeviceOverrideEnabledChanged,
             onSubtitleMatchesDeviceChanged = onSubtitleMatchesDeviceChanged,
             // Contain Up at the pane's top row: escaping to the top menu from
@@ -591,8 +606,6 @@ private fun SettingsDetailPane(
     detailFocusRequester: FocusRequester,
     onDetailFocusChanged: (Boolean) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
-    onManageSessions: () -> Unit,
-    onPairDevice: () -> Unit,
     onManageServers: () -> Unit,
     onQualityChanged: (PlaybackQuality) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
@@ -620,6 +633,7 @@ private fun SettingsDetailPane(
     onSubtitleBackgroundOpacityChanged: (Int) -> Unit,
     onSubtitleBackgroundColorChanged: (String) -> Unit,
     onSubtitlePositionChanged: (SubtitlePositionPreset) -> Unit,
+    onResetSubtitleAppearance: () -> Unit,
     onSubtitleDeviceOverrideEnabledChanged: (Boolean) -> Unit,
     onSubtitleMatchesDeviceChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -684,14 +698,13 @@ private fun SettingsDetailPane(
                 onSubtitleBackgroundOpacityChanged = onSubtitleBackgroundOpacityChanged,
                 onSubtitleBackgroundColorChanged = onSubtitleBackgroundColorChanged,
                 onSubtitlePositionChanged = onSubtitlePositionChanged,
+                onResetSubtitleAppearance = onResetSubtitleAppearance,
                 onSubtitleDeviceOverrideEnabledChanged = onSubtitleDeviceOverrideEnabledChanged,
             onSubtitleMatchesDeviceChanged = onSubtitleMatchesDeviceChanged,
             )
             TvSettingsCategory.Server -> TvServerSettingsPane(
                 state = state,
                 firstFocusRequester = detailFocusRequester,
-                onManageSessions = onManageSessions,
-                onPairDevice = onPairDevice,
                 onManageServers = onManageServers,
             )
         }
@@ -912,10 +925,12 @@ private fun TvSubtitleSettingsPane(
     onSubtitleBackgroundOpacityChanged: (Int) -> Unit,
     onSubtitleBackgroundColorChanged: (String) -> Unit,
     onSubtitlePositionChanged: (SubtitlePositionPreset) -> Unit,
+    onResetSubtitleAppearance: () -> Unit,
     onSubtitleDeviceOverrideEnabledChanged: (Boolean) -> Unit,
     onSubtitleMatchesDeviceChanged: (Boolean) -> Unit,
 ) {
     var activePicker by remember { mutableStateOf<SubtitlePicker?>(null) }
+    var showResetConfirmation by remember { mutableStateOf(false) }
     val appearance = state.subtitleAppearance
 
     LazyColumn(
@@ -960,60 +975,77 @@ private fun TvSubtitleSettingsPane(
                 SettingsToggleRow(
                     // tvOS parity: appearance follows the OS captioning
                     // settings while this is on.
-                    label = "Match Device Settings",
+                    label = "Use System Caption Style",
                     checked = state.subtitleMatchesDevice,
                     onCheckedChange = onSubtitleMatchesDeviceChanged,
                 )
                 SettingsToggleRow(
-                    label = "Custom Appearance",
+                    label = "Custom Subtitle Appearance",
                     checked = state.subtitleUsesDeviceOverride,
                     onCheckedChange = onSubtitleDeviceOverrideEnabledChanged,
                 )
-                SettingsValueRow(
-                    label = "Font Size",
-                    value = TvSubtitleAppearanceOptions.fontSizeLabel(appearance.fontSize),
-                    onClick = { activePicker = SubtitlePicker.FontSize },
-                )
-                SettingsValueRow(
-                    label = "Font Family",
-                    value = TvSubtitleAppearanceOptions.fontFamilyLabel(appearance.fontFamily),
-                    onClick = { activePicker = SubtitlePicker.FontFamily },
-                )
-                SettingsValueRow(
-                    label = "Font Color",
-                    value = TvSubtitleAppearanceOptions.fontColorLabel(appearance.fontColor),
-                    onClick = { activePicker = SubtitlePicker.FontColor },
-                )
-                SettingsToggleRow(
-                    label = "Text Outline",
-                    checked = appearance.textOutline,
-                    onCheckedChange = onSubtitleTextOutlineChanged,
-                )
-                SettingsValueRow(
-                    label = "Outline Color",
-                    value = TvSubtitleAppearanceOptions.outlineColorLabel(appearance.textOutlineColor),
-                    onClick = { activePicker = SubtitlePicker.OutlineColor },
-                )
-                SettingsValueRow(
-                    label = "Background Style",
-                    value = TvSubtitleAppearanceOptions.backgroundStyleLabel(appearance.backgroundStyle),
-                    onClick = { activePicker = SubtitlePicker.BackgroundStyle },
-                )
-                SettingsValueRow(
-                    label = "Background Opacity",
-                    value = "${appearance.backgroundOpacity}%",
-                    onClick = { activePicker = SubtitlePicker.BackgroundOpacity },
-                )
-                SettingsValueRow(
-                    label = "Background Color",
-                    value = TvSubtitleAppearanceOptions.backgroundColorLabel(appearance.backgroundColor),
-                    onClick = { activePicker = SubtitlePicker.BackgroundColor },
-                )
-                SettingsValueRow(
-                    label = "Position",
-                    value = TvSubtitleAppearanceOptions.positionLabel(appearance.position),
-                    onClick = { activePicker = SubtitlePicker.Position },
-                )
+                SettingsNestedGroup(enabled = state.subtitleUsesDeviceOverride) {
+                    SettingsValueRow(
+                        label = "Font Size",
+                        value = TvSubtitleAppearanceOptions.fontSizeLabel(appearance.fontSize),
+                        onClick = { activePicker = SubtitlePicker.FontSize },
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                    SettingsValueRow(
+                        label = "Font Family",
+                        value = TvSubtitleAppearanceOptions.fontFamilyLabel(appearance.fontFamily),
+                        onClick = { activePicker = SubtitlePicker.FontFamily },
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                    SettingsValueRow(
+                        label = "Font Color",
+                        value = TvSubtitleAppearanceOptions.fontColorLabel(appearance.fontColor),
+                        onClick = { activePicker = SubtitlePicker.FontColor },
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                    SettingsToggleRow(
+                        label = "Text Outline",
+                        checked = appearance.textOutline,
+                        onCheckedChange = onSubtitleTextOutlineChanged,
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                    SettingsValueRow(
+                        label = "Outline Color",
+                        value = TvSubtitleAppearanceOptions.outlineColorLabel(appearance.textOutlineColor),
+                        onClick = { activePicker = SubtitlePicker.OutlineColor },
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                    SettingsValueRow(
+                        label = "Background Style",
+                        value = TvSubtitleAppearanceOptions.backgroundStyleLabel(appearance.backgroundStyle),
+                        onClick = { activePicker = SubtitlePicker.BackgroundStyle },
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                    SettingsValueRow(
+                        label = "Background Opacity",
+                        value = "${appearance.backgroundOpacity}%",
+                        onClick = { activePicker = SubtitlePicker.BackgroundOpacity },
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                    SettingsValueRow(
+                        label = "Background Color",
+                        value = TvSubtitleAppearanceOptions.backgroundColorLabel(appearance.backgroundColor),
+                        onClick = { activePicker = SubtitlePicker.BackgroundColor },
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                    SettingsValueRow(
+                        label = "Position",
+                        value = TvSubtitleAppearanceOptions.positionLabel(appearance.position),
+                        onClick = { activePicker = SubtitlePicker.Position },
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                    SettingsActionRow(
+                        label = "Reset Custom Appearance",
+                        onClick = { showResetConfirmation = true },
+                        destructive = true,
+                        enabled = state.subtitleUsesDeviceOverride,
+                    )
+                }
             }
         }
         item {
@@ -1142,6 +1174,19 @@ private fun TvSubtitleSettingsPane(
         )
         null -> Unit
     }
+
+    if (showResetConfirmation) {
+        TvSettingsConfirmDialog(
+            title = "Reset Custom Appearance?",
+            message = "This restores all custom subtitle appearance options to their defaults.",
+            confirmLabel = "Reset",
+            onConfirm = {
+                showResetConfirmation = false
+                onResetSubtitleAppearance()
+            },
+            onDismiss = { showResetConfirmation = false },
+        )
+    }
 }
 
 /** Live approximation of the effective subtitle style, matching tvOS Settings. */
@@ -1224,8 +1269,6 @@ private fun TvSettingsSubtitlePreview(appearance: SubtitleAppearance) {
 private fun TvServerSettingsPane(
     state: TvSettingsViewModel.UiState,
     firstFocusRequester: FocusRequester,
-    onManageSessions: () -> Unit,
-    onPairDevice: () -> Unit,
     onManageServers: () -> Unit,
 ) {
     LazyColumn(
@@ -1247,12 +1290,6 @@ private fun TvServerSettingsPane(
                     onClick = onManageServers,
                     focusRequester = firstFocusRequester,
                 )
-            }
-        }
-        item {
-            SettingsGroup(title = "Account") {
-                SettingsActionRow(label = "Manage Sessions", onClick = onManageSessions)
-                SettingsActionRow(label = "Pair a Device", onClick = onPairDevice)
             }
         }
         item {
@@ -1562,6 +1599,27 @@ private fun SettingsGroup(
 }
 
 @Composable
+private fun SettingsNestedGroup(
+    enabled: Boolean,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .widthIn(max = RowMaxWidth)
+            .fillMaxWidth()
+            .padding(start = 14.dp, top = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.White.copy(alpha = 0.025f))
+            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
+            .padding(6.dp)
+            .alpha(if (enabled) 1f else 0.42f),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        content()
+    }
+}
+
+@Composable
 private fun SettingsMonoHeaderStyle() =
     MaterialTheme.typography.labelMedium.copy(
         fontFamily = FontFamily.Monospace,
@@ -1672,12 +1730,14 @@ private fun SettingsValueRow(
     value: String,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    enabled: Boolean = true,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val reportDetailFocus = LocalSettingsDetailFocusReporter.current
     Surface(
         onClick = onClick,
+        enabled = enabled,
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = RowShape),
         colors = invertedRowColors(),
@@ -1731,12 +1791,14 @@ private fun SettingsActionRow(
     onClick: () -> Unit,
     destructive: Boolean = false,
     focusRequester: FocusRequester? = null,
+    enabled: Boolean = true,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val reportDetailFocus = LocalSettingsDetailFocusReporter.current
     Surface(
         onClick = onClick,
+        enabled = enabled,
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = RowShape),
         colors = invertedRowColors(),
@@ -1787,12 +1849,14 @@ private fun SettingsToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     focusRequester: FocusRequester? = null,
+    enabled: Boolean = true,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val reportDetailFocus = LocalSettingsDetailFocusReporter.current
     Surface(
         onClick = { onCheckedChange(!checked) },
+        enabled = enabled,
         interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(shape = RowShape),
         colors = invertedRowColors(),

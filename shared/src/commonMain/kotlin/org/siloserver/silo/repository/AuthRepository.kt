@@ -172,6 +172,7 @@ class AuthRepository(
             val id = serverRegistry.addOrUpdate(url)
             serverRegistry.switchTo(id)
             tokenManager.switchActiveServer(id)
+            refreshActiveServerName()
         } else {
             tokenManager.setServerUrl(url)
         }
@@ -183,9 +184,15 @@ class AuthRepository(
      * or the call fails — this is purely for nicer UX in the server list.
      */
     suspend fun refreshActiveServerName() {
-        // The HealthApi today returns Unit (no body parsing); when the
-        // server-name field is exposed in a response shape we can wire it
-        // in here. Callers are tolerant of a null fetched name.
-        // TODO: surface server_name once HealthApi exposes it.
+        val registry = serverRegistry ?: return
+        val api = healthApi ?: return
+        val activeId = registry.activeServerId.value ?: return
+        val result = api.checkHealth()
+        if (result is ApiResult.Success) {
+            result.data.serverName
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { registry.setFetchedName(activeId, it) }
+        }
     }
 }

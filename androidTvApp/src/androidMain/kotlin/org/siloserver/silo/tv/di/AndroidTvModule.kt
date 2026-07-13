@@ -330,7 +330,7 @@ val androidTvModule = module {
             profileId = params.get(),
         )
     }
-    viewModel { TvServerListViewModel(get(), get()) }
+    viewModel { TvServerListViewModel(get(), get(), get()) }
 
     // Admin ViewModels
     viewModel { AdminStatsViewModel(get()) }
@@ -466,6 +466,7 @@ val androidTvModule = module {
             authRepository = get(),
             profileRepository = get(),
             tokenManager = get(),
+            serverRegistry = get(),
             playerSettingsStore = get(),
             libraryPlaybackPrefsStore = get(),
             overlayPrefsStore = get(),

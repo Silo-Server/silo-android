@@ -52,6 +52,8 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.core.qualifier.named
 
+private const val RETURN_TO_MANAGE_SERVERS_KEY = "return_to_manage_servers"
+
 /**
  * Top-level TV navigation graph.
  *
@@ -401,8 +403,18 @@ fun TvAppNavigation(
             )
         }
 
-        composable(TvRoute.Main.route) {
+        composable(TvRoute.Main.route) { mainEntry ->
+            val returnToManageServers =
+                mainEntry.savedStateHandle.get<Boolean>(RETURN_TO_MANAGE_SERVERS_KEY) == true
             TvMainShell(
+                returnToManageServers = returnToManageServers,
+                onManageServersReturnFocusConsumed = {
+                    mainEntry.savedStateHandle.remove<Boolean>(RETURN_TO_MANAGE_SERVERS_KEY)
+                },
+                onManageServers = {
+                    mainEntry.savedStateHandle[RETURN_TO_MANAGE_SERVERS_KEY] = true
+                    navController.navigate(TvRoute.ServerList.route)
+                },
                 onOpenItemDetail = { contentId ->
                     // launchSingleTop collapses a double-OK on the same card into
                     // one ItemDetail entry (consecutive identical contentId), so
