@@ -19,10 +19,14 @@ import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.model.playback.planAttemptKey
 import org.siloserver.silo.model.playback.validateForMedia3
 import org.siloserver.silo.model.playback.PlaybackFailureV3
+import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
+import org.siloserver.silo.model.playback.SEEK_FAILURE_RECOVERY_V3_OPERATION
+import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
+import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_OPERATION
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.PlaybackRepository
@@ -53,8 +57,10 @@ open class PlaybackSessionManager(
         val context: ClientPlaybackContext,
         val playbackAttemptId: String,
         val qualityPreference: String,
+        val networkEvidence: PlaybackNetworkSnapshot,
         val sessionId: String,
-        val plan: org.siloserver.silo.model.playback.PlaybackPlanV3,
+        val plan: PlaybackPlanV3,
+        val serverFeatures: Set<String>,
         val planAttemptId: String,
         val planAttemptKey: String,
         val localMutations: List<String>,
@@ -66,6 +72,7 @@ open class PlaybackSessionManager(
 
     private val videoAttemptMutex = Mutex()
     private val telemetryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile
     private var activeVideoAttempt: ActiveVideoAttempt? = null
 
     suspend fun startVideoSessionV3(
@@ -111,8 +118,10 @@ open class PlaybackSessionManager(
                         context = clientPlaybackContext,
                         playbackAttemptId = playbackAttemptId,
                         qualityPreference = request.qualityPreference,
+                        networkEvidence = network,
                         sessionId = validated.sessionId,
                         plan = validated.plan,
+                        serverFeatures = result.data.serverFeatures.toSet(),
                         planAttemptId = planAttemptId,
                         planAttemptKey = planAttemptKey,
                         localMutations = emptyList(),
@@ -168,8 +177,10 @@ open class PlaybackSessionManager(
                         context = clientPlaybackContext,
                         playbackAttemptId = playbackAttemptId,
                         qualityPreference = request.qualityPreference,
+                        networkEvidence = network,
                         sessionId = validated.sessionId,
                         plan = validated.plan,
+                        serverFeatures = result.data.serverFeatures.toSet(),
                         planAttemptId = planAttemptId,
                         planAttemptKey = key,
                         localMutations = emptyList(),
@@ -210,6 +221,15 @@ open class PlaybackSessionManager(
             error = "playback_attempt_not_active",
             message = "No protocol-v3 playback attempt is active.",
         )
+        if (classification == SEEK_REANCHOR_V3_OPERATION ||
+            classification == SEEK_FAILURE_RECOVERY_V3_OPERATION
+        ) {
+            return@withLock ApiResult.Error(
+                code = 400,
+                error = "reserved_playback_operation",
+                message = "Seek operations must use the dedicated playback session methods.",
+            )
+        }
         val currentCapabilities = capabilities ?: active.capabilities
         val currentContext = clientPlaybackContext ?: active.context
         val network = networkEvidenceProvider.snapshot()
@@ -285,12 +305,14 @@ open class PlaybackSessionManager(
                     val next = active.copy(
                         sessionId = validated.sessionId,
                         plan = validated.plan,
+                        serverFeatures = result.data.serverFeatures.toSet(),
                         planAttemptId = nextAttemptId,
                         planAttemptKey = nextKey,
                         localMutations = emptyList(),
                         attemptedPlanKeys = attemptedKeys + nextKey,
                         attemptCount = if (invalidation) 1 else active.attemptCount + 1,
                         qualityPreference = request.qualityPreference,
+                        networkEvidence = network,
                         capabilities = currentCapabilities,
                         context = currentContext,
                         startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
@@ -354,6 +376,469 @@ open class PlaybackSessionManager(
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
+
+    /** Reopens the active V3 transport at a new source-time origin. */
+    suspend fun reanchorActiveVideoSession(
+        positionSeconds: Double,
+        diagnostics: Map<String, String> = emptyMap(),
+    ): ApiResult<VideoSessionStartV3> = videoAttemptMutex.withLock {
+        val active = activeVideoAttempt ?: return@withLock ApiResult.Error(
+            code = 409,
+            error = "playback_attempt_not_active",
+            message = "No protocol-v3 playback attempt is active.",
+        )
+        if (SEEK_REANCHOR_V3_FEATURE !in active.serverFeatures) {
+            return@withLock ApiResult.Error(
+                code = 409,
+                error = "seek_reanchor_not_supported",
+                message = "The active playback server did not negotiate seek re-anchoring.",
+            )
+        }
+        if (!positionSeconds.isFinite() || positionSeconds < 0.0) {
+            return@withLock ApiResult.Error(
+                code = 400,
+                error = "invalid_seek_position",
+                message = "Seek position must be a finite, non-negative source timestamp.",
+            )
+        }
+
+        val network = networkEvidenceProvider.snapshot()
+        val request = PlaybackReplanRequestV3(
+            operation = SEEK_REANCHOR_V3_OPERATION,
+            playbackAttemptId = active.playbackAttemptId,
+            replanRequestId = UUID.randomUUID().toString(),
+            failedPlanId = active.plan.planId,
+            planAttemptId = active.planAttemptId,
+            planAttemptKey = active.planAttemptKey,
+            attemptedPlanKeys = active.attemptedPlanKeys,
+            attemptCount = active.attemptCount,
+            qualityPreference = active.qualityPreference,
+            positionSeconds = positionSeconds,
+            outputRouteGeneration = active.context.output.outputRouteGeneration,
+            metered = active.networkEvidence.metered,
+            bandwidthEstimateKbps = active.networkEvidence.bandwidthEstimateKbps,
+            selectedTracks = active.plan.selectedTracks,
+            failure = PlaybackFailureV3(
+                classification = SEEK_REANCHOR_V3_OPERATION,
+                message = "Reanchor the active stream at the requested source position.",
+            ),
+            capabilities = active.capabilities,
+            clientPlaybackContext = active.context,
+        )
+        emitRouteEvent(
+            PlaybackRouteEventV3(
+                playbackAttemptId = active.playbackAttemptId,
+                sessionId = active.sessionId,
+                planId = active.plan.planId,
+                planAttemptId = active.planAttemptId,
+                planAttemptKey = active.planAttemptKey,
+                event = "seek_reanchor_requested",
+                appliedQuirkIds = active.plan.appliedQuirks.map { it.id },
+                quirkRegistryRevision = active.plan.appliedQuirks.firstOrNull()?.registryRevision,
+                outputRouteGeneration = active.context.output.outputRouteGeneration,
+                diagnostics = diagnostics + network.asRouteDiagnostics() +
+                    ("target_source_position_seconds" to positionSeconds.toString()),
+            ),
+        )
+
+        when (val result = playbackRepository.replanPlaybackV3(active.sessionId, request)) {
+            is ApiResult.Success -> {
+                if (SEEK_REANCHOR_V3_FEATURE !in result.data.serverFeatures) {
+                    return@withLock invalidSeekReanchorResponse(
+                        "The server omitted the negotiated seek re-anchor feature from its response.",
+                    )
+                }
+                when (val validated = result.data.validateForMedia3()) {
+                    is PlaybackV3Validation.Playable -> {
+                        val mismatch = seekReanchorMismatch(
+                            active = active,
+                            responseSessionId = result.data.sessionId,
+                            resolvedSessionId = validated.sessionId,
+                            candidate = validated.plan,
+                        )
+                        if (mismatch != null) {
+                            return@withLock invalidSeekReanchorResponse(mismatch)
+                        }
+                        // Synchronous local recovery mutations do not acquire the
+                        // suspend operation mutex. Re-read the active record at
+                        // commit time so any such mutation is retained rather
+                        // than overwritten by the pre-request snapshot.
+                        val next = adoptSeekReanchoredPlan(
+                            expected = active,
+                            plan = validated.plan,
+                            serverFeatures = result.data.serverFeatures,
+                        )
+                        if (next == null) {
+                            return@withLock ApiResult.Error(
+                                code = 409,
+                                error = "playback_attempt_changed",
+                                message = "The active playback attempt changed while seek re-anchoring.",
+                            )
+                        }
+                        emitRouteEvent(
+                            PlaybackRouteEventV3(
+                                playbackAttemptId = next.playbackAttemptId,
+                                sessionId = next.sessionId,
+                                planId = next.plan.planId,
+                                planAttemptId = next.planAttemptId,
+                                planAttemptKey = next.planAttemptKey,
+                                event = "seek_reanchored",
+                                appliedQuirkIds = next.plan.appliedQuirks.map { it.id },
+                                quirkRegistryRevision = next.plan.appliedQuirks.firstOrNull()?.registryRevision,
+                                outputRouteGeneration = next.context.output.outputRouteGeneration,
+                                diagnostics = diagnostics +
+                                    ("target_source_position_seconds" to positionSeconds.toString()),
+                            ),
+                        )
+                        val effectivePlan = next.plan.applyLocalPlaybackMutations(next.localMutations)
+                        ApiResult.Success(
+                            VideoSessionStartV3.Ready(
+                                session = effectivePlan.toSessionResponse(next.sessionId, next.profileId, next.fileId),
+                                plan = effectivePlan,
+                                playbackAttemptId = next.playbackAttemptId,
+                                planAttemptId = next.planAttemptId,
+                                planAttemptKey = next.planAttemptKey,
+                            ),
+                        )
+                    }
+                    is PlaybackV3Validation.Terminal -> invalidSeekReanchorResponse(
+                        "The server rejected seek re-anchoring: ${validated.reason}.",
+                    )
+                    is PlaybackV3Validation.Incompatible -> invalidSeekReanchorResponse(
+                        "The server returned an incompatible seek re-anchor response.",
+                    )
+                    is PlaybackV3Validation.ReplanRequired -> invalidSeekReanchorResponse(
+                        "The server changed the player engine during seek re-anchoring.",
+                    )
+                }
+            }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
+    }
+
+    private fun seekReanchorMismatch(
+        active: ActiveVideoAttempt,
+        responseSessionId: String?,
+        resolvedSessionId: String,
+        candidate: PlaybackPlanV3,
+    ): String? {
+        if (resolvedSessionId != active.sessionId ||
+            responseSessionId?.let { it != active.sessionId } == true ||
+            candidate.sessionId?.let { it != active.sessionId } == true
+        ) {
+            return "The server changed the playback session during seek re-anchoring."
+        }
+        if (candidate.planId != active.plan.planId) {
+            return "The server changed the playback plan during seek re-anchoring."
+        }
+        val requestedFileId = active.plan.requestedMediaFileId ?: active.fileId
+        val effectiveFileId = active.plan.effectiveMediaFileId ?: requestedFileId
+        if (candidate.requestedMediaFileId != requestedFileId ||
+            candidate.effectiveMediaFileId != effectiveFileId
+        ) {
+            return "The server changed the media file during seek re-anchoring."
+        }
+        if (candidate.selectedTracks != active.plan.selectedTracks) {
+            return "The server changed the selected tracks during seek re-anchoring."
+        }
+        if (!candidate.hasSameSeekReanchorBaseRoute(active.plan, active.context.output.outputRouteGeneration)) {
+            return "The server changed the playback route during seek re-anchoring."
+        }
+        return null
+    }
+
+    private fun PlaybackPlanV3.hasSameSeekReanchorBaseRoute(
+        current: PlaybackPlanV3,
+        outputRouteGeneration: Long,
+    ): Boolean =
+        planAttemptKey(outputRouteGeneration) == current.planAttemptKey(outputRouteGeneration) &&
+            engine == current.engine &&
+            stream.mimeType == current.stream.mimeType &&
+            stream.headerRefresh == current.stream.headerRefresh &&
+            effectiveRecipe == current.effectiveRecipe &&
+            claims == current.claims &&
+            subtitle.mode == current.subtitle.mode &&
+            subtitle.trackId == current.subtitle.trackId &&
+            subtitle.artifact?.mimeType == current.subtitle.artifact?.mimeType &&
+            subtitle.artifact?.format == current.subtitle.artifact?.format &&
+            transformations.toSet() == current.transformations.toSet() &&
+            appliedQuirks.toSet() == current.appliedQuirks.toSet() &&
+            runtimeCorrections.toSet() == current.runtimeCorrections.toSet()
+
+    private fun invalidSeekReanchorResponse(message: String): ApiResult.Error = ApiResult.Error(
+        code = 502,
+        error = "invalid_seek_reanchor_response",
+        message = message,
+    )
+
+    /** Reapply device-local fixes that are intentionally invisible to the server recipe. */
+    private fun PlaybackPlanV3.applyLocalPlaybackMutations(
+        localMutations: List<String>,
+    ): PlaybackPlanV3 {
+        if (localMutations.none { it.startsWith("pcm:") }) return this
+        return copy(
+            claims = claims.copy(
+                audio = claims.audio.copy(
+                    passthrough = false,
+                    reason = "client_pcm_retry",
+                ),
+            ),
+        )
+    }
+
+    @Synchronized
+    private fun adoptSeekReanchoredPlan(
+        expected: ActiveVideoAttempt,
+        plan: PlaybackPlanV3,
+        serverFeatures: List<String>,
+    ): ActiveVideoAttempt? {
+        val current = activeVideoAttempt ?: return null
+        if (current.playbackAttemptId != expected.playbackAttemptId ||
+            current.sessionId != expected.sessionId ||
+            current.plan.planId != expected.plan.planId
+        ) {
+            return null
+        }
+        return current.copy(
+            plan = plan,
+            serverFeatures = serverFeatures.toSet(),
+            startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
+            firstFrameReported = false,
+        ).also { activeVideoAttempt = it }
+    }
+
+    /**
+     * Falls back to another route after a seek-scoped playback failure without
+     * allowing the planner to change editions, quality intent, or tracks.
+     */
+    suspend fun recoverActiveVideoSessionAfterSeek(
+        positionSeconds: Double,
+        classification: String,
+        message: String? = null,
+        decoderName: String? = null,
+        diagnostics: Map<String, String> = emptyMap(),
+    ): ApiResult<VideoSessionStartV3> = videoAttemptMutex.withLock {
+        val active = activeVideoAttempt ?: return@withLock ApiResult.Error(
+            code = 409,
+            error = "playback_attempt_not_active",
+            message = "No protocol-v3 playback attempt is active.",
+        )
+        if (SEEK_REANCHOR_V3_FEATURE !in active.serverFeatures) {
+            return@withLock ApiResult.Error(
+                code = 409,
+                error = "seek_reanchor_not_supported",
+                message = "The active playback server did not negotiate seek recovery.",
+            )
+        }
+        if (!positionSeconds.isFinite() || positionSeconds < 0.0) {
+            return@withLock ApiResult.Error(
+                code = 400,
+                error = "invalid_seek_position",
+                message = "Seek position must be a finite, non-negative source timestamp.",
+            )
+        }
+        if (classification.isBlank()) {
+            return@withLock ApiResult.Error(
+                code = 400,
+                error = "invalid_failure_classification",
+                message = "Seek recovery requires a failure classification.",
+            )
+        }
+
+        val network = networkEvidenceProvider.snapshot()
+        val attemptedKeys = (active.attemptedPlanKeys + active.planAttemptKey).distinct()
+        val request = PlaybackReplanRequestV3(
+            operation = SEEK_FAILURE_RECOVERY_V3_OPERATION,
+            playbackAttemptId = active.playbackAttemptId,
+            replanRequestId = UUID.randomUUID().toString(),
+            failedPlanId = active.plan.planId,
+            planAttemptId = active.planAttemptId,
+            planAttemptKey = active.planAttemptKey,
+            attemptedPlanKeys = attemptedKeys,
+            attemptCount = active.attemptCount,
+            qualityPreference = active.qualityPreference,
+            positionSeconds = positionSeconds,
+            outputRouteGeneration = active.context.output.outputRouteGeneration,
+            metered = active.networkEvidence.metered,
+            bandwidthEstimateKbps = active.networkEvidence.bandwidthEstimateKbps,
+            selectedTracks = active.plan.selectedTracks,
+            failure = PlaybackFailureV3(
+                classification = classification,
+                message = message,
+                decoderName = decoderName,
+            ),
+            capabilities = active.capabilities,
+            clientPlaybackContext = active.context,
+        )
+        emitRouteEvent(
+            PlaybackRouteEventV3(
+                playbackAttemptId = active.playbackAttemptId,
+                sessionId = active.sessionId,
+                planId = active.plan.planId,
+                planAttemptId = active.planAttemptId,
+                planAttemptKey = active.planAttemptKey,
+                event = "plan_failed",
+                failureClassification = classification,
+                appliedQuirkIds = active.plan.appliedQuirks.map { it.id },
+                quirkRegistryRevision = active.plan.appliedQuirks.firstOrNull()?.registryRevision,
+                outputRouteGeneration = active.context.output.outputRouteGeneration,
+                diagnostics = diagnostics + mapOfNotNull("decoder_name" to decoderName) +
+                    network.asRouteDiagnostics() +
+                    ("seek_recovery_position_seconds" to positionSeconds.toString()),
+            ),
+        )
+
+        when (val result = playbackRepository.replanPlaybackV3(active.sessionId, request)) {
+            is ApiResult.Success -> {
+                if (SEEK_REANCHOR_V3_FEATURE !in result.data.serverFeatures) {
+                    return@withLock invalidSeekRecoveryResponse(
+                        "The server omitted the negotiated seek recovery feature from its response.",
+                    )
+                }
+                when (val validated = result.data.validateForMedia3()) {
+                    is PlaybackV3Validation.Playable -> {
+                        val mismatch = seekRecoveryIdentityMismatch(
+                            active = active,
+                            responseSessionId = result.data.sessionId,
+                            resolvedSessionId = validated.sessionId,
+                            candidate = validated.plan,
+                        )
+                        if (mismatch != null) {
+                            return@withLock invalidSeekRecoveryResponse(mismatch)
+                        }
+                        val nextKey = validated.plan.planAttemptKey(
+                            active.context.output.outputRouteGeneration,
+                        )
+                        if (nextKey in attemptedKeys) {
+                            return@withLock ApiResult.Success(
+                                VideoSessionStartV3.Terminal(
+                                    reason = "replan_loop_detected",
+                                    message = "The server returned a seek-recovery route that already failed.",
+                                    retryable = false,
+                                ),
+                            )
+                        }
+                        val nextAttemptId = UUID.randomUUID().toString()
+                        val next = adoptSeekRecoveryPlan(
+                            expected = active,
+                            plan = validated.plan,
+                            serverFeatures = result.data.serverFeatures,
+                            planAttemptId = nextAttemptId,
+                            planAttemptKey = nextKey,
+                            attemptedPlanKeys = attemptedKeys,
+                        )
+                        if (next == null) {
+                            return@withLock ApiResult.Error(
+                                code = 409,
+                                error = "playback_attempt_changed",
+                                message = "The active playback attempt changed during seek recovery.",
+                            )
+                        }
+                        PassthroughSuppressionRegistry.beginAttempt(nextKey)
+                        emitRouteEvent(
+                            PlaybackRouteEventV3(
+                                playbackAttemptId = next.playbackAttemptId,
+                                sessionId = next.sessionId,
+                                planId = next.plan.planId,
+                                planAttemptId = next.planAttemptId,
+                                planAttemptKey = next.planAttemptKey,
+                                event = "plan_selected",
+                                fallbackReason = classification,
+                                appliedQuirkIds = next.plan.appliedQuirks.map { it.id },
+                                quirkRegistryRevision = next.plan.appliedQuirks.firstOrNull()?.registryRevision,
+                                outputRouteGeneration = next.context.output.outputRouteGeneration,
+                            ),
+                        )
+                        ApiResult.Success(
+                            VideoSessionStartV3.Ready(
+                                session = next.plan.toSessionResponse(next.sessionId, next.profileId, next.fileId),
+                                plan = next.plan,
+                                playbackAttemptId = next.playbackAttemptId,
+                                planAttemptId = next.planAttemptId,
+                                planAttemptKey = next.planAttemptKey,
+                            ),
+                        )
+                    }
+                    is PlaybackV3Validation.Terminal -> ApiResult.Success(
+                        VideoSessionStartV3.Terminal(
+                            validated.reason,
+                            validated.message,
+                            validated.retryable,
+                        ),
+                    )
+                    is PlaybackV3Validation.Incompatible -> invalidSeekRecoveryResponse(
+                        "The server returned an incompatible seek recovery response.",
+                    )
+                    is PlaybackV3Validation.ReplanRequired -> invalidSeekRecoveryResponse(
+                        "The server returned an unsupported player engine during seek recovery.",
+                    )
+                }
+            }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
+    }
+
+    private fun seekRecoveryIdentityMismatch(
+        active: ActiveVideoAttempt,
+        responseSessionId: String?,
+        resolvedSessionId: String,
+        candidate: PlaybackPlanV3,
+    ): String? {
+        if (resolvedSessionId != active.sessionId ||
+            responseSessionId?.let { it != active.sessionId } == true ||
+            candidate.sessionId?.let { it != active.sessionId } == true
+        ) {
+            return "The server changed the playback session during seek recovery."
+        }
+        val requestedFileId = active.plan.requestedMediaFileId ?: active.fileId
+        val effectiveFileId = active.plan.effectiveMediaFileId ?: requestedFileId
+        if (candidate.requestedMediaFileId != requestedFileId ||
+            candidate.effectiveMediaFileId != effectiveFileId
+        ) {
+            return "The server changed the media file during seek recovery."
+        }
+        if (candidate.selectedTracks != active.plan.selectedTracks) {
+            return "The server changed the selected tracks during seek recovery."
+        }
+        return null
+    }
+
+    private fun invalidSeekRecoveryResponse(message: String): ApiResult.Error = ApiResult.Error(
+        code = 502,
+        error = "invalid_seek_recovery_response",
+        message = message,
+    )
+
+    @Synchronized
+    private fun adoptSeekRecoveryPlan(
+        expected: ActiveVideoAttempt,
+        plan: PlaybackPlanV3,
+        serverFeatures: List<String>,
+        planAttemptId: String,
+        planAttemptKey: String,
+        attemptedPlanKeys: List<String>,
+    ): ActiveVideoAttempt? {
+        val current = activeVideoAttempt ?: return null
+        if (current.playbackAttemptId != expected.playbackAttemptId ||
+            current.sessionId != expected.sessionId ||
+            current.plan.planId != expected.plan.planId
+        ) {
+            return null
+        }
+        return current.copy(
+            plan = plan,
+            serverFeatures = serverFeatures.toSet(),
+            planAttemptId = planAttemptId,
+            planAttemptKey = planAttemptKey,
+            localMutations = emptyList(),
+            attemptedPlanKeys = (current.attemptedPlanKeys + attemptedPlanKeys + planAttemptKey).distinct(),
+            attemptCount = current.attemptCount + 1,
+            startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
+            firstFrameReported = false,
+        ).also { activeVideoAttempt = it }
     }
 
     private fun mapOfNotNull(vararg values: Pair<String, String?>): Map<String, String> =

@@ -44,13 +44,30 @@ class PlayerScreenStartPositionTest {
             .substringBefore("// Mid-playback subtitle refresh")
 
         assertTrue(
-            mountEffect.contains("val delivery = if (localUri == null) plan?.delivery ?: uiState.delivery else null") &&
+            mountEffect.contains("val delivery = plan?.delivery ?: uiState.delivery") &&
                 mountEffect.contains("delivery = delivery"),
             "mobile mounts must carry playback-plan or inferred delivery",
         )
         assertFalse(mountEffect.contains("awaitEngineSwitch"))
         assertFalse(mountEffect.contains("sendCustomCommand"))
-        assertTrue(mountEffect.contains("backend.mount(mediaSpec)"))
+        assertTrue(mountEffect.contains("backend.mount(mediaSpec, playWhenReady = !viewModel.uiState.value.isPaused)"))
+        assertTrue(
+            mountEffect.contains("uiState.mediaMountGeneration") &&
+                mountEffect.contains("viewModel.onMediaMountApplied(uiState.mediaMountGeneration)"),
+            "server recovery must force a new mount and acknowledge it before old positions are accepted",
+        )
+    }
+
+    @Test
+    fun playerScreenNeverSilentlyReplacesTheViewModelTransportWithADownload() {
+        val mountEffect = source
+            .substringAfter("// Set up the media item when stream URL becomes available")
+            .substringBefore("// Mid-playback subtitle refresh")
+
+        assertTrue(mountEffect.contains("val effectiveStreamUrl = streamUrl"))
+        assertTrue(mountEffect.contains("val plan = uiState.playbackPlan"))
+        assertFalse(mountEffect.contains("locateLocalMedia"))
+        assertFalse(source.contains("DownloadStorage = koinInject()"))
     }
 
     @Test
@@ -117,6 +134,21 @@ class PlayerScreenStartPositionTest {
             source.contains("controller.seekTo((posSec * 1000).toLong())"),
             "seek requests must be the path that drives MediaController.seekTo",
         )
+    }
+
+    @Test
+    fun pausedSeeksStillPublishTheirSettledPosition() {
+        val playerListener = source
+            .substringAfter("val listener = object : Player.Listener")
+            .substringBefore("controller.addListener(listener)")
+        val positionTicker = source
+            .substringAfter("// Lifecycle-bounded position ticker.")
+            .substringBefore("LaunchedEffect(\n        mediaController,\n        uiState.sessionId")
+
+        assertTrue(playerListener.contains("override fun onPositionDiscontinuity("))
+        assertTrue(playerListener.contains("newPosition.positionMs"))
+        assertTrue(positionTicker.contains("if (controller.mediaItemCount > 0)"))
+        assertFalse(positionTicker.contains("controller.isPlaying ||"))
     }
 
     @Test

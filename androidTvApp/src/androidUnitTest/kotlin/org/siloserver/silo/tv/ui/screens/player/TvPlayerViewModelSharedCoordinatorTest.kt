@@ -13,6 +13,50 @@ class TvPlayerViewModelSharedCoordinatorTest {
     ).readText()
 
     @Test
+    fun tvNativeSeekCommandsSurviveCollectorAndRemountGaps() {
+        assertTrue(
+            viewModelSource.contains("private val seekRequestChannel = Channel<Double>(capacity = Channel.BUFFERED)"),
+        )
+        assertTrue(
+            viewModelSource.contains("val seekRequests: Flow<Double> = seekRequestChannel.receiveAsFlow()"),
+        )
+        assertTrue(viewModelSource.contains("seekRequestChannel.trySend("))
+        assertFalse(viewModelSource.contains("private val _seekRequests"))
+    }
+
+    @Test
+    fun tvReanchorHandoffIgnoresOldErrorsAndKeepsHealthyPlaybackOnApiFailure() {
+        val errorBody = viewModelSource
+            .substringAfter("fun onPlayerError(error:")
+            .substringBefore("private fun startProtocolV3Replan(")
+        val failureBody = viewModelSource
+            .substringAfter("private fun handleSeekRecoveryFailure(")
+            .substringBefore("private inline fun updateSeekRecoveryIfCurrent(")
+
+        assertTrue(errorBody.contains("action=ignore_stale_player_error"))
+        assertTrue(errorBody.contains("transportMountGate.suppressPositionReports"))
+        assertTrue(failureBody.contains("request.operation as? TvSeekRecoveryOperation.Reanchor"))
+        assertTrue(failureBody.contains("reanchor.rollbackAllowed"))
+        assertTrue(failureBody.contains("!seekRecoveryRollbackInvalidated"))
+        assertTrue(failureBody.contains("transportMountGate.reset()"))
+        assertTrue(failureBody.contains("error = null"))
+    }
+
+    @Test
+    fun tvMountPendingTargetIsReevaluatedAgainstTheWinningPlan() {
+        val mountAckBody = viewModelSource
+            .substringAfter("fun onTransportMountApplied(nonce: Long)")
+            .substringBefore("/**\n     * Invalidates seek work")
+        val executeSeekBody = viewModelSource
+            .substringAfter("private fun executeSeekTarget(")
+            .substringBefore("private fun startSeekReanchor(")
+
+        assertTrue(executeSeekBody.contains("pendingNativeSeekAfterMount = targetSourceSec"))
+        assertTrue(executeSeekBody.contains("state.sessionId == null || state.playbackPlan == null"))
+        assertTrue(mountAckBody.contains("executeSeekTarget(targetSeconds)"))
+    }
+
+    @Test
     fun tvPlayerViewModelStartsPlaybackThroughSharedCoordinator() {
         assertTrue(
             viewModelSource.contains("VideoPlaybackSessionCoordinator"),
@@ -91,22 +135,19 @@ class TvPlayerViewModelSharedCoordinatorTest {
         assertTrue(starterSource.contains("requestHeaders = readyV3.plan.stream.headers"))
         assertFalse(starterSource.contains("startSessionV2("))
         assertFalse(starterSource.contains("startTranscodeFallback("))
-        assertTrue(
-            starterSource.contains("resolvePlaybackStartPosition("),
-            "TV starter must preserve resolved resume/start position semantics",
-        )
+        assertTrue(starterSource.contains("readyV3.plan.timeline.playerStartSeconds"))
+        assertTrue(starterSource.contains("readyV3.plan.timeline.sourceStartSeconds"))
+        assertTrue(starterSource.contains("startPositionSeconds = playerStartPos"))
+        assertTrue(starterSource.contains("sourceStartPositionSeconds = sourceStartPos"))
         assertTrue(
             starterSource.contains("resolvePlaybackStartRequestPosition("),
             "TV starter must preserve explicit Start Over request semantics",
         )
         assertTrue(
-            starterSource.contains("import org.siloserver.silo.model.playback.resolvePlaybackStartPosition"),
-            "TV starter must use the shared resume resolver that mobile and audiobooks use",
-        )
-        assertTrue(
             starterSource.contains("import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition"),
             "TV starter must use the shared start-request resolver that mobile and audiobooks use",
         )
+        assertFalse(starterSource.contains("resolvePlaybackStartPosition("))
         assertFalse(
             starterSource.contains("private fun resolvePlaybackStartPosition("),
             "TV starter must not keep a private copy of shared resume semantics",

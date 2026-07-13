@@ -228,6 +228,10 @@ data class PlaybackTimeline(
     @SerialName("stream_origin_seconds") val streamOriginSeconds: Double = 0.0,
     @SerialName("timeline_offset_seconds") val timelineOffsetSeconds: Double = 0.0,
     @SerialName("can_seek_anywhere") val canSeekAnywhere: Boolean = true,
+    @SerialName("source_start_seconds") val sourceStartSeconds: Double = 0.0,
+    @SerialName("seek_window_start_seconds") val seekWindowStartSeconds: Double? = null,
+    @SerialName("seek_window_end_seconds") val seekWindowEndSeconds: Double? = null,
+    @SerialName("seek_restoration") val seekRestoration: String = "player_position",
 )
 
 @Serializable
@@ -318,6 +322,7 @@ data class ClientPlaybackContext(
         MEDIA3_ONLY_FEATURE,
         DETAILED_DECODE_CAPABILITIES_FEATURE,
         DEVICE_QUIRKS_V3_FEATURE,
+        SEEK_REANCHOR_V3_FEATURE,
     ),
     val platform: String = "android",
     @SerialName("form_factor") val formFactor: String,

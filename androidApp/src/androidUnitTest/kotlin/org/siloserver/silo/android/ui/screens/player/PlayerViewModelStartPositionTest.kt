@@ -20,34 +20,107 @@ class PlayerViewModelStartPositionTest {
     }
 
     @Test
+    fun offlinePlaybackOwnsAPlanFreeLocalTransport() {
+        val offlineBranch = source
+            .substringAfter("private suspend fun tryLocalPlayback")
+            .substringBefore("override fun onCleared")
+
+        assertTrue(offlineBranch.contains("sessionId = null"))
+        assertTrue(offlineBranch.contains("streamUrl = media.uriString"))
+        assertTrue(offlineBranch.contains("playbackPlan = null"))
+        assertTrue(offlineBranch.contains("requestHeaders = emptyMap()"))
+        assertTrue(offlineBranch.contains("delivery = null"))
+    }
+
+    @Test
     fun userSeeksUseDedicatedSeekRequestChannel() {
-        val onSeekBody = source
-            .substringAfter("fun onSeek(position: Double)")
-            .substringBefore("/**\n     * Immediate, deadband-free seek")
+        val executeSeekBody = source
+            .substringAfter("private fun executeSeekTarget(")
+            .substringBefore("private fun startSeekReanchor(")
 
         assertTrue(
-            source.contains("private val _seekRequests"),
-            "mobile player must have a dedicated channel for user seek commands",
+            source.contains("private val seekRequestChannel = Channel<Double>(capacity = Channel.BUFFERED)"),
+            "mobile player must buffer seek commands until PlayerScreen starts collecting",
         )
         assertTrue(
-            source.contains("val seekRequests"),
+            source.contains("val seekRequests: Flow<Double> = seekRequestChannel.receiveAsFlow()"),
             "mobile player must expose seek requests for PlayerScreen to collect",
         )
         assertTrue(
-            onSeekBody.contains("_seekRequests.tryEmit(position)"),
-            "onSeek must emit an explicit player command instead of relying on mirrored position state",
+            executeSeekBody.contains("seekRequestChannel.trySend("),
+            "resolved native seeks must emit an explicit player command instead of relying on mirrored position state",
         )
+        assertFalse(source.contains("private val _seekRequests"))
+    }
+
+    @Test
+    fun serverSeekRecoveryQueuesTheLatestTargetWithoutCancellingTheRunningRequest() {
+        val executeSeekBody = source
+            .substringAfter("private fun executeSeekTarget(")
+            .substringBefore("private fun startSeekReanchor(")
+        val enqueueBody = source
+            .substringAfter("private fun enqueueServerSeekRecovery(")
+            .substringBefore("private suspend fun runServerSeekRecovery(")
+        val recoveryBody = source
+            .substringAfter("private suspend fun runServerSeekRecovery(")
+            .substringBefore("private fun publishSeekFailure(")
+
+        assertTrue(executeSeekBody.contains("positionReportsBlockedForPendingLoad"))
+        assertTrue(executeSeekBody.contains("awaitingMediaMountGeneration != null"))
+        assertTrue(executeSeekBody.contains("startSeekReanchor(targetSourceSec, \"reanchor_in_flight\")"))
+        assertTrue(enqueueBody.contains("queuedServerSeek = request"))
+        assertFalse(enqueueBody.contains("seekRecoveryJob?.cancel()"))
+        assertTrue(recoveryBody.contains("val latestAfterReanchor = queuedServerSeek"))
+        assertTrue(recoveryBody.contains("if (activeSeekId != request.seekId) return"))
+    }
+
+    @Test
+    fun reanchorHandoffIgnoresOldPlayerErrorsAndRollsBackNonDestructively() {
+        val errorBody = source
+            .substringAfter("fun onPlayerError(error:")
+            .substringBefore("private fun startProtocolV3Replan(")
+        val failureBody = source
+            .substringAfter("private fun publishSeekFailure(")
+            .substringBefore("private fun isCurrentServerSeek(")
+
+        assertTrue(errorBody.contains("action=ignore_stale_player_error"))
+        assertTrue(errorBody.contains("awaitingMediaMountGeneration != null"))
+        assertTrue(failureBody.contains("request.mode == ServerSeekRecoveryMode.REANCHOR"))
+        assertTrue(failureBody.contains("request.rollbackAllowed"))
+        assertTrue(failureBody.contains("!seekRecoveryRollbackInvalidated"))
+        assertTrue(failureBody.contains("seekPresentationGuard.cancel()?.originPositionMs"))
+        assertTrue(failureBody.contains("error = null"))
+    }
+
+    @Test
+    fun mountPendingTargetIsReevaluatedAgainstTheWinningPlan() {
+        val mountAckBody = source
+            .substringAfter("fun onMediaMountApplied(generation: Long)")
+            .substringBefore("/** Called by the player when the current position changes.")
+        val executeSeekBody = source
+            .substringAfter("private fun executeSeekTarget(")
+            .substringBefore("private fun startSeekReanchor(")
+
+        assertTrue(executeSeekBody.contains("pendingNativeSeekAfterMount = targetSourceSec to immediate"))
+        assertTrue(executeSeekBody.contains("state.sessionId == null || state.playbackPlan == null"))
+        assertTrue(mountAckBody.contains("executeSeekTarget(targetSeconds, immediate)"))
     }
 
     @Test
     fun playerProgressIgnoresUnknownMediaSessionPositions() {
         val onPositionChangedBody = source
-            .substringAfter("fun onPositionChanged(positionMs: Long, durationMs: Long)")
+            .substringAfter("fun onPositionChanged(positionMs: Long, durationMs: Long, bufferedPositionMs: Long = 0L)")
             .substringBefore("/**\n     * Called when the player's actual playing state changes.")
 
         assertTrue(
             onPositionChangedBody.contains("if (positionMs < 0) return"),
             "MediaSession can report C.TIME_UNSET/-1; that must not overwrite progress or trigger resume reports",
+        )
+        assertTrue(
+            onPositionChangedBody.contains(
+                "if (positionReportsBlockedForPendingLoad || awaitingMediaMountGeneration != null) return",
+            ),
+            "old player callbacks must not overwrite a server recovery target before the new mount is applied",
         )
     }
 

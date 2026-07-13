@@ -88,10 +88,14 @@ internal fun PlaybackPlanV3.toSessionResponse(
             playMethod = playMethod,
         ),
         timeline = PlaybackTimeline(
+            sourceStartSeconds = timeline.sourceStartSeconds,
             playerStartSeconds = timeline.playerStartSeconds,
             streamOriginSeconds = timeline.streamOriginSeconds,
             timelineOffsetSeconds = timeline.timelineOffsetSeconds,
+            seekWindowStartSeconds = timeline.seekWindowStartSeconds,
+            seekWindowEndSeconds = timeline.seekWindowEndSeconds,
             canSeekAnywhere = timeline.canSeekAnywhere,
+            seekRestoration = timeline.seekRestoration,
         ),
         selectedTracks = SelectedPlaybackTracks(
             audioIndex = selectedTracks.audio?.index,
@@ -121,7 +125,9 @@ internal fun PlaybackPlanV3.toSessionResponse(
         profileId = profileId,
         mediaFileId = effectiveFileId,
         playMethod = playMethod,
-        position = timeline.playerStartSeconds,
+        // Session/reporting position is always source/movie time. The player
+        // mount position lives separately in playbackPlan.timeline.
+        position = timeline.sourceStartSeconds,
         streamUrl = stream.url,
         audioTrackIndex = selectedTracks.audio?.index ?: 0,
         subtitleUrls = subtitles,

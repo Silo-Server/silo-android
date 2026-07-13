@@ -42,7 +42,10 @@ sealed interface VideoPlayerUiState {
         val title: String,
         val subtitle: String?,
         val artworkUrl: String?,
+        /** Initial position in the mounted Media3 timeline. */
         val startPositionSeconds: Double,
+        /** Initial position in the full source/movie timeline. */
+        val sourceStartPositionSeconds: Double = startPositionSeconds,
         val sessionId: String? = null,
         val serverUrl: String = "",
         val accessToken: String = "",

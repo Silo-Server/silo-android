@@ -21,6 +21,7 @@ class VideoPlaybackSessionCoordinator(
                 subtitle = result.subtitle,
                 artworkUrl = result.artworkUrl,
                 startPositionSeconds = result.startPositionSeconds,
+                sourceStartPositionSeconds = result.sourceStartPositionSeconds,
                 sessionId = result.sessionId,
                 serverUrl = result.serverUrl,
                 accessToken = result.accessToken,

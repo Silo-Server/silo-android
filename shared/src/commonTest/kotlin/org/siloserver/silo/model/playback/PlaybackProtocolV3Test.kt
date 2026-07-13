@@ -349,6 +349,43 @@ class PlaybackProtocolV3Test {
         assertTrue(start.contains("\"bandwidth_cap_kbps\":15000"))
         assertTrue(replan.contains("\"bandwidth_estimate_kbps\":9000"))
         assertTrue(replan.contains("\"bandwidth_cap_kbps\":8000"))
+        assertFalse(replan.contains("\"operation\""))
+    }
+
+    @Test
+    fun seekReanchorOperationIsExplicitAndNegotiated() {
+        val start = SiloJson.encodeToString(
+            PlaybackStartRequestV3(
+                fileId = 12,
+                profileId = "profile",
+                playbackAttemptId = "attempt",
+                subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
+                outputRouteGeneration = 4,
+                capabilities = ClientCodecCapabilities(),
+                clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
+            ),
+        )
+        val reanchor = SiloJson.encodeToString(
+            PlaybackReplanRequestV3(
+                operation = SEEK_REANCHOR_V3_OPERATION,
+                playbackAttemptId = "attempt",
+                replanRequestId = "request",
+                failedPlanId = "plan",
+                planAttemptId = "plan-attempt",
+                planAttemptKey = "key",
+                attemptedPlanKeys = listOf("key"),
+                attemptCount = 1,
+                positionSeconds = 10.0,
+                outputRouteGeneration = 4,
+                selectedTracks = SelectedPlaybackTracksV3(),
+                failure = PlaybackFailureV3(SEEK_REANCHOR_V3_OPERATION),
+                capabilities = ClientCodecCapabilities(),
+                clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
+            ),
+        )
+
+        assertTrue(start.contains(SEEK_REANCHOR_V3_FEATURE))
+        assertTrue(reanchor.contains("\"operation\":\"seek_reanchor\""))
     }
 
     @Test

@@ -33,7 +33,12 @@ class TvPlayerControlsUsabilityTest {
 
     @Test
     fun idleOverlayDefaultsToPlayPauseInTransportDock() {
-        assertTrue(screenSource.contains("LaunchedEffect(transportFocusRequest) { runCatching { playPauseFocus.requestFocus() } }"))
+        assertTrue(screenSource.contains("LaunchedEffect(focusRequest.nonce)"))
+        assertTrue(
+            screenSource.contains(
+                "TvIdleOverlayFocusTarget.Transport -> playPauseFocus.requestFocus()",
+            ),
+        )
         // Primary group pinned left + secondary group pushed right.
         assertTrue(clusterSource.contains("Arrangement.SpaceBetween"))
         assertTrue(clusterSource.contains("Icons.Filled.Replay10"))
@@ -408,9 +413,9 @@ class TvPlayerControlsUsabilityTest {
             .substringAfter("fun handleSkipIntroNow(): Boolean")
             .substringBefore("DisposableEffect(context)")
 
-        assertTrue(skipBlock.contains("tvRoomTransportGate(roomSnapshot, TvTransportIntent.Seek)"))
+        assertTrue(skipBlock.contains("tvRoomTransportGate(latestRoomSnapshot, TvTransportIntent.Seek)"))
         assertTrue(skipBlock.contains("roomController.onUserSeek(target)"))
-        assertTrue(skipBlock.contains("mediaController?.seekTo((soloTarget * 1000).toLong())"))
+        assertTrue(skipBlock.contains("viewModel.seekImmediate(soloTarget)"))
     }
 
     @Test
@@ -435,8 +440,8 @@ class TvPlayerControlsUsabilityTest {
     fun mountedPlayerRegistersRemoteKeyBridgeAndRefocusesTransport() {
         assertTrue(screenSource.contains("TvPlayerRemoteKeyBridge.install(handler)"))
         assertTrue(screenSource.contains("TvPlayerRemoteKeyBridge.clear(handler)"))
-        assertTrue(screenSource.contains("transportFocusRequest++"))
-        assertTrue(screenSource.contains("LaunchedEffect(transportFocusRequest)"))
+        assertTrue(screenSource.contains("requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Transport)"))
+        assertTrue(screenSource.contains("LaunchedEffect(focusRequest.nonce)"))
     }
 
     @Test

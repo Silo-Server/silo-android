@@ -9,24 +9,17 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material3.Icon
@@ -44,7 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,14 +61,13 @@ import kotlin.math.hypot
  * - Vertical swipe down in the center: dismiss the player (iOS
  *   MobilePlayerGestureLayer parity — evaluated on release, mostly-vertical
  *   drags over 140dp only; no interactive transform, no velocity check)
- * - Horizontal swipe: seek through the video
+ * Large seeks are intentionally handled only by the visible timeline. This
+ * matches Silo Apple and avoids an invisible full-screen gesture committing a
+ * surprising seek while the user intended to dismiss or adjust an edge.
  */
 @Composable
 fun PlayerGestureHandler(
-    position: Double,
-    duration: Double,
     onToggleControls: () -> Unit,
-    onSeek: (Double) -> Unit,
     onSkipForward: () -> Unit,
     onSkipBackward: () -> Unit,
     // When false (a Watch Together guest without seek authority), the outer
@@ -99,20 +90,12 @@ fun PlayerGestureHandler(
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
-    // Keep latest position/duration available inside long-lived gesture coroutines
-    // without re-keying pointerInput (re-keying on every position tick — ~every 500ms —
-    // tears down the coroutine and drops in-flight taps and double-taps).
-    val currentPosition by rememberUpdatedState(position)
-    val currentDuration by rememberUpdatedState(duration)
     val currentSeekEnabled by rememberUpdatedState(seekEnabled)
     // Same reason as seekEnabled: the vertical-drag coroutine is created once
     // (keyed on Unit), so read the latest dismiss gate through rememberUpdatedState
     // — otherwise a value captured while buffering would stick after playback.
     val currentDismissEnabled by rememberUpdatedState(dismissEnabled)
 
-    // Live scrub feedback shown while a seek drag is in progress (direction +
-    // delta + target time); null when not seeking.
-    var seekPreview by remember { mutableStateOf<SeekPreview?>(null) }
     var suppressTapAfterFastForwardHold by remember { mutableStateOf(false) }
 
     // Double-tap skip feedback (iOS MobilePlayerGestureLayer skipFlash parity):
@@ -261,60 +244,6 @@ fun PlayerGestureHandler(
                         }
                     },
                 )
-            }
-            .pointerInput(Unit) {
-                // Low-level loop instead of detectHorizontalDragGestures: that
-                // detector reports onDragStart only AFTER crossing (and consuming)
-                // horizontal slop, so the start position is post-slop and the edge
-                // event is already claimed — too late to (a) honor the safe-box on
-                // the true down position, or (b) leave an edge swipe for the system
-                // back gesture. Here we read the raw down, apply the safe-box
-                // BEFORE consuming anything, and only then claim the drag.
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val edge = size.width * SeekEdgeExclusionFraction
-                    // Safe-box: a drag beginning in the outer band (or with seek
-                    // gated off) is left entirely unconsumed so it can be a system
-                    // back-swipe, not a scrub.
-                    if (!currentSeekEnabled ||
-                        down.position.x < edge ||
-                        down.position.x > size.width - edge
-                    ) {
-                        return@awaitEachGesture
-                    }
-                    // Claim only once the motion is actually horizontal (lets taps,
-                    // vertical brightness/volume/dismiss drags win otherwise).
-                    var accumulator = 0f
-                    val slopChange = awaitHorizontalTouchSlopOrCancellation(down.id) { change, overSlop ->
-                        change.consume()
-                        accumulator += overSlop
-                    } ?: return@awaitEachGesture
-
-                    val startPosition = currentPosition
-                    fun publishPreview() {
-                        val dur = currentDuration
-                        val seekAmount = (accumulator / size.width.toFloat()) * dur.toFloat() * 0.5f
-                        val target = (startPosition + seekAmount).coerceIn(0.0, dur)
-                        seekPreview = SeekPreview(
-                            deltaSeconds = target - startPosition,
-                            targetSeconds = target,
-                        )
-                    }
-                    slopChange.consume()
-                    publishPreview()
-
-                    horizontalDrag(down.id) { change ->
-                        accumulator += change.positionChange().x
-                        change.consume()
-                        publishPreview()
-                    }
-
-                    // Released: commit the seek to the previewed target.
-                    val dur = currentDuration
-                    val seekAmount = (accumulator / size.width.toFloat()) * dur.toFloat() * 0.5f
-                    onSeek((startPosition + seekAmount).coerceIn(0.0, dur))
-                    seekPreview = null
-                }
             },
     ) {
         // Double-tap skip flash badge — vertically centered in the tapped
@@ -334,65 +263,7 @@ fun PlayerGestureHandler(
                 SkipFlashBadge(forward = flash.forward)
             }
         }
-
-        // Live scrub feedback while a horizontal seek drag is in progress.
-        val preview = seekPreview
-        if (preview != null) {
-            SeekPreviewBadge(preview, modifier = Modifier.align(Alignment.Center))
-        }
     }
-}
-
-/**
- * Live scrubbing HUD shown during a horizontal seek drag: a direction glyph,
- * the signed delta from the drag's start position, and the target time. No
- * animation — it tracks the finger and vanishes on release.
- */
-@Composable
-private fun SeekPreviewBadge(preview: SeekPreview, modifier: Modifier = Modifier) {
-    val forward = preview.deltaSeconds >= 0
-    Row(
-        modifier = modifier
-            .background(color = Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(14.dp))
-            .padding(horizontal = 18.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = if (forward) Icons.Filled.FastForward else Icons.Filled.FastRewind,
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.size(24.dp),
-        )
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = formatSeekDelta(preview.deltaSeconds),
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = formatSeekClock(preview.targetSeconds),
-                color = Color.White.copy(alpha = 0.7f),
-                fontSize = 12.sp,
-            )
-        }
-    }
-}
-
-private data class SeekPreview(val deltaSeconds: Double, val targetSeconds: Double)
-
-private fun formatSeekClock(seconds: Double): String {
-    val s = seconds.toInt().coerceAtLeast(0)
-    val h = s / 3600
-    val m = (s % 3600) / 60
-    val sec = s % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
-}
-
-private fun formatSeekDelta(deltaSeconds: Double): String {
-    val sign = if (deltaSeconds >= 0) "+" else "−"
-    return sign + formatSeekClock(kotlin.math.abs(deltaSeconds))
 }
 
 /**
@@ -428,13 +299,6 @@ private const val PinchGravityThreshold = 1.08f
 
 /** iOS skipZoneFraction: outer double-tap bands (35% each side) skip ±10s. */
 private const val SkipZoneFraction = 0.35f
-
-/**
- * Horizontal seek safe-box: a drag must START within the inner 80% (this much
- * excluded on each side) to scrub. Drags beginning in the outer band are left
- * unconsumed so an edge swipe stays a system back-swipe, not a rewind (Jim).
- */
-private const val SeekEdgeExclusionFraction = 0.1f
 
 /** iOS skip flash hold before the fade-out begins. */
 private const val SkipFlashHoldMs = 700L

@@ -18,6 +18,9 @@ const val DETAILED_DECODE_CAPABILITIES_FEATURE = "detailed_decode_capabilities"
 const val LAYOUT_AWARE_PASSTHROUGH_FEATURE = "layout_aware_passthrough"
 const val CLIENT_VIDEO_TRANSFORMATIONS_FEATURE = "client_video_transformations_v1"
 const val DEVICE_QUIRKS_V3_FEATURE = "device_quirks_v1"
+const val SEEK_REANCHOR_V3_FEATURE = "seek_reanchor_v1"
+const val SEEK_REANCHOR_V3_OPERATION = "seek_reanchor"
+const val SEEK_FAILURE_RECOVERY_V3_OPERATION = "seek_failure_recovery"
 const val CLIENT_DV7_TO_DV81 = "client_dv7_to_dv81"
 const val CLIENT_DV7_TO_HDR10 = "client_dv7_to_hdr10"
 const val CLIENT_DV_TRANSFORM_RECIPE_VERSION = "1"
@@ -221,6 +224,7 @@ data class PlaybackStartRequestV3(
         DETAILED_DECODE_CAPABILITIES_FEATURE,
         CLIENT_VIDEO_TRANSFORMATIONS_FEATURE,
         DEVICE_QUIRKS_V3_FEATURE,
+        SEEK_REANCHOR_V3_FEATURE,
     ),
     @SerialName("file_id") val fileId: Int,
     @SerialName("profile_id") val profileId: String,
@@ -250,6 +254,12 @@ data class PlaybackFailureV3(
 @Serializable
 data class PlaybackReplanRequestV3(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
+    /**
+     * Omitted requests retain the protocol-v3 failure-recovery behavior.
+     * Explicit operations are negotiated independently through client/server
+     * features so an older server never has to infer new semantics.
+     */
+    val operation: String? = null,
     @SerialName("playback_attempt_id") val playbackAttemptId: String,
     @SerialName("replan_request_id") val replanRequestId: String,
     @SerialName("failed_plan_id") val failedPlanId: String,

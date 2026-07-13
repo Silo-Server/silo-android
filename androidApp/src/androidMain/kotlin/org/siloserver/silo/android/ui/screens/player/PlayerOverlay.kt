@@ -103,6 +103,18 @@ fun PlayerOverlay(
         if (inRoom && isRoomHost) showCloseConfirm = true else onBack()
     }
     val gatedSeek: (Double) -> Unit = { pos -> if (seekEnabled) onSeek(pos) }
+    val gatedSkipForward: () -> Unit = {
+        if (seekEnabled) {
+            if (inRoom) gatedSeek((state.position + 10.0).coerceAtMost(state.duration))
+            else viewModel.onSkipBy(10.0)
+        }
+    }
+    val gatedSkipBackward: () -> Unit = {
+        if (seekEnabled) {
+            if (inRoom) gatedSeek((state.position - 10.0).coerceAtLeast(0.0))
+            else viewModel.onSkipBy(-10.0)
+        }
+    }
     val gatedPlayPause: () -> Unit = { if (playPauseEnabled) onPlayPause() }
     val gatedFastForwardHold: (Boolean) -> Unit = if (!inRoom) onFastForwardHold else { _: Boolean -> }
 
@@ -157,12 +169,9 @@ fun PlayerOverlay(
         // full-screen pointer handlers cannot consume taps meant for buttons.
         if (!state.showControls && !state.showUpNext) {
             PlayerGestureHandler(
-                position = state.position,
-                duration = state.duration,
                 onToggleControls = onToggleControls,
-                onSeek = gatedSeek,
-                onSkipForward = { gatedSeek((state.position + 10.0).coerceAtMost(state.duration)) },
-                onSkipBackward = { gatedSeek((state.position - 10.0).coerceAtLeast(0.0)) },
+                onSkipForward = gatedSkipForward,
+                onSkipBackward = gatedSkipBackward,
                 seekEnabled = seekEnabled,
                 onFastForwardHold = gatedFastForwardHold,
                 onPinchVideoGravity = stepVideoGravity,
@@ -322,8 +331,8 @@ fun PlayerOverlay(
                 onBack = handleBack,
                 onPlayPause = gatedPlayPause,
                 onSeek = gatedSeek,
-                onSkipForward = { gatedSeek((state.position + 10.0).coerceAtMost(state.duration)) },
-                onSkipBackward = { gatedSeek((state.position - 10.0).coerceAtLeast(0.0)) },
+                onSkipForward = gatedSkipForward,
+                onSkipBackward = gatedSkipBackward,
                 onToggleOrientationLock = {
                     viewModel.onSetOrientationLocked(!isOrientationLocked)
                 },

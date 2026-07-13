@@ -159,7 +159,9 @@ class PlayerViewModelSharedCoordinatorTest {
         assertFalse(starterSource.contains("startSessionV2("))
         assertFalse(starterSource.contains("startTranscodeFallback("))
         assertFalse(starterSource.contains("playMethod = PlayMethod.DIRECT"))
-        assertTrue(starterSource.contains("resolvePlaybackStartPosition("))
+        assertTrue(starterSource.contains("resolvePlaybackStartRequestPosition("))
+        assertTrue(starterSource.contains("readyV3.plan.timeline.playerStartSeconds"))
+        assertTrue(starterSource.contains("readyV3.plan.timeline.sourceStartSeconds"))
         assertTrue(starterSource.contains("adoptActiveSession("))
     }
 

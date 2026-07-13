@@ -13,7 +13,6 @@ import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.model.playback.applyResumeRewind
-import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.selectPlaybackVersion
@@ -132,17 +131,16 @@ class TvVideoPlaybackStarter(
                 ?.takeIf { it.isNotBlank() }
                 ?: resolved.streamUrl
 
-            val startPos = resolvePlaybackStartPosition(
-                // For a resume, follow the server's actual cut (resolved.position)
-                // so the player can't seek before a transcode's start; only honor
-                // an exact override when rewind is suppressed (Start Over / WT /
-                // retry). We already sent the rewound seek above, so a transcode's
-                // resolved.position reflects the rewind; direct-play rewind then
-                // depends on the server echoing it (device-verify).
-                overridePosition = if (suppressRewind) request.resumePositionOverride else null,
-                sessionPosition = resolved.position,
-                detailPosition = watchDetail.userData?.positionSeconds,
-            )
+            // The server may reanchor an HLS stream at a non-zero movie time
+            // while exposing a player timeline that begins at zero. Preserve
+            // both coordinates so Media3 and the UI each receive the right one.
+            val playerStartPos = readyV3.plan.timeline.playerStartSeconds
+                .takeIf { it.isFinite() && it >= 0.0 }
+                ?: resolved.position.coerceAtLeast(0.0)
+            val sourceStartPos = readyV3.plan.timeline.sourceStartSeconds
+                .takeIf { it.isFinite() && it >= 0.0 }
+                ?: startRequestPosition
+                ?: playerStartPos
 
             sessionLifecycle.adoptActiveSession(
                 params = StartParams(
@@ -152,7 +150,7 @@ class TvVideoPlaybackStarter(
                     audioTrackIndex = resolved.audioTrackIndex,
                     subtitleTrackIndex = request.subtitleTrackIndex,
                     qualityPreference = playbackQualityIntent,
-                    startPosition = startPos,
+                    startPosition = sourceStartPos,
                     clientPlaybackContext = playbackContext,
                 ),
                 session = resolved,
@@ -176,7 +174,8 @@ class TvVideoPlaybackStarter(
                 subtitle = null,
                 artworkUrl = watchDetail.posterUrl?.takeIf { it.isNotBlank() }
                     ?: watchDetail.backdropUrl?.takeIf { it.isNotBlank() },
-                startPositionSeconds = startPos,
+                startPositionSeconds = playerStartPos,
+                sourceStartPositionSeconds = sourceStartPos,
                 serverUrl = serverUrl,
                 accessToken = accessToken,
                 mediaFileId = resolved.mediaFileId.takeIf { id -> id > 0 }

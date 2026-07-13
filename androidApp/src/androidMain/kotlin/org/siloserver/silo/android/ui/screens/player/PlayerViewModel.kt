@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -22,6 +23,15 @@ import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.player.StartParams
 import org.siloserver.silo.common.player.backend.VideoBackendCapabilities
 import org.siloserver.silo.common.player.reducePlayerStats
+import org.siloserver.silo.common.player.seek.PendingSeekPresentationGuard
+import org.siloserver.silo.common.player.seek.PlaybackSeekDecision
+import org.siloserver.silo.common.player.seek.QuickSkipAccumulator
+import org.siloserver.silo.common.player.seek.SeekBoundsMs
+import org.siloserver.silo.common.player.seek.SeekPositionDecision
+import org.siloserver.silo.common.player.seek.decideSeek
+import org.siloserver.silo.common.player.seek.isSameRouteSeekReanchorCandidate
+import org.siloserver.silo.common.player.seek.playerPositionForSource
+import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
@@ -71,8 +81,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -83,6 +95,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -134,6 +147,7 @@ class PlayerViewModel(
         // server reporter cadence) to bound DB/outbox churn.
         private const val POSITION_RECORD_INTERVAL_SEC = 10.0
         private const val MAX_TRANSIENT_NETWORK_RETRIES = 1
+        private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
         // Up-next auto-play countdown length (matches TV's NEXT_UP_COUNTDOWN_SECONDS).
         const val UP_NEXT_COUNTDOWN_SECONDS = 10
         /** iOS resolveOnDeckItems: section pools feeding the On Deck carousel. */
@@ -202,6 +216,12 @@ class PlayerViewModel(
         val serverUrl: String = "",
         val accessToken: String = "",
         val startPosition: Double = 0.0,
+        /**
+         * Monotonic identity for the media currently mounted in Media3. Server
+         * recovery can legitimately return an otherwise-equal URL and plan, so
+         * this nonce is part of PlayerScreen's mount key to guarantee a remount.
+         */
+        val mediaMountGeneration: Long = 0L,
         val position: Double = 0.0,
         val duration: Double = 0.0,
         val bufferedPosition: Double = 0.0,
@@ -268,12 +288,8 @@ class PlayerViewModel(
      * calls MediaController.seekTo. Keeping it separate from uiState.position
      * prevents routine progress samples from becoming seek commands.
      */
-    private val _seekRequests = MutableSharedFlow<Double>(
-        replay = 0,
-        extraBufferCapacity = 8,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    val seekRequests: SharedFlow<Double> = _seekRequests.asSharedFlow()
+    private val seekRequestChannel = Channel<Double>(capacity = Channel.BUFFERED)
+    val seekRequests: Flow<Double> = seekRequestChannel.receiveAsFlow()
 
     /**
      * Unconditional seek channel for room-driven corrective seeks. The normal
@@ -283,12 +299,8 @@ class PlayerViewModel(
      * MUST always reach the player. PlayerScreen collects this and calls
      * `mediaController.seekTo` with no deadband. See [seekImmediate].
      */
-    private val _immediateSeeks = kotlinx.coroutines.flow.MutableSharedFlow<Double>(
-        replay = 0,
-        extraBufferCapacity = 8,
-        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
-    )
-    val immediateSeeks: kotlinx.coroutines.flow.SharedFlow<Double> = _immediateSeeks.asSharedFlow()
+    private val immediateSeekChannel = Channel<Double>(capacity = Channel.BUFFERED)
+    val immediateSeeks: Flow<Double> = immediateSeekChannel.receiveAsFlow()
 
     // ---- Remote session-control surface (driven by PlaybackRealtimeController) -----
     // The control socket can stop the session and display a message; neither has a
@@ -378,6 +390,52 @@ class PlayerViewModel(
     // network failure gets one same-route reopen before server replanning.
     private var transientNetworkRetries = 0
     private var recoveryJob: Job? = null
+
+    private enum class ServerSeekRecoveryMode {
+        REANCHOR,
+        PINNED_FALLBACK,
+    }
+
+    private data class ServerSeekRecoveryRequest(
+        val seekId: Long,
+        val targetSourceSec: Double,
+        val mode: ServerSeekRecoveryMode,
+        val reason: String,
+        val rollbackAllowed: Boolean = true,
+        val classification: String? = null,
+        val notice: String? = null,
+        val diagnostics: Map<String, String> = emptyMap(),
+    )
+
+    private data class PinnedSeekRecoveryRequest(
+        val classification: String,
+        val notice: String,
+        val diagnostics: Map<String, String>,
+    )
+
+    // Seek recovery is deliberately serialized separately from generic player
+    // recovery. A second seek never cancels an in-flight HTTP request: it
+    // replaces this single queued request, and the stale response is ignored
+    // before any UI/lifecycle adoption.
+    private var seekRecoveryJob: Job? = null
+    private var serverSeekRecoveryInFlight = false
+    private var queuedServerSeek: ServerSeekRecoveryRequest? = null
+    private var playbackRecoveryGeneration = 0L
+    private var mediaMountSequence = 0L
+    private var awaitingMediaMountGeneration: Long? = null
+    private var positionReportsBlockedForPendingLoad = false
+    private var seekRecoveryRollbackInvalidated = false
+    private var pendingNativeSeekAfterMount: Pair<Double, Boolean>? = null
+    private val quickSkipAccumulator = QuickSkipAccumulator()
+    private val seekPresentationGuard = PendingSeekPresentationGuard()
+    private var quickSkipCommitJob: Job? = null
+    private var quickSkipOriginMs: Long = 0L
+    private var activeSeekTargetSec: Double? = null
+    private var activeSeekStartedAtMs: Long = 0L
+    private var sameRouteSeekRecoveryAttempted = false
+    private var seekSequence = 0L
+    private var activeSeekId: Long? = null
+    private var hasRenderedFirstFrame = false
 
     val hdrEnabled: StateFlow<Boolean> = playerSettingsStore.hdrEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
@@ -559,6 +617,7 @@ class PlayerViewModel(
         _uiState.update {
             it.copy(
                 isLoading = true,
+                isBuffering = false,
                 error = null,
                 contentId = contentId,
                 nextEpisode = null,
@@ -723,6 +782,7 @@ class PlayerViewModel(
         // never an Off produced by a failed explicit pick.
         persistNextSubtitleSelection = explicitSubtitlePickResolved || persistedSubtitleIndex != null
 
+        val mountGeneration = expectNextMediaMount()
         _uiState.update {
             it.copy(
                 isLoading = false,
@@ -740,7 +800,8 @@ class PlayerViewModel(
                 serverUrl = playbackState.serverUrl,
                 accessToken = playbackState.accessToken,
                 startPosition = playbackState.startPositionSeconds,
-                position = playbackState.startPositionSeconds,
+                mediaMountGeneration = mountGeneration,
+                position = playbackState.sourceStartPositionSeconds,
                 duration = playbackState.durationSeconds.takeIf { duration -> duration > 0.0 }
                     ?: version?.duration
                     ?: 0.0,
@@ -852,10 +913,14 @@ class PlayerViewModel(
                 it.copy(
                     error = null,
                     playbackPlan = plan.copy(
-                        timeline = plan.timeline.copy(playerStartSeconds = state.position),
+                        timeline = plan.timeline.copy(
+                            playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
+                                ?: plan.timeline.playerStartSeconds,
+                        ),
                         decisionTrace = plan.decisionTrace + "client_retry=transport_reopen",
                     ),
-                    startPosition = state.position,
+                    startPosition = plan.timeline.playerPositionForSource(state.position)
+                        ?: plan.timeline.playerStartSeconds,
                 )
             }
             return
@@ -877,6 +942,25 @@ class PlayerViewModel(
         val state = _uiState.value
         val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
             ?: "Playback failed. Please try again."
+        val pendingSeekTarget = activeSeekTargetSec
+        if (pendingSeekTarget != null &&
+            (serverSeekRecoveryInFlight ||
+                recoveryJob?.isActive == true ||
+                positionReportsBlockedForPendingLoad ||
+                awaitingMediaMountGeneration != null)
+        ) {
+            // The listener belongs to the currently mounted Media3 item, which
+            // is still the old transport while a server response/remount is in
+            // flight. Do not let that stale callback demote the replacement
+            // route before it has even been mounted and acknowledged.
+            Log.i(
+                TAG,
+                "seek_recovery seek_id=$activeSeekId action=ignore_stale_player_error " +
+                    "error=${error.errorCodeName}",
+            )
+            seekRecoveryRollbackInvalidated = true
+            return
+        }
         val isAudioSinkFailure = error.errorCode in setOf(
             androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
             androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
@@ -894,7 +978,10 @@ class PlayerViewModel(
                     it.copy(
                         error = null,
                         playbackPlan = plan.copy(
-                            timeline = plan.timeline.copy(playerStartSeconds = state.position),
+                            timeline = plan.timeline.copy(
+                                playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
+                                    ?: plan.timeline.playerStartSeconds,
+                            ),
                             claims = plan.claims.copy(
                                 audio = plan.claims.audio.copy(
                                     passthrough = false,
@@ -904,11 +991,39 @@ class PlayerViewModel(
                             decisionTrace = plan.decisionTrace +
                                 "client_retry=pcm_decode:$mime:${track?.channels ?: 0}",
                         ),
-                        startPosition = state.position,
+                        startPosition = plan.timeline.playerPositionForSource(state.position)
+                            ?: plan.timeline.playerStartSeconds,
                     )
                 }
                 return
             }
+        }
+        // A seek can expose a broken byte-range/container boundary even when
+        // startup decoding was healthy. Only those seek-scoped transport and
+        // parser failures get the same-recipe reanchor; decoder, DV transform,
+        // and audio failures must keep their specialized recovery paths.
+        if (state.sessionId != null && pendingSeekTarget != null &&
+            hasRenderedFirstFrame &&
+            !sameRouteSeekRecoveryAttempted && error.isSameRouteSeekReanchorCandidate()
+        ) {
+            sameRouteSeekRecoveryAttempted = true
+            Log.w(
+                TAG,
+                "seek_recovery seek_id=$activeSeekId action=same_route_reanchor " +
+                    "target_source_seconds=$pendingSeekTarget error=${error.errorCodeName}",
+                error,
+            )
+            startSeekReanchor(
+                targetSourceSec = pendingSeekTarget,
+                reason = "player_error_same_route",
+                rollbackAllowed = false,
+                diagnostics = mapOf(
+                    "error_code" to error.errorCode.toString(),
+                    "error_code_name" to error.errorCodeName,
+                    "error_cause" to (error.cause?.javaClass?.simpleName ?: "unknown"),
+                ),
+            )
+            return
         }
         val isTransientNetwork =
             error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
@@ -930,26 +1045,40 @@ class PlayerViewModel(
                     isLoading = false,
                     error = null,
                     playbackPlan = plan.copy(
-                        timeline = plan.timeline.copy(playerStartSeconds = state.position),
+                        timeline = plan.timeline.copy(
+                            playerStartSeconds = plan.timeline.playerPositionForSource(state.position)
+                                ?: plan.timeline.playerStartSeconds,
+                        ),
                         decisionTrace = plan.decisionTrace +
                             "client_retry=transient_network:$transientNetworkRetries",
                     ),
-                    startPosition = state.position,
+                    startPosition = plan.timeline.playerPositionForSource(state.position)
+                        ?: plan.timeline.playerStartSeconds,
                 )
             }
             return
         }
         if (state.sessionId != null) {
-            startProtocolV3Replan(
-                error.failureClassification(),
-                message,
-                state,
-                diagnostics = mapOf(
-                    "error_code" to error.errorCode.toString(),
-                    "error_code_name" to error.errorCodeName,
-                    "error_cause" to (error.cause?.javaClass?.simpleName ?: "unknown"),
-                ),
+            val diagnostics = mapOf(
+                "error_code" to error.errorCode.toString(),
+                "error_code_name" to error.errorCodeName,
+                "error_cause" to (error.cause?.javaClass?.simpleName ?: "unknown"),
             )
+            if (pendingSeekTarget != null) {
+                startSeekFailureRecovery(
+                    targetSourceSec = pendingSeekTarget,
+                    classification = error.failureClassification(),
+                    notice = message,
+                    diagnostics = diagnostics,
+                )
+            } else {
+                startProtocolV3Replan(
+                    error.failureClassification(),
+                    message,
+                    state,
+                    diagnostics = diagnostics,
+                )
+            }
             return
         }
         _uiState.update {
@@ -969,7 +1098,9 @@ class PlayerViewModel(
         diagnostics: Map<String, String> = emptyMap(),
     ) {
         if (recoveryJob?.isActive == true) return
+        if (serverSeekRecoveryInFlight) return
         val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId ?: return
+        val recoveryGeneration = playbackRecoveryGeneration
         recoveryJob = viewModelScope.launch {
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
@@ -978,7 +1109,7 @@ class PlayerViewModel(
                 appVersion = BuildConfig.VERSION_NAME,
                 dolbyVision = dolbyVision,
             )
-            when (val result = playbackSessionManager.replanActiveVideoSession(
+            val result = playbackSessionManager.replanActiveVideoSession(
                 classification = classification,
                 message = notice,
                 positionSeconds = state.position,
@@ -987,7 +1118,9 @@ class PlayerViewModel(
                 diagnostics = diagnostics,
                 capabilities = capabilities,
                 clientPlaybackContext = playbackContext,
-            )) {
+            )
+            if (recoveryGeneration != playbackRecoveryGeneration) return@launch
+            when (result) {
                 is ApiResult.Success -> when (val decision = result.data) {
                     is VideoSessionStartV3.Ready -> {
                         sessionLifecycle.adoptActiveSession(
@@ -1002,6 +1135,8 @@ class PlayerViewModel(
                             session = decision.session,
                             renewMissingSessionWithLegacyStart = false,
                         )
+                        if (recoveryGeneration != playbackRecoveryGeneration) return@launch
+                        val mountGeneration = expectNextMediaMount()
                         _uiState.update { current ->
                             current.copy(
                                 error = null,
@@ -1011,7 +1146,12 @@ class PlayerViewModel(
                                 delivery = decision.plan.delivery,
                                 streamUrl = decision.plan.stream.url,
                                 requestHeaders = decision.plan.stream.headers,
+                                container = decision.plan.stream.container ?: current.container,
                                 startPosition = decision.plan.timeline.playerStartSeconds,
+                                mediaMountGeneration = mountGeneration,
+                                position = decision.plan.timeline.sourceStartSeconds
+                                    .takeIf { it.isFinite() && it >= 0.0 }
+                                    ?: current.position,
                             )
                         }
                     }
@@ -1070,10 +1210,29 @@ class PlayerViewModel(
      * Updating the plan's engine + startPosition re-runs the screen's mount
      * Returns false when the action isn't an engine switch so the caller
      * proceeds to the server ladder.
-     */
+    */
 
     private fun resetPlaybackRecoveryState() {
+        // Invalidate callbacks before cancelling jobs. Some HTTP stacks can
+        // still return a response while cancellation propagates; generation
+        // checks prevent that response from adopting into the new content.
+        playbackRecoveryGeneration++
         cancelRecoveryJob()
+        seekRecoveryJob?.cancel()
+        seekRecoveryJob = null
+        serverSeekRecoveryInFlight = false
+        queuedServerSeek = null
+        awaitingMediaMountGeneration = null
+        positionReportsBlockedForPendingLoad = true
+        seekRecoveryRollbackInvalidated = false
+        clearBufferedSeekCommands()
+        pendingNativeSeekAfterMount = null
+        cancelPendingQuickSkip()
+        seekPresentationGuard.cancel()
+        activeSeekTargetSec = null
+        activeSeekId = null
+        sameRouteSeekRecoveryAttempted = false
+        hasRenderedFirstFrame = false
         transientNetworkRetries = 0
     }
 
@@ -1082,13 +1241,85 @@ class PlayerViewModel(
         recoveryJob = null
     }
 
+    private fun clearBufferedSeekCommands() {
+        while (seekRequestChannel.tryReceive().isSuccess) Unit
+        while (immediateSeekChannel.tryReceive().isSuccess) Unit
+    }
+
+    private fun expectNextMediaMount(): Long {
+        mediaMountSequence = if (mediaMountSequence == Long.MAX_VALUE) 1L else mediaMountSequence + 1L
+        awaitingMediaMountGeneration = mediaMountSequence
+        positionReportsBlockedForPendingLoad = false
+        return mediaMountSequence
+    }
+
+    /** Called synchronously after PlayerScreen has applied this mount to Media3. */
+    fun onMediaMountApplied(generation: Long) {
+        if (awaitingMediaMountGeneration == generation) {
+            awaitingMediaMountGeneration = null
+            positionReportsBlockedForPendingLoad = false
+            pendingNativeSeekAfterMount?.let { (targetSeconds, immediate) ->
+                pendingNativeSeekAfterMount = null
+                // The load may have resolved to an online V3 plan after the
+                // command was queued. Decide again against the newly mounted
+                // timeline so source time is mapped or re-anchored correctly.
+                executeSeekTarget(targetSeconds, immediate)
+            }
+        }
+    }
+
     /** Called by the player when the current position changes. */
     fun onPositionChanged(positionMs: Long, durationMs: Long, bufferedPositionMs: Long = 0L) {
         if (positionMs < 0) return
+        // A recovery state update precedes the actual Media3 remount. Ignore
+        // callbacks from the old media item during that gap so they cannot
+        // overwrite the requested source position or settle the new seek.
+        if (positionReportsBlockedForPendingLoad || awaitingMediaMountGeneration != null) return
 
-        val positionSec = positionMs / 1000.0
-        val durationSec = durationMs / 1000.0
-        val bufferedSec = bufferedPositionMs / 1000.0
+        val currentState = _uiState.value
+        val timeline = currentState.playbackPlan?.timeline
+        val knownSourceDuration = currentState.duration.takeIf { it > 0.0 }
+        val rawPositionSec = positionMs / 1000.0
+        val rawDurationSec = durationMs / 1000.0
+        val rawBufferedSec = bufferedPositionMs / 1000.0
+        val mappedPositionSec = (timeline?.sourcePositionForPlayer(rawPositionSec) ?: rawPositionSec)
+            .let { position -> knownSourceDuration?.let { position.coerceAtMost(it) } ?: position }
+        val mappedDurationSec = if (durationMs > 0) {
+            timeline?.sourcePositionForPlayer(rawDurationSec) ?: rawDurationSec
+        } else {
+            0.0
+        }.let { duration -> knownSourceDuration?.let { duration.coerceAtMost(it) } ?: duration }
+        val mappedBufferedSec = (timeline?.sourcePositionForPlayer(rawBufferedSec) ?: rawBufferedSec)
+            .let { position -> knownSourceDuration?.let { position.coerceAtMost(it) } ?: position }
+        val nowMs = SystemClock.elapsedRealtime()
+        val positionDecision = seekPresentationGuard.onPositionReport(
+            positionMs = (mappedPositionSec * 1_000.0).toLong().coerceAtLeast(0L),
+            nowElapsedRealtimeMs = nowMs,
+        )
+        if (positionDecision is SeekPositionDecision.Suppress) {
+            _uiState.update { state ->
+                state.copy(
+                    duration = if (mappedDurationSec > 0) mappedDurationSec else state.duration,
+                    bufferedPosition = mappedBufferedSec,
+                )
+            }
+            return
+        }
+        val positionSec = (positionDecision as SeekPositionDecision.Publish).positionMs / 1000.0
+        val durationSec = mappedDurationSec
+        val bufferedSec = mappedBufferedSec
+        val seekWasActive = activeSeekTargetSec != null
+        activeSeekTargetSec?.let { target ->
+            if (!serverSeekRecoveryInFlight &&
+                (kotlin.math.abs(positionSec - target) <= 2.0 ||
+                    nowMs - activeSeekStartedAtMs >= SEEK_SETTLE_DEADLINE_MS)
+            ) {
+                Log.i(TAG, "seek_settled seek_id=$activeSeekId target_source_seconds=$target actual_source_seconds=$positionSec")
+                activeSeekTargetSec = null
+                activeSeekId = null
+                sameRouteSeekRecoveryAttempted = false
+            }
+        }
         val previousPosition = _uiState.value.position
 
         // Playback is progressing — restore the transient-network retry budget so
@@ -1109,15 +1340,17 @@ class PlayerViewModel(
         // (only on the before->after transition, so resuming inside the credits
         // doesn't instantly trigger it). Without a credits marker, fall back to
         // crossing (duration - nextUpPromptSeconds); 0 = only at end (iOS parity).
-        val creditsStart = _uiState.value.credits?.start
-        if (creditsStart != null) {
-            if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
-        } else {
-            val promptSeconds = nextUpPromptSeconds.value
-            val duration = _uiState.value.duration
-            if (promptSeconds > 0 && duration > 0) {
-                val promptStart = duration - promptSeconds
-                if (previousPosition < promptStart && positionSec >= promptStart) onApproachingEnd()
+        if (!seekWasActive) {
+            val creditsStart = _uiState.value.credits?.start
+            if (creditsStart != null) {
+                if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
+            } else {
+                val promptSeconds = nextUpPromptSeconds.value
+                val duration = _uiState.value.duration
+                if (promptSeconds > 0 && duration > 0) {
+                    val promptStart = duration - promptSeconds
+                    if (previousPosition < promptStart && positionSec >= promptStart) onApproachingEnd()
+                }
             }
         }
 
@@ -1181,6 +1414,7 @@ class PlayerViewModel(
     }
 
     fun onFirstVideoFrameRendered() {
+        hasRenderedFirstFrame = true
         playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
     }
 
@@ -1228,8 +1462,48 @@ class PlayerViewModel(
         // dismiss. Room-driven corrective seeks go through seekImmediate and
         // are unaffected.
         if (_uiState.value.showUpNext) dismissUpNext()
-        _uiState.update { it.copy(position = position) }
-        _seekRequests.tryEmit(position)
+        cancelPendingQuickSkip()
+        beginAndExecuteSeek(position)
+    }
+
+    /** Apple-parity quick skip: preview every tap, commit one engine command
+     * after the 200ms trailing edge, and base repeats on the pending target. */
+    fun onSkipBy(deltaSeconds: Double) {
+        autoPlayGuard.recordUserAction()
+        pendingApproachingEndVideoEnded = null
+        if (_uiState.value.showUpNext) dismissUpNext()
+        val state = _uiState.value
+        val nowMs = SystemClock.elapsedRealtime()
+        if (quickSkipAccumulator.pending == null) {
+            quickSkipOriginMs = (state.position * 1_000.0).toLong().coerceAtLeast(0L)
+            activeSeekId = ++seekSequence
+            sameRouteSeekRecoveryAttempted = false
+        }
+        val pending = quickSkipAccumulator.addSkip(
+            deltaMs = (deltaSeconds * 1_000.0).toLong(),
+            enginePositionMs = (state.position * 1_000.0).toLong().coerceAtLeast(0L),
+            bounds = SeekBoundsMs(
+                endPositionMs = state.duration.takeIf { it > 0.0 }
+                    ?.let { (it * 1_000.0).toLong() },
+            ),
+            nowElapsedRealtimeMs = nowMs,
+        )
+        armSeekPresentation(
+            originSourceMs = quickSkipOriginMs,
+            targetSourceMs = pending.targetPositionMs,
+            nowMs = nowMs,
+        )
+        _uiState.update { it.copy(position = pending.targetPositionMs / 1_000.0) }
+        quickSkipCommitJob?.cancel()
+        quickSkipCommitJob = viewModelScope.launch {
+            delay((pending.commitAtElapsedRealtimeMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L))
+            quickSkipAccumulator.commitIfDue(
+                expectedGeneration = pending.generation,
+                nowElapsedRealtimeMs = SystemClock.elapsedRealtime(),
+            )?.let { commit ->
+                executeSeekTarget(commit.targetPositionMs / 1_000.0)
+            }
+        }
     }
 
     /**
@@ -1240,8 +1514,467 @@ class PlayerViewModel(
      * deadband that would otherwise swallow sub-2s sync corrections.
      */
     fun seekImmediate(position: Double) {
-        _uiState.update { it.copy(position = position) }
-        _immediateSeeks.tryEmit(position)
+        cancelPendingQuickSkip()
+        beginAndExecuteSeek(position, immediate = true)
+    }
+
+    private fun cancelPendingQuickSkip() {
+        quickSkipCommitJob?.cancel()
+        quickSkipCommitJob = null
+        quickSkipAccumulator.cancel()
+    }
+
+    private fun beginAndExecuteSeek(position: Double, immediate: Boolean = false) {
+        val state = _uiState.value
+        val target = position
+            .takeIf { it.isFinite() }
+            ?.coerceAtLeast(0.0)
+            ?.let { value -> if (state.duration > 0.0) value.coerceAtMost(state.duration) else value }
+            ?: return
+        val nowMs = SystemClock.elapsedRealtime()
+        activeSeekId = ++seekSequence
+        sameRouteSeekRecoveryAttempted = false
+        armSeekPresentation(
+            originSourceMs = (state.position * 1_000.0).toLong().coerceAtLeast(0L),
+            targetSourceMs = (target * 1_000.0).toLong().coerceAtLeast(0L),
+            nowMs = nowMs,
+        )
+        _uiState.update { it.copy(position = target) }
+        executeSeekTarget(target, immediate)
+    }
+
+    private fun armSeekPresentation(originSourceMs: Long, targetSourceMs: Long, nowMs: Long) {
+        seekPresentationGuard.begin(
+            originPositionMs = originSourceMs,
+            targetPositionMs = targetSourceMs,
+            nowElapsedRealtimeMs = nowMs,
+        )
+        activeSeekTargetSec = targetSourceMs / 1_000.0
+        activeSeekStartedAtMs = nowMs
+        if (activeSeekId == null) activeSeekId = ++seekSequence
+    }
+
+    private fun executeSeekTarget(targetSourceSec: Double, immediate: Boolean = false) {
+        val state = _uiState.value
+        val mountPending = positionReportsBlockedForPendingLoad || awaitingMediaMountGeneration != null
+        if (mountPending && (state.sessionId == null || state.playbackPlan == null)) {
+            // Local/offline playback has no V3 attempt to re-anchor. Retain the
+            // newest absolute target until the matching Media3 mount is applied.
+            pendingNativeSeekAfterMount = targetSourceSec to immediate
+            Log.i(
+                TAG,
+                "seek_commit seek_id=$activeSeekId action=queue_native_after_mount " +
+                    "target_source_seconds=$targetSourceSec",
+            )
+            return
+        }
+        // The mounted player still represents the old server origin until the
+        // active re-anchor returns. Even if that old timeline calls this seek
+        // "native", executing it there would race the replacement mount. Queue
+        // the latest source target as another server re-anchor instead.
+        if (
+            serverSeekRecoveryInFlight ||
+            recoveryJob?.isActive == true ||
+            positionReportsBlockedForPendingLoad ||
+            awaitingMediaMountGeneration != null
+        ) {
+            Log.i(
+                TAG,
+                "seek_commit seek_id=$activeSeekId action=queue_server_reanchor " +
+                    "target_source_seconds=$targetSourceSec reason=reanchor_in_flight",
+            )
+            startSeekReanchor(targetSourceSec, "reanchor_in_flight")
+            return
+        }
+        val timeline = state.playbackPlan?.timeline
+        val decision = timeline?.decideSeek(targetSourceSec)
+        when (decision) {
+            is PlaybackSeekDecision.ServerReanchor -> {
+                Log.i(
+                    TAG,
+                    "seek_commit seek_id=$activeSeekId action=server_reanchor " +
+                        "target_source_seconds=$targetSourceSec reason=${decision.reason}",
+                )
+                startSeekReanchor(targetSourceSec, "${decision.reason}")
+            }
+            is PlaybackSeekDecision.NativeSeek -> {
+                Log.i(
+                    TAG,
+                    "seek_commit seek_id=$activeSeekId action=native " +
+                        "target_source_seconds=$targetSourceSec " +
+                        "target_player_seconds=${decision.targetPlayerPositionSeconds}",
+                )
+                if (immediate) {
+                    immediateSeekChannel.trySend(decision.targetPlayerPositionSeconds)
+                } else {
+                    seekRequestChannel.trySend(decision.targetPlayerPositionSeconds)
+                }
+            }
+            null -> {
+                // Offline/local playback has no V3 plan; source and player
+                // coordinates are the same.
+                if (immediate) immediateSeekChannel.trySend(targetSourceSec)
+                else seekRequestChannel.trySend(targetSourceSec)
+            }
+        }
+    }
+
+    private fun startSeekReanchor(
+        targetSourceSec: Double,
+        reason: String,
+        rollbackAllowed: Boolean = true,
+        diagnostics: Map<String, String> = emptyMap(),
+    ) {
+        val seekId = activeSeekId ?: return
+        enqueueServerSeekRecovery(
+            ServerSeekRecoveryRequest(
+                seekId = seekId,
+                targetSourceSec = targetSourceSec,
+                mode = ServerSeekRecoveryMode.REANCHOR,
+                reason = reason,
+                rollbackAllowed = rollbackAllowed,
+                diagnostics = diagnostics,
+            ),
+        )
+    }
+
+    private fun startSeekFailureRecovery(
+        targetSourceSec: Double,
+        classification: String,
+        notice: String,
+        diagnostics: Map<String, String> = emptyMap(),
+    ) {
+        val seekId = activeSeekId ?: return
+        enqueueServerSeekRecovery(
+            ServerSeekRecoveryRequest(
+                seekId = seekId,
+                targetSourceSec = targetSourceSec,
+                mode = ServerSeekRecoveryMode.PINNED_FALLBACK,
+                reason = "player_error",
+                classification = classification,
+                notice = notice,
+                diagnostics = diagnostics,
+            ),
+        )
+    }
+
+    private fun enqueueServerSeekRecovery(request: ServerSeekRecoveryRequest) {
+        val state = _uiState.value
+        state.versions.getOrNull(state.selectedVersionIndex)?.fileId ?: return
+        // A server-origin replacement supersedes any native command that has
+        // not reached Media3 yet; replaying that old command on the new mount
+        // would violate latest-target-wins ordering.
+        clearBufferedSeekCommands()
+        sameRouteSeekRecoveryAttempted = true
+        _uiState.update { it.copy(isBuffering = true, error = null) }
+
+        if (serverSeekRecoveryInFlight) {
+            // One slot is intentional: seeks are absolute source positions, so
+            // only the newest target remains useful. The running HTTP request is
+            // allowed to complete and is discarded before adoption.
+            val queued = queuedServerSeek
+            if (request.mode == ServerSeekRecoveryMode.PINNED_FALLBACK &&
+                queued != null && queued.seekId >= request.seekId
+            ) {
+                // An error callback from the old mount can arrive after the
+                // user has already queued a newer exact target. It must not
+                // replace that deliberate seek with a fallback for stale media.
+                return
+            }
+            queuedServerSeek = request
+            Log.i(
+                TAG,
+                "seek_recovery seek_id=${request.seekId} action=queued_latest " +
+                    "target_source_seconds=${request.targetSourceSec}",
+            )
+            return
+        }
+
+        serverSeekRecoveryInFlight = true
+        seekRecoveryRollbackInvalidated = !request.rollbackAllowed
+        queuedServerSeek = null
+        val recoveryGeneration = playbackRecoveryGeneration
+        seekRecoveryJob = viewModelScope.launch {
+            runServerSeekRecovery(request, recoveryGeneration)
+        }
+    }
+
+    private suspend fun runServerSeekRecovery(
+        initialRequest: ServerSeekRecoveryRequest,
+        recoveryGeneration: Long,
+    ) {
+        var request = initialRequest
+        try {
+            // A generic V3 recovery may already own the manager operation
+            // mutex. Let it finish without cancellation, then apply the newest
+            // user target after it so the generic recovery cannot remount an
+            // older position last.
+            recoveryJob?.takeIf { it.isActive }?.join()
+            if (recoveryGeneration != playbackRecoveryGeneration) return
+            while (recoveryGeneration == playbackRecoveryGeneration) {
+                // A newer target may have arrived before this coroutine got its
+                // first turn, or while the preceding lifecycle adoption waited.
+                queuedServerSeek?.let { latest ->
+                    request = latest
+                    queuedServerSeek = null
+                }
+                if (activeSeekId != request.seekId) return
+
+                val before = _uiState.value
+                val operationDiagnostics = request.diagnostics + mapOf(
+                    "seek_id" to request.seekId.toString(),
+                    "seek_reason" to request.reason,
+                )
+                var readyDecision: VideoSessionStartV3.Ready? = null
+                var pinnedRequest = if (request.mode == ServerSeekRecoveryMode.PINNED_FALLBACK) {
+                    PinnedSeekRecoveryRequest(
+                        classification = request.classification ?: "seek_failure",
+                        notice = request.notice ?: "Playback failed while seeking.",
+                        diagnostics = operationDiagnostics,
+                    )
+                } else {
+                    null
+                }
+                var failureMessage: String? = null
+
+                if (request.mode == ServerSeekRecoveryMode.REANCHOR) {
+                    val result = playbackSessionManager.reanchorActiveVideoSession(
+                        positionSeconds = request.targetSourceSec,
+                        diagnostics = operationDiagnostics,
+                    )
+                    if (recoveryGeneration != playbackRecoveryGeneration) return
+                    val latestAfterReanchor = queuedServerSeek
+                    if (latestAfterReanchor != null) {
+                        queuedServerSeek = null
+                        request = latestAfterReanchor
+                        continue
+                    }
+                    if (activeSeekId != request.seekId) return
+
+                    when (result) {
+                        is ApiResult.Success -> when (val decision = result.data) {
+                            is VideoSessionStartV3.Ready -> readyDecision = decision
+                            is VideoSessionStartV3.Terminal -> {
+                                pinnedRequest = PinnedSeekRecoveryRequest(
+                                    classification = "seek_reanchor_terminal",
+                                    notice = decision.message,
+                                    diagnostics = operationDiagnostics + mapOf(
+                                        "reanchor_terminal_reason" to decision.reason,
+                                    ),
+                                )
+                            }
+                            VideoSessionStartV3.ServerUpgradeRequired -> {
+                                failureMessage = "This Silo server does not support reliable seeking."
+                            }
+                        }
+                        is ApiResult.Error -> if (result.error == "seek_reanchor_not_supported") {
+                            failureMessage = "This Silo server does not support reliable seeking."
+                        } else {
+                            pinnedRequest = PinnedSeekRecoveryRequest(
+                                classification = "seek_reanchor_failed",
+                                notice = result.message,
+                                diagnostics = operationDiagnostics + mapOf("reanchor_error" to result.error),
+                            )
+                        }
+                        is ApiResult.NetworkError -> {
+                            pinnedRequest = PinnedSeekRecoveryRequest(
+                                classification = "seek_reanchor_network_failure",
+                                notice = result.exception.message ?: "Seek re-anchor request failed.",
+                                diagnostics = operationDiagnostics,
+                            )
+                        }
+                    }
+                }
+
+                if (failureMessage != null) {
+                    publishSeekFailure(request, recoveryGeneration, failureMessage)
+                    return
+                }
+
+                val reanchoredDecision = readyDecision
+                if (reanchoredDecision != null) {
+                    adoptSeekRecoveryDecision(
+                        decision = reanchoredDecision,
+                        before = before,
+                        request = request,
+                        recoveryGeneration = recoveryGeneration,
+                    )
+                    if (recoveryGeneration != playbackRecoveryGeneration) return
+                    val latestAfterAdoption = queuedServerSeek
+                    if (latestAfterAdoption != null) {
+                        queuedServerSeek = null
+                        request = latestAfterAdoption
+                        continue
+                    }
+                    return
+                }
+
+                val fallback = pinnedRequest ?: return
+                val fallbackResult = playbackSessionManager.recoverActiveVideoSessionAfterSeek(
+                    positionSeconds = request.targetSourceSec,
+                    classification = fallback.classification,
+                    message = fallback.notice,
+                    diagnostics = fallback.diagnostics,
+                )
+                if (recoveryGeneration != playbackRecoveryGeneration) return
+                val latestAfterFallback = queuedServerSeek
+                if (latestAfterFallback != null) {
+                    queuedServerSeek = null
+                    request = latestAfterFallback
+                    continue
+                }
+                if (activeSeekId != request.seekId) return
+
+                when (fallbackResult) {
+                    is ApiResult.Success -> when (val decision = fallbackResult.data) {
+                        is VideoSessionStartV3.Ready -> adoptSeekRecoveryDecision(
+                            decision = decision,
+                            before = before,
+                            request = request,
+                            recoveryGeneration = recoveryGeneration,
+                        )
+                        is VideoSessionStartV3.Terminal -> publishSeekFailure(
+                            request,
+                            recoveryGeneration,
+                            "Unable to seek (${decision.reason}): ${decision.message}",
+                        )
+                        VideoSessionStartV3.ServerUpgradeRequired -> publishSeekFailure(
+                            request,
+                            recoveryGeneration,
+                            "This Silo server does not support reliable seeking.",
+                        )
+                    }
+                    is ApiResult.Error -> publishSeekFailure(
+                        request,
+                        recoveryGeneration,
+                        if (fallbackResult.error == "seek_reanchor_not_supported") {
+                            "This Silo server does not support reliable seeking."
+                        } else {
+                            "Unable to seek (${fallbackResult.message})"
+                        },
+                    )
+                    is ApiResult.NetworkError -> publishSeekFailure(
+                        request,
+                        recoveryGeneration,
+                        "Unable to seek (${fallbackResult.exception.message})",
+                    )
+                }
+
+                if (recoveryGeneration != playbackRecoveryGeneration) return
+                val latestAfterFallbackAdoption = queuedServerSeek
+                if (latestAfterFallbackAdoption != null) {
+                    queuedServerSeek = null
+                    request = latestAfterFallbackAdoption
+                    continue
+                }
+                return
+            }
+        } finally {
+            if (recoveryGeneration == playbackRecoveryGeneration) {
+                serverSeekRecoveryInFlight = false
+                seekRecoveryJob = null
+            }
+        }
+    }
+
+    private fun publishSeekFailure(
+        request: ServerSeekRecoveryRequest,
+        recoveryGeneration: Long,
+        message: String,
+    ) {
+        if (!isCurrentServerSeek(request, recoveryGeneration)) return
+        if (request.mode == ServerSeekRecoveryMode.REANCHOR &&
+            request.rollbackAllowed &&
+            !seekRecoveryRollbackInvalidated
+        ) {
+            // A policy re-anchor is transactional: until a replacement is
+            // adopted, the old Media3 item remains valid. A temporary API
+            // failure therefore cancels the optimistic seek and leaves
+            // playback running instead of replacing it with a fatal screen.
+            val rollback = seekPresentationGuard.cancel()?.originPositionMs
+                ?.div(1_000.0)
+                ?: _uiState.value.position
+            activeSeekTargetSec = null
+            activeSeekId = null
+            sameRouteSeekRecoveryAttempted = false
+            seekRecoveryRollbackInvalidated = false
+            positionReportsBlockedForPendingLoad = false
+            awaitingMediaMountGeneration = null
+            Log.w(TAG, "seek_recovery action=rollback message=$message")
+            _uiState.update {
+                it.copy(
+                    position = rollback,
+                    isBuffering = false,
+                    error = null,
+                )
+            }
+            return
+        }
+        _uiState.update { it.copy(isBuffering = false, error = message) }
+    }
+
+    private fun isCurrentServerSeek(
+        request: ServerSeekRecoveryRequest,
+        recoveryGeneration: Long,
+    ): Boolean = recoveryGeneration == playbackRecoveryGeneration &&
+        activeSeekId == request.seekId &&
+        queuedServerSeek == null
+
+    private suspend fun adoptSeekRecoveryDecision(
+        decision: VideoSessionStartV3.Ready,
+        before: PlayerUiState,
+        request: ServerSeekRecoveryRequest,
+        recoveryGeneration: Long,
+    ) {
+        if (!isCurrentServerSeek(request, recoveryGeneration)) return
+        val fileId = before.versions.getOrNull(before.selectedVersionIndex)?.fileId ?: return
+        val expectedFileId = before.playbackPlan?.effectiveMediaFileId ?: fileId
+        val actualFileId = decision.plan.effectiveMediaFileId ?: expectedFileId
+        if (actualFileId != expectedFileId) {
+            publishSeekFailure(
+                request,
+                recoveryGeneration,
+                "Seek recovery tried to change the selected media version.",
+            )
+            return
+        }
+        val sourcePosition = decision.plan.timeline.sourceStartSeconds
+            .takeIf { it.isFinite() && it >= 0.0 }
+            ?: request.targetSourceSec
+        seekRecoveryRollbackInvalidated = false
+        sessionLifecycle.adoptActiveSession(
+            params = StartParams(
+                contentId = before.contentId,
+                fileId = fileId,
+                capabilities = capabilityDetector.detect(
+                    dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot(),
+                ),
+                audioTrackIndex = decision.session.audioTrackIndex,
+                subtitleTrackIndex = before.selectedSubtitleIndex,
+                startPosition = sourcePosition,
+            ),
+            session = decision.session,
+            renewMissingSessionWithLegacyStart = false,
+        )
+        if (!isCurrentServerSeek(request, recoveryGeneration)) return
+        val mountGeneration = expectNextMediaMount()
+        _uiState.update { current ->
+            current.copy(
+                error = null,
+                isBuffering = false,
+                sessionId = decision.session.sessionId,
+                playMethod = decision.session.playMethod,
+                playbackPlan = decision.session.playbackPlan,
+                delivery = decision.plan.delivery,
+                streamUrl = decision.plan.stream.url,
+                requestHeaders = decision.plan.stream.headers,
+                container = decision.plan.stream.container ?: current.container,
+                startPosition = decision.plan.timeline.playerStartSeconds,
+                mediaMountGeneration = mountGeneration,
+                position = sourcePosition,
+                bufferedPosition = sourcePosition,
+            )
+        }
     }
 
     // ---- Remote-control adapters (PlaybackRealtimeController calls these) ----
@@ -2180,6 +2913,7 @@ class PlayerViewModel(
             ?: watchDetail?.backdropUrl?.takeIf { url -> url.isNotBlank() }
             ?: sidecar.posterUrl?.takeIf { url -> url.isNotBlank() }
 
+        val mountGeneration = expectNextMediaMount()
         _uiState.update {
             it.copy(
                 isLoading = false,
@@ -2189,27 +2923,38 @@ class PlayerViewModel(
                 artworkUrl = artworkUrl,
                 // Playback fields — file:// is read directly by Media3, no
                 // server session needed.
+                sessionId = null,
                 streamUrl = media.uriString,
                 playMethod = org.siloserver.silo.model.playback.PlayMethod.DIRECT,
                 playbackPlan = null,
+                requestHeaders = emptyMap(),
                 delivery = null,
+                container = sidecar.container,
                 serverUrl = "",   // unused for local files
                 accessToken = "",
                 startPosition = startPos,
+                mediaMountGeneration = mountGeneration,
                 position = startPos,
-                duration = watchDetail?.versions?.firstOrNull { v -> v.fileId == fileId }?.duration ?: 0.0,
+                bufferedPosition = 0.0,
+                duration = watchDetail?.versions?.firstOrNull { v -> v.fileId == fileId }?.duration
+                    ?: sidecar.durationSeconds
+                    ?: 0.0,
                 isPlaying = true,
                 isPaused = false,
+                isBuffering = false,
                 versions = versions,
                 selectedVersionIndex = selectedIndex,
                 audioTracks = versions[selectedIndex].audioTracks ?: emptyList(),
                 subtitleTracks = emptyList(),  // sidecars are remote in v1
+                selectedAudioIndex = 0,
+                selectedSubtitleIndex = -1,
                 intro = watchDetail?.intro,
                 credits = watchDetail?.credits,
-                chapters = versions[selectedIndex].chapters.orEmpty(),
+                chapters = versions[selectedIndex].chapters.orEmpty().ifEmpty { sidecar.chapters.orEmpty() },
                 seriesId = watchDetail?.seriesId,
                 preferredAudioLanguage = null,
                 preferredTextLanguage = null,
+                subtitleRefreshNonce = 0,
             )
         }
         android.util.Log.i(

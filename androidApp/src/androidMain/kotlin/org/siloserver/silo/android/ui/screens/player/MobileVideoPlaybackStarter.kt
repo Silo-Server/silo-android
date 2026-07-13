@@ -15,7 +15,6 @@ import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.android.BuildConfig
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.model.playback.applyResumeRewind
-import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.selectPlaybackVersion
@@ -134,17 +133,17 @@ class MobileVideoPlaybackStarter(
                 ?.takeIf { it.isNotBlank() }
                 ?: resolved.streamUrl
 
-            val startPos = resolvePlaybackStartPosition(
-                // For a resume, follow the server's actual cut (resolved.position)
-                // so the player can't seek before a transcode's start; only honor
-                // an exact override when rewind is suppressed (Start Over / WT /
-                // retry). We already sent the rewound seek above, so a transcode's
-                // resolved.position reflects the rewind; direct-play rewind then
-                // depends on the server echoing it (device-verify).
-                overridePosition = if (suppressRewind) request.resumePositionOverride else null,
-                sessionPosition = resolved.position,
-                detailPosition = watchDetail.userData?.positionSeconds,
-            )
+            // V3 distinguishes full movie time from the mounted player time.
+            // In particular, a copy-mode HLS stream may begin at movie time
+            // 3,000s while Media3 must mount it at 0s. Never feed the source
+            // position back into the shortened player timeline.
+            val playerStartPos = readyV3.plan.timeline.playerStartSeconds
+                .takeIf { it.isFinite() && it >= 0.0 }
+                ?: resolved.position.coerceAtLeast(0.0)
+            val sourceStartPos = readyV3.plan.timeline.sourceStartSeconds
+                .takeIf { it.isFinite() && it >= 0.0 }
+                ?: startRequestPosition
+                ?: playerStartPos
 
             sessionLifecycle.adoptActiveSession(
                 params = StartParams(
@@ -154,7 +153,7 @@ class MobileVideoPlaybackStarter(
                     audioTrackIndex = request.audioTrackIndex ?: resolved.audioTrackIndex,
                     subtitleTrackIndex = request.subtitleTrackIndex,
                     qualityPreference = playbackQualityIntent,
-                    startPosition = startPos,
+                    startPosition = sourceStartPos,
                     clientPlaybackContext = playbackContext,
                 ),
                 session = resolved,
@@ -176,7 +175,8 @@ class MobileVideoPlaybackStarter(
                 subtitle = buildSubtitle(watchDetail).takeIf { it.isNotBlank() },
                 artworkUrl = watchDetail.posterUrl?.takeIf { it.isNotBlank() }
                     ?: watchDetail.backdropUrl?.takeIf { it.isNotBlank() },
-                startPositionSeconds = startPos,
+                startPositionSeconds = playerStartPos,
+                sourceStartPositionSeconds = sourceStartPos,
                 serverUrl = serverUrl,
                 accessToken = accessToken,
                 mediaFileId = resolved.mediaFileId.takeIf { id -> id > 0 }

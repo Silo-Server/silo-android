@@ -119,7 +119,18 @@ class TvPlayerScreenStartPositionTest {
         assertFalse(mountEffect.contains("sendCustomCommand"))
         assertTrue(mountEffect.contains("val delivery = plan?.delivery ?: state.delivery"))
         assertTrue(mountEffect.contains("delivery = delivery"))
-        assertTrue(mountEffect.contains("backend.mount(mediaSpec)"))
+        assertTrue(mountEffect.contains("backend.mount(mediaSpec, playWhenReady = !viewModel.uiState.value.isPaused)"))
+    }
+
+    @Test
+    fun recoveryMountUsesNonceAndAcknowledgesAppliedTimeline() {
+        val mountEffect = source
+            .substringAfter("// Prepare the player when a stream URL becomes available.")
+            .substringBefore("// Subtitle refresh")
+
+        assertTrue(mountEffect.contains("state.transportMountNonce"))
+        assertTrue(mountEffect.contains("backend.mount(mediaSpec, playWhenReady = !viewModel.uiState.value.isPaused)"))
+        assertTrue(mountEffect.contains("viewModel.onTransportMountApplied(state.transportMountNonce)"))
     }
 
     @Test

@@ -26,7 +26,12 @@ sealed interface VideoPlaybackStartResult {
         val title: String,
         val subtitle: String?,
         val artworkUrl: String?,
+        /** Position in the mounted Media3 timeline. This may be zero for a
+         * server-reanchored HLS stream whose movie-time origin is non-zero. */
         val startPositionSeconds: Double,
+        /** Position in the full movie/source timeline shown to the user and
+         * reported to the server. */
+        val sourceStartPositionSeconds: Double = startPositionSeconds,
         val sessionId: String? = null,
         val serverUrl: String = "",
         val accessToken: String = "",

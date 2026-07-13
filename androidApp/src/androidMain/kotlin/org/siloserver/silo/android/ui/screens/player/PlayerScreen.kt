@@ -132,9 +132,6 @@ fun PlayerScreen(
     val backendFactory: VideoPlaybackBackendFactory = koinInject()
     val audioCapabilityManager: AudioCapabilityManager = koinInject()
     val capabilityDetector: PlaybackCapabilityDetector = koinInject()
-    val downloadStorage: org.siloserver.silo.common.downloads.DownloadStorage = koinInject()
-    val serverRegistry: org.siloserver.silo.network.ServerRegistry = koinInject()
-    val profileRepository: org.siloserver.silo.repository.ProfileRepository = koinInject()
     val subtitleManager: SubtitleManager = koinInject()
     val displayHdr = remember { DisplayHdrProbe.probe(context) }
     val refreshRateMatcher = remember { RefreshRateMatcher() }
@@ -427,6 +424,7 @@ fun PlayerScreen(
         uiState.playbackPlan,
         uiState.delivery,
         uiState.startPosition,
+        uiState.mediaMountGeneration,
     ) {
         if (exitRequested) return@LaunchedEffect
         val backend = videoBackend ?: return@LaunchedEffect
@@ -439,30 +437,20 @@ fun PlayerScreen(
         val isLocalMedia = streamUrl.startsWith("file://") || streamUrl.startsWith("content://")
         if (!isLocalMedia && serverUrl.isEmpty()) return@LaunchedEffect
 
-        // Prefer the locally-downloaded file when one exists for the active
-        // version (T9). Falls back to the streamed URL when not downloaded
-        // or when the local file disappeared between detail-screen check
-        // and Play. Media3 handles file:// URIs natively, so no factory
-        // change is needed.
-        val activeFileId = uiState.versions
-            .getOrNull(uiState.selectedVersionIndex)
-            ?.fileId
-        val localUri: String? = activeFileId?.let { fileId ->
-            val serverId = serverRegistry.activeServerId.value
-                ?: org.siloserver.silo.common.downloads.DownloadEnqueuer.DEFAULT_SERVER_ID
-            val profileId = profileRepository.getActiveProfileId()
-                ?: org.siloserver.silo.common.downloads.DownloadEnqueuer.DEFAULT_PROFILE_ID
-            downloadStorage.locateLocalMedia(serverId, profileId, fileId)?.uriString
-        }
-        val effectiveStreamUrl = localUri ?: streamUrl
-        val plan = if (localUri == null) uiState.playbackPlan else null
-        val delivery = if (localUri == null) plan?.delivery ?: uiState.delivery else null
+        // Transport selection belongs to PlayerViewModel. In particular, never
+        // replace an online V3 stream with a downloaded URI here: doing so would
+        // mount local bytes while the ViewModel continued to map seeks through
+        // the server plan's source/player timeline. The offline-first path
+        // already publishes its local URI with no session or playback plan.
+        val effectiveStreamUrl = streamUrl
+        val plan = uiState.playbackPlan
+        val delivery = plan?.delivery ?: uiState.delivery
 
         val mediaSpec = VideoPlayerMediaSpec(
             streamUrl = effectiveStreamUrl,
             // Local files play as progressive (DIRECT), regardless of how
             // the server originally provisioned the session.
-            playMethod = if (localUri != null) org.siloserver.silo.model.playback.PlayMethod.DIRECT else playMethod,
+            playMethod = playMethod,
             delivery = delivery,
             serverUrl = serverUrl,
             container = uiState.container,
@@ -477,7 +465,7 @@ fun PlayerScreen(
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
         )
-        if (localUri == null && uiState.sessionId != null) {
+        if (!isLocalMedia && uiState.sessionId != null) {
             PlaybackRuntimeCorrectionMetrics.reset()
             dvSanitizerReported = false
             startupStallDetector.onMounted(
@@ -490,7 +478,8 @@ fun PlayerScreen(
                 "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:${plan?.decisionTrace?.size ?: 0}",
             )
         }
-        backend.mount(mediaSpec)
+        backend.mount(mediaSpec, playWhenReady = !viewModel.uiState.value.isPaused)
+        viewModel.onMediaMountApplied(uiState.mediaMountGeneration)
     }
 
     // Mid-playback subtitle refresh (downloaded / AI-generated tracks).
@@ -506,25 +495,14 @@ fun PlayerScreen(
         val streamUrl = uiState.streamUrl ?: return@LaunchedEffect
         val playMethod = uiState.playMethod ?: return@LaunchedEffect
 
-        // Mirror the start effect's local-file preference so a rebuild never
-        // silently switches a local-file playback back to the remote stream.
-        val activeFileId = uiState.versions
-            .getOrNull(uiState.selectedVersionIndex)
-            ?.fileId
-        val localUri: String? = activeFileId?.let { fileId ->
-            val serverId = serverRegistry.activeServerId.value
-                ?: org.siloserver.silo.common.downloads.DownloadEnqueuer.DEFAULT_SERVER_ID
-            val profileId = profileRepository.getActiveProfileId()
-                ?: org.siloserver.silo.common.downloads.DownloadEnqueuer.DEFAULT_PROFILE_ID
-            downloadStorage.locateLocalMedia(serverId, profileId, fileId)?.uriString
-        }
-        val effectiveStreamUrl = localUri ?: streamUrl
-        val plan = if (localUri == null) uiState.playbackPlan else null
-        val delivery = if (localUri == null) plan?.delivery ?: uiState.delivery else null
+        val isLocalMedia = streamUrl.startsWith("file://") || streamUrl.startsWith("content://")
+        val effectiveStreamUrl = streamUrl
+        val plan = uiState.playbackPlan
+        val delivery = plan?.delivery ?: uiState.delivery
 
         val mediaSpec = VideoPlayerMediaSpec(
             streamUrl = effectiveStreamUrl,
-            playMethod = if (localUri != null) org.siloserver.silo.model.playback.PlayMethod.DIRECT else playMethod,
+            playMethod = playMethod,
             delivery = delivery,
             serverUrl = uiState.serverUrl,
             container = uiState.container,
@@ -534,12 +512,12 @@ fun PlayerScreen(
             artworkUrl = uiState.artworkUrl,
             startPositionSeconds = uiState.startPosition,
             durationSeconds = uiState.duration,
-            audioPassthroughCodecs = if (localUri == null) {
+            audioPassthroughCodecs = if (!isLocalMedia) {
                 plan.validatedPassthroughCodecs()
             } else {
                 emptyList()
             },
-            requestHeaders = if (localUri == null) uiState.requestHeaders else emptyMap(),
+            requestHeaders = if (!isLocalMedia) uiState.requestHeaders else emptyMap(),
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
         )
@@ -616,6 +594,21 @@ fun PlayerScreen(
                     }
                 }
 
+                override fun onPositionDiscontinuity(
+                    oldPosition: Player.PositionInfo,
+                    newPosition: Player.PositionInfo,
+                    reason: Int,
+                ) {
+                    // Media3 emits this for completed seeks even while paused,
+                    // when onIsPlayingChanged and playback-state callbacks can
+                    // remain silent. Publish the settled engine position now.
+                    viewModel.onPositionChanged(
+                        newPosition.positionMs,
+                        controller.duration,
+                        controller.bufferedPosition.coerceAtLeast(0L),
+                    )
+                }
+
                 override fun onVideoSizeChanged(size: VideoSize) {
                     if (size.width > 0 && size.height > 0) {
                         pictureInPictureVideoWidth = size.width
@@ -656,13 +649,15 @@ fun PlayerScreen(
         }
     }
 
-    // Lifecycle-bounded position ticker. Cancels when the screen pauses or
-    // the controller disconnects, so we don't hit a released Player.
+    // Lifecycle-bounded position ticker. It samples mounted media while paused
+    // too, so a paused seek settles within 500ms even on devices that omit a
+    // position-discontinuity callback. Lifecycle stop/controller disconnect
+    // still bounds the loop so it never polls a released Player.
     LaunchedEffect(mediaController, lifecycleOwner) {
         val controller = mediaController ?: return@LaunchedEffect
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
-                if (controller.isPlaying || controller.playbackState == Player.STATE_BUFFERING) {
+                if (controller.mediaItemCount > 0) {
                     viewModel.onPositionChanged(
                         controller.currentPosition,
                         controller.duration,
@@ -951,7 +946,6 @@ fun PlayerScreen(
                             roomController.onUserSeek(position)
                         } else {
                             viewModel.onSeek(position)
-                            mediaController?.seekTo((position * 1000).toLong())
                         }
                     },
                     onToggleControls = { viewModel.onToggleControls() },
