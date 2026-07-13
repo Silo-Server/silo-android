@@ -1124,6 +1124,7 @@ class TvPlayerViewModel(
         notice: String,
         state: UiState,
         qualityPreference: String? = null,
+        diagnostics: Map<String, String> = emptyMap(),
     ) {
         if (recoveryJob?.isActive == true) return
         val fileId = state.selectedFileId ?: state.mediaFileId ?: return
@@ -1144,6 +1145,7 @@ class TvPlayerViewModel(
                 audioTrackIndex = selectedAudio,
                 subtitleTrackIndex = selectedSubtitle,
                 decoderName = state.stats.videoDecoderName ?: state.stats.audioDecoderName,
+                diagnostics = diagnostics,
                 qualityPreference = qualityPreference,
                 capabilities = capabilities,
                 clientPlaybackContext = playbackContext,
@@ -1298,7 +1300,7 @@ class TvPlayerViewModel(
     }
 
     fun onFirstVideoFrameRendered() {
-        playbackSessionManager.reportActiveVideoEvent("first_frame")
+        playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
     }
 
     fun onBufferingChanged(isBuffering: Boolean) {
@@ -2408,7 +2410,17 @@ class TvPlayerViewModel(
             return
         }
         if (state.sessionId != null) {
-            startProtocolV3Replan(error.failureClassification(), message, state)
+            val diagnostics = mapOf(
+                "error_code" to error.errorCode.toString(),
+                "error_code_name" to error.errorCodeName,
+                "error_cause" to (error.cause?.javaClass?.simpleName ?: "unknown"),
+            )
+            startProtocolV3Replan(
+                error.failureClassification(),
+                message,
+                state,
+                diagnostics = diagnostics,
+            )
             return
         }
         _uiState.update {

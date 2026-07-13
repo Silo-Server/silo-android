@@ -37,6 +37,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
     profileId: String,
     mediaFileId: Int,
 ): PlaybackSessionResponse {
+    val effectiveFileId = effectiveMediaFileId ?: mediaFileId
     val playMethod = when (delivery) {
         PlaybackDelivery.ORIGINAL_HTTP -> PlayMethod.DIRECT
         PlaybackDelivery.SERVER_REMUX_PROGRESSIVE,
@@ -88,7 +89,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
             subtitleIndex = selectedTracks.subtitle?.index,
         ),
         source = PlaybackSourceMetadata(
-            mediaFileId = mediaFileId,
+            mediaFileId = effectiveFileId,
             container = stream.container,
             videoCodec = effectiveRecipe.videoCodec,
             audioCodec = effectiveRecipe.audioCodec,
@@ -99,12 +100,14 @@ internal fun PlaybackPlanV3.toSessionResponse(
         claims = claims,
         degradationWarnings = degradationWarnings,
         decisionTrace = listOf(decisionReason),
+        requestedMediaFileId = requestedMediaFileId ?: mediaFileId,
+        effectiveMediaFileId = effectiveFileId,
     )
     return PlaybackSessionResponse(
         sessionId = sessionId,
         userId = 0,
         profileId = profileId,
-        mediaFileId = mediaFileId,
+        mediaFileId = effectiveFileId,
         playMethod = playMethod,
         position = timeline.playerStartSeconds,
         streamUrl = stream.url,

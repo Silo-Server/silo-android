@@ -537,6 +537,11 @@ private fun HudInfoPane(
     }
     val streamRows = buildList<Pair<String, String>> {
         stats.backendRoute?.let { add("Route" to it) }
+        playbackPlan?.takeIf {
+            it.requestedMediaFileId != null &&
+                it.effectiveMediaFileId != null &&
+                it.requestedMediaFileId != it.effectiveMediaFileId
+        }?.let { add("Source" to "Alternate version") }
         stats.videoCodec?.let { add("Video" to it.uppercase()) }
         stats.audioCodec?.let { add("Audio" to it.uppercase()) }
         val sub = subtitleTracks.firstOrNull { it.isSelected }

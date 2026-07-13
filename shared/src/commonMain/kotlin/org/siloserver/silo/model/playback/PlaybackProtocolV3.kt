@@ -106,6 +106,8 @@ data class PlaybackPlanV3(
     val transformations: List<PlaybackTransformationV3> = emptyList(),
     @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
     @SerialName("decision_reason") val decisionReason: String,
+    @SerialName("requested_media_file_id") val requestedMediaFileId: Int? = null,
+    @SerialName("effective_media_file_id") val effectiveMediaFileId: Int? = null,
 )
 
 @Serializable

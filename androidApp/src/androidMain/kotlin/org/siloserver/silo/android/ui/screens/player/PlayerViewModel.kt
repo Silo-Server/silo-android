@@ -938,7 +938,16 @@ class PlayerViewModel(
             return
         }
         if (state.sessionId != null) {
-            startProtocolV3Replan(error.failureClassification(), message, state)
+            startProtocolV3Replan(
+                error.failureClassification(),
+                message,
+                state,
+                diagnostics = mapOf(
+                    "error_code" to error.errorCode.toString(),
+                    "error_code_name" to error.errorCodeName,
+                    "error_cause" to (error.cause?.javaClass?.simpleName ?: "unknown"),
+                ),
+            )
             return
         }
         _uiState.update {
@@ -955,6 +964,7 @@ class PlayerViewModel(
         classification: String,
         notice: String,
         state: PlayerUiState,
+        diagnostics: Map<String, String> = emptyMap(),
     ) {
         if (recoveryJob?.isActive == true) return
         val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId ?: return
@@ -972,6 +982,7 @@ class PlayerViewModel(
                 positionSeconds = state.position,
                 audioTrackIndex = state.selectedAudioIndex,
                 subtitleTrackIndex = state.selectedSubtitleIndex,
+                diagnostics = diagnostics,
                 capabilities = capabilities,
                 clientPlaybackContext = playbackContext,
             )) {
@@ -1166,7 +1177,7 @@ class PlayerViewModel(
     }
 
     fun onFirstVideoFrameRendered() {
-        playbackSessionManager.reportActiveVideoEvent("first_frame")
+        playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
     }
 
     /** Called when buffering state changes. */

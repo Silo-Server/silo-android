@@ -32,6 +32,8 @@ class PlaybackProtocolV3Test {
             dynamicRange = "dolby_vision_p8_1",
         ),
         decisionReason = "original_compatible",
+        requestedMediaFileId = 42,
+        effectiveMediaFileId = 84,
     )
 
     @Test
@@ -67,6 +69,14 @@ class PlaybackProtocolV3Test {
             playbackPlan = plan.copy(engine = PlaybackEngineKind.MPV_DIRECT),
         ).validateForMedia3()
         assertIs<PlaybackV3Validation.ReplanRequired>(stale)
+    }
+
+    @Test
+    fun requestedAndEffectiveFileIdsRoundTrip() {
+        val encoded = SiloJson.encodeToString(plan)
+        val decoded = SiloJson.decodeFromString<PlaybackPlanV3>(encoded)
+        assertEquals(42, decoded.requestedMediaFileId)
+        assertEquals(84, decoded.effectiveMediaFileId)
     }
 
     @Test

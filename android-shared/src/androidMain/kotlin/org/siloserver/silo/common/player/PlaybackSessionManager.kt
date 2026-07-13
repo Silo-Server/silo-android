@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.player
 
+import android.os.SystemClock
 import android.util.Log
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -58,6 +59,8 @@ open class PlaybackSessionManager(
         val localMutations: List<String>,
         val attemptedPlanKeys: List<String>,
         val attemptCount: Int,
+        val startedAtElapsedRealtimeMs: Long,
+        val firstFrameReported: Boolean,
     )
 
     private val videoAttemptMutex = Mutex()
@@ -111,6 +114,8 @@ open class PlaybackSessionManager(
                         localMutations = emptyList(),
                         attemptedPlanKeys = listOf(planAttemptKey),
                         attemptCount = 1,
+                        startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
+                        firstFrameReported = false,
                     )
                     PassthroughSuppressionRegistry.beginAttempt(planAttemptKey)
                     reportActiveVideoEvent("plan_selected")
@@ -166,6 +171,8 @@ open class PlaybackSessionManager(
                         localMutations = emptyList(),
                         attemptedPlanKeys = listOf(key),
                         attemptCount = 1,
+                        startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
+                        firstFrameReported = false,
                     )
                     PassthroughSuppressionRegistry.beginAttempt(key)
                     replanActiveVideoSession(
@@ -189,6 +196,7 @@ open class PlaybackSessionManager(
         audioTrackIndex: Int?,
         subtitleTrackIndex: Int?,
         decoderName: String? = null,
+        diagnostics: Map<String, String> = emptyMap(),
         qualityPreference: String? = null,
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
@@ -218,7 +226,7 @@ open class PlaybackSessionManager(
                 event = if (invalidation) "plan_invalidated" else "plan_failed",
                 failureClassification = classification,
                 outputRouteGeneration = currentContext.output.outputRouteGeneration,
-                diagnostics = mapOfNotNull("message" to message, "decoder_name" to decoderName),
+                diagnostics = diagnostics + mapOfNotNull("decoder_name" to decoderName),
             ),
         )
         val request = PlaybackReplanRequestV3(
@@ -270,6 +278,8 @@ open class PlaybackSessionManager(
                         qualityPreference = request.qualityPreference,
                         capabilities = currentCapabilities,
                         context = currentContext,
+                        startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
+                        firstFrameReported = false,
                     )
                     activeVideoAttempt = next
                     PassthroughSuppressionRegistry.beginAttempt(nextKey)
@@ -354,6 +364,26 @@ open class PlaybackSessionManager(
                 event = event,
                 outputRouteGeneration = active.context.output.outputRouteGeneration,
                 diagnostics = diagnostics,
+            ),
+        )
+    }
+
+    @Synchronized
+    fun reportFirstVideoFrame(stats: PlayerStatsSnapshot) {
+        val active = activeVideoAttempt ?: return
+        if (active.firstFrameReported) return
+        activeVideoAttempt = active.copy(firstFrameReported = true)
+        val firstFrameMs = SystemClock.elapsedRealtime() - active.startedAtElapsedRealtimeMs
+        emitRouteEvent(
+            PlaybackRouteEventV3(
+                playbackAttemptId = active.playbackAttemptId,
+                sessionId = active.sessionId,
+                planId = active.plan.planId,
+                planAttemptId = active.planAttemptId,
+                planAttemptKey = active.planAttemptKey,
+                event = "first_frame",
+                outputRouteGeneration = active.context.output.outputRouteGeneration,
+                diagnostics = stats.firstFrameDiagnostics(firstFrameMs),
             ),
         )
     }

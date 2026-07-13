@@ -174,6 +174,8 @@ data class PlaybackExecutionPlan(
     val fallbacks: List<PlaybackFallbackCandidate> = emptyList(),
     @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
     @SerialName("decision_trace") val decisionTrace: List<String> = emptyList(),
+    @SerialName("requested_media_file_id") val requestedMediaFileId: Int? = null,
+    @SerialName("effective_media_file_id") val effectiveMediaFileId: Int? = null,
 )
 
 /**

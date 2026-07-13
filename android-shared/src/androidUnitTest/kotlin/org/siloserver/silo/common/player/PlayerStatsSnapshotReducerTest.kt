@@ -22,6 +22,7 @@ class PlayerStatsSnapshotReducerTest {
             .setColorInfo(
                 ColorInfo.Builder()
                     .setColorTransfer(C.COLOR_TRANSFER_ST2084)
+                    .setColorRange(C.COLOR_RANGE_LIMITED)
                     .build(),
             )
             .build()
@@ -35,6 +36,40 @@ class PlayerStatsSnapshotReducerTest {
         assertEquals("1920x1080", result.resolution)
         assertEquals(23.976f, result.frameRate)
         assertEquals("HDR10", result.hdrMode)
+        assertEquals("video/avc", result.videoMimeType)
+        assertEquals(1920, result.videoWidth)
+        assertEquals(1080, result.videoHeight)
+        assertEquals("st2084", result.colorTransfer)
+        assertEquals("limited", result.colorRange)
+    }
+
+    @Test
+    fun `first frame diagnostics include decoder format and timing evidence`() {
+        val snapshot = PlayerStatsSnapshot(
+            videoDecoderName = "OMX.Nvidia.h265.decode",
+            videoDecoderInitializationMs = 37,
+            videoCodec = "hev1.2.4.L153.B0",
+            videoMimeType = "video/hevc",
+            videoWidth = 3840,
+            videoHeight = 2160,
+            colorTransfer = "st2084",
+            colorRange = "limited",
+        )
+
+        assertEquals(
+            mapOf(
+                "decoder_name" to "OMX.Nvidia.h265.decode",
+                "decoder_init_ms" to "37",
+                "first_frame_ms" to "412",
+                "video_mime" to "video/hevc",
+                "video_codecs" to "hev1.2.4.L153.B0",
+                "video_width" to "3840",
+                "video_height" to "2160",
+                "color_transfer" to "st2084",
+                "color_range" to "limited",
+            ),
+            snapshot.firstFrameDiagnostics(412),
+        )
     }
 
     @Test

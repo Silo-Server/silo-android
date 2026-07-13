@@ -31,7 +31,10 @@ class PlaybackAnalyticsListener : AnalyticsListener {
     }
 
     sealed class Event {
-        data class VideoDecoderInitialized(val decoderName: String) : Event()
+        data class VideoDecoderInitialized(
+            val decoderName: String,
+            val initializationDurationMs: Long? = null,
+        ) : Event()
         data class AudioDecoderInitialized(val decoderName: String) : Event()
         data class VideoFormatChanged(val format: Format) : Event()
         data class AudioFormatChanged(val format: Format) : Event()
@@ -53,7 +56,7 @@ class PlaybackAnalyticsListener : AnalyticsListener {
         initializationDurationMs: Long,
     ) {
         Log.i(TAG, "Video decoder: $decoderName (init ${initializationDurationMs}ms)")
-        _events.tryEmit(Event.VideoDecoderInitialized(decoderName))
+        _events.tryEmit(Event.VideoDecoderInitialized(decoderName, initializationDurationMs))
     }
 
     override fun onAudioDecoderInitialized(

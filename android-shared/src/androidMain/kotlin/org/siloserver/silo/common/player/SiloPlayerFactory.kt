@@ -80,7 +80,7 @@ class SiloPlayerFactory(
 
     private val subtitleParserFactory = OffsetSubtitleParserFactory(subtitleOffsetHolder)
 
-    private val extractorsFactory = DefaultExtractorsFactory()
+    private val extractorsFactory = DolbyVisionColorInfoExtractorsFactory(DefaultExtractorsFactory()
         // Media3 1.10 expects parsed cue samples by default. Forcing raw
         // subtitle payloads here makes SRT/ASS tracks crash the text renderer
         // on Android TV with "Legacy decoding is disabled". The offset wrapper
@@ -95,7 +95,7 @@ class SiloPlayerFactory(
         // remux/transcode TS segments with sparse PTS — startup then fails
         // with "timestamp not found" (androidx/media #8571-class failures).
         // 1500 packets matches what battle-tested players ship.
-        .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
+        .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE))
 
     private val hlsExtractorFactory = DefaultHlsExtractorFactory(
         // HLS uses a separate extractor path from progressive TS. Keep the DTS

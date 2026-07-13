@@ -20,8 +20,8 @@ class TvPlayerUsabilityTest {
     }
 
     @Test
-    fun playerUsesTextureViewSoComposeControlsRenderAboveVideo() {
+    fun playerUsesSurfaceViewSoHdrFramesReachTheDisplay() {
         assertTrue(source.contains("R.layout.tv_player_view"))
-        assertTrue(playerLayout.contains("app:surface_type=\"texture_view\""))
+        assertTrue(playerLayout.contains("app:surface_type=\"surface_view\""))
     }
 }

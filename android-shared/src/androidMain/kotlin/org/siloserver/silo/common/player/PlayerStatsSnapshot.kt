@@ -18,8 +18,14 @@ data class PlayerStatsSnapshot(
     val subtitleRendering: String? = null,
     val hardContainers: String? = null,
     val videoDecoderName: String? = null,
+    val videoDecoderInitializationMs: Long? = null,
     val audioDecoderName: String? = null,
     val videoCodec: String? = null,
+    val videoMimeType: String? = null,
+    val videoWidth: Int? = null,
+    val videoHeight: Int? = null,
+    val colorTransfer: String? = null,
+    val colorRange: String? = null,
     val audioCodec: String? = null,
     val resolution: String? = null,
     val frameRate: Float? = null,
@@ -38,11 +44,17 @@ fun reducePlayerStats(
     event: PlaybackAnalyticsListener.Event,
 ): PlayerStatsSnapshot = when (event) {
     is PlaybackAnalyticsListener.Event.VideoDecoderInitialized ->
-        current.copy(videoDecoderName = event.decoderName)
+        current.copy(
+            videoDecoderName = event.decoderName,
+            videoDecoderInitializationMs = event.initializationDurationMs,
+        )
     is PlaybackAnalyticsListener.Event.AudioDecoderInitialized ->
         current.copy(audioDecoderName = event.decoderName)
     is PlaybackAnalyticsListener.Event.VideoFormatChanged -> current.copy(
         videoCodec = event.format.codecs ?: event.format.sampleMimeType,
+        videoMimeType = event.format.sampleMimeType,
+        videoWidth = event.format.width.takeIf { it > 0 },
+        videoHeight = event.format.height.takeIf { it > 0 },
         resolution = if (event.format.width > 0 && event.format.height > 0) {
             "${event.format.width}x${event.format.height}"
         } else {
@@ -50,6 +62,8 @@ fun reducePlayerStats(
         },
         frameRate = if (event.format.frameRate > 0f) event.format.frameRate else current.frameRate,
         hdrMode = describeHdrMode(event.format) ?: current.hdrMode,
+        colorTransfer = describeColorTransfer(event.format) ?: current.colorTransfer,
+        colorRange = describeColorRange(event.format) ?: current.colorRange,
     )
     is PlaybackAnalyticsListener.Event.AudioFormatChanged ->
         current.copy(audioCodec = event.format.codecs ?: event.format.sampleMimeType)
@@ -63,6 +77,31 @@ fun reducePlayerStats(
     is PlaybackAnalyticsListener.Event.PlayerError,
     is PlaybackAnalyticsListener.Event.TrackSnapshot,
     -> current
+}
+
+fun PlayerStatsSnapshot.firstFrameDiagnostics(firstFrameMs: Long): Map<String, String> = buildMap {
+    videoDecoderName?.let { put("decoder_name", it) }
+    videoDecoderInitializationMs?.let { put("decoder_init_ms", it.toString()) }
+    put("first_frame_ms", firstFrameMs.coerceAtLeast(0).toString())
+    videoMimeType?.let { put("video_mime", it) }
+    videoCodec?.let { put("video_codecs", it) }
+    videoWidth?.let { put("video_width", it.toString()) }
+    videoHeight?.let { put("video_height", it.toString()) }
+    colorTransfer?.let { put("color_transfer", it) }
+    colorRange?.let { put("color_range", it) }
+}
+
+private fun describeColorTransfer(format: Format): String? = when (format.colorInfo?.colorTransfer) {
+    C.COLOR_TRANSFER_ST2084 -> "st2084"
+    C.COLOR_TRANSFER_HLG -> "hlg"
+    C.COLOR_TRANSFER_SDR -> "sdr"
+    else -> null
+}
+
+private fun describeColorRange(format: Format): String? = when (format.colorInfo?.colorRange) {
+    C.COLOR_RANGE_FULL -> "full"
+    C.COLOR_RANGE_LIMITED -> "limited"
+    else -> null
 }
 
 private fun describeHdrMode(format: Format): String? {
