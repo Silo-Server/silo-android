@@ -131,6 +131,23 @@ class PlaybackSessionManagerSeekReanchorTest {
     }
 
     @Test
+    fun reanchorTreatsOmittedOptionalMediaIdsAsUnchanged() = runTest {
+        val initial = plan()
+        val responsePlan = reanchored(initial, 90.0).copy(
+            requestedMediaFileId = null,
+            effectiveMediaFileId = null,
+        )
+        val harness = Harness(response(initial)) { _, _ -> success(response(responsePlan)) }
+        harness.manager.start()
+
+        val result = harness.manager.reanchorActiveVideoSession(positionSeconds = 90.0)
+
+        assertIs<VideoSessionStartV3.Ready>(
+            assertIs<ApiResult.Success<VideoSessionStartV3>>(result).data,
+        )
+    }
+
+    @Test
     fun exactReanchorRetainsTheDeviceLocalPcmFallback() = runTest {
         val initial = plan().copy(
             claims = org.siloserver.silo.model.playback.PlaybackValidationClaims(
@@ -289,6 +306,28 @@ class PlaybackSessionManagerSeekReanchorTest {
             .map { it.jsonPrimitive.content }
         assertTrue(request["attempted_plan_keys"]!!.jsonArray.all { it.jsonPrimitive.content in history })
         assertTrue(ready.planAttemptKey in history)
+    }
+
+    @Test
+    fun seekFailureRecoveryTreatsOmittedOptionalMediaIdsAsUnchanged() = runTest {
+        val initial = plan()
+        val fallback = initial.copy(
+            planId = "plan-2",
+            stream = initial.stream.copy(url = "/stream/session-1/seek-recovery.m3u8"),
+            requestedMediaFileId = null,
+            effectiveMediaFileId = null,
+        )
+        val harness = Harness(response(initial)) { _, _ -> success(response(fallback)) }
+        harness.manager.start()
+
+        val result = harness.manager.recoverActiveVideoSessionAfterSeek(
+            positionSeconds = 90.0,
+            classification = "seek_parser_failure",
+        )
+
+        assertIs<VideoSessionStartV3.Ready>(
+            assertIs<ApiResult.Success<VideoSessionStartV3>>(result).data,
+        )
     }
 
     @Test

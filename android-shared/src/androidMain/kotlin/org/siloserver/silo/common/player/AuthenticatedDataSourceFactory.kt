@@ -121,8 +121,25 @@ internal class RefreshingHttpDataSource(
     }
 
     private fun DataSpec.withAuthHeaders(snapshot: MediaAuthSnapshot): DataSpec = buildUpon()
-        .setHttpRequestHeaders(httpRequestHeaders + snapshot.asRequestHeaders())
+        // A V3 plan may carry a stream-scoped credential (for example, a
+        // signed CDN Authorization value). Treat those explicit DataSpec
+        // headers as authoritative while filling only missing auth/profile
+        // headers from the refreshable Silo session.
+        .setHttpRequestHeaders(
+            mergeSessionAuthHeaders(snapshot.asRequestHeaders(), httpRequestHeaders),
+        )
         .build()
+}
+
+internal fun mergeSessionAuthHeaders(
+    sessionHeaders: Map<String, String>,
+    explicitHeaders: Map<String, String>,
+): Map<String, String> = buildMap {
+    putAll(sessionHeaders)
+    explicitHeaders.forEach { (name, value) ->
+        keys.firstOrNull { it.equals(name, ignoreCase = true) }?.let(::remove)
+        put(name, value)
+    }
 }
 
 /**

@@ -540,8 +540,10 @@ open class PlaybackSessionManager(
         }
         val requestedFileId = active.plan.requestedMediaFileId ?: active.fileId
         val effectiveFileId = active.plan.effectiveMediaFileId ?: requestedFileId
-        if (candidate.requestedMediaFileId != requestedFileId ||
-            candidate.effectiveMediaFileId != effectiveFileId
+        val candidateRequestedFileId = candidate.requestedMediaFileId ?: requestedFileId
+        val candidateEffectiveFileId = candidate.effectiveMediaFileId ?: candidateRequestedFileId
+        if (candidateRequestedFileId != requestedFileId ||
+            candidateEffectiveFileId != effectiveFileId
         ) {
             return "The server changed the media file during seek re-anchoring."
         }
@@ -800,8 +802,10 @@ open class PlaybackSessionManager(
         }
         val requestedFileId = active.plan.requestedMediaFileId ?: active.fileId
         val effectiveFileId = active.plan.effectiveMediaFileId ?: requestedFileId
-        if (candidate.requestedMediaFileId != requestedFileId ||
-            candidate.effectiveMediaFileId != effectiveFileId
+        val candidateRequestedFileId = candidate.requestedMediaFileId ?: requestedFileId
+        val candidateEffectiveFileId = candidate.effectiveMediaFileId ?: candidateRequestedFileId
+        if (candidateRequestedFileId != requestedFileId ||
+            candidateEffectiveFileId != effectiveFileId
         ) {
             return "The server changed the media file during seek recovery."
         }

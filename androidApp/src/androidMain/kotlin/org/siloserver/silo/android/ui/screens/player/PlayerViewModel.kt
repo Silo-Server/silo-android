@@ -2684,14 +2684,17 @@ class PlayerViewModel(
         val state = _uiState.value
         val version = state.versions.getOrNull(index) ?: return
         if (!isRecovery && index == state.selectedVersionIndex) return
-        loadContent(
-            contentId = state.contentId,
-            preferredFileId = version.fileId,
-            initialAudioTrackIndex = state.selectedAudioIndex,
-            initialSubtitleTrackIndex = state.selectedSubtitleIndex,
-            resumePositionOverride = state.position,
-            suppressResumeRewind = true,
-        )
+        viewModelScope.launch {
+            sessionLifecycle.stop()
+            loadContent(
+                contentId = state.contentId,
+                preferredFileId = version.fileId,
+                initialAudioTrackIndex = state.selectedAudioIndex,
+                initialSubtitleTrackIndex = state.selectedSubtitleIndex,
+                resumePositionOverride = state.position,
+                suppressResumeRewind = true,
+            )
+        }
     }
 
     /**

@@ -26,6 +26,7 @@ import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
 import org.siloserver.silo.model.playback.CLIENT_DV_TRANSFORM_RECIPE_VERSION
 import org.siloserver.silo.model.playback.MEDIA3_ONLY_FEATURE
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
+import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDeviceContext
 import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackTransformationExecutor
@@ -204,6 +205,7 @@ class PlaybackCapabilityDetector(
         val libassDirectFidelity = libassRendering && libassEmbeddedFonts
         val contextFeatures = buildList {
             add(PLAYBACK_PLAN_V3_FEATURE)
+            add(SEEK_REANCHOR_V3_FEATURE)
             add(MEDIA3_ONLY_FEATURE)
             add(DETAILED_DECODE_CAPABILITIES_FEATURE)
             if (!passthrough?.entries.isNullOrEmpty()) add(LAYOUT_AWARE_PASSTHROUGH_FEATURE)

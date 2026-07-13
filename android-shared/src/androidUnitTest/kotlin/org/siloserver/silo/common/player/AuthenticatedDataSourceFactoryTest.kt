@@ -31,6 +31,25 @@ class AuthenticatedDataSourceFactoryTest {
     }
 
     @Test
+    fun explicitPlanHeadersOverrideSessionAuthCaseInsensitively() {
+        val merged = mergeSessionAuthHeaders(
+            sessionHeaders = mapOf(
+                "Authorization" to "Bearer silo-session",
+                "X-Profile-Id" to "profile-1",
+            ),
+            explicitHeaders = mapOf(
+                "authorization" to "Signed cdn-credential",
+                "X-Stream-Scope" to "route-7",
+            ),
+        )
+
+        assertEquals("Signed cdn-credential", merged["authorization"])
+        assertFalse(merged.containsKey("Authorization"))
+        assertEquals("profile-1", merged["X-Profile-Id"])
+        assertEquals("route-7", merged["X-Stream-Scope"])
+    }
+
+    @Test
     fun srtSubtitlePayloadBytesAreNormalizedBeforeMedia3ParsesThem() {
         val loose = """
             00:00:01.000 --> 00:00:02.000

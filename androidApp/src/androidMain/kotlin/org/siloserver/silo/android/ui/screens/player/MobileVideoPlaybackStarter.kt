@@ -13,7 +13,9 @@ import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.android.BuildConfig
+import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.WatchDetail
+import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.network.ApiResult
@@ -128,6 +130,11 @@ class MobileVideoPlaybackStarter(
             }
             val session = readyV3.session
             val resolved = session
+            val effectiveFileId = resolved.mediaFileId.takeIf { it > 0 }
+                ?: readyV3.plan.effectiveMediaFileId
+                ?: version.fileId
+            val effectiveVersion = watchDetail.versions.firstOrNull { it.fileId == effectiveFileId }
+                ?: version
             val resolvedDelivery = resolved.resolvedPlaybackDelivery()
             val resolvedStreamUrl = resolved.playbackPlan?.stream?.url
                 ?.takeIf { it.isNotBlank() }
@@ -148,7 +155,7 @@ class MobileVideoPlaybackStarter(
             sessionLifecycle.adoptActiveSession(
                 params = StartParams(
                     contentId = request.contentId,
-                    fileId = version.fileId,
+                    fileId = effectiveFileId,
                     capabilities = capabilities,
                     audioTrackIndex = request.audioTrackIndex ?: resolved.audioTrackIndex,
                     subtitleTrackIndex = request.subtitleTrackIndex,
@@ -162,7 +169,9 @@ class MobileVideoPlaybackStarter(
 
             VideoPlaybackStartResult.Ready(
                 contentId = request.contentId,
-                fileId = version.fileId,
+                fileId = effectiveFileId,
+                versions = watchDetail.versions,
+                fileResolution = effectiveVersion.resolution,
                 sessionId = resolved.sessionId,
                 streamUrl = resolvedStreamUrl,
                 playMethod = resolved.playMethod,
@@ -170,7 +179,7 @@ class MobileVideoPlaybackStarter(
                 playbackPlanV3 = readyV3.plan,
                 requestHeaders = readyV3.plan.stream.headers,
                 delivery = resolvedDelivery,
-                container = version.container,
+                container = readyV3.plan.stream.container ?: effectiveVersion.container,
                 title = watchDetail.title,
                 subtitle = buildSubtitle(watchDetail).takeIf { it.isNotBlank() },
                 artworkUrl = watchDetail.posterUrl?.takeIf { it.isNotBlank() }
@@ -179,16 +188,19 @@ class MobileVideoPlaybackStarter(
                 sourceStartPositionSeconds = sourceStartPos,
                 serverUrl = serverUrl,
                 accessToken = accessToken,
-                mediaFileId = resolved.mediaFileId.takeIf { id -> id > 0 }
-                    ?: session.mediaFileId.takeIf { id -> id > 0 },
+                mediaFileId = effectiveFileId,
                 audioTrackIndex = resolved.audioTrackIndex,
-                durationSeconds = resolved.durationSeconds ?: version.duration,
-                subtitleUrls = resolved.subtitleUrls ?: emptyList(),
+                durationSeconds = resolved.durationSeconds ?: effectiveVersion.duration,
+                subtitleUrls = buildMobileSubtitleChoices(
+                    catalogTracks = effectiveVersion.subtitleTracks.orEmpty(),
+                    plannedTracks = resolved.subtitleUrls.orEmpty(),
+                    sessionId = resolved.sessionId,
+                ),
                 preferredAudioLanguage = preferredAudioLanguage ?: activeProfile?.language,
                 preferredTextLanguage = activeProfile?.subtitleLanguage,
                 intro = watchDetail.intro,
                 credits = watchDetail.credits,
-                chapters = version.chapters.orEmpty(),
+                chapters = effectiveVersion.chapters.orEmpty(),
                 seriesId = watchDetail.seriesId,
                 seasonNumber = watchDetail.seasonNumber,
                 episodeNumber = watchDetail.episodeNumber,
@@ -225,4 +237,54 @@ class MobileVideoPlaybackStarter(
     private companion object {
         const val TAG = "MobileVideoPlaybackStarter"
     }
+}
+
+internal fun buildMobileSubtitleChoices(
+    catalogTracks: List<SubtitleTrack>,
+    plannedTracks: List<PlayerSubtitleInfo>,
+    sessionId: String,
+): List<PlayerSubtitleInfo> {
+    if (catalogTracks.isEmpty()) return plannedTracks
+
+    val plannedByIndex = plannedTracks.associateBy(PlayerSubtitleInfo::index)
+    val catalogChoices = catalogTracks.map { track ->
+        plannedByIndex[track.index]?.let { planned ->
+            planned.copy(
+                language = planned.language ?: track.language,
+                codec = planned.codec ?: track.codec,
+                label = planned.label ?: track.title,
+                source = planned.source ?: if (track.external) "external" else "embedded",
+                forced = planned.forced ?: track.forced,
+            )
+        } ?: PlayerSubtitleInfo(
+            index = track.index,
+            language = track.language,
+            codec = track.codec,
+            label = track.title,
+            source = if (track.external) "external" else "embedded",
+            forced = track.forced,
+            url = mobileSubtitleTrackUrl(sessionId, track),
+        )
+    }
+    val catalogIndices = catalogTracks.mapTo(mutableSetOf(), SubtitleTrack::index)
+    return catalogChoices + plannedTracks.filterNot { it.index in catalogIndices }
+}
+
+private fun mobileSubtitleTrackUrl(sessionId: String, track: SubtitleTrack): String {
+    val format = track.codec?.trim()?.lowercase()
+    val isBitmap = format in setOf(
+        "pgs",
+        "hdmv_pgs_subtitle",
+        "dvd_subtitle",
+        "dvdsub",
+        "dvb_subtitle",
+    )
+    if (isBitmap && !track.external) return ""
+    val extension = when (format) {
+        "ass", "ssa" -> ".ass"
+        "pgs", "hdmv_pgs_subtitle" -> ".sup"
+        "ttml" -> ".ttml"
+        else -> ".vtt"
+    }
+    return "/stream/$sessionId/subtitles/${track.index}$extension"
 }
