@@ -7,12 +7,13 @@ import okhttp3.Protocol
 import java.util.concurrent.TimeUnit
 
 /**
- * Pooled OkHttpClient used by every media stream request.
+ * Pooled OkHttp transport used by Media3 and authenticated reader requests.
  *
  * Lives as a Koin singleton so the underlying connection pool, dispatcher,
  * and HTTP/2 session survive across playback sessions. Keep it separate from
  * the app-level Ktor client — this one only serves media; the auth/refresh
- * chain on the Ktor client must not see media traffic.
+ * chain on the Ktor client must not see media traffic. Media3 auth lives above
+ * this transport in [RefreshingHttpDataSource].
  */
 internal fun buildPlayerOkHttpClient(): OkHttpClient =
     OkHttpClient.Builder()

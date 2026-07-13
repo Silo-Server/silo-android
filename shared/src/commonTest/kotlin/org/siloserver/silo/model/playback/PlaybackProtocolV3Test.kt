@@ -309,6 +309,49 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
+    fun startAndReplanRequestsCarryCurrentNetworkEvidence() {
+        val start = SiloJson.encodeToString(
+            PlaybackStartRequestV3(
+                fileId = 12,
+                profileId = "profile",
+                playbackAttemptId = "attempt",
+                subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
+                outputRouteGeneration = 4,
+                metered = true,
+                bandwidthEstimateKbps = 22_000,
+                bandwidthCapKbps = 15_000,
+                capabilities = ClientCodecCapabilities(),
+                clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
+            ),
+        )
+        val replan = SiloJson.encodeToString(
+            PlaybackReplanRequestV3(
+                playbackAttemptId = "attempt",
+                replanRequestId = "request",
+                failedPlanId = "plan",
+                planAttemptId = "plan-attempt",
+                planAttemptKey = "key",
+                attemptedPlanKeys = listOf("key"),
+                attemptCount = 2,
+                positionSeconds = 10.0,
+                outputRouteGeneration = 4,
+                metered = true,
+                bandwidthEstimateKbps = 9_000,
+                bandwidthCapKbps = 8_000,
+                selectedTracks = SelectedPlaybackTracksV3(),
+                failure = PlaybackFailureV3("transport_stall"),
+                capabilities = ClientCodecCapabilities(),
+                clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
+            ),
+        )
+
+        assertTrue(start.contains("\"bandwidth_estimate_kbps\":22000"))
+        assertTrue(start.contains("\"bandwidth_cap_kbps\":15000"))
+        assertTrue(replan.contains("\"bandwidth_estimate_kbps\":9000"))
+        assertTrue(replan.contains("\"bandwidth_cap_kbps\":8000"))
+    }
+
+    @Test
     fun layoutAwarePassthroughSerializesExactRouteEvidence() {
         val passthrough = AudioPassthroughCapabilities(
             passthroughCodecs = listOf("truehd"),

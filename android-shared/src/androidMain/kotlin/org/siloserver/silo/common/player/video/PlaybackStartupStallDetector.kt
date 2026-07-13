@@ -16,6 +16,7 @@ class PlaybackStartupStallDetector(
     private val startupGraceMs: Long = DEFAULT_STARTUP_GRACE_MS,
     private val midStreamGraceMs: Long = DEFAULT_MID_STREAM_GRACE_MS,
     private val startedProgressMs: Long = DEFAULT_STARTED_PROGRESS_MS,
+    private val bufferedProgressMs: Long = DEFAULT_BUFFERED_PROGRESS_MS,
 ) {
     private var sessionKey: String? = null
     private var startPositionMs: Long = 0L
@@ -27,6 +28,7 @@ class PlaybackStartupStallDetector(
     // starts). The stall is measured from here, so the same logic covers a
     // never-started session and a mid-stream freeze.
     private var lastProgressPositionMs: Long = 0L
+    private var lastBufferedPositionMs: Long = 0L
     private var lastProgressAtMs: Long = 0L
 
     fun onMounted(
@@ -43,6 +45,7 @@ class PlaybackStartupStallDetector(
         this.firstFrameRendered = false
         this.decoderStartupAtMs = null
         this.lastProgressPositionMs = this.startPositionMs
+        this.lastBufferedPositionMs = this.startPositionMs
         this.lastProgressAtMs = nowMs
     }
 
@@ -101,6 +104,20 @@ class PlaybackStartupStallDetector(
             started = true
         }
 
+        // Downloading media is transport progress even before the first frame
+        // or while a rebuffer is filling. Re-anchor only the transport clock;
+        // the independent decoder-no-output deadline above must still fire if
+        // bytes arrive but the video decoder never produces a frame.
+        if ((decoderInputBufferCount == 0 || firstFrameRendered) &&
+            bufferedPositionMs - lastBufferedPositionMs >= bufferedProgressMs
+        ) {
+            lastBufferedPositionMs = bufferedPositionMs
+            lastProgressAtMs = nowMs
+        } else if (bufferedPositionMs < lastBufferedPositionMs) {
+            // A seek or timeline replacement can move the buffer backwards.
+            lastBufferedPositionMs = bufferedPositionMs
+        }
+
         if (signaled) return null
         if (!playWhenReady || !isBuffering) return null
 
@@ -128,5 +145,6 @@ class PlaybackStartupStallDetector(
         const val DEFAULT_STARTUP_GRACE_MS: Long = 20_000L
         const val DEFAULT_MID_STREAM_GRACE_MS: Long = 20_000L
         const val DEFAULT_STARTED_PROGRESS_MS: Long = 1_500L
+        const val DEFAULT_BUFFERED_PROGRESS_MS: Long = 250L
     }
 }

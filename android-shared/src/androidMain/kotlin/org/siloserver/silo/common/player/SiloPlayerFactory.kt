@@ -11,7 +11,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
-import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
@@ -27,6 +27,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
@@ -48,9 +49,9 @@ import java.util.ArrayList
 
 /**
  * Factory for ExoPlayer instances. Each factory owns exactly one
- * [AuthenticatedDataSourceFactory], which in turn reuses the pooled
- * media [okhttp3.OkHttpClient] injected via Koin — so TLS sessions and
- * HTTP/2 connections survive across playback sessions.
+ * [AuthenticatedDataSourceFactory], which in turn reuses the pooled HTTP
+ * backend injected via Koin — so TLS sessions and HTTP/2 connections survive
+ * across playback sessions while the backend remains replaceable.
  *
  * Form-factor (TV vs. phone) is resolved lazily from the [Context] via
  * [TvModeDetector] — callers never pass an `isTv` flag.
@@ -64,7 +65,9 @@ class SiloPlayerFactory(
     private val context: Context,
     private val tokenManager: TokenManager,
     private val subtitleManager: SubtitleManager,
-    okHttpClient: okhttp3.OkHttpClient,
+    httpDataSourceFactory: HttpDataSource.Factory,
+    mediaAuthSession: MediaAuthSession,
+    private val bandwidthMeter: DefaultBandwidthMeter,
     private val delayProcessor: DelayAudioProcessor,
     private val subtitleOffsetHolder: SubtitleOffsetHolder,
     private val libassBridge: LibassBridge,
@@ -82,8 +85,8 @@ class SiloPlayerFactory(
 
     private val dataSourceFactory = AuthenticatedDataSourceFactory(
         context = context,
-        okHttpClient = okHttpClient,
-        tokenManager = tokenManager,
+        httpDataSourceFactory = httpDataSourceFactory,
+        authSession = mediaAuthSession,
         serverUrlProvider = { serverUrl },
         requestHeadersProvider = ::requestHeadersFor,
     )
@@ -262,24 +265,16 @@ class SiloPlayerFactory(
         // streams grow toward the time limit while preventing high-bitrate
         // remuxes from filling the app heap on memory-constrained TVs.
         val bufferPolicy = PlaybackBufferPolicy.forMode(
-            PlaybackBufferMode.QuickStart,
+            PlaybackBufferMode.Balanced,
             playbackBufferDeviceProfile(),
         )
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                /* minBufferMs = */ bufferPolicy.minBufferMs,
-                /* maxBufferMs = */ bufferPolicy.maxBufferMs,
-                /* bufferForPlaybackMs = */ bufferPolicy.bufferForPlaybackMs,
-                /* bufferForPlaybackAfterRebufferMs = */ bufferPolicy.bufferForPlaybackAfterRebufferMs,
-            )
-            .setTargetBufferBytes(bufferPolicy.targetBufferBytes)
-            .setPrioritizeTimeOverSizeThresholds(bufferPolicy.prioritizeTimeOverSizeThresholds)
-            .build()
+        val loadControl = SiloLoadControl(bufferPolicy)
 
         val builder = ExoPlayer.Builder(context, renderersFactory)
             .setTrackSelector(trackSelector)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
+            .setBandwidthMeter(bandwidthMeter)
             .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .setSeekBackIncrementMs(10_000)

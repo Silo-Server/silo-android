@@ -82,6 +82,7 @@ class PlaybackApiTest {
                 "media3_only",
                 "detailed_decode_capabilities",
                 "client_video_transformations_v1",
+                "device_quirks_v1",
             ),
             body["client_features"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
@@ -103,6 +104,9 @@ class PlaybackApiTest {
                 qualityPreference = "720p",
                 positionSeconds = 12.5,
                 outputRouteGeneration = 8,
+                metered = true,
+                bandwidthEstimateKbps = 18_500,
+                bandwidthCapKbps = 12_000,
                 selectedTracks = SelectedPlaybackTracksV3(),
                 failure = PlaybackFailureV3("decoder_no_output"),
                 capabilities = ClientCodecCapabilities(),
@@ -115,6 +119,9 @@ class PlaybackApiTest {
         val body = SiloJson.parseToJsonElement(captured.body).jsonObject
         assertEquals("key-1", body["plan_attempt_key"]!!.jsonPrimitive.content)
         assertEquals(2, body["attempted_plan_keys"]!!.jsonArray.size)
+        assertEquals(true, body["metered"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(18_500, body["bandwidth_estimate_kbps"]!!.jsonPrimitive.int)
+        assertEquals(12_000, body["bandwidth_cap_kbps"]!!.jsonPrimitive.int)
     }
 
     @Test

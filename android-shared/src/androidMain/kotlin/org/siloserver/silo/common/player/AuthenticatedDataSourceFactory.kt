@@ -8,19 +8,18 @@ import androidx.media3.datasource.ContentDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.FileDataSource
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.TransferListener
-import androidx.media3.datasource.okhttp.OkHttpDataSource
 import org.siloserver.silo.common.player.subtitle.normalizeSubripPayloadIfNeeded
-import org.siloserver.silo.network.TokenManager
 import java.io.ByteArrayOutputStream
-import okhttp3.OkHttpClient
+import kotlinx.coroutines.runBlocking
 
 /**
  * DataSource.Factory that resolves relative stream URLs against the server
- * base URL and lets [MediaAuthInterceptor] on the shared [OkHttpClient] inject
- * `Authorization: Bearer` + handle 401-refresh. Explicit header injection here
- * would shadow the interceptor and leave long HLS sessions stranded on stale
- * tokens.
+ * base URL and wraps an arbitrary [HttpDataSource.Factory] with Silo's shared
+ * auth/refresh contract. The backend is currently OkHttp, but neither routing
+ * nor credentials depend on it; HttpEngine or Cronet can be selected later
+ * without duplicating token refresh behavior.
  *
  * For offline playback the `streamUrl` is `file://…` (the downloaded media
  * file on disk); the routed source below delegates those to a [FileDataSource]
@@ -29,14 +28,14 @@ import okhttp3.OkHttpClient
 @UnstableApi
 class AuthenticatedDataSourceFactory(
     private val context: Context,
-    private val okHttpClient: OkHttpClient,
-    @Suppress("unused") private val tokenManager: TokenManager,
+    private val httpDataSourceFactory: HttpDataSource.Factory,
+    private val authSession: MediaAuthSession,
     private val serverUrlProvider: () -> String,
     private val requestHeadersProvider: (Uri) -> Map<String, String> = { emptyMap() },
 ) : DataSource.Factory {
 
     override fun createDataSource(): DataSource {
-        val http = OkHttpDataSource.Factory(okHttpClient).createDataSource()
+        val http = RefreshingHttpDataSource(httpDataSourceFactory, authSession)
         val file = FileDataSource()
         val content = ContentDataSource(context)
         return RoutedDataSource(
@@ -47,6 +46,83 @@ class AuthenticatedDataSourceFactory(
             requestHeadersProvider = requestHeadersProvider,
         )
     }
+}
+
+/**
+ * Applies fresh credentials to every HTTP open and retries one 401 after the
+ * process-wide single-flight refresh. This is deliberately implemented at the
+ * Media3 boundary instead of in an OkHttp interceptor so all HTTP backends get
+ * identical long-session behavior.
+ */
+@UnstableApi
+internal class RefreshingHttpDataSource(
+    private val factory: HttpDataSource.Factory,
+    private val authSession: MediaAuthSession,
+) : HttpDataSource {
+    private val transferListeners = mutableListOf<TransferListener>()
+    private val requestProperties = linkedMapOf<String, String>()
+    private var active: HttpDataSource? = null
+
+    override fun addTransferListener(transferListener: TransferListener) {
+        transferListeners += transferListener
+        active?.addTransferListener(transferListener)
+    }
+
+    override fun open(dataSpec: DataSpec): Long {
+        val failedSnapshot = runBlocking { authSession.snapshot() }
+        val first = newDataSource()
+        active = first
+        return try {
+            first.open(dataSpec.withAuthHeaders(failedSnapshot))
+        } catch (error: HttpDataSource.InvalidResponseCodeException) {
+            if (error.responseCode != 401 || !runBlocking { authSession.refreshIfStale(failedSnapshot) }) {
+                throw error
+            }
+            first.close()
+            val retry = newDataSource()
+            active = retry
+            retry.open(dataSpec.withAuthHeaders(runBlocking { authSession.snapshot() }))
+        }
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+        active?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
+
+    override fun getUri(): Uri? = active?.uri
+
+    override fun getResponseCode(): Int = active?.responseCode ?: -1
+
+    override fun getResponseHeaders(): Map<String, List<String>> =
+        active?.responseHeaders.orEmpty()
+
+    override fun setRequestProperty(name: String, value: String) {
+        requestProperties[name] = value
+        active?.setRequestProperty(name, value)
+    }
+
+    override fun clearRequestProperty(name: String) {
+        requestProperties.remove(name)
+        active?.clearRequestProperty(name)
+    }
+
+    override fun clearAllRequestProperties() {
+        requestProperties.clear()
+        active?.clearAllRequestProperties()
+    }
+
+    override fun close() {
+        active?.close()
+        active = null
+    }
+
+    private fun newDataSource(): HttpDataSource = factory.createDataSource().also { dataSource ->
+        requestProperties.forEach(dataSource::setRequestProperty)
+        transferListeners.forEach(dataSource::addTransferListener)
+    }
+
+    private fun DataSpec.withAuthHeaders(snapshot: MediaAuthSnapshot): DataSpec = buildUpon()
+        .setHttpRequestHeaders(httpRequestHeaders + snapshot.asRequestHeaders())
+        .build()
 }
 
 /**

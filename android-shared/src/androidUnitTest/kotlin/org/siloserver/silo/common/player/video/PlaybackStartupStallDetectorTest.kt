@@ -327,4 +327,50 @@ class PlaybackStartupStallDetectorTest {
             ),
         )
     }
+
+    @Test
+    fun bufferedGrowthReanchorsTransportStallWithoutPretendingPlaybackStarted() {
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 10_000)
+        detector.onMounted(
+            sessionKey = "session-buffering",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+        )
+
+        assertNull(
+            detector.sample(
+                sessionKey = "session-buffering",
+                nowMs = 9_000,
+                playWhenReady = true,
+                isPlaying = false,
+                isBuffering = true,
+                currentPositionMs = 0,
+                bufferedPositionMs = 5_000,
+            ),
+        )
+        assertNull(
+            detector.sample(
+                sessionKey = "session-buffering",
+                nowMs = 15_000,
+                playWhenReady = true,
+                isPlaying = false,
+                isBuffering = true,
+                currentPositionMs = 0,
+                bufferedPositionMs = 5_000,
+            ),
+        )
+        assertEquals(
+            Playability.StartupStalled(bufferedAheadMs = 5_000, stalledForMs = 10_001),
+            detector.sample(
+                sessionKey = "session-buffering",
+                nowMs = 19_001,
+                playWhenReady = true,
+                isPlaying = false,
+                isBuffering = true,
+                currentPositionMs = 0,
+                bufferedPositionMs = 5_000,
+            ),
+        )
+    }
 }

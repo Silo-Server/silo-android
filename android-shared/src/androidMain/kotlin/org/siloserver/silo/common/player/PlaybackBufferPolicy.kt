@@ -28,25 +28,25 @@ data class PlaybackBufferPolicy(
             PlaybackBufferMode.QuickStart -> PlaybackBufferPolicy(
                 minBufferMs = 30_000,
                 maxBufferMs = 60_000,
-                bufferForPlaybackMs = 3_000,
+                bufferForPlaybackMs = 2_000,
                 bufferForPlaybackAfterRebufferMs = 6_000,
-                targetBufferBytes = targetBufferBytes(deviceProfile, low = 48, medium = 96, roomy = 160),
+                targetBufferBytes = targetBufferBytes(deviceProfile, low = 32, medium = 64, roomy = 128),
                 prioritizeTimeOverSizeThresholds = false,
             )
             PlaybackBufferMode.Balanced -> PlaybackBufferPolicy(
-                minBufferMs = 60_000,
+                minBufferMs = 50_000,
                 maxBufferMs = 120_000,
-                bufferForPlaybackMs = 7_000,
-                bufferForPlaybackAfterRebufferMs = 12_000,
-                targetBufferBytes = targetBufferBytes(deviceProfile, low = 64, medium = 128, roomy = 192),
+                bufferForPlaybackMs = 3_000,
+                bufferForPlaybackAfterRebufferMs = 10_000,
+                targetBufferBytes = targetBufferBytes(deviceProfile, low = 48, medium = 96, roomy = 160),
                 prioritizeTimeOverSizeThresholds = false,
             )
             PlaybackBufferMode.SmoothPlayback -> PlaybackBufferPolicy(
-                minBufferMs = 45_000,
-                maxBufferMs = 90_000,
+                minBufferMs = 90_000,
+                maxBufferMs = 180_000,
                 bufferForPlaybackMs = 5_000,
                 bufferForPlaybackAfterRebufferMs = 15_000,
-                targetBufferBytes = targetBufferBytes(deviceProfile, low = 96, medium = 160, roomy = 256),
+                targetBufferBytes = targetBufferBytes(deviceProfile, low = 64, medium = 128, roomy = 192),
                 prioritizeTimeOverSizeThresholds = false,
             )
         }

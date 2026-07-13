@@ -44,6 +44,7 @@ import org.siloserver.silo.common.player.audio.PassthroughSuppressionRegistry
 open class PlaybackSessionManager(
     private val playbackRepository: PlaybackRepository,
     private val tokenManager: TokenManager,
+    private val networkEvidenceProvider: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
 ) {
     private data class ActiveVideoAttempt(
         val fileId: Int,
@@ -79,6 +80,7 @@ open class PlaybackSessionManager(
         subtitleFidelityPreference: SubtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
     ): ApiResult<VideoSessionStartV3> {
         val playbackAttemptId = UUID.randomUUID().toString()
+        val network = networkEvidenceProvider.snapshot()
         val request = PlaybackStartRequestV3(
             fileId = fileId,
             profileId = profileId,
@@ -92,6 +94,8 @@ open class PlaybackSessionManager(
                 ?.let { stableTrackId(fileId, "subtitle", it) },
             subtitleTrackIndex = subtitleTrackIndex,
             outputRouteGeneration = clientPlaybackContext.output.outputRouteGeneration,
+            metered = network.metered,
+            bandwidthEstimateKbps = network.bandwidthEstimateKbps,
             capabilities = capabilities,
             clientPlaybackContext = clientPlaybackContext,
         )
@@ -118,7 +122,7 @@ open class PlaybackSessionManager(
                         firstFrameReported = false,
                     )
                     PassthroughSuppressionRegistry.beginAttempt(planAttemptKey)
-                    reportActiveVideoEvent("plan_selected")
+                    reportActiveVideoEvent("plan_selected", network.asRouteDiagnostics())
                     ApiResult.Success(
                         VideoSessionStartV3.Ready(
                             session = validated.plan.toSessionResponse(validated.sessionId, profileId, fileId),
@@ -208,6 +212,7 @@ open class PlaybackSessionManager(
         )
         val currentCapabilities = capabilities ?: active.capabilities
         val currentContext = clientPlaybackContext ?: active.context
+        val network = networkEvidenceProvider.snapshot()
         val failedKey = active.planAttemptKey
         val invalidation = classification in setOf(
             "audio_track_changed",
@@ -233,7 +238,8 @@ open class PlaybackSessionManager(
                 appliedQuirkIds = active.plan.appliedQuirks.map { it.id },
                 quirkRegistryRevision = active.plan.appliedQuirks.firstOrNull()?.registryRevision,
                 outputRouteGeneration = currentContext.output.outputRouteGeneration,
-                diagnostics = diagnostics + mapOfNotNull("decoder_name" to decoderName),
+                diagnostics = diagnostics + mapOfNotNull("decoder_name" to decoderName) +
+                    network.asRouteDiagnostics(),
             ),
         )
         val request = PlaybackReplanRequestV3(
@@ -247,6 +253,8 @@ open class PlaybackSessionManager(
             qualityPreference = qualityPreference?.lowercase() ?: active.qualityPreference,
             positionSeconds = positionSeconds,
             outputRouteGeneration = currentContext.output.outputRouteGeneration,
+            metered = network.metered,
+            bandwidthEstimateKbps = network.bandwidthEstimateKbps,
             selectedTracks = SelectedPlaybackTracksV3(
                 audio = selectedTrackIdentity(active, "audio", audioTrackIndex, active.plan.selectedTracks.audio),
                 subtitle = subtitleTrackIndex?.takeIf { it >= 0 }
@@ -350,6 +358,14 @@ open class PlaybackSessionManager(
 
     private fun mapOfNotNull(vararg values: Pair<String, String?>): Map<String, String> =
         values.mapNotNull { (key, value) -> value?.let { key to it } }.toMap()
+
+    private fun PlaybackNetworkSnapshot.asRouteDiagnostics(): Map<String, String> = buildMap {
+        put("network_transport", transport)
+        put("network_metered", metered.toString())
+        put("network_validated", validated.toString())
+        bandwidthEstimateKbps?.let { put("bandwidth_estimate_kbps", it.toString()) }
+        linkDownstreamKbps?.let { put("link_downstream_kbps", it.toString()) }
+    }
 
     private fun emitRouteEvent(event: PlaybackRouteEventV3) {
         telemetryScope.launch {
