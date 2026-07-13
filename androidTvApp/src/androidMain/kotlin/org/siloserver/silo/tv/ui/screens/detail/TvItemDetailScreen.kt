@@ -598,6 +598,8 @@ private fun TvDetailContent(
                                         episode.userData?.resumePositionSeconds(),
                                     )
                                 },
+                                onSetEpisodeWatched = viewModel::onSetEpisodeWatched,
+                                onSetEpisodeFavorite = viewModel::onSetEpisodeFavorite,
                             )
                             }
                         }
@@ -1083,6 +1085,8 @@ private fun EpisodesSection(
     onReturnToHero: () -> Boolean,
     onSeasonSelected: (org.siloserver.silo.model.catalog.Season) -> Unit,
     onEpisodeSelected: (EpisodeListItem) -> Unit,
+    onSetEpisodeWatched: (contentId: String, watched: Boolean) -> Unit,
+    onSetEpisodeFavorite: (contentId: String, favorite: Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Row(
@@ -1156,7 +1160,10 @@ private fun EpisodesSection(
                     TvDetailEpisodeRail(
                         episodes = state.episodes,
                         currentContentId = currentEpisodeRailContentId(detail, state),
+                        favoriteStates = state.episodeFavoriteStates,
                         onEpisodeSelected = onEpisodeSelected,
+                        onSetWatched = onSetEpisodeWatched,
+                        onSetFavorite = onSetEpisodeFavorite,
                         // Up returns to the hero only when the season chips aren't above
                         // the rail (the chips own the Up traversal when present).
                         onDirectionUp = if (showsSeasonChips) null else onReturnToHero,
