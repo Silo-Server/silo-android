@@ -97,6 +97,8 @@ import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
 import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
+import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
+import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
 import org.siloserver.silo.cast.SiloCastPlaybackState
 import org.siloserver.silo.cast.SiloCastQualityOption
@@ -262,6 +264,8 @@ fun TvPlayerScreen(
         }
     }
     val startupStallDetector = remember { PlaybackStartupStallDetector() }
+    val postResumeStallDetector = remember { PostResumeVideoStallDetector() }
+    var dvSanitizerReported by remember { mutableStateOf(false) }
     var pictureInPictureVideoWidth by remember { mutableStateOf(16) }
     var pictureInPictureVideoHeight by remember { mutableStateOf(9) }
     var pictureInPictureSourceRect by remember { mutableStateOf<Rect?>(null) }
@@ -846,9 +850,26 @@ fun TvPlayerScreen(
             val listener = object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     viewModel.onPlayingChanged(isPlaying)
+                    val live = viewModel.uiState.value
+                    val key = live.sessionId?.let { sessionId ->
+                        "$sessionId:${live.streamUrl}:${live.playbackPlan?.planId.orEmpty()}:" +
+                            "${live.playbackPlan?.decisionTrace?.size ?: 0}"
+                    }
+                    if (key != null) {
+                        val rendered = (activePlayerHolder.player.value as? androidx.media3.exoplayer.ExoPlayer)
+                            ?.videoDecoderCounters?.renderedOutputBufferCount
+                        postResumeStallDetector.onIsPlayingChanged(
+                            sessionKey = key,
+                            isPlaying = isPlaying,
+                            nowMs = SystemClock.elapsedRealtime(),
+                            currentPositionMs = controller.currentPosition.coerceAtLeast(0L),
+                            renderedOutputBufferCount = rendered,
+                        )
+                    }
                 }
                 override fun onRenderedFirstFrame() {
                     startupStallDetector.onFirstFrameRendered()
+                    postResumeStallDetector.onFirstFrameRendered()
                     viewModel.onFirstVideoFrameRendered()
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -955,6 +976,62 @@ fun TvPlayerScreen(
                     viewModel.onUnsupportedPlayback(reason)
                     return@repeatOnLifecycle
                 }
+                val sanitizedSamples = PlaybackRuntimeCorrectionMetrics.consumeDolbyVisionHdr10PlusSamples()
+                if (sanitizedSamples > 0 && !dvSanitizerReported) {
+                    dvSanitizerReported = true
+                    viewModel.onRuntimeCorrection(
+                        event = "runtime_correction_applied",
+                        correctionId = "client_dv8_hdr10plus_sanitizer_v1",
+                        stage = "sample_sanitized",
+                        details = mapOf("sample_count" to sanitizedSamples.toString()),
+                    )
+                }
+                when (val recovery = postResumeStallDetector.sample(
+                    sessionKey = sessionKey,
+                    nowMs = SystemClock.elapsedRealtime(),
+                    playWhenReady = controller.playWhenReady,
+                    isPlaying = controller.isPlaying,
+                    isReady = controller.playbackState == Player.STATE_READY,
+                    currentPositionMs = controller.currentPosition.coerceAtLeast(0L),
+                    durationMs = controller.duration.coerceAtLeast(0L),
+                    renderedOutputBufferCount = decoderCounters?.renderedOutputBufferCount,
+                )) {
+                    PostResumeVideoStallDetector.Signal.SeekBack -> {
+                        controller.seekTo(
+                            (controller.currentPosition - PostResumeVideoStallDetector.SEEK_BACK_MS)
+                                .coerceAtLeast(0L),
+                        )
+                        viewModel.onRuntimeCorrection(
+                            "runtime_correction_applied",
+                            "client_post_resume_video_recovery_v1",
+                            "nonzero_seek",
+                        )
+                    }
+                    PostResumeVideoStallDetector.Signal.Reprepare -> {
+                        val position = controller.currentPosition.coerceAtLeast(0L)
+                        val resume = controller.playWhenReady
+                        controller.stop()
+                        controller.prepare()
+                        controller.seekTo(position)
+                        if (resume) controller.play()
+                        viewModel.onRuntimeCorrection(
+                            "runtime_correction_applied",
+                            "client_surface_recovery_v1",
+                            "codec_surface_reprepare",
+                        )
+                    }
+                    is PostResumeVideoStallDetector.Signal.Recovered -> viewModel.onRuntimeCorrection(
+                        "runtime_correction_succeeded",
+                        recovery.correctionId,
+                        "rendered_frame_progress",
+                    )
+                    is PostResumeVideoStallDetector.Signal.Failed -> viewModel.onRuntimeCorrection(
+                        "runtime_correction_failed",
+                        recovery.correctionId,
+                        "bounded_recovery_exhausted",
+                    )
+                    null -> Unit
+                }
                 delay(1_000)
             }
         }
@@ -990,13 +1067,19 @@ fun TvPlayerScreen(
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
+            runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
         )
         state.sessionId?.let { sessionId ->
+            PlaybackRuntimeCorrectionMetrics.reset()
+            dvSanitizerReported = false
             startupStallDetector.onMounted(
                 sessionKey = "$sessionId:$url:${plan?.planId.orEmpty()}:${plan?.decisionTrace?.size ?: 0}",
                 playMethod = method,
                 startPositionMs = mediaSpec.startPositionMs,
                 nowMs = SystemClock.elapsedRealtime(),
+            )
+            postResumeStallDetector.onMounted(
+                "$sessionId:$url:${plan?.planId.orEmpty()}:${plan?.decisionTrace?.size ?: 0}",
             )
         }
         backend.mount(mediaSpec)
@@ -1029,6 +1112,7 @@ fun TvPlayerScreen(
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
+            runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
         )
         backend.refresh(mediaSpec)
     }

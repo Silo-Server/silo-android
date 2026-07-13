@@ -25,6 +25,7 @@ fun mountVideoMedia(
         durationMs = spec.durationMs,
         requestHeaders = spec.requestHeaders,
         transformations = spec.transformations,
+        runtimeCorrections = spec.runtimeCorrections,
     )
     player.setMediaItem(mediaItem, startPositionMs.coerceAtLeast(0L))
     player.prepare()
@@ -52,6 +53,7 @@ fun refreshMountedVideoMedia(
         durationMs = spec.durationMs,
         requestHeaders = spec.requestHeaders,
         transformations = spec.transformations,
+        runtimeCorrections = spec.runtimeCorrections,
     )
     player.setMediaItem(mediaItem, resumePositionMs)
     player.prepare()

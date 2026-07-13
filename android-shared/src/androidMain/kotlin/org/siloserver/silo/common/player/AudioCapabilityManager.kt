@@ -2,6 +2,7 @@ package org.siloserver.silo.common.player
 
 import android.content.Context
 import android.media.AudioFormat
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.Spatializer
@@ -41,6 +42,7 @@ class AudioCapabilityManager(
     context: Context,
 ) {
     private val appContext = context.applicationContext
+    private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private val mediaAttrs = AudioAttributes.Builder()
         .setUsage(C.USAGE_MEDIA)
@@ -91,7 +93,7 @@ class AudioCapabilityManager(
     private val spatializer: Spatializer? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             runCatching {
-                (appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager).spatializer
+                audioManager.spatializer
             }.getOrNull()
         } else null
 
@@ -161,6 +163,63 @@ class AudioCapabilityManager(
             maxChannels = maxChannels,
             entries = entries,
         )
+    }
+
+    /**
+     * Returns a privacy-safe category for the active media sink. Device names,
+     * addresses, and HDMI product strings are intentionally never sent to the
+     * server. API 33+ exposes the route selected for media attributes; older
+     * releases can only expose connected outputs, so their result is a
+     * conservative category ordered by the routes most relevant to playback.
+     */
+    fun currentSinkType(): String {
+        val devices = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val attrs = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                    .build()
+                audioManager.getAudioDevicesForAttributes(attrs)
+            } else {
+                audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
+            }
+        }.getOrDefault(emptyList())
+        return devices.map(::sinkCategory).minByOrNull(::sinkPriority) ?: "unknown"
+    }
+
+    private fun sinkCategory(device: AudioDeviceInfo): String = when (device.type) {
+        AudioDeviceInfo.TYPE_HDMI,
+        AudioDeviceInfo.TYPE_HDMI_ARC,
+        -> "hdmi"
+        AudioDeviceInfo.TYPE_HDMI_EARC -> "hdmi_earc"
+        AudioDeviceInfo.TYPE_USB_ACCESSORY,
+        AudioDeviceInfo.TYPE_USB_DEVICE,
+        AudioDeviceInfo.TYPE_USB_HEADSET,
+        -> "usb"
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        AudioDeviceInfo.TYPE_BLE_HEADSET,
+        AudioDeviceInfo.TYPE_BLE_SPEAKER,
+        -> "bluetooth"
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        AudioDeviceInfo.TYPE_WIRED_HEADSET,
+        AudioDeviceInfo.TYPE_LINE_ANALOG,
+        AudioDeviceInfo.TYPE_LINE_DIGITAL,
+        -> "wired"
+        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE,
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+        -> "built_in"
+        else -> "other"
+    }
+
+    private fun sinkPriority(category: String): Int = when (category) {
+        "hdmi_earc" -> 0
+        "hdmi" -> 1
+        "usb" -> 2
+        "bluetooth" -> 3
+        "wired" -> 4
+        "built_in" -> 5
+        else -> 6
     }
 
     /**

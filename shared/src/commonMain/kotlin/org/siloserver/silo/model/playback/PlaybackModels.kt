@@ -172,6 +172,8 @@ data class PlaybackExecutionPlan(
     val requirements: RouteRequirements = RouteRequirements(),
     val claims: PlaybackValidationClaims = PlaybackValidationClaims(),
     val transformations: List<PlaybackTransformationV3> = emptyList(),
+    @SerialName("applied_quirks") val appliedQuirks: List<PlaybackAppliedQuirkV3> = emptyList(),
+    @SerialName("runtime_corrections") val runtimeCorrections: List<String> = emptyList(),
     val fallbacks: List<PlaybackFallbackCandidate> = emptyList(),
     @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
     @SerialName("decision_trace") val decisionTrace: List<String> = emptyList(),
@@ -315,6 +317,7 @@ data class ClientPlaybackContext(
         PLAYBACK_PLAN_V3_FEATURE,
         MEDIA3_ONLY_FEATURE,
         DETAILED_DECODE_CAPABILITIES_FEATURE,
+        DEVICE_QUIRKS_V3_FEATURE,
     ),
     val platform: String = "android",
     @SerialName("form_factor") val formFactor: String,
@@ -333,6 +336,9 @@ data class PlaybackDeviceContext(
     val product: String? = null,
     @SerialName("soc_manufacturer") val socManufacturer: String? = null,
     @SerialName("soc_model") val socModel: String? = null,
+    @SerialName("build_id") val buildId: String? = null,
+    @SerialName("build_display") val buildDisplay: String? = null,
+    @SerialName("security_patch") val securityPatch: String? = null,
     @SerialName("sdk_int") val sdkInt: Int? = null,
     val abis: List<String> = emptyList(),
 )
@@ -342,6 +348,7 @@ data class PlaybackOutputContext(
     @SerialName("hdr_details") val hdrDetails: HdrCapabilities? = null,
     @SerialName("audio_passthrough") val audioPassthrough: AudioPassthroughCapabilities? = null,
     @SerialName("current_sink") val currentSink: String? = null,
+    @SerialName("sink_type") val sinkType: String? = null,
     @SerialName("output_route_generation") val outputRouteGeneration: Long = 0,
 )
 

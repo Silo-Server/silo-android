@@ -108,6 +108,8 @@ internal fun PlaybackPlanV3.toSessionResponse(
         ),
         claims = claims,
         transformations = transformations,
+        appliedQuirks = appliedQuirks,
+        runtimeCorrections = runtimeCorrections,
         degradationWarnings = degradationWarnings,
         decisionTrace = listOf(decisionReason),
         requestedMediaFileId = requestedMediaFileId ?: mediaFileId,

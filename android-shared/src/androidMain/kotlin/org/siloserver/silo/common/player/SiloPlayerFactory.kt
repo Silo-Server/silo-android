@@ -2,6 +2,7 @@ package org.siloserver.silo.common.player
 
 import android.app.ActivityManager
 import android.content.Context
+import android.os.Handler
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -13,7 +14,10 @@ import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
@@ -31,6 +35,8 @@ import org.siloserver.silo.common.player.audio.DelayAudioProcessor
 import org.siloserver.silo.common.player.audio.PassthroughSuppressingAudioSink
 import org.siloserver.silo.common.player.subtitle.OffsetSubtitleParserFactory
 import org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder
+import org.siloserver.silo.common.player.video.SiloMediaCodecVideoRenderer
+import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionState
 import org.siloserver.silo.libass.LibassBridge
 import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
 import org.siloserver.silo.model.playback.HdrCapabilities
@@ -38,6 +44,7 @@ import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.network.TokenManager
+import java.util.ArrayList
 
 /**
  * Factory for ExoPlayer instances. Each factory owns exactly one
@@ -71,6 +78,7 @@ class SiloPlayerFactory(
     )
 
     @Volatile private var requestHeaderScope: RequestHeaderScope? = null
+    private val runtimeCorrectionState = PlaybackRuntimeCorrectionState()
 
     private val dataSourceFactory = AuthenticatedDataSourceFactory(
         context = context,
@@ -152,6 +160,42 @@ class SiloPlayerFactory(
                 enableFloatOutput: Boolean,
                 enableAudioTrackPlaybackParams: Boolean,
             ): AudioSink = audioSink
+
+            override fun buildVideoRenderers(
+                context: Context,
+                extensionRendererMode: Int,
+                mediaCodecSelector: MediaCodecSelector,
+                enableDecoderFallback: Boolean,
+                eventHandler: Handler,
+                eventListener: VideoRendererEventListener,
+                allowedVideoJoiningTimeMs: Long,
+                out: ArrayList<Renderer>,
+            ) {
+                val firstNewRenderer = out.size
+                super.buildVideoRenderers(
+                    context,
+                    extensionRendererMode,
+                    mediaCodecSelector,
+                    enableDecoderFallback,
+                    eventHandler,
+                    eventListener,
+                    allowedVideoJoiningTimeMs,
+                    out,
+                )
+                val platformRenderer = (firstNewRenderer until out.size)
+                    .firstOrNull { out[it] is MediaCodecVideoRenderer }
+                    ?: return
+                out[platformRenderer] = SiloMediaCodecVideoRenderer(
+                    context = context,
+                    codecAdapterFactory = codecAdapterFactory,
+                    mediaCodecSelector = mediaCodecSelector,
+                    allowedJoiningTimeMs = allowedVideoJoiningTimeMs,
+                    enableDecoderFallback = enableDecoderFallback,
+                    eventHandler = eventHandler,
+                    eventListener = eventListener,
+                    runtimeCorrectionEnabled = runtimeCorrectionState::isEnabled,
+                )
+            }
         }.apply {
             setExtensionRendererMode(extensionMode)
             setEnableDecoderFallback(true)
@@ -338,8 +382,10 @@ class SiloPlayerFactory(
         durationMs: Long? = null,
         requestHeaders: Map<String, String> = emptyMap(),
         transformations: List<String> = emptyList(),
+        runtimeCorrections: List<String> = emptyList(),
     ): MediaItem {
         this.serverUrl = serverUrl
+        runtimeCorrectionState.activate(runtimeCorrections)
         val absoluteUrl = buildAbsoluteUrl(serverUrl, streamUrl)
         requestHeaderScope = requestHeaders.takeIf { it.isNotEmpty() }?.let {
             RequestHeaderScope(android.net.Uri.parse(absoluteUrl), it)

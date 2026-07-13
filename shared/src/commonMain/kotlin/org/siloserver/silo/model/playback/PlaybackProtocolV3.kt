@@ -17,9 +17,13 @@ const val MEDIA3_ONLY_FEATURE = "media3_only"
 const val DETAILED_DECODE_CAPABILITIES_FEATURE = "detailed_decode_capabilities"
 const val LAYOUT_AWARE_PASSTHROUGH_FEATURE = "layout_aware_passthrough"
 const val CLIENT_VIDEO_TRANSFORMATIONS_FEATURE = "client_video_transformations_v1"
+const val DEVICE_QUIRKS_V3_FEATURE = "device_quirks_v1"
 const val CLIENT_DV7_TO_DV81 = "client_dv7_to_dv81"
 const val CLIENT_DV7_TO_HDR10 = "client_dv7_to_hdr10"
 const val CLIENT_DV_TRANSFORM_RECIPE_VERSION = "1"
+const val CLIENT_DV8_HDR10_PLUS_SANITIZER = "client_dv8_hdr10plus_sanitizer_v1"
+const val CLIENT_POST_RESUME_VIDEO_RECOVERY = "client_post_resume_video_recovery_v1"
+const val CLIENT_SURFACE_RECOVERY = "client_surface_recovery_v1"
 
 @Serializable
 enum class PlaybackDecisionOutcome {
@@ -108,10 +112,20 @@ data class PlaybackPlanV3(
     val claims: PlaybackValidationClaims = PlaybackValidationClaims(),
     val subtitle: PlaybackSubtitleDecisionV3 = PlaybackSubtitleDecisionV3(),
     val transformations: List<PlaybackTransformationV3> = emptyList(),
+    @SerialName("applied_quirks") val appliedQuirks: List<PlaybackAppliedQuirkV3> = emptyList(),
+    @SerialName("runtime_corrections") val runtimeCorrections: List<String> = emptyList(),
     @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
     @SerialName("decision_reason") val decisionReason: String,
     @SerialName("requested_media_file_id") val requestedMediaFileId: Int? = null,
     @SerialName("effective_media_file_id") val effectiveMediaFileId: Int? = null,
+)
+
+@Serializable
+data class PlaybackAppliedQuirkV3(
+    val id: String,
+    @SerialName("registry_revision") val registryRevision: String,
+    val action: String,
+    val reason: String? = null,
 )
 
 @Serializable
@@ -206,6 +220,7 @@ data class PlaybackStartRequestV3(
         MEDIA3_ONLY_FEATURE,
         DETAILED_DECODE_CAPABILITIES_FEATURE,
         CLIENT_VIDEO_TRANSFORMATIONS_FEATURE,
+        DEVICE_QUIRKS_V3_FEATURE,
     ),
     @SerialName("file_id") val fileId: Int,
     @SerialName("profile_id") val profileId: String,
@@ -262,6 +277,8 @@ data class PlaybackRouteEventV3(
     val event: String,
     @SerialName("failure_classification") val failureClassification: String? = null,
     @SerialName("fallback_reason") val fallbackReason: String? = null,
+    @SerialName("applied_quirk_ids") val appliedQuirkIds: List<String> = emptyList(),
+    @SerialName("quirk_registry_revision") val quirkRegistryRevision: String? = null,
     @SerialName("output_route_generation") val outputRouteGeneration: Long,
     val diagnostics: Map<String, String> = emptyMap(),
 )
@@ -287,6 +304,12 @@ fun PlaybackPlanV3.planAttemptKey(
         }.sorted().joinToString(",") {
             it
         })
+        if (appliedQuirks.isNotEmpty() || runtimeCorrections.isNotEmpty()) {
+            append('|').append(appliedQuirks.map {
+                "${it.registryRevision}:${it.id}"
+            }.sorted().joinToString(","))
+            append('|').append(runtimeCorrections.sorted().joinToString(","))
+        }
         append('|').append(outputRouteGeneration)
         append('|').append(localMutations.sorted().joinToString(","))
     }
@@ -345,6 +368,20 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
             "unsupported_header_refresh",
             "This playback plan requires a header refresh mode the Android client cannot execute.",
             false,
+        )
+    }
+    val unsupportedRuntimeCorrection = plan.runtimeCorrections.firstOrNull {
+        it !in setOf(
+            CLIENT_DV8_HDR10_PLUS_SANITIZER,
+            CLIENT_POST_RESUME_VIDEO_RECOVERY,
+            CLIENT_SURFACE_RECOVERY,
+        )
+    }
+    if (unsupportedRuntimeCorrection != null) {
+        return PlaybackV3Validation.ReplanRequired(
+            "unsupported_client_runtime_correction",
+            plan,
+            resolvedSessionId,
         )
     }
     val unsupportedClientTransform = plan.transformations.firstOrNull {

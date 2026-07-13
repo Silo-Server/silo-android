@@ -17,6 +17,10 @@ import org.siloserver.silo.model.playback.EngineSubtitleCapabilities
 import org.siloserver.silo.model.playback.DETAILED_DECODE_CAPABILITIES_FEATURE
 import org.siloserver.silo.model.playback.LAYOUT_AWARE_PASSTHROUGH_FEATURE
 import org.siloserver.silo.model.playback.CLIENT_VIDEO_TRANSFORMATIONS_FEATURE
+import org.siloserver.silo.model.playback.DEVICE_QUIRKS_V3_FEATURE
+import org.siloserver.silo.model.playback.CLIENT_DV8_HDR10_PLUS_SANITIZER
+import org.siloserver.silo.model.playback.CLIENT_POST_RESUME_VIDEO_RECOVERY
+import org.siloserver.silo.model.playback.CLIENT_SURFACE_RECOVERY
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
 import org.siloserver.silo.model.playback.CLIENT_DV_TRANSFORM_RECIPE_VERSION
@@ -204,6 +208,7 @@ class PlaybackCapabilityDetector(
             add(DETAILED_DECODE_CAPABILITIES_FEATURE)
             if (!passthrough?.entries.isNullOrEmpty()) add(LAYOUT_AWARE_PASSTHROUGH_FEATURE)
             add(CLIENT_VIDEO_TRANSFORMATIONS_FEATURE)
+            add(DEVICE_QUIRKS_V3_FEATURE)
         }
         val clientVideoTransformations = buildList {
             if (8 in caps.hdrDetails?.dolbyVisionProfiles.orEmpty() && NativeDolbyVisionRpuConverter.isAvailable) {
@@ -249,6 +254,9 @@ class PlaybackCapabilityDetector(
                     Build.SOC_MANUFACTURER
                 } else null,
                 socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else null,
+                buildId = Build.ID,
+                buildDisplay = Build.DISPLAY,
+                securityPatch = Build.VERSION.SECURITY_PATCH,
                 sdkInt = Build.VERSION.SDK_INT,
                 abis = supportedAbis,
             ),
@@ -256,6 +264,7 @@ class PlaybackCapabilityDetector(
                 hdrDetails = caps.hdrDetails,
                 audioPassthrough = passthrough,
                 currentSink = if (passthrough?.passthroughCodecs?.isNotEmpty() == true) "passthrough_sink" else "local_output",
+                sinkType = audioCapabilityManager.currentSinkType(),
                 outputRouteGeneration = audioCapabilityManager.outputRouteGeneration.value,
             ),
             engines = mapOf(
@@ -283,6 +292,9 @@ class PlaybackCapabilityDetector(
                     ),
                     features = buildList {
                         addAll(listOf("track_switching", "audio_delay", "subtitle_delay", "buffer_reporting"))
+                        add(CLIENT_DV8_HDR10_PLUS_SANITIZER)
+                        add(CLIENT_POST_RESUME_VIDEO_RECOVERY)
+                        add(CLIENT_SURFACE_RECOVERY)
                         if (libassDirectFidelity) add("libass_subtitles")
                     },
                     transformations = clientVideoTransformations,
@@ -303,7 +315,14 @@ class PlaybackCapabilityDetector(
                         embeddedText = true,
                         sidecarText = true,
                     ),
-                    features = listOf("progressive", "track_switching", "buffer_reporting"),
+                    features = listOf(
+                        "progressive",
+                        "track_switching",
+                        "buffer_reporting",
+                        CLIENT_DV8_HDR10_PLUS_SANITIZER,
+                        CLIENT_POST_RESUME_VIDEO_RECOVERY,
+                        CLIENT_SURFACE_RECOVERY,
+                    ),
                     authHeaderRefresh = true,
                     validatedClaims = emptyList(),
                 ),
@@ -323,6 +342,9 @@ class PlaybackCapabilityDetector(
                     ),
                     features = buildList {
                         addAll(listOf("hls", "track_switching", "buffer_reporting"))
+                        add(CLIENT_DV8_HDR10_PLUS_SANITIZER)
+                        add(CLIENT_POST_RESUME_VIDEO_RECOVERY)
+                        add(CLIENT_SURFACE_RECOVERY)
                         if (libassRendering) add("libass_subtitles")
                     },
                     authHeaderRefresh = true,

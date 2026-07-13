@@ -1184,6 +1184,13 @@ class PlayerViewModel(
         playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
     }
 
+    fun onRuntimeCorrection(event: String, correctionId: String, stage: String, details: Map<String, String> = emptyMap()) {
+        playbackSessionManager.reportActiveVideoEvent(
+            event = event,
+            diagnostics = details + mapOf("correction_id" to correctionId, "correction_stage" to stage),
+        )
+    }
+
     /** Called when buffering state changes. */
     fun onBufferingChanged(isBuffering: Boolean) {
         _uiState.update { it.copy(isBuffering = isBuffering) }

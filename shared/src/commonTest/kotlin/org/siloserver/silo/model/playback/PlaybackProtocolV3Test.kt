@@ -244,6 +244,53 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
+    fun attemptKeyMatchesGoDeviceQuirkFixture() {
+        val fixture = plan.copy(
+            planId = "plan:quirk",
+            delivery = PlaybackDelivery.ORIGINAL_HTTP,
+            stream = plan.stream.copy(
+                protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
+                container = "mkv",
+            ),
+            effectiveRecipe = plan.effectiveRecipe.copy(
+                videoCodec = "hevc",
+                audioCodec = "eac3",
+                width = 3840,
+                height = 2160,
+                bitrateKbps = 60_000,
+                dynamicRange = "dolby_vision",
+            ),
+            subtitle = PlaybackSubtitleDecisionV3(mode = PlaybackSubtitleModeV3.OFF),
+            transformations = emptyList(),
+            appliedQuirks = listOf(
+                PlaybackAppliedQuirkV3(
+                    id = "android.fire_tv.dv8_hdr10plus_sei_v1",
+                    registryRevision = "2026-07-13.1",
+                    action = "client_runtime_correction",
+                ),
+            ),
+            runtimeCorrections = listOf(CLIENT_DV8_HDR10_PLUS_SANITIZER),
+        )
+
+        assertEquals("v3:8d843bfffeb3adc3", fixture.planAttemptKey(9))
+    }
+
+    @Test
+    fun unknownRuntimeCorrectionRequestsReplan() {
+        val response = PlaybackDecisionResponseV3(
+            protocolVersion = 3,
+            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(runtimeCorrections = listOf("future_runtime_fix")),
+        ).validateForMedia3()
+
+        assertEquals(
+            "unsupported_client_runtime_correction",
+            assertIs<PlaybackV3Validation.ReplanRequired>(response).reason,
+        )
+    }
+
+    @Test
     fun startRequestNeverForcesAPlayMethod() {
         val encoded = SiloJson.encodeToString(
             PlaybackStartRequestV3(
