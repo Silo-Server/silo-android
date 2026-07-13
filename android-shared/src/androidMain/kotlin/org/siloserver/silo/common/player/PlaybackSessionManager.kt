@@ -113,28 +113,16 @@ open class PlaybackSessionManager(
             is ApiResult.Success -> when (val validated = result.data.validateForMedia3()) {
                 is PlaybackV3Validation.Playable -> {
                     val planAttemptId = UUID.randomUUID().toString()
-                    val planAttemptKey = validated.plan.planAttemptKey(request.outputRouteGeneration)
-                    val active = ActiveVideoAttempt(
-                        fileId = fileId,
-                        profileId = profileId,
-                        capabilities = capabilities,
-                        context = clientPlaybackContext,
-                        playbackAttemptId = playbackAttemptId,
-                        qualityPreference = request.qualityPreference,
-                        networkEvidence = network,
+                    val active = newActiveAttempt(
+                        request = request,
+                        network = network,
                         sessionId = validated.sessionId,
                         plan = validated.plan,
                         serverFeatures = result.data.serverFeatures.toSet(),
                         planAttemptId = planAttemptId,
-                        planAttemptKey = planAttemptKey,
-                        localMutations = emptyList(),
-                        attemptedPlanKeys = listOf(planAttemptKey),
-                        attemptCount = 1,
-                        startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
-                        firstFrameReported = false,
                     )
                     videoAttemptMutex.withLock { activeVideoAttempt.set(active) }
-                    PassthroughSuppressionRegistry.beginAttempt(planAttemptKey)
+                    PassthroughSuppressionRegistry.beginAttempt(active.planAttemptKey)
                     reportActiveVideoEvent("plan_selected", network.asRouteDiagnostics())
                     ApiResult.Success(
                         VideoSessionStartV3.Ready(
@@ -142,7 +130,7 @@ open class PlaybackSessionManager(
                             plan = validated.plan,
                             playbackAttemptId = playbackAttemptId,
                             planAttemptId = planAttemptId,
-                            planAttemptKey = planAttemptKey,
+                            planAttemptKey = active.planAttemptKey,
                         ),
                     )
                 }
@@ -173,28 +161,16 @@ open class PlaybackSessionManager(
                     // the allocated session and give the v3 planner exactly one
                     // opportunity to replace the route with a Media3 plan.
                     val planAttemptId = UUID.randomUUID().toString()
-                    val key = validated.plan.planAttemptKey(request.outputRouteGeneration)
-                    val active = ActiveVideoAttempt(
-                        fileId = fileId,
-                        profileId = profileId,
-                        capabilities = capabilities,
-                        context = clientPlaybackContext,
-                        playbackAttemptId = playbackAttemptId,
-                        qualityPreference = request.qualityPreference,
-                        networkEvidence = network,
+                    val active = newActiveAttempt(
+                        request = request,
+                        network = network,
                         sessionId = validated.sessionId,
                         plan = validated.plan,
                         serverFeatures = result.data.serverFeatures.toSet(),
                         planAttemptId = planAttemptId,
-                        planAttemptKey = key,
-                        localMutations = emptyList(),
-                        attemptedPlanKeys = listOf(key),
-                        attemptCount = 1,
-                        startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
-                        firstFrameReported = false,
                     )
                     videoAttemptMutex.withLock { activeVideoAttempt.set(active) }
-                    PassthroughSuppressionRegistry.beginAttempt(key)
+                    PassthroughSuppressionRegistry.beginAttempt(active.planAttemptKey)
                     replanActiveVideoSession(
                         classification = validated.reason,
                         message = "The server returned a legacy player route.",
@@ -207,6 +183,36 @@ open class PlaybackSessionManager(
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
+
+    private fun newActiveAttempt(
+        request: PlaybackStartRequestV3,
+        network: PlaybackNetworkSnapshot,
+        sessionId: String,
+        plan: PlaybackPlanV3,
+        serverFeatures: Set<String>,
+        planAttemptId: String,
+    ): ActiveVideoAttempt {
+        val planAttemptKey = plan.planAttemptKey(request.outputRouteGeneration)
+        return ActiveVideoAttempt(
+            fileId = request.fileId,
+            profileId = request.profileId,
+            capabilities = request.capabilities,
+            context = request.clientPlaybackContext,
+            playbackAttemptId = request.playbackAttemptId,
+            qualityPreference = request.qualityPreference,
+            networkEvidence = network,
+            sessionId = sessionId,
+            plan = plan,
+            serverFeatures = serverFeatures,
+            planAttemptId = planAttemptId,
+            planAttemptKey = planAttemptKey,
+            localMutations = emptyList(),
+            attemptedPlanKeys = listOf(planAttemptKey),
+            attemptCount = 1,
+            startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
+            firstFrameReported = false,
+        )
     }
 
     suspend fun replanActiveVideoSession(

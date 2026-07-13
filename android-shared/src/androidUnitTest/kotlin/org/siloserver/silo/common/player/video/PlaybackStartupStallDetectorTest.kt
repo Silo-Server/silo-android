@@ -225,6 +225,74 @@ class PlaybackStartupStallDetectorTest {
     }
 
     @Test
+    fun resumeStartsAFreshDecoderStartupGracePeriod() {
+        val detector = PlaybackStartupStallDetector(startupGraceMs = 1_000)
+        detector.onMounted("paused-decoder", PlayMethod.DIRECT, 0, 0)
+
+        assertNull(
+            detector.sample(
+                sessionKey = "paused-decoder",
+                nowMs = 100,
+                playWhenReady = true,
+                isPlaying = false,
+                isBuffering = true,
+                currentPositionMs = 0,
+                bufferedPositionMs = 5_000,
+                decoderInputBufferCount = 1,
+            ),
+        )
+        assertNull(
+            detector.sample(
+                sessionKey = "paused-decoder",
+                nowMs = 900,
+                playWhenReady = false,
+                isPlaying = false,
+                isBuffering = true,
+                currentPositionMs = 0,
+                bufferedPositionMs = 5_000,
+                decoderInputBufferCount = 4,
+            ),
+        )
+        assertNull(
+            detector.sample(
+                sessionKey = "paused-decoder",
+                nowMs = 5_000,
+                playWhenReady = true,
+                isPlaying = false,
+                isBuffering = true,
+                currentPositionMs = 0,
+                bufferedPositionMs = 5_000,
+                decoderInputBufferCount = 4,
+            ),
+        )
+        assertNull(
+            detector.sample(
+                sessionKey = "paused-decoder",
+                nowMs = 5_999,
+                playWhenReady = true,
+                isPlaying = false,
+                isBuffering = true,
+                currentPositionMs = 0,
+                bufferedPositionMs = 5_000,
+                decoderInputBufferCount = 4,
+            ),
+        )
+        assertEquals(
+            "decoder_no_output",
+            detector.sample(
+                sessionKey = "paused-decoder",
+                nowMs = 6_001,
+                playWhenReady = true,
+                isPlaying = false,
+                isBuffering = true,
+                currentPositionMs = 0,
+                bufferedPositionMs = 5_000,
+                decoderInputBufferCount = 4,
+            )?.classification,
+        )
+    }
+
+    @Test
     fun midStreamFreezeTriggersFallbackAfterStarted() {
         // Playback starts and advances, then the position freezes while
         // buffering → fires after the mid-stream grace, not before.

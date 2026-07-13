@@ -24,6 +24,7 @@ class PlaybackStartupStallDetector(
     private var signaled = false
     private var firstFrameRendered = false
     private var decoderStartupAtMs: Long? = null
+    private var paused = false
     // Last time playback made forward progress (or the mount time before it
     // starts). The stall is measured from here, so the same logic covers a
     // never-started session and a mid-stream freeze.
@@ -44,6 +45,7 @@ class PlaybackStartupStallDetector(
         this.signaled = false
         this.firstFrameRendered = false
         this.decoderStartupAtMs = null
+        this.paused = false
         this.lastProgressPositionMs = this.startPositionMs
         this.lastBufferedPositionMs = this.startPositionMs
         this.lastProgressAtMs = nowMs
@@ -74,6 +76,20 @@ class PlaybackStartupStallDetector(
         if (!firstFrameRendered && decoderRenderedOutputBufferCount > 0) {
             firstFrameRendered = true
             decoderStartupAtMs = null
+        }
+
+        if (!playWhenReady) {
+            paused = true
+            decoderStartupAtMs = null
+            lastProgressAtMs = nowMs
+            return null
+        }
+        if (paused) {
+            paused = false
+            // Resume begins a fresh startup/stall grace period; time spent
+            // paused is not evidence of a decoder or transport failure.
+            decoderStartupAtMs = null
+            lastProgressAtMs = nowMs
         }
 
         // Audio may advance the position and set isPlaying=true while video is
@@ -118,7 +134,7 @@ class PlaybackStartupStallDetector(
         }
 
         if (signaled) return null
-        if (!playWhenReady || !isBuffering) return null
+        if (!isBuffering) return null
 
         // Longer grace before playback ever starts (initial handshake/buffer)
         // than for a mid-stream freeze once it has been playing.
