@@ -9,6 +9,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -34,11 +36,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
+import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 
 /**
@@ -49,11 +53,83 @@ import androidx.tv.material3.Text
 
 val AuroraInk = Color(0xFFF3EFE9)
 val AuroraAccent = Color(0xFFF3D3A0)
+private val AuroraJourneyAccent = Color(0xFFFF7900)
 private val AuroraGlassTint = Color(0xFF171019)
 private val AuroraCreamTop = Color(0xFFFDF7EC)
 private val AuroraCreamBottom = Color(0xFFF1E3CD)
 private val AuroraCreamInk = Color(0xFF20160A)
 private val AuroraNightBottom = Color(0xFF070509)
+
+/** Compact Server → Account → Profile progress used across TV onboarding. */
+@Composable
+fun AuroraJourneyProgress(
+    currentStep: Int,
+    modifier: Modifier = Modifier,
+) {
+    val labels = listOf("SERVER", "ACCOUNT", "PROFILE")
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            labels.forEachIndexed { index, _ ->
+                val step = index + 1
+                val reached = step <= currentStep
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(if (reached) AuroraJourneyAccent else Color.White.copy(alpha = 0.10f))
+                        .border(
+                            1.dp,
+                            if (reached) AuroraJourneyAccent else Color.White.copy(alpha = 0.20f),
+                            RoundedCornerShape(11.dp),
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = if (step < currentStep) "✓" else step.toString(),
+                        color = if (reached) Color.Black else Color.White.copy(alpha = 0.48f),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                if (index < labels.lastIndex) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 7.dp)
+                            .height(1.dp)
+                            .background(
+                                if (step < currentStep) AuroraJourneyAccent
+                                else Color.White.copy(alpha = 0.16f),
+                            ),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
+            labels.forEachIndexed { index, label ->
+                Text(
+                    text = label,
+                    color = if (index + 1 == currentStep) Color.White else Color.White.copy(alpha = 0.42f),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = if (index + 1 == currentStep) FontWeight.Bold else FontWeight.Medium,
+                        letterSpacing = 1.2.sp,
+                    ),
+                    textAlign = when (index) {
+                        0 -> TextAlign.Start
+                        labels.lastIndex -> TextAlign.End
+                        else -> TextAlign.Center
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
 
 /** Gold-hairline + mono-caps step label, e.g. "STEP 01 — CONNECT". */
 @Composable

@@ -88,6 +88,7 @@ import org.siloserver.silo.tv.ui.components.AuroraEyebrow
 import org.siloserver.silo.tv.ui.components.AuroraInk
 import org.siloserver.silo.tv.ui.components.auroraGlass
 import org.siloserver.silo.tv.ui.components.AuroraGhostButton
+import org.siloserver.silo.tv.ui.components.AuroraJourneyProgress
 import org.siloserver.silo.tv.ui.components.AuroraPrimaryButton
 import org.siloserver.silo.tv.ui.components.TvAuroraBackdrop
 import org.siloserver.silo.tv.ui.components.TvAuroraVariant
@@ -205,7 +206,17 @@ fun TvServerSetupScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 48.dp, vertical = 32.dp),
             ) {
-                BrandHeader()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BrandHeader()
+                    AuroraJourneyProgress(
+                        currentStep = 1,
+                        modifier = Modifier.width(230.dp),
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(Spacing.lg))
 
@@ -214,7 +225,7 @@ fun TvServerSetupScreen(
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    AuroraEyebrow(text = "Step 01 — Connect")
+                    AuroraEyebrow(text = "Connect")
                     Text(
                         text = "Connect this Android TV",
                         style = TvServerSetupTextStyles.Title,

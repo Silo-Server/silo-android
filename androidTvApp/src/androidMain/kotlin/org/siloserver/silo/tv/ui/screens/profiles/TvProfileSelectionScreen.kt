@@ -70,6 +70,7 @@ import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
 import org.siloserver.silo.common.ui.components.resolveAvatarUrl
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.tv.ui.components.TvAuroraBackdrop
+import org.siloserver.silo.tv.ui.components.AuroraJourneyProgress
 import org.siloserver.silo.tv.ui.components.TvAuroraVariant
 import org.siloserver.silo.tv.ui.components.TvDialogOption
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
@@ -176,8 +177,21 @@ fun TvProfileSelectionScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
-                        .padding(top = ProfileHeaderTop, start = Spacing.safeArea, end = Spacing.safeArea),
+                        // The journey row adds 40dp above the legacy title band;
+                        // offset that addition so the title/grid keep their
+                        // established vertical footprint and utility chips stay
+                        // isolated in the top chrome.
+                        .padding(
+                            top = ProfileHeaderTop - 40.dp,
+                            start = Spacing.safeArea,
+                            end = Spacing.safeArea,
+                        ),
                 ) {
+                    AuroraJourneyProgress(
+                        currentStep = 3,
+                        modifier = Modifier.width(230.dp),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "Who's watching?",
                         style = MaterialTheme.typography.displayLarge,
@@ -208,15 +222,6 @@ fun TvProfileSelectionScreen(
                         onAddProfile = onAddProfile,
                     )
 
-                    Spacer(modifier = Modifier.height(28.dp))
-
-                    TvHeroActionPill(
-                        label = if (state.isManageMode) "Done" else "Manage Profiles",
-                        icon = Icons.Filled.Edit,
-                        variant = TvPillVariant.Ghost,
-                        onClick = viewModel::toggleManageMode,
-                    )
-
                     if (state.error != null) {
                         Spacer(modifier = Modifier.height(24.dp))
                         Text(
@@ -235,6 +240,7 @@ fun TvProfileSelectionScreen(
     if (pinProfile != null) {
         TvPinEntryDialog(
             profileName = pinProfile.name,
+            profileAvatar = pinProfile.avatar,
             errorMessage = state.pinError,
             isVerifying = state.isVerifyingPin,
             onPinEntered = viewModel::onPinEntered,
@@ -282,13 +288,18 @@ private fun ProfileTileGrid(
         verticalArrangement = Arrangement.spacedBy(56.dp),
     ) {
         repeat(rowCount) { rowIndex ->
+            val firstItemIndex = rowIndex * ProfileGridColumns
+            val itemsInRow = minOf(ProfileGridColumns, itemCount - firstItemIndex)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(ProfileGridGap),
+                horizontalArrangement = Arrangement.spacedBy(
+                    ProfileGridGap,
+                    Alignment.CenterHorizontally,
+                ),
                 verticalAlignment = Alignment.Top,
             ) {
-                repeat(ProfileGridColumns) { columnIndex ->
-                    val itemIndex = rowIndex * ProfileGridColumns + columnIndex
+                repeat(itemsInRow) { columnIndex ->
+                    val itemIndex = firstItemIndex + columnIndex
                     Box(modifier = Modifier.width(ProfileTileSize), contentAlignment = Alignment.TopCenter) {
                         when {
                             itemIndex < profiles.size -> {
@@ -312,7 +323,6 @@ private fun ProfileTileGrid(
                                 )
                             }
                             itemIndex == profiles.size -> TvAddProfileCard(onClick = onAddProfile)
-                            else -> Spacer(modifier = Modifier.size(ProfileTileSize))
                         }
                     }
                 }

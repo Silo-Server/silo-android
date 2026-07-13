@@ -65,6 +65,7 @@ import org.siloserver.silo.repository.DeviceLoginRepository
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.AuroraEyebrow
 import org.siloserver.silo.tv.ui.components.AuroraGhostButton
+import org.siloserver.silo.tv.ui.components.AuroraJourneyProgress
 import org.siloserver.silo.tv.ui.components.AuroraPrimaryButton
 import org.siloserver.silo.tv.ui.components.AuroraStepRow
 import org.siloserver.silo.tv.ui.components.auroraGlass
@@ -146,11 +147,21 @@ fun TvLoginScreen(
                     end = 54.dp,
                 ),
         ) {
-            BrandHeader()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BrandHeader()
+                AuroraJourneyProgress(
+                    currentStep = 2,
+                    modifier = Modifier.width(230.dp),
+                )
+            }
 
             Spacer(modifier = Modifier.height(if (showPasswordForm) Spacing.sm else Spacing.lg))
 
-            AuroraEyebrow(text = "Step 02 — Sign in")
+            AuroraEyebrow(text = "Account")
             Spacer(modifier = Modifier.height(if (showPasswordForm) Spacing.md else Spacing.xl))
 
             if (showPasswordForm) {
@@ -219,13 +230,13 @@ private fun PhoneSignInHero(
         modifier = modifier,
     ) {
         Text(
-            text = "Sign in with your phone.",
+            text = "Scan. Confirm.\nStart watching.",
             style = TvLoginTextStyles.Hero,
             color = MaterialTheme.colorScheme.onBackground,
         )
         Text(
-            text = "Point your phone at the code, confirm the number, then approve. " +
-                "Nothing to type on the remote.",
+            text = "Open your phone's Camera and point it at the code. " +
+                "You won't need to type a password on your TV.",
             style = TvLoginTextStyles.Body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -567,6 +578,11 @@ private fun QrLoginCard(
             .auroraGlass(15.dp)
             .padding(24.dp),
     ) {
+        Text(
+            text = "Scan with Camera",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
         when (state) {
             DeviceLoginRepository.DeviceLoginState.Idle,
             DeviceLoginRepository.DeviceLoginState.Initiating -> {
@@ -628,12 +644,12 @@ private fun QrLoginCard(
         Spacer(modifier = Modifier.height(Spacing.xs))
 
         AuroraGhostButton(
-            label = "Use a password instead",
+            label = "Sign in with a password",
             onClick = onUsePassword,
             modifier = Modifier.focusRequester(usePasswordFocus),
         )
         AuroraGhostButton(
-            label = "Change server",
+            label = "Use another server",
             onClick = onChangeServer,
         )
     }

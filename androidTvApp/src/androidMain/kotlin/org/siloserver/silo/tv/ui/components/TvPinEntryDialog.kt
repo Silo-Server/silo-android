@@ -1,10 +1,13 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,112 +28,146 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.tv.material3.Card
-import androidx.tv.material3.CardDefaults
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
+import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.isImageAvatar
+import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
+import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
+import org.siloserver.silo.common.ui.components.resolveAvatarUrl
+import org.siloserver.silo.tv.ui.theme.FocusedContainer
+import org.siloserver.silo.tv.ui.theme.FocusedContent
+import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 
 private const val PIN_LENGTH = 4
 
-/**
- * Modal 4-digit PIN entry keypad for PIN-protected profiles. Uses a 3x4 grid
- * of focusable [Card] keys plus a backspace key. Auto-submits once all 4
- * digits are entered — TVs don't need a separate submit button, and the
- * auto-submit UX reduces D-pad trips by one.
- *
- * Error state lights up the 4 dots red; the caller sets [errorMessage] after
- * a failed `verifyPin` and the dialog clears the entry on the next key press
- * so the user can retry.
- */
+/** Compact, remote-first PIN keypad for protected TV profiles. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun TvPinEntryDialog(
     profileName: String,
+    profileAvatar: String? = null,
     onPinEntered: (String) -> Unit,
     onDismiss: () -> Unit,
     errorMessage: String? = null,
     isVerifying: Boolean = false,
 ) {
     var pin by remember { mutableStateOf("") }
-
-    // Reset pin automatically when the caller shows a fresh error.
     val latestError = remember(errorMessage) { errorMessage }
-    if (latestError != null && pin.length == PIN_LENGTH) {
-        pin = ""
-    }
+    if (latestError != null && pin.length == PIN_LENGTH) pin = ""
 
-    Dialog(onDismissRequest = onDismiss) {
+    Popup(
+        alignment = Alignment.Center,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(
+            focusable = true,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false,
+            clippingEnabled = false,
+        ),
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.85f)),
+                .background(Color.Black.copy(alpha = 0.72f)),
             contentAlignment = Alignment.Center,
         ) {
-            Card(
-                onClick = {},
-                shape = CardDefaults.shape(shape = RoundedCornerShape(12.dp)),
-                modifier = Modifier.padding(24.dp),
+            val panelShape = RoundedCornerShape(17.dp)
+            Column(
+                modifier = Modifier
+                    .width(310.dp)
+                    .shadow(
+                        elevation = 18.dp,
+                        shape = panelShape,
+                        clip = false,
+                        ambientColor = Color.Black.copy(alpha = 0.45f),
+                        spotColor = Color.Black.copy(alpha = 0.45f),
+                    )
+                    .clip(panelShape)
+                    .background(Color(0xFF15171C))
+                    .border(0.5.dp, Color.White.copy(alpha = 0.16f), panelShape)
+                    .padding(horizontal = 28.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Column(
-                    modifier = Modifier
-                        .padding(horizontal = 28.dp, vertical = 24.dp)
-                        .width(260.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                ProfilePinAvatar(profileName = profileName, profileAvatar = profileAvatar)
+                Spacer(modifier = Modifier.height(5.dp))
+                Text(
+                    text = "Enter PIN for $profileName",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 14.sp,
+                        lineHeight = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                PinDots(pinLength = pin.length, error = latestError != null)
+
+                if (latestError != null || isVerifying) {
+                    Spacer(modifier = Modifier.height(7.dp))
+                    Text(
+                        text = latestError ?: "Verifying...",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                        color = if (latestError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+                PinKeypad(
+                    enabled = !isVerifying,
+                    onDigitPressed = { digit ->
+                        if (pin.length < PIN_LENGTH && !isVerifying) {
+                            val next = pin + digit
+                            pin = next
+                            if (next.length == PIN_LENGTH) onPinEntered(next)
+                        }
+                    },
+                    onBackspacePressed = { if (pin.isNotEmpty() && !isVerifying) pin = pin.dropLast(1) },
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    onClick = onDismiss,
+                    shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(50)),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Color.Transparent,
+                        contentColor = SiloOnSurface,
+                        focusedContainerColor = FocusedContainer,
+                        focusedContentColor = FocusedContent,
+                        pressedContainerColor = FocusedContainer,
+                        pressedContentColor = FocusedContent,
+                    ),
+                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.045f),
+                    border = ClickableSurfaceDefaults.border(
+                        focusedBorder = Border(
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.90f)),
+                            shape = RoundedCornerShape(50),
+                        ),
+                    ),
                 ) {
                     Text(
-                        text = "Enter PIN",
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 19.sp, lineHeight = 22.sp),
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = profileName,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    PinDots(
-                        pinLength = pin.length,
-                        error = latestError != null,
-                    )
-
-                    if (latestError != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = latestError,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    } else if (isVerifying) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Verifying...",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    PinKeypad(
-                        onDigitPressed = { digit ->
-                            if (pin.length < PIN_LENGTH && !isVerifying) {
-                                val next = pin + digit
-                                pin = next
-                                if (next.length == PIN_LENGTH) onPinEntered(next)
-                            }
-                        },
-                        onBackspacePressed = {
-                            if (pin.isNotEmpty()) pin = pin.dropLast(1)
-                        },
+                        text = "Cancel",
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp),
                     )
                 }
             }
@@ -137,21 +175,50 @@ fun TvPinEntryDialog(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ProfilePinAvatar(profileName: String, profileAvatar: String?) {
+    val serverUrl = rememberProfileServerUrl()
+    val avatarUrl = profileAvatar
+        ?.takeIf(::isImageAvatar)
+        ?.let { resolveAvatarUrl(serverUrl, it) }
+    Box(
+        modifier = Modifier
+            .size(42.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.10f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (avatarUrl != null) {
+            ThumbhashImage(
+                url = avatarUrl,
+                thumbhash = null,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Text(
+                text = profileAvatarDisplayText(profileAvatar, profileName),
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp, lineHeight = 21.sp),
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+    }
+}
+
 @Composable
 private fun PinDots(pinLength: Int, error: Boolean) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        repeat(PIN_LENGTH) { i ->
-            val filled = i < pinLength
+        repeat(PIN_LENGTH) { index ->
             Box(
                 modifier = Modifier
-                    .size(14.dp)
+                    .size(12.dp)
                     .clip(CircleShape)
                     .background(
                         when {
                             error -> MaterialTheme.colorScheme.error
-                            filled -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.surfaceVariant
+                            index < pinLength -> MaterialTheme.colorScheme.primary
+                            else -> Color.Black.copy(alpha = 0.45f)
                         },
                     ),
             )
@@ -162,27 +229,32 @@ private fun PinDots(pinLength: Int, error: Boolean) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun PinKeypad(
+    enabled: Boolean,
     onDigitPressed: (Char) -> Unit,
     onBackspacePressed: () -> Unit,
 ) {
+    val fiveFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(60)
+        runCatching { fiveFocusRequester.requestFocus() }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Rows 1-9.
         listOf("123", "456", "789").forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { d ->
-                    PinKey(label = d.toString(), onClick = { onDigitPressed(d) })
+                row.forEach { digit ->
+                    PinKey(
+                        label = digit.toString(),
+                        modifier = if (digit == '5') Modifier.focusRequester(fiveFocusRequester) else Modifier,
+                        onClick = { if (enabled) onDigitPressed(digit) },
+                    )
                 }
             }
         }
-        // Bottom row: 0 + backspace (blank slot on the left keeps the grid aligned).
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Spacer(modifier = Modifier.size(48.dp))
-            PinKey(label = "0", onClick = { onDigitPressed('0') })
-            PinKey(
-                label = null,
-                icon = Icons.AutoMirrored.Filled.Backspace,
-                onClick = onBackspacePressed,
-            )
+            PinKey(label = "0", onClick = { if (enabled) onDigitPressed('0') })
+            PinKey(label = null, icon = Icons.AutoMirrored.Filled.Backspace, onClick = { if (enabled) onBackspacePressed() })
         }
     }
 }
@@ -192,35 +264,57 @@ private fun PinKeypad(
 private fun PinKey(
     label: String?,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
 ) {
-    Card(
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val keyShape = RoundedCornerShape(9.dp)
+    Surface(
         onClick = onClick,
-        shape = CardDefaults.shape(shape = RoundedCornerShape(8.dp)),
-        modifier = Modifier.size(48.dp),
+        interactionSource = interactionSource,
+        shape = ClickableSurfaceDefaults.shape(shape = keyShape),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.White.copy(alpha = 0.10f),
+            contentColor = SiloOnSurface,
+            focusedContainerColor = FocusedContainer,
+            focusedContentColor = FocusedContent,
+            pressedContainerColor = FocusedContainer,
+            pressedContentColor = FocusedContent,
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(
+                border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.18f)),
+                shape = keyShape,
+            ),
+            focusedBorder = Border(
+                border = BorderStroke(0.dp, Color.Transparent),
+                shape = keyShape,
+            ),
+        ),
+        modifier = modifier.size(48.dp),
     ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             if (label != null) {
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp, lineHeight = 25.sp),
-                    color = MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontSize = 32.sp,
+                        lineHeight = 36.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                    ),
+                    color = if (isFocused) FocusedContent else SiloOnSurface,
                 )
             } else if (icon != null) {
                 Icon(
                     imageVector = icon,
                     contentDescription = "Backspace",
-                    tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.size(16.dp),
+                    tint = if (isFocused) FocusedContent else SiloOnSurface,
+                    modifier = Modifier.size(17.dp),
                 )
             }
         }
     }
 }
-
-// Suppress unused parameter warning.
-@Suppress("unused")
-private val _unused: PaddingValues? = null
