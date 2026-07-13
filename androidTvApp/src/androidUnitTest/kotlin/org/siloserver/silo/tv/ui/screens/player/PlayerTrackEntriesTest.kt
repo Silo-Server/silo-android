@@ -326,6 +326,73 @@ class PlayerTrackEntriesTest {
     }
 
     @Test
+    fun initialEmbeddedVobSubOrdinalResolvesByCodecWithoutSyntheticMetadata() {
+        val tracks = listOf(
+            PlayerTrackEntry(
+                index = 0,
+                label = "English ASS",
+                language = "en",
+                isSelected = true,
+                codecOrMime = "text/x-ssa",
+            ),
+            PlayerTrackEntry(
+                index = 2,
+                label = "DVD VobSub",
+                language = "en",
+                isSelected = false,
+                codecOrMime = "application/vobsub",
+            ),
+        )
+        val mounted = listOf(
+            PlayerSubtitleInfo(
+                index = 2,
+                codec = "dvd_subtitle",
+                source = "embedded",
+                url = "",
+            ),
+        )
+
+        assertEquals(
+            2,
+            resolveInitialSubtitleTrackIndex(
+                requestedOrdinal = 2,
+                subtitleTracks = tracks,
+                mountedSubtitles = mounted,
+            ),
+        )
+    }
+
+    @Test
+    fun initialEmbeddedDvbSubtitleOrdinalNormalizesFfprobeAndMedia3CodecNames() {
+        val tracks = listOf(
+            PlayerTrackEntry(
+                index = 0,
+                label = "",
+                language = "fi",
+                isSelected = false,
+                codecOrMime = "application/dvbsubs",
+            ),
+        )
+        val mounted = listOf(
+            PlayerSubtitleInfo(
+                index = 0,
+                codec = "dvb_subtitle",
+                source = "embedded",
+                url = "",
+            ),
+        )
+
+        assertEquals(
+            0,
+            resolveInitialSubtitleTrackIndex(
+                requestedOrdinal = 0,
+                subtitleTracks = tracks,
+                mountedSubtitles = mounted,
+            ),
+        )
+    }
+
+    @Test
     fun textTracksExposeEmbeddedBitmapSubtitlesAndPreserveMedia3FlatIndex() {
         val group = TrackGroup(
             Format.Builder()

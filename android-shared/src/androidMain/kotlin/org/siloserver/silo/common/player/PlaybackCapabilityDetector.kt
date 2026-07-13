@@ -272,7 +272,12 @@ class PlaybackCapabilityDetector(
                         embeddedText = true,
                         sidecarText = true,
                         assStyling = libassDirectFidelity,
-                        embeddedBitmap = false,
+                        // Media3's DefaultSubtitleParserFactory decodes the
+                        // three embedded bitmap families carried by our
+                        // direct-play containers: PGS, VobSub/DVD, and DVB.
+                        // Keep sidecar bitmap disabled because Silo does not
+                        // mount raw bitmap sidecars into the MediaItem.
+                        embeddedBitmap = true,
                         sidecarBitmap = false,
                         fontAttachments = libassEmbeddedFonts,
                     ),

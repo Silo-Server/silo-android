@@ -92,6 +92,18 @@ internal fun resolveInitialMobileSubtitleOrdinal(
     mountedSubtitles: List<PlayerSubtitleInfo>,
 ): Int? {
     if (requestedOrdinal == -1) return -1
+    // V3 uses the server's combined subtitle ordinal as PlayerSubtitleInfo.index.
+    // Embedded bitmap rows can intentionally omit label/language because the
+    // primary media carries those properties; resolve their stable identity
+    // before attempting descriptive metadata matching.
+    mountedSubtitles.indexOfFirst {
+        it.source == "embedded" &&
+            it.index == requestedOrdinal &&
+            it.label.isNullOrBlank() &&
+            it.language.isNullOrBlank()
+    }
+        .takeIf { it >= 0 }
+        ?.let { return it }
     val requested = catalogTracks.getOrNull(requestedOrdinal)
         ?: return requestedOrdinal.takeIf { it in mountedSubtitles.indices }
     mountedSubtitles.indexOfFirst { it.matchesCatalogSubtitle(requested) }
@@ -123,15 +135,16 @@ private fun normalizedSubtitleCodec(codecOrMime: String?): String? {
     val normalized = codecOrMime
         ?.trim()
         ?.takeIf { it.isNotBlank() }
+        ?.filter { it.isLetterOrDigit() }
         ?.lowercase()
-        ?.replace('_', '-')
         ?: return null
     return when {
-        normalized == "ass" || normalized == "ssa" || normalized.contains("x-ssa") -> "ssa"
+        normalized == "ass" || normalized == "ssa" || normalized.contains("xssa") -> "ssa"
         normalized == "srt" || normalized.contains("subrip") -> "srt"
-        normalized == "vtt" || normalized == "text/vtt" || normalized.contains("webvtt") -> "vtt"
-        normalized.contains("pgs") || normalized.contains("hdmv") -> "pgs"
-        normalized.contains("dvd") || normalized.contains("dvb") -> "dvd"
+        normalized == "vtt" || normalized == "textvtt" || normalized.contains("webvtt") -> "vtt"
+        normalized.contains("pgs") -> "pgs"
+        normalized.contains("dvd") || normalized.contains("vobsub") -> "vobsub"
+        normalized.contains("dvbsub") -> "dvbsub"
         else -> normalized
     }
 }

@@ -296,10 +296,16 @@ private fun PlayerTrackEntry.matchesMountedSubtitle(subtitle: PlayerSubtitleInfo
 
     val targetLanguage = normalizedSubtitleLanguage(subtitle.language)
     val trackLanguage = normalizedSubtitleLanguage(language)
-    if (targetLanguage == null || trackLanguage != targetLanguage) return false
-
     val targetCodec = normalizedSubtitleCodec(subtitle.codec ?: subtitleCodecFromUrl(subtitle.url))
     val trackCodec = normalizedSubtitleCodec(codecOrMime)
+    // V3 embedded-bitmap selection metadata intentionally has no synthetic
+    // label/language: those values belong to the real demuxed Media3 track.
+    // In that case the codec family is the stable bridge (dvd_subtitle ->
+    // application/vobsub, for example).
+    if (targetLanguage == null) {
+        return targetCodec != null && trackCodec == targetCodec
+    }
+    if (trackLanguage != targetLanguage) return false
     return targetCodec == null || trackCodec == null || targetCodec == trackCodec
 }
 
@@ -327,15 +333,16 @@ private fun normalizedSubtitleCodec(codecOrMime: String?): String? {
     val normalized = codecOrMime
         ?.trim()
         ?.takeIf { it.isNotBlank() }
+        ?.filter { it.isLetterOrDigit() }
         ?.lowercase()
-        ?.replace('_', '-')
         ?: return null
     return when {
-        normalized == "ass" || normalized == "ssa" || normalized.contains("x-ssa") -> "ssa"
+        normalized == "ass" || normalized == "ssa" || normalized.contains("xssa") -> "ssa"
         normalized == "srt" || normalized.contains("subrip") -> "srt"
-        normalized == "vtt" || normalized == "text/vtt" || normalized.contains("webvtt") -> "vtt"
-        normalized.contains("pgs") || normalized.contains("hdmv") -> "pgs"
-        normalized.contains("dvd") || normalized.contains("dvb") -> "dvd"
+        normalized == "vtt" || normalized == "textvtt" || normalized.contains("webvtt") -> "vtt"
+        normalized.contains("pgs") -> "pgs"
+        normalized.contains("dvd") || normalized.contains("vobsub") -> "vobsub"
+        normalized.contains("dvbsub") -> "dvbsub"
         else -> normalized
     }
 }

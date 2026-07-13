@@ -57,6 +57,14 @@ class SubtitleManager(
         serverUrl: String,
     ): List<MediaItem.SubtitleConfiguration> {
         return subtitles.mapNotNull { subtitle ->
+            // V3 embedded-bitmap rows intentionally carry a blank URL: they
+            // are selection metadata for a track already in the primary
+            // media, not a merging sidecar source. Do not key only on
+            // `source=embedded`, because legacy/remux routes can still expose
+            // a real extracted text artifact from an embedded source.
+            if (subtitle.url.isBlank()) {
+                return@mapNotNull null
+            }
             val absoluteUrl = resolveSubtitleUrl(serverUrl, subtitle.url)
             val mimeType = subtitleMimeType(subtitle.codec, absoluteUrl)
             if (!isMedia3TextSidecarMimeType(mimeType)) {
@@ -652,7 +660,8 @@ internal fun resolveSubtitleSelection(
 ): SubtitleSelection? {
     val label = subtitle.label?.trim()?.takeIf { it.isNotBlank() }
     val language = subtitle.language?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-    if (label == null && language == null) return null
+    val family = subtitleCodecFamily(subtitle.codec ?: subtitle.url)
+    if (label == null && language == null && family == null) return null
 
     val candidates = textTrackCandidates(tracks)
     if (label != null) {
@@ -668,8 +677,18 @@ internal fun resolveSubtitleSelection(
         val languageMatches = candidates.filter {
             it.language?.trim()?.lowercase() == language
         }
-        languageMatches.firstOrNull { !it.isBitmap }?.let { return it.selection }
+        family?.let { targetFamily ->
+            languageMatches.firstOrNull { it.codecFamily == targetFamily }
+                ?.let { return it.selection }
+        }
+        val targetIsBitmap = isBitmapSubtitleCodecOrMime(subtitle.codec)
+        languageMatches.firstOrNull { it.isBitmap == targetIsBitmap }
+            ?.let { return it.selection }
         languageMatches.firstOrNull()?.let { return it.selection }
+    }
+    family?.let { targetFamily ->
+        candidates.firstOrNull { it.codecFamily == targetFamily }
+            ?.let { return it.selection }
     }
     return null
 }
@@ -679,6 +698,7 @@ private data class TextTrackCandidate(
     val label: String?,
     val language: String?,
     val isBitmap: Boolean,
+    val codecFamily: String?,
 )
 
 private fun textTrackCandidates(tracks: Tracks): List<TextTrackCandidate> {
@@ -692,6 +712,7 @@ private fun textTrackCandidates(tracks: Tracks): List<TextTrackCandidate> {
                 label = format.label,
                 language = format.language,
                 isBitmap = isBitmapSubtitleCodecOrMime(format.subtitleCodecOrMime()),
+                codecFamily = subtitleCodecFamily(format.subtitleCodecOrMime()),
             )
         }
     }
@@ -713,10 +734,30 @@ fun isBitmapSubtitleCodecOrMime(codecOrMime: String?): Boolean {
         ?.takeIf { it.isNotEmpty() }
         ?: return false
     return normalized.contains("pgs") ||
-        normalized.contains("hdmv") ||
         normalized.contains("dvd") ||
         normalized.contains("dvbsub") ||
         normalized.contains("vobsub")
+}
+
+private fun subtitleCodecFamily(codecOrMime: String?): String? {
+    val normalized = codecOrMime
+        ?.filter { it.isLetterOrDigit() }
+        ?.lowercase()
+        ?.takeIf { it.isNotEmpty() }
+        ?: return null
+    return when {
+        normalized.contains("pgs") -> "pgs"
+        normalized.contains("vobsub") || normalized.contains("dvdsubtitle") -> "vobsub"
+        normalized.contains("dvbsub") -> "dvbsub"
+        normalized.contains("subrip") || normalized == "srt" -> "subrip"
+        normalized.contains("webvtt") || normalized.endsWith("vtt") -> "webvtt"
+        normalized.contains("tx3g") || normalized.contains("movtext") -> "tx3g"
+        normalized.contains("ssa") || normalized.contains("ass") -> "ssa"
+        normalized.contains("ttml") -> "ttml"
+        normalized.contains("cea608") || normalized.contains("eia608") -> "cea608"
+        normalized.contains("cea708") -> "cea708"
+        else -> null
+    }
 }
 
 private fun Format.subtitleCodecOrMime(): String? =

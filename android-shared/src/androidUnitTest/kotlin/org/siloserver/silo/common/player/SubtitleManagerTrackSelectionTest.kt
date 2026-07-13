@@ -150,6 +150,35 @@ class SubtitleManagerTrackSelectionTest {
     }
 
     @Test
+    fun embeddedVobSubMetadataSelectsTheEmbeddedBitmapTrack() {
+        val ass = TrackGroup(
+            subtitle("English ASS", "en", sampleMimeType = "application/x-media3-cues", codecs = MimeTypes.TEXT_SSA),
+        )
+        val vobSub = TrackGroup(
+            subtitle("DVD VobSub", "en", sampleMimeType = "application/x-media3-cues", codecs = "application/vobsub"),
+        )
+        val tracks = Tracks(
+            listOf(
+                Tracks.Group(ass, false, intArrayOf(C.FORMAT_HANDLED), booleanArrayOf(false)),
+                Tracks.Group(vobSub, false, intArrayOf(C.FORMAT_HANDLED), booleanArrayOf(false)),
+            ),
+        )
+
+        val selection = resolveSubtitleSelection(
+            tracks,
+            PlayerSubtitleInfo(
+                index = 2,
+                codec = "dvd_subtitle",
+                source = "embedded",
+                url = "",
+            ),
+        )
+
+        assertSame(vobSub, selection?.mediaTrackGroup)
+        assertEquals(0, selection?.trackIndex)
+    }
+
+    @Test
     fun deliveredVttSubtitleUrlsUseWebvttMimeEvenWhenSourceCodecIsSubrip() {
         val configuration = SubtitleManager().buildSubtitleConfigurations(
             subtitles = listOf(
@@ -221,6 +250,23 @@ class SubtitleManagerTrackSelectionTest {
     }
 
     @Test
+    fun embeddedBitmapSelectionMetadataIsNeverMountedAsASidecar() {
+        val configurations = SubtitleManager().buildSubtitleConfigurations(
+            subtitles = listOf(
+                PlayerSubtitleInfo(
+                    index = 2,
+                    codec = "dvd_subtitle",
+                    source = "embedded",
+                    url = "",
+                ),
+            ),
+            serverUrl = "https://silo.example",
+        )
+
+        assertTrue(configurations.isEmpty())
+    }
+
+    @Test
     fun bitmapSubtitleClassificationCoversFfprobeAndMedia3Names() {
         // Apple's ApplePlaybackRoutePlanner token set (ffprobe names) plus the
         // Media3 mimes must all classify as bitmap regardless of separator
@@ -239,7 +285,17 @@ class SubtitleManagerTrackSelectionTest {
         ).forEach { codec ->
             assertTrue(isBitmapSubtitleCodecOrMime(codec), "expected bitmap: $codec")
         }
-        listOf("subrip", "srt", "ass", "webvtt", "mov_text", null, " ").forEach { codec ->
+        listOf(
+            "subrip",
+            "srt",
+            "ass",
+            "webvtt",
+            "mov_text",
+            "dvb_teletext",
+            "hdmv_text_subtitle",
+            null,
+            " ",
+        ).forEach { codec ->
             assertFalse(isBitmapSubtitleCodecOrMime(codec), "expected text: $codec")
         }
     }

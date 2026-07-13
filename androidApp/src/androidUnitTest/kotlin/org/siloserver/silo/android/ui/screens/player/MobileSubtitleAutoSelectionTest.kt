@@ -144,6 +144,31 @@ class MobileSubtitleAutoSelectionTest {
         )
     }
 
+    @Test
+    fun initialEmbeddedBitmapOrdinalUsesStableServerIndexWithoutSyntheticMetadata() {
+        val mounted = listOf(
+            PlayerSubtitleInfo(
+                index = 2,
+                codec = "dvd_subtitle",
+                source = "embedded",
+                url = "",
+            ),
+        )
+
+        assertEquals(
+            0,
+            resolveInitialMobileSubtitleOrdinal(
+                requestedOrdinal = 2,
+                catalogTracks = listOf(
+                    catalogSubtitle(index = 0, title = "English ASS", codec = "ass"),
+                    catalogSubtitle(index = 1, title = "Signs", codec = "ass"),
+                    catalogSubtitle(index = 2, title = "DVD VobSub", codec = "dvd_subtitle"),
+                ),
+                mountedSubtitles = mounted,
+            ),
+        )
+    }
+
     private fun catalogSubtitle(
         index: Int,
         title: String,

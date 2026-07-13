@@ -30,4 +30,16 @@ class PlaybackCapabilityDetectorSourceTest {
         assertTrue(source.contains("assStyling = libassRendering"))
         assertTrue(source.contains("fontAttachments = libassEmbeddedFonts"))
     }
+
+    @Test
+    fun detectorAdvertisesEmbeddedButNotSidecarBitmapSubtitles() {
+        assertTrue(
+            source.contains("embeddedBitmap = true"),
+            "Media3 direct playback supports embedded PGS, VobSub, and DVB subtitle parsers.",
+        )
+        assertTrue(
+            source.contains("sidecarBitmap = false"),
+            "Raw bitmap sidecars are not mounted into Silo MediaItems.",
+        )
+    }
 }
