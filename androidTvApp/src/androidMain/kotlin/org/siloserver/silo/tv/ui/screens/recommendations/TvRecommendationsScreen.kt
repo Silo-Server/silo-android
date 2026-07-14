@@ -216,6 +216,26 @@ fun TvRecommendationsScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             TvHeroActionPill(
+                label = "For You",
+                icon = Icons.Outlined.AutoAwesome,
+                variant = TvPillVariant.Hollow,
+                selected = savedListSelection == null,
+                heightOverride = 32.dp,
+                horizontalPaddingOverride = 13.dp,
+                iconSizeOverride = 10.dp,
+                iconLabelSpacingOverride = 5.dp,
+                restBorderWidthOverride = 0.75.dp,
+                focusedBorderWidthOverride = 1.5.dp,
+                focusedScaleOverride = 1.045f,
+                focusedGlowElevationOverride = 9.dp,
+                labelStyle = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 12.sp,
+                    lineHeight = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                onClick = { savedListSelection = null },
+            )
+            TvHeroActionPill(
                 label = "Watchlist",
                 icon = Icons.Filled.Bookmark,
                 variant = TvPillVariant.Hollow,

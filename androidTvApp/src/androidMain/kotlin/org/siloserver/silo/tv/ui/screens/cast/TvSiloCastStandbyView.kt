@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -32,7 +33,7 @@ fun TvSiloCastStandbyView(
     state: TvSiloCastReceiver.StandbyState,
     onDisconnect: () -> Unit,
 ) {
-    val disconnectFocus = FocusRequester()
+    val disconnectFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { disconnectFocus.requestFocus() }
 
     Box(

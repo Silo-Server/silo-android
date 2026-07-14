@@ -365,6 +365,10 @@ fun TvPlayerScreen(
     val latestSiloCastMediaController by rememberUpdatedState(mediaController)
     val latestSiloCastSessionPlayer by rememberUpdatedState(sessionPlayer)
     DisposableEffect(siloCastReceiver, viewModel, contentId) {
+        var lastAudibleRemoteVolume = latestSiloCastMediaController
+            ?.volume
+            ?.takeIf { it > 0.001f }
+            ?: 1f
         val adapter = TvSiloCastPlayerAdapter(
             play = {
                 // Watch Together is authoritative for transport: suppress
@@ -416,10 +420,18 @@ fun TvPlayerScreen(
                 )
             },
             setVolume = { volume ->
-                latestSiloCastMediaController?.volume = volume.toFloat().coerceIn(0f, 1f)
+                val next = volume.toFloat().coerceIn(0f, 1f)
+                if (next > 0.001f) lastAudibleRemoteVolume = next
+                latestSiloCastMediaController?.volume = next
             },
             setMuted = { muted ->
-                latestSiloCastMediaController?.volume = if (muted) 0f else 1f
+                val controller = latestSiloCastMediaController
+                if (muted) {
+                    controller?.volume?.takeIf { it > 0.001f }?.let { lastAudibleRemoteVolume = it }
+                    controller?.volume = 0f
+                } else {
+                    controller?.volume = lastAudibleRemoteVolume
+                }
             },
             playNext = viewModel::playNextEpisodeNow,
         )

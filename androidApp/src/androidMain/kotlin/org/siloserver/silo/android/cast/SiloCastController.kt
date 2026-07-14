@@ -184,6 +184,17 @@ class SiloCastController(
                     _state.update { it.copy(isLaunching = true) }
                     prepareRemoteIdentity(request)
                     send(SiloCastMessage.Launch(request))
+                    // A cross-server handoff changes the TV's advertised
+                    // server after the socket was opened. Persist the actual
+                    // remote session scope, not the target's stale discovery
+                    // value, so foreground auto-resume can reattach.
+                    lastTargetStore.save(
+                        SiloCastPersistedTarget(
+                            deviceId = target.deviceId,
+                            name = target.name,
+                            serverId = request.serverId,
+                        ),
+                    )
                 }
             } catch (error: CancellationException) {
                 // Transport teardown cancels the handoff deferreds. Clear the

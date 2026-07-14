@@ -371,6 +371,12 @@ class AndroidPlayerSettingsStore(
                 serverSettingsFlusher.flushNow()
             } else {
                 store.edit {
+                    val savedCustomKey = stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)
+                    if (snapshot[savedCustomKey] == null) {
+                        snapshot.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "")
+                            .takeIf { value -> value.isNotBlank() }
+                            ?.let { value -> it[savedCustomKey] = value }
+                    }
                     it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
                 }
                 serverSettingsFlusher.enqueueDelete(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance)

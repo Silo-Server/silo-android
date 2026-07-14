@@ -75,7 +75,7 @@ fun SiloBottomNavBar(
 ) {
     // Paint the bar background on the outer Box so it extends behind the
     // gesture-nav inset, then apply the inset as padding around the
-    // NavigationBar itself. This keeps a clean 72dp content area for the
+    // NavigationBar itself. This keeps a clean 60dp content area for the
     // items so they sit vertically centered, instead of getting squeezed
     // toward the top by NavigationBar's internal inset padding.
     //

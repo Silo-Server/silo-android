@@ -93,8 +93,8 @@ import kotlinx.coroutines.delay
  * TV Settings — a tvOS-style split rail/detail surface modeled on
  * `iosApp/.../tvOS/Screens/Settings/TVSettingsView.swift`.
  *
- * Requests/admin/watch-together routes stay compiled elsewhere, but this
- * settings surface deliberately avoids exposing them as normal user menu rows.
+ * Requests/watch-together routes stay compiled elsewhere without normal menu
+ * rows. The stats-only Admin dashboard remains role-gated in this surface.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -452,8 +452,15 @@ private fun SettingsRail(
             )
         }
         Spacer(modifier = Modifier.weight(1f))
-        // Admin dashboard entry hidden for now (product call 2026-07-12);
-        // route + screen stay compiled for an easy re-enable.
+        // Apple-parity admin surface: the stats dashboard only, role-gated.
+        if (state.adminVisible) {
+            SettingsRailActionRow(
+                label = "Admin",
+                icon = Icons.Filled.Settings,
+                onClick = onNavigateToAdmin,
+                onFocused = { railActionHasFocus = true },
+            )
+        }
         SettingsRailActionRow(
             label = "Sign Out",
             icon = Icons.AutoMirrored.Filled.Logout,

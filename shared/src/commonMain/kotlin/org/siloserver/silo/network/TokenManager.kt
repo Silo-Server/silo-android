@@ -11,7 +11,13 @@ data class TemporaryAuthScope(
     val profileId: String,
     val profileToken: String,
     val expiresAtEpochMs: Long,
-)
+) {
+    override fun toString(): String =
+        "TemporaryAuthScope(" +
+            "generationId=$generationId, serverId=$serverId, serverUrl=$serverUrl, " +
+            "accessToken=<redacted>, refreshToken=<redacted>, profileId=$profileId, " +
+            "profileToken=<redacted>, expiresAtEpochMs=$expiresAtEpochMs)"
+}
 
 /**
  * Manages JWT access and refresh tokens.

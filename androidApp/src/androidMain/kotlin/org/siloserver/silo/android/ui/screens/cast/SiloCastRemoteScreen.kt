@@ -764,11 +764,12 @@ private fun subtitleMenuEntries(
     }
     if (playback.supportsSubtitlePosition == true) {
         add(MenuEntry(label = "Position", selected = false, isSectionHeader = true))
-        listOf("bottom" to "Bottom", "lower-third" to "Lower Third", "top" to "Top").forEach { (id, label) ->
+        listOf("standard" to "Bottom", "lower-third" to "Lower Third", "top" to "Top").forEach { (id, label) ->
             add(
                 MenuEntry(
                     label = label,
-                    selected = playback.subtitlePosition == id,
+                    selected = playback.subtitlePosition == id ||
+                        (id == "standard" && playback.subtitlePosition == "bottom"),
                     onClick = { controller.setSubtitlePosition(id) },
                 ),
             )

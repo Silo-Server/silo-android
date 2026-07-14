@@ -152,19 +152,24 @@ class RemotePlaybackIdentityManager(
 
     private suspend fun endLocked() {
         val active = activeIdentity
-        if (active != null && tokenManager.hasTemporaryScope()) {
-            deviceLoginApi.endRemotePlayback(
-                AuthScopeSnapshot(
-                    serverId = active.serverId,
-                    serverUrl = active.serverUrl,
-                    profileId = active.profileId,
-                    profileToken = null,
-                    credentialGenerationId = active.generationId,
-                ),
-            )
+        try {
+            if (active != null && tokenManager.hasTemporaryScope()) {
+                deviceLoginApi.endRemotePlayback(
+                    AuthScopeSnapshot(
+                        serverId = active.serverId,
+                        serverUrl = active.serverUrl,
+                        profileId = active.profileId,
+                        profileToken = null,
+                        credentialGenerationId = active.generationId,
+                    ),
+                )
+            }
+        } finally {
+            // Local credential teardown is mandatory even if the best-effort
+            // server logout throws or the transport disappears mid-request.
+            tokenManager.endTemporaryScope()
+            activeIdentity = null
         }
-        tokenManager.endTemporaryScope()
-        activeIdentity = null
     }
 
     private fun validateOffer(offer: SiloCastHandoffOffer) {

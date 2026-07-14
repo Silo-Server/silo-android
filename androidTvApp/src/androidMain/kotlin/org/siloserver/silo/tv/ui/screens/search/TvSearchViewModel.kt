@@ -94,7 +94,10 @@ class TvSearchViewModel(
             }
             // If the active filter was forced to change while a query is live,
             // re-run so results aren't left stale under the old filter.
-            if (nextMediaType != current.mediaType && current.query.isNotBlank()) {
+            if (
+                (nextMediaType != current.mediaType || showAudiobooks != current.showAudiobooks) &&
+                current.query.isNotBlank()
+            ) {
                 searchGeneration += 1
                 searchJob?.cancel()
                 loadMoreJob?.cancel()
@@ -210,75 +213,92 @@ class TvSearchViewModel(
             return
         }
 
-        val offset = if (reset) 0 else state.rawResultCount
+        var offset = if (reset) 0 else state.rawResultCount
+        var fetchedRawCount = 0
         _uiState.update {
             if (reset) it.copy(isLoading = true, isLoadingMore = false, error = null)
             else it.copy(isLoadingMore = true)
         }
 
-        val result = catalogRepository.browse(
-            source = "query",
-            query = requestedQuery,
-            mediaType = requestedMediaType.wire,
-            offset = offset,
-            limit = pageSize,
-        )
+        while (true) {
+            val result = catalogRepository.browse(
+                source = "query",
+                query = requestedQuery,
+                mediaType = requestedMediaType.wire,
+                offset = offset,
+                limit = pageSize,
+            )
 
-        // safeApiCall upstream swallows CancellationException into NetworkError —
-        // rethrow so a cancelled coroutine can't write any state from beyond the grave.
-        if (result is ApiResult.NetworkError && result.exception is CancellationException) {
-            throw result.exception
-        }
+            // safeApiCall upstream swallows CancellationException into NetworkError —
+            // rethrow so a cancelled coroutine can't write any state from beyond the grave.
+            if (result is ApiResult.NetworkError && result.exception is CancellationException) {
+                throw result.exception
+            }
 
-        // Drop a page fetched for a query/filter the user has already moved past,
-        // so it can neither replace nor append onto the current generation.
-        if (generation != searchGeneration) {
-            if (!reset) _uiState.update { it.copy(isLoadingMore = false) }
-            return
-        }
+            // Drop a page fetched for a query/filter the user has already moved past,
+            // so it can neither replace nor append onto the current generation.
+            if (generation != searchGeneration) {
+                if (!reset) _uiState.update { it.copy(isLoadingMore = false) }
+                return
+            }
 
-        when (result) {
-            is ApiResult.Success -> {
-                // The results now belong to this generation; load-more may page.
-                if (reset) resultsGeneration = generation
-                val response = result.data
-                val visibleItems = response.items
-                    .visibleOnTv()
-                    .filter { _uiState.value.showAudiobooks || !isAudiobookItemType(it.type) }
-                _uiState.update {
-                    val accumulatedItems = if (reset) visibleItems else it.items + visibleItems
-                    it.copy(
-                        isLoading = false,
-                        isLoadingMore = false,
-                        items = accumulatedItems,
-                        total = if (requestedMediaType == TvSearchMediaType.All) {
-                            accumulatedItems.size
-                        } else {
-                            response.total
-                        },
-                        hasMore = response.hasMore,
-                        error = null,
-                        rawResultCount = if (reset) {
-                            response.items.size
-                        } else {
-                            it.rawResultCount + response.items.size
-                        },
-                    )
+            when (result) {
+                is ApiResult.Success -> {
+                    // The results now belong to this generation; load-more may page.
+                    if (reset) resultsGeneration = generation
+                    val response = result.data
+                    fetchedRawCount += response.items.size
+                    val visibleItems = response.items
+                        .visibleOnTv()
+                        .filter { _uiState.value.showAudiobooks || !isAudiobookItemType(it.type) }
+
+                    // A raw page can contain only hidden audiobook/reading
+                    // results. The grid cannot request another page when it has
+                    // no rendered cards, so transparently drain hidden-only
+                    // pages until something visible is found or paging ends.
+                    if (visibleItems.isEmpty() && response.hasMore && response.items.isNotEmpty()) {
+                        offset += response.items.size
+                        continue
+                    }
+
+                    _uiState.update {
+                        val accumulatedItems = if (reset) visibleItems else it.items + visibleItems
+                        it.copy(
+                            isLoading = false,
+                            isLoadingMore = false,
+                            items = accumulatedItems,
+                            total = if (requestedMediaType == TvSearchMediaType.All) {
+                                accumulatedItems.size
+                            } else {
+                                response.total
+                            },
+                            hasMore = response.hasMore && response.items.isNotEmpty(),
+                            error = null,
+                            rawResultCount = if (reset) fetchedRawCount else it.rawResultCount + fetchedRawCount,
+                        )
+                    }
+                    return
                 }
-            }
-            is ApiResult.Error -> _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    isLoadingMore = false,
-                    error = result.message.ifBlank { "Search failed" },
-                )
-            }
-            is ApiResult.NetworkError -> _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    isLoadingMore = false,
-                    error = "Network error: ${result.exception.message ?: "unknown"}",
-                )
+                is ApiResult.Error -> {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            isLoadingMore = false,
+                            error = result.message.ifBlank { "Search failed" },
+                        )
+                    }
+                    return
+                }
+                is ApiResult.NetworkError -> {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            isLoadingMore = false,
+                            error = "Network error: ${result.exception.message ?: "unknown"}",
+                        )
+                    }
+                    return
+                }
             }
         }
     }

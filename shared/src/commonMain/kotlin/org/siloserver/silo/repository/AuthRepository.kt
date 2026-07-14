@@ -188,7 +188,7 @@ class AuthRepository(
         val api = healthApi ?: return
         val activeId = registry.activeServerId.value ?: return
         val result = api.checkHealth()
-        if (result is ApiResult.Success) {
+        if (result is ApiResult.Success && registry.activeServerId.value == activeId) {
             result.data.serverName
                 ?.trim()
                 ?.takeIf { it.isNotBlank() }

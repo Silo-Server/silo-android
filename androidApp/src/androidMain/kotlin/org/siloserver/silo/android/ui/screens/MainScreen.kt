@@ -360,7 +360,14 @@ fun MainScreen(
                                         Route.AudiobookPlayer(item.contentId, item.fileId).route,
                                     )
                                 } else {
-                                    playVideo(item.contentId, fileId = item.fileId)
+                                    // Downloads are explicitly local/offline;
+                                    // bypass playVideo's active-cast redirect.
+                                    navController.navigate(
+                                        Route.Player(
+                                            contentId = item.contentId,
+                                            fileId = item.fileId,
+                                        ).route,
+                                    )
                                 }
                             },
                             onReadEbook = { contentId, fileId ->

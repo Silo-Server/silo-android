@@ -72,7 +72,11 @@ fun TvPinEntryDialog(
 ) {
     var pin by remember { mutableStateOf("") }
     val latestError = remember(errorMessage) { errorMessage }
-    if (latestError != null && pin.length == PIN_LENGTH) pin = ""
+    LaunchedEffect(isVerifying, latestError) {
+        if (!isVerifying && latestError != null && pin.length == PIN_LENGTH) {
+            pin = ""
+        }
+    }
 
     Popup(
         alignment = Alignment.Center,

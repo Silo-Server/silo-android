@@ -130,6 +130,7 @@ fun TvItemDetailScreen(
     seasonNumber: Int? = null,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, subtitleTrackIndex: Int?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
+    onItemDetailReplace: (contentId: String) -> Unit = onItemDetail,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchTogether: (RoomSnapshot) -> Unit,
@@ -186,6 +187,7 @@ fun TvItemDetailScreen(
             viewModel = viewModel,
             onPlay = onPlay,
             onItemDetail = onItemDetail,
+            onItemDetailReplace = onItemDetailReplace,
             onSeriesClick = onSeriesClick,
             onSeasonClick = onSeasonClick,
             onOpenPerson = onOpenPerson,
@@ -201,6 +203,7 @@ private fun TvDetailContent(
     viewModel: TvItemDetailViewModel,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, subtitleTrackIndex: Int?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
+    onItemDetailReplace: (contentId: String) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
@@ -250,7 +253,7 @@ private fun TvDetailContent(
                     restored = true
                     break
                 }
-                restored = runCatching { castReturnFocus.requestFocus() }.isSuccess || restored
+                restored = runCatching { castReturnFocus.requestFocus() }.getOrDefault(false) || restored
                 withFrameNanos { }
                 withFrameNanos { }
             }
@@ -580,7 +583,16 @@ private fun TvDetailContent(
                                 showsSeasonChips = showsSeasonChips,
                                 onReturnToHero = returnToHero,
                                 onSeasonSelected = { season ->
-                                    viewModel.onSeasonSelected(season.seasonNumber)
+                                    if (detail.type == "series") {
+                                        viewModel.onSeasonSelected(season.seasonNumber)
+                                    } else if (season.contentId != detail.contentId) {
+                                        // Season/episode pages own their hero and
+                                        // metadata. Replace that detail entry so
+                                        // the selected rail cannot appear under
+                                        // a stale header, and repeated paging
+                                        // does not grow the back stack.
+                                        onItemDetailReplace(season.contentId)
+                                    }
                                 },
                                 // OK plays/resumes the episode immediately. The
                                 // episode's own detail page is pushed first so it

@@ -218,7 +218,9 @@ class CompanionPairingCoordinator(
                     // before joining or successful pairing can remain stuck in cleanup.
                     withContext(NonCancellable) {
                         collector.cancel()
-                        withContext(Dispatchers.IO) { connected.close() }
+                        val toClose = transport
+                        transport = null
+                        withContext(Dispatchers.IO) { toClose?.close() }
                         collector.join()
                         inbox.close()
                     }
@@ -237,8 +239,10 @@ class CompanionPairingCoordinator(
             _status.value = CompanionPairingStatus.Failed(target.name, message)
             return CompanionPairingResult.Failed(message)
         } finally {
+            val toClose = transport
+            transport = null
             withContext(NonCancellable + Dispatchers.IO) {
-                transport?.close()
+                toClose?.close()
             }
         }
     }

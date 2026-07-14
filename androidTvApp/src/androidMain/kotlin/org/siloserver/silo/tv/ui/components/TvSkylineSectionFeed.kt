@@ -442,7 +442,9 @@ fun TvSkylineSectionFeed(
             if (focusedRowIndex == rowIndex && focusedItemIndex == itemIndex) break
             runCatching { detailReturnItemFocusRequester.requestFocus() }
         }
-        detailReturnPending = false
+        if (focusedRowIndex == rowIndex && focusedItemIndex == itemIndex) {
+            detailReturnPending = false
+        }
     }
 
     fun requestFirstRowFocus(): Boolean {
@@ -530,9 +532,12 @@ fun TvSkylineSectionFeed(
             // window composes the launch card; retry across a few frames.
             for (attempt in 0 until 8) {
                 withFrameNanos { }
-                if (runCatching { detailReturnItemFocusRequester.requestFocus() }.isSuccess) break
+                runCatching { detailReturnItemFocusRequester.requestFocus() }
+                if (focusedRowIndex == rowIndex && focusedItemIndex == itemIndex) break
             }
-            detailReturnPending = false
+            if (focusedRowIndex == rowIndex && focusedItemIndex == itemIndex) {
+                detailReturnPending = false
+            }
             return@LaunchedEffect
         }
         if (initialFocusRequested || firstRowId == null) return@LaunchedEffect

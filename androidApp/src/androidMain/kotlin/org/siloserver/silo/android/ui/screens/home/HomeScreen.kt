@@ -129,9 +129,9 @@ fun HomeScreen(
                 // Android NSD can resolve the same TV again with a new listener port after
                 // its setup screen restarts. Keep the visible card, but always pair with the
                 // freshest endpoint instead of the target object originally latched by UI.
-                companionTargets.firstOrNull { it.deviceId == presented.deviceId }?.let {
-                    presentedPairingTarget = it
-                }
+                presentedPairingTarget = companionTargets
+                    .firstOrNull { it.deviceId == presented.deviceId }
+                    ?: companionTargets.firstOrNull { it.dismissalKey !in dismissedPairingSessions }
             }
         }
     }

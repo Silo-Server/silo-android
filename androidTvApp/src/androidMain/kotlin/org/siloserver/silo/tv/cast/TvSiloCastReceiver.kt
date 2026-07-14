@@ -142,8 +142,9 @@ class TvSiloCastReceiver(
     @Synchronized
     fun stop() {
         advertiser.stop()
-        val unusedReadyIdentity = identityManager.activeIdentity?.generationId
-            ?.takeIf { activePlayer == null && pendingPlayerIdentityGeneration != it }
+        val identityGeneration = identityManager.activeIdentity?.generationId
+        pendingPlayerIdentityGeneration = null
+        identityEndJob = null
         // Close the session directly (not via closePreviousController, which
         // launches the goodbye on `scope` — the scope we cancel a line later,
         // which would kill the goodbye before it writes). A direct close()
@@ -157,12 +158,11 @@ class TvSiloCastReceiver(
         serverSocket = null
         scope?.cancel()
         scope = null
-        if (unusedReadyIdentity != null) {
+        if (identityGeneration != null) {
             identityCleanupScope.launch {
-                val stillUnused = synchronized(this@TvSiloCastReceiver) {
-                    activePlayer == null && pendingPlayerIdentityGeneration != unusedReadyIdentity
-                }
-                if (stillUnused && identityManager.activeIdentity?.generationId == unusedReadyIdentity) {
+                // Exact-generation guard: a rapid stop/start/new handoff must
+                // not let the old shutdown clean up the replacement identity.
+                if (identityManager.activeIdentity?.generationId == identityGeneration) {
                     identityManager.end()
                 }
             }

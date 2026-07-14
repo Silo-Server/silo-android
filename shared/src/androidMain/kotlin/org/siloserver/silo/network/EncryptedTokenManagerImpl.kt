@@ -133,40 +133,37 @@ class EncryptedTokenManagerImpl(
                 temporaryScope = null
                 return@withLock
             }
-            val serverId = activeServerId
-            accessToken = null
-            refreshToken = null
-            tokenExpiryEpochMs = null
-            profileId = null
-            profileToken = null
-            if (serverId != null) {
-                prefs.edit()
-                    .remove(serverScopedKey(serverId, KEY_ACCESS_TOKEN))
-                    .remove(serverScopedKey(serverId, KEY_REFRESH_TOKEN))
-                    .remove(serverScopedKey(serverId, KEY_TOKEN_EXPIRY))
-                    .remove(serverScopedKey(serverId, KEY_PROFILE_ID))
-                    .remove(serverScopedKey(serverId, KEY_PROFILE_TOKEN))
-                    .apply()
-            }
+            clearPersistentTokensLocked()
         }
     }
 
     override suspend fun invalidateSession() {
-        val invalidatedTemporaryScope = mutex.withLock {
-            if (temporaryScope == null) {
-                false
-            } else {
+        mutex.withLock {
+            if (temporaryScope != null) {
                 temporaryScope = null
-                true
+                return
             }
+            clearPersistentTokensLocked()
+            _sessionExpired.tryEmit(Unit)
         }
-        // A remote-playback token failure must not sign the TV out of its
-        // saved account. The player surfaces the failed temporary session and
-        // receiver teardown restores the saved scope; only a persistent-scope
-        // rejection belongs on the root session-expired navigation path.
-        if (invalidatedTemporaryScope) return
-        clearTokens()
-        _sessionExpired.tryEmit(Unit)
+    }
+
+    private fun clearPersistentTokensLocked() {
+        val serverId = activeServerId
+        accessToken = null
+        refreshToken = null
+        tokenExpiryEpochMs = null
+        profileId = null
+        profileToken = null
+        if (serverId != null) {
+            prefs.edit()
+                .remove(serverScopedKey(serverId, KEY_ACCESS_TOKEN))
+                .remove(serverScopedKey(serverId, KEY_REFRESH_TOKEN))
+                .remove(serverScopedKey(serverId, KEY_TOKEN_EXPIRY))
+                .remove(serverScopedKey(serverId, KEY_PROFILE_ID))
+                .remove(serverScopedKey(serverId, KEY_PROFILE_TOKEN))
+                .apply()
+        }
     }
 
     override suspend fun getProfileId(): String? = mutex.withLock {

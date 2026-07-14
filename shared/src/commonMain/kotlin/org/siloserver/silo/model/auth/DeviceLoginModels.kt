@@ -74,8 +74,8 @@ data class DeviceLoginLookupResponse(
 
 @Serializable
 data class DeviceLoginCapabilityResponse(
-    @SerialName("remote_playback_handoff") val remotePlaybackHandoff: Boolean,
-    @SerialName("protocol_versions") val protocolVersions: List<Int>,
+    @SerialName("remote_playback_handoff") val remotePlaybackHandoff: Boolean = false,
+    @SerialName("protocol_versions") val protocolVersions: List<Int> = emptyList(),
 )
 
 @Serializable

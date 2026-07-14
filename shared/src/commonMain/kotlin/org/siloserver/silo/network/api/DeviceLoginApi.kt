@@ -51,13 +51,13 @@ interface DeviceLoginApi {
         serverUrl: String,
         deviceName: String?,
         devicePlatform: String?,
-    ): ApiResult<DeviceLoginStartResponse> = startDeviceLogin(deviceName, devicePlatform)
+    ): ApiResult<DeviceLoginStartResponse> = unsupportedScopedDeviceLoginOperation()
 
     /** Poll the same candidate server without mutating or authenticating the active scope. */
     suspend fun pollDeviceLoginAt(
         serverUrl: String,
         deviceCode: String,
-    ): ApiResult<DeviceLoginPollResponse> = pollDeviceLogin(deviceCode)
+    ): ApiResult<DeviceLoginPollResponse> = unsupportedScopedDeviceLoginOperation()
 
     suspend fun remotePlaybackCapabilityAt(
         serverUrl: String,
@@ -71,7 +71,7 @@ interface DeviceLoginApi {
         serverUrl: String,
         deviceName: String?,
         devicePlatform: String?,
-    ): ApiResult<DeviceLoginStartResponse> = startDeviceLoginAt(serverUrl, deviceName, devicePlatform)
+    ): ApiResult<DeviceLoginStartResponse> = unsupportedScopedDeviceLoginOperation()
 
     suspend fun lookupDeviceLogin(
         token: String?,
@@ -92,25 +92,31 @@ interface DeviceLoginApi {
     suspend fun lookupDeviceLoginForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginLookupResponse> = lookupDeviceLogin(token = null, code = code)
+    ): ApiResult<DeviceLoginLookupResponse> = unsupportedScopedDeviceLoginOperation()
 
     suspend fun approveDeviceLoginForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginDecisionResponse> = approveDeviceLogin(token = null, code = code)
+    ): ApiResult<DeviceLoginDecisionResponse> = unsupportedScopedDeviceLoginOperation()
 
     suspend fun approveRemotePlaybackForScope(
         scope: AuthScopeSnapshot,
         code: String,
     ): ApiResult<DeviceLoginDecisionResponse> = approveDeviceLoginForScope(scope, code)
 
-    suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> = ApiResult.Success(Unit)
+    suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> = unsupportedScopedDeviceLoginOperation()
 
     suspend fun denyDeviceLoginForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginDecisionResponse> = denyDeviceLogin(token = null, code = code)
+    ): ApiResult<DeviceLoginDecisionResponse> = unsupportedScopedDeviceLoginOperation()
 }
+
+private fun <T> unsupportedScopedDeviceLoginOperation(): ApiResult<T> = ApiResult.Error(
+    code = 501,
+    error = "scoped_device_login_unsupported",
+    message = "This device-login implementation does not support candidate or pinned auth scopes.",
+)
 
 /**
  * Ktor-backed implementation. Funnels both calls through [safeApiCall]

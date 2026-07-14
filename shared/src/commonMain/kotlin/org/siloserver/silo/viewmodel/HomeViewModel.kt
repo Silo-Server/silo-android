@@ -270,7 +270,12 @@ class HomeViewModel(
         _uiState.update { state ->
             state.copy(
                 sections = state.sections.map { section ->
-                    if (section.sectionType == "continue_watching" || section.sectionType == "in_progress") {
+                    if (
+                        section.sectionType == "continue_watching" ||
+                        section.sectionType == "in_progress" ||
+                        section.sectionType == "next_up" ||
+                        section.sectionType == "up_next"
+                    ) {
                         section.copy(items = section.items.filterNot { it.contentId == itemId })
                     } else {
                         section

@@ -149,22 +149,21 @@ fun TvCalendarScreen(
     // Target the active segment directly instead of asking the parent content
     // group to guess a descendant (which falls back to Home while navigating).
     LaunchedEffect(focusRequest, state.isLoading) {
-        if (focusRequest == lastAppliedFocusRequest && !state.isLoading) return@LaunchedEffect
-        if (!state.isLoading) {
-            val layoutInfo = listState.layoutInfo
-            val itemExtent = (layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 0) +
-                layoutInfo.mainAxisItemSpacing
-            val distance = listState.firstVisibleItemIndex.toFloat() * itemExtent +
-                listState.firstVisibleItemScrollOffset
-            if (distance > 0f) {
-                val durationMs = (distance / 4f).toInt().coerceIn(250, 900)
-                listState.animateScrollBy(
-                    -distance,
-                    tween(durationMs, easing = FastOutSlowInEasing),
-                )
-            }
-            listState.scrollToItem(0)
+        if (focusRequest == lastAppliedFocusRequest) return@LaunchedEffect
+        if (state.isLoading) return@LaunchedEffect
+        val layoutInfo = listState.layoutInfo
+        val itemExtent = (layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 0) +
+            layoutInfo.mainAxisItemSpacing
+        val distance = listState.firstVisibleItemIndex.toFloat() * itemExtent +
+            listState.firstVisibleItemScrollOffset
+        if (distance > 0f) {
+            val durationMs = (distance / 4f).toInt().coerceIn(250, 900)
+            listState.animateScrollBy(
+                -distance,
+                tween(durationMs, easing = FastOutSlowInEasing),
+            )
         }
+        listState.scrollToItem(0)
         // Let the active loading/content branch attach its focus nodes before
         // applying the handoff. A request in the same frame as NavHost restore
         // is overwritten by Android's initial focus search.
@@ -172,7 +171,7 @@ fun TvCalendarScreen(
         androidx.compose.runtime.withFrameNanos { }
         val requester = filterFocusRequesters[state.filter] ?: filterFocusRequester
         val applied = runCatching { requester.requestFocus() }.getOrDefault(false)
-        if (applied && !state.isLoading) {
+        if (applied) {
             // Keep the shell bar suppressed through Android's delayed initial
             // focus pass. Reconfirm the filter after that pass, then release
             // suppression on the following frame.

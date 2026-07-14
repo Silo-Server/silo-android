@@ -109,8 +109,8 @@ fun SiloCastMiniBar(
                 } else {
                     IconButton(onClick = { controller.playPause() }) {
                         Icon(
-                            if (controller.isPlaying()) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = if (controller.isPlaying()) "Pause" else "Play",
+                            if (playback?.isPlaying == true) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (playback?.isPlaying == true) "Pause" else "Play",
                         )
                     }
                 }

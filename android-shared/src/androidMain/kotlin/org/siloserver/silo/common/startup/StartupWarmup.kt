@@ -127,7 +127,7 @@ suspend fun warmProfileSelectionStartup(
         is ApiResult.Success -> result.data
         else -> return
     }
-    warmAvatarArtwork(context, profiles.take(MaxProfileArtworkUrls), serverUrl)
+    warmAvatarArtwork(context, profiles.take(maxProfileArtworkUrls), serverUrl)
 }
 
 private suspend fun CoroutineScope.warmHome(
@@ -238,7 +238,7 @@ private suspend fun warmAvatarArtwork(
         .map { url ->
             ImageRequest.Builder(context)
                 .data(url)
-                .size(ProfileAvatarWarmSizePx, ProfileAvatarWarmSizePx)
+                .size(profileAvatarWarmSizePx, profileAvatarWarmSizePx)
                 .build()
         }
     warmImages(context, requests)
@@ -263,7 +263,7 @@ private fun ResolvedSection.rendersEpisodeStills(): Boolean {
         type.contains("up_next")
 }
 
-private const val MaxProfileArtworkUrls = 8
+private const val maxProfileArtworkUrls = 8
 
 /** DiceBear presets already resolve at 256px; server avatars decode fine at it too. */
-private const val ProfileAvatarWarmSizePx = 256
+private const val profileAvatarWarmSizePx = 256

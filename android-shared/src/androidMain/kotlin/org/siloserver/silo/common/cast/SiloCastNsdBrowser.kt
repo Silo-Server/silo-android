@@ -61,6 +61,12 @@ class SiloCastNsdBrowser(context: Context) {
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
                 val lostName = serviceInfo.serviceName
+                synchronized(this@SiloCastNsdBrowser) {
+                    activeResolution
+                        ?.takeIf { it.serviceInfo.serviceName == lostName }
+                        ?.cancelled = true
+                    pendingResolutions.removeAll { it.serviceInfo.serviceName == lostName }
+                }
                 _targets.update { targets -> targets.filterNot { it.serviceName == lostName } }
             }
 
@@ -101,7 +107,7 @@ class SiloCastNsdBrowser(context: Context) {
         val next = synchronized(this) {
             if (discoveryListener == null) return
             val serviceName = serviceInfo.serviceName
-            if (activeResolution?.serviceInfo?.serviceName == serviceName ||
+            if (activeResolution?.takeUnless { it.cancelled }?.serviceInfo?.serviceName == serviceName ||
                 pendingResolutions.any { it.serviceInfo.serviceName == serviceName }
             ) {
                 return
@@ -123,10 +129,15 @@ class SiloCastNsdBrowser(context: Context) {
                 }
 
                 override fun onServiceResolved(info: NsdServiceInfo) {
-                    info.toSiloCastTarget()?.let { target ->
-                        _targets.update { current ->
-                            (current.filterNot { it.deviceId == target.deviceId } + target)
-                                .sortedBy { it.name.lowercase() }
+                    val mayPublish = synchronized(this@SiloCastNsdBrowser) {
+                        discoveryListener != null && activeResolution === pending && !pending.cancelled
+                    }
+                    if (mayPublish) {
+                        info.toSiloCastTarget()?.let { target ->
+                            _targets.update { current ->
+                                (current.filterNot { it.deviceId == target.deviceId } + target)
+                                    .sortedBy { it.name.lowercase() }
+                            }
                         }
                     }
                     finishResolution(pending)
@@ -176,7 +187,10 @@ class SiloCastNsdBrowser(context: Context) {
     private fun Map<String, ByteArray>.string(key: String): String? =
         this[key]?.toString(Charset.forName("UTF-8"))?.takeIf { it.isNotBlank() }
 
-    private class PendingResolution(val serviceInfo: NsdServiceInfo)
+    private class PendingResolution(
+        val serviceInfo: NsdServiceInfo,
+        var cancelled: Boolean = false,
+    )
 
     private companion object {
         const val TAG = "SiloCastNsdBrowser"

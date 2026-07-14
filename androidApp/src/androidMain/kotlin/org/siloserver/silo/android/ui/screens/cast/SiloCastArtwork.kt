@@ -33,7 +33,9 @@ data class SiloCastArtwork(
 @Composable
 fun rememberSiloCastArtwork(contentId: String?): SiloCastArtwork {
     val repository: CatalogRepository = koinInject()
-    var artwork by remember { mutableStateOf(SiloCastArtwork()) }
+    // Key the state as well as the effect so the previous title's artwork is
+    // removed synchronously, before the new detail lookup suspends.
+    var artwork by remember(contentId) { mutableStateOf(SiloCastArtwork()) }
     LaunchedEffect(contentId) {
         artwork = if (contentId.isNullOrBlank()) {
             SiloCastArtwork()

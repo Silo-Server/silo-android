@@ -92,6 +92,7 @@ private val AddProfilePlusStrokeWidth = 2.dp
 private val ProfileUtilityChromeTop = 40.dp
 private val ProfileUtilityChromeEnd = 64.dp
 private val ProfileUtilityChangeServerWidth = 164.dp
+private val ProfileUtilityManageWidth = 104.dp
 private val ProfileUtilitySignOutWidth = 100.dp
 private val ProfileUtilityChipHeight = 28.dp
 private val ProfileHeaderTop = 92.dp
@@ -150,6 +151,16 @@ fun TvProfileSelectionScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    TvHeroActionPill(
+                        label = if (state.isManageMode) "Done" else "Manage",
+                        icon = Icons.Filled.Edit,
+                        variant = TvPillVariant.Hollow,
+                        modifier = Modifier.width(ProfileUtilityManageWidth),
+                        heightOverride = ProfileUtilityChipHeight,
+                        horizontalPaddingOverride = 10.dp,
+                        labelStyle = MaterialTheme.typography.labelMedium,
+                        onClick = viewModel::toggleManageMode,
+                    )
                     TvHeroActionPill(
                         label = "Change Server",
                         icon = Icons.Filled.Dns,

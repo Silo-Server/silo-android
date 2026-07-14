@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.pairing
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,7 +46,8 @@ class CompanionPairingViewModel(
 
     fun pair(target: CompanionPairingTarget) {
         if (pairingJob?.isActive == true) return
-        pairingJob = viewModelScope.launch {
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val self = kotlin.coroutines.coroutineContext[Job]
             try {
                 val result = coordinator.pair(
                     target = target,
@@ -76,9 +78,11 @@ class CompanionPairingViewModel(
                     browser.stop()
                 }
             } finally {
-                pairingJob = null
+                if (pairingJob === self) pairingJob = null
             }
         }
+        pairingJob = job
+        job.start()
     }
 
     fun continueWithServers(serverIds: Set<String>) {

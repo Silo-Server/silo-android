@@ -582,6 +582,8 @@ class TvItemDetailViewModel(
     private var episodeListGeneration: Long = 0
     private var nextEpisodeWatchMutationGeneration: Long = 0
     private val episodeWatchMutationGenerations = mutableMapOf<String, Long>()
+    private var nextEpisodeFavoriteMutationGeneration: Long = 0
+    private val episodeFavoriteMutationGenerations = mutableMapOf<String, Long>()
 
     /**
      * Loads a season's episodes. [quiet] suppresses the loading spinner and is
@@ -628,11 +630,15 @@ class TvItemDetailViewModel(
             _uiState.update { it.copy(episodeFavoriteStates = emptyMap()) }
             return
         }
+        val knownStates = _uiState.value.episodeFavoriteStates
         val states = coroutineScope {
             episodes.map { episode ->
                 async {
                     val favorite = personalDataRepository.isFavorite(episode.contentId)
-                    episode.contentId to ((favorite as? ApiResult.Success)?.data ?: false)
+                    episode.contentId to when (favorite) {
+                        is ApiResult.Success -> favorite.data
+                        else -> knownStates[episode.contentId] ?: false
+                    }
                 }
             }.awaitAll().toMap()
         }
@@ -698,6 +704,8 @@ class TvItemDetailViewModel(
         val current = _uiState.value
         val previousFavorite = current.episodeFavoriteStates[episodeContentId] ?: false
         val isCurrentDetail = episodeContentId == current.detail?.contentId
+        val mutationGeneration = ++nextEpisodeFavoriteMutationGeneration
+        episodeFavoriteMutationGenerations[episodeContentId] = mutationGeneration
         _uiState.update {
             it.copy(
                 episodeFavoriteStates = it.episodeFavoriteStates + (episodeContentId to favorite),
@@ -705,15 +713,22 @@ class TvItemDetailViewModel(
             )
         }
         viewModelScope.launch {
-            if (personalDataRepository.toggleFavorite(episodeContentId, favorite) !is ApiResult.Success) {
+            val result = personalDataRepository.toggleFavorite(episodeContentId, favorite)
+            val isCurrentMutation = episodeFavoriteMutationGenerations[episodeContentId] == mutationGeneration
+            if (result !is ApiResult.Success && isCurrentMutation) {
                 _uiState.update {
                     it.copy(
                         episodeFavoriteStates = it.episodeFavoriteStates +
                             (episodeContentId to previousFavorite),
-                        isFavorite = if (isCurrentDetail) previousFavorite else it.isFavorite,
+                        isFavorite = if (isCurrentDetail && it.detail?.contentId == episodeContentId) {
+                            previousFavorite
+                        } else {
+                            it.isFavorite
+                        },
                     )
                 }
             }
+            if (isCurrentMutation) episodeFavoriteMutationGenerations.remove(episodeContentId)
         }
     }
 

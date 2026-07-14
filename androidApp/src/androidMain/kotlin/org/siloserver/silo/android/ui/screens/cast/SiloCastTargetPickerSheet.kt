@@ -202,7 +202,7 @@ private fun TargetRow(
     isConnectingToThis: Boolean,
     onSelect: () -> Unit,
 ) {
-    val needsUpdate = launchRequest != null && target.version < SiloCastProtocol.version
+    val needsUpdate = target.version < SiloCastProtocol.version
     val enabled = !needsUpdate
 
     Row(

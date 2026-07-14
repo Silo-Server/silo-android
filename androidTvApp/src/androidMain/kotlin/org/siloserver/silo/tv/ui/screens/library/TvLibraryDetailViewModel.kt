@@ -244,7 +244,12 @@ class TvLibraryDetailViewModel(
 
     /** Replaces the Browse panel's facet selections and reloads the grid. */
     fun onFacetSelectionApplied(selection: TvCatalogFacetSelection) {
-        updateBrowseFilter(_uiState.value.browseFilter.copy(facetSelection = selection))
+        updateBrowseFilter(
+            _uiState.value.browseFilter.copy(
+                facetSelection = selection,
+                namePrefix = null,
+            ),
+        )
     }
 
     fun onNamePrefixChanged(prefix: String?) {

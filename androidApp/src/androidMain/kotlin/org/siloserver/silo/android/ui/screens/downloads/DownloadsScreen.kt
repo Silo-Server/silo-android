@@ -252,7 +252,12 @@ fun DownloadsScreen(
                         onClick = { pendingBulkDelete = selectedRecordIds to selectedBytes },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(16.dp),
+                            .padding(
+                                start = 16.dp,
+                                top = 16.dp,
+                                end = 16.dp,
+                                bottom = 16.dp + LocalBottomChromeInset.current,
+                            ),
                     ) {
                         Text("Delete ${selectedEntryIds.size} · Free ${formatBytes(selectedBytes)}")
                     }

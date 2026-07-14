@@ -111,7 +111,7 @@ private fun ItemDetail.assembleFacts(): List<FactRow> {
         out += FactRow("Genres", it.joinToString(", "))
     }
     if (type.equals("episode", ignoreCase = true)) {
-        formattedDate(airDate ?: releaseDate)?.let { out += FactRow("Aired", it) }
+        TvDetailMetadata.abbreviatedDate(airDate ?: releaseDate)?.let { out += FactRow("Aired", it) }
     } else {
         formattedDate(releaseDate)?.let { out += FactRow("Released", it) }
         formattedDate(firstAirDate)?.let { out += FactRow("First Aired", it) }

@@ -377,7 +377,7 @@ fun TvTopMenuBar(
         // Leading: SILO wordmark.
         Box(
             modifier = Modifier
-                .padding(start = Spacing.safeArea)
+                .padding(start = TvSkyline.safeAreaX)
                 .height(TvSkyline.barHeight),
             contentAlignment = Alignment.Center,
         ) {

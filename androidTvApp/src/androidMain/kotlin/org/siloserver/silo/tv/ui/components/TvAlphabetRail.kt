@@ -118,7 +118,7 @@ fun TvAlphabetRail(
             )
             // Entering the rail always lands on "All" at the top, not
             // whatever letter happens to sit beside the launching card.
-            .focusProperties { enter = { allFocusRequester } }
+            .focusProperties { onEnter = { allFocusRequester.requestFocus() } }
             // Expand while focus is anywhere in the rail; collapse to the edge
             // peek once focus leaves. hasFocus stays true moving between letters,
             // so there's no collapse/expand flicker during traversal.

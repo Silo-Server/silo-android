@@ -1115,7 +1115,7 @@ fun TvMainShell(
                 }
             },
             onSearchClick = onSearchPressed,
-            onProfileClick = {},
+            onProfileClick = focusState::enterProfileMenu,
             onProfileDwell = focusState::previewProfileMenu,
             onProfileBlur = focusState::closeProfilePreview,
             onEnterProfileMenu = focusState::enterProfileMenu,
