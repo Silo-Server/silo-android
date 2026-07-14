@@ -188,7 +188,6 @@ class TvVideoPlaybackStarter(
                 subtitleUrls = buildPlaybackSubtitleChoices(
                     catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
-                    sessionId = resolved.sessionId,
                 ),
                 preferredAudioLanguage = preferredAudioLanguage ?: activeProfile?.language,
                 preferredTextLanguage = watchDetail.effectiveSubtitleLanguage

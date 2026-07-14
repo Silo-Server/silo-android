@@ -15,11 +15,10 @@ class PlaybackSubtitleChoicesTest {
             plannedTracks = listOf(
                 PlayerSubtitleInfo(index = 7, source = "server_artifact", url = "/planned/signs.ass"),
             ),
-            sessionId = "session-1",
         )
 
         assertEquals(listOf(3, 7), choices.map(PlayerSubtitleInfo::index))
-        assertEquals("/stream/session-1/subtitles/3.vtt", choices[0].url)
+        assertEquals("", choices[0].url)
         assertEquals("/planned/signs.ass", choices[1].url)
         assertEquals("Signs", choices[1].label)
         assertEquals("ja", choices[1].language)
@@ -32,7 +31,6 @@ class PlaybackSubtitleChoicesTest {
                 SubtitleTrack(index = 5, codec = "hdmv_pgs_subtitle", title = "English PGS"),
             ),
             plannedTracks = emptyList(),
-            sessionId = "session-1",
         )
 
         assertEquals("", choices.single().url)

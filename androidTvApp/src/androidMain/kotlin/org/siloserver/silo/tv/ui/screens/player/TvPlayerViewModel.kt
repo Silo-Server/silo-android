@@ -1290,7 +1290,6 @@ class TvPlayerViewModel(
                         val effectiveSubtitleUrls = buildPlaybackSubtitleChoices(
                             catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
                             plannedTracks = plannedSubtitles + preservedSubtitles,
-                            sessionId = decision.session.sessionId,
                         )
                         val effectiveContainer = decision.plan.stream.container
                             ?: effectiveVersion?.container

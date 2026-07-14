@@ -2,11 +2,17 @@ package org.siloserver.silo.model.playback
 
 import org.siloserver.silo.model.catalog.SubtitleTrack
 
-/** Combines catalog subtitle alternatives with any artifact selected by the playback plan. */
+/**
+ * Combines catalog subtitle alternatives with artifacts selected by the playback plan.
+ *
+ * Catalog-only rows deliberately have no URL. They remain available as selection metadata,
+ * while choosing one asks playback V3 to materialize the corresponding artifact. Giving every
+ * catalog row a speculative stream URL makes Media3 prepare every sidecar eagerly; one missing
+ * artifact can then prevent the primary media source from becoming ready.
+ */
 fun buildPlaybackSubtitleChoices(
     catalogTracks: List<SubtitleTrack>,
     plannedTracks: List<PlayerSubtitleInfo>,
-    sessionId: String,
 ): List<PlayerSubtitleInfo> {
     if (catalogTracks.isEmpty()) return plannedTracks
 
@@ -27,28 +33,9 @@ fun buildPlaybackSubtitleChoices(
             label = track.title,
             source = if (track.external) "external" else "embedded",
             forced = track.forced,
-            url = playbackSubtitleTrackUrl(sessionId, track),
+            url = "",
         )
     }
     val catalogIndices = catalogTracks.mapTo(mutableSetOf(), SubtitleTrack::index)
     return catalogChoices + plannedTracks.filterNot { it.index in catalogIndices }
-}
-
-private fun playbackSubtitleTrackUrl(sessionId: String, track: SubtitleTrack): String {
-    val format = track.codec?.trim()?.lowercase()
-    val isBitmap = format in setOf(
-        "pgs",
-        "hdmv_pgs_subtitle",
-        "dvd_subtitle",
-        "dvdsub",
-        "dvb_subtitle",
-    )
-    if (isBitmap && !track.external) return ""
-    val extension = when (format) {
-        "ass", "ssa" -> ".ass"
-        "pgs", "hdmv_pgs_subtitle" -> ".sup"
-        "ttml" -> ".ttml"
-        else -> ".vtt"
-    }
-    return "/stream/$sessionId/subtitles/${track.index}$extension"
 }
