@@ -130,7 +130,6 @@ class TvVideoPlaybackStarter(
                 ?: readyV3.plan.effectiveMediaFileId
                 ?: version.fileId
             val effectiveVersion = watchDetail.versions.firstOrNull { it.fileId == effectiveFileId }
-                ?: version
             val resolvedDelivery = resolved.resolvedPlaybackDelivery()
             val resolvedStreamUrl = resolved.playbackPlan?.stream?.url
                 ?.takeIf { it.isNotBlank() }
@@ -166,7 +165,8 @@ class TvVideoPlaybackStarter(
                 contentId = request.contentId,
                 fileId = effectiveFileId,
                 versions = watchDetail.versions,
-                fileResolution = effectiveVersion.resolution,
+                fileResolution = effectiveVersion?.resolution
+                    ?: readyV3.plan.effectiveRecipe.height?.let { "${it}p" },
                 sessionId = resolved.sessionId,
                 streamUrl = resolvedStreamUrl,
                 playMethod = resolved.playMethod,
@@ -174,7 +174,7 @@ class TvVideoPlaybackStarter(
                 playbackPlanV3 = readyV3.plan,
                 requestHeaders = readyV3.plan.stream.headers,
                 delivery = resolvedDelivery,
-                container = readyV3.plan.stream.container ?: effectiveVersion.container,
+                container = readyV3.plan.stream.container ?: effectiveVersion?.container,
                 title = watchDetail.title,
                 subtitle = null,
                 artworkUrl = watchDetail.posterUrl?.takeIf { it.isNotBlank() }
@@ -184,9 +184,9 @@ class TvVideoPlaybackStarter(
                 serverUrl = serverUrl,
                 accessToken = accessToken,
                 mediaFileId = effectiveFileId,
-                durationSeconds = resolved.durationSeconds ?: effectiveVersion.duration,
+                durationSeconds = resolved.durationSeconds ?: effectiveVersion?.duration ?: 0.0,
                 subtitleUrls = buildPlaybackSubtitleChoices(
-                    catalogTracks = effectiveVersion.subtitleTracks.orEmpty(),
+                    catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
                     sessionId = resolved.sessionId,
                 ),
@@ -200,7 +200,7 @@ class TvVideoPlaybackStarter(
                     ?: true,
                 intro = watchDetail.intro,
                 credits = watchDetail.credits,
-                chapters = effectiveVersion.chapters.orEmpty(),
+                chapters = effectiveVersion?.chapters.orEmpty(),
                 seriesId = watchDetail.seriesId,
                 seasonNumber = watchDetail.seasonNumber,
                 episodeNumber = watchDetail.episodeNumber,
