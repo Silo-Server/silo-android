@@ -469,13 +469,15 @@ fun PlayerScreen(
             PlaybackRuntimeCorrectionMetrics.reset()
             dvSanitizerReported = false
             startupStallDetector.onMounted(
-                sessionKey = "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:${plan?.decisionTrace?.size ?: 0}",
+                sessionKey = "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:" +
+                    "${plan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}",
                 playMethod = playMethod,
                 startPositionMs = mediaSpec.startPositionMs,
                 nowMs = SystemClock.elapsedRealtime(),
             )
             postResumeStallDetector.onMounted(
-                "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:${plan?.decisionTrace?.size ?: 0}",
+                "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:" +
+                    "${plan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}",
             )
         }
         backend.mount(mediaSpec, playWhenReady = !viewModel.uiState.value.isPaused)
@@ -563,7 +565,7 @@ fun PlayerScreen(
                     val live = viewModel.uiState.value
                     val key = live.sessionId?.let { sessionId ->
                         "$sessionId:${live.streamUrl}:${live.playbackPlan?.planId.orEmpty()}:" +
-                            "${live.playbackPlan?.decisionTrace?.size ?: 0}"
+                            "${live.playbackPlan?.decisionTrace?.size ?: 0}:${live.mediaMountGeneration}"
                     }
                     if (key != null) {
                         val rendered = (activePlayerHolder.player.value as? androidx.media3.exoplayer.ExoPlayer)
@@ -676,12 +678,13 @@ fun PlayerScreen(
         uiState.playMethod,
         uiState.playbackPlan?.planId,
         uiState.playbackPlan?.decisionTrace?.size,
+        uiState.mediaMountGeneration,
     ) {
         val controller = mediaController ?: return@LaunchedEffect
         val sessionId = uiState.sessionId ?: return@LaunchedEffect
         val streamUrl = uiState.streamUrl ?: return@LaunchedEffect
         val sessionKey = "$sessionId:$streamUrl:${uiState.playbackPlan?.planId.orEmpty()}:" +
-            "${uiState.playbackPlan?.decisionTrace?.size ?: 0}"
+            "${uiState.playbackPlan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}"
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
                 val decoderCounters = (sessionPlayer as? androidx.media3.exoplayer.ExoPlayer)?.videoDecoderCounters

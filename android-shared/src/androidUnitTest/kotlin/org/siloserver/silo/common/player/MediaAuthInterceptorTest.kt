@@ -111,6 +111,32 @@ class MediaAuthInterceptorTest {
     }
 
     @Test
+    fun `new token from a different server does not satisfy a failed request`() {
+        val tokenManager = FakeTokenManager(
+            accessToken = "server-a-access",
+            refreshToken = "server-a-refresh",
+            serverUrl = "https://server-a.example",
+            serverId = "server-a",
+        )
+        val refreshClient = OkHttpClient.Builder()
+            .addInterceptor { error("A cross-server credential change must not trigger refresh") }
+            .build()
+        val session = MediaAuthSession(tokenManager, refreshClient)
+        val failedSnapshot = runBlocking { session.snapshot() }
+
+        tokenManager.serverId = "server-b"
+        runBlocking {
+            tokenManager.saveTokens(
+                accessToken = "server-b-access",
+                refreshToken = "server-b-refresh",
+                expiresIn = 3600,
+            )
+        }
+
+        assertFalse(runBlocking { session.refreshIfStale(failedSnapshot) })
+    }
+
+    @Test
     fun `refresh response is discarded when active server changes mid refresh`() {
         val tokenManager = FakeTokenManager(
             accessToken = "expired-access",

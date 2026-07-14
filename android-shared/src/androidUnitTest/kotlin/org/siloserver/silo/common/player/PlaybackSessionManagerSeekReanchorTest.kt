@@ -365,6 +365,39 @@ class PlaybackSessionManagerSeekReanchorTest {
         )
     }
 
+    @Test
+    fun replanSynthesizesChangedTrackIdsFromTheEffectiveFile() = runTest {
+        val initial = plan().copy(
+            effectiveMediaFileId = 84,
+            selectedTracks = SelectedPlaybackTracksV3(
+                audio = PlaybackTrackIdentityV3("file:84:audio:1", 1),
+            ),
+        )
+        val replanned = initial.copy(
+            planId = "plan-2",
+            selectedTracks = SelectedPlaybackTracksV3(
+                audio = PlaybackTrackIdentityV3("file:84:audio:2", 2),
+                subtitle = PlaybackTrackIdentityV3("file:84:subtitle:3", 3),
+            ),
+        )
+        val harness = Harness(response(initial)) { _, _ -> success(response(replanned)) }
+        harness.manager.start()
+
+        val result = harness.manager.replanActiveVideoSession(
+            classification = "audio_track_changed",
+            positionSeconds = 15.0,
+            audioTrackIndex = 2,
+            subtitleTrackIndex = 3,
+        )
+
+        assertIs<VideoSessionStartV3.Ready>(
+            assertIs<ApiResult.Success<VideoSessionStartV3>>(result).data,
+        )
+        val selectedTracks = harness.replanBodies.single()["selected_tracks"]!!.jsonObject
+        assertEquals("file:84:audio:2", selectedTracks["audio"]!!.jsonObject.string("id"))
+        assertEquals("file:84:subtitle:3", selectedTracks["subtitle"]!!.jsonObject.string("id"))
+    }
+
     private class Harness(
         startResponse: PlaybackDecisionResponseV3,
         networkEvidenceProvider: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,

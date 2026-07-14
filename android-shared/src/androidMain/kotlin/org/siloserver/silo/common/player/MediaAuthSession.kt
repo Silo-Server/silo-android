@@ -37,11 +37,11 @@ class MediaAuthSession(
 
     suspend fun refreshIfStale(failedSnapshot: MediaAuthSnapshot): Boolean = refreshMutex.withLock {
         val current = snapshot()
-        if (!current.accessToken.isNullOrBlank() && current.accessToken != failedSnapshot.accessToken) {
-            return@withLock true
-        }
         if (current.serverId != failedSnapshot.serverId) {
             return@withLock false
+        }
+        if (!current.accessToken.isNullOrBlank() && current.accessToken != failedSnapshot.accessToken) {
+            return@withLock true
         }
         attemptRefresh(failedSnapshot.serverId)
     }

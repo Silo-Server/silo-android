@@ -934,8 +934,9 @@ open class PlaybackSessionManager(
         selected: PlaybackTrackIdentityV3?,
     ): PlaybackTrackIdentityV3? {
         if (index == null) return null
+        val effectiveFileId = active.plan.effectiveMediaFileId ?: active.fileId
         return selected?.takeIf { it.index == index }
-            ?: PlaybackTrackIdentityV3(stableTrackId(active.fileId, kind, index), index)
+            ?: PlaybackTrackIdentityV3(stableTrackId(effectiveFileId, kind, index), index)
     }
 
     fun trySingleLocalPcmRetry(mime: String, channels: Int): Boolean {
