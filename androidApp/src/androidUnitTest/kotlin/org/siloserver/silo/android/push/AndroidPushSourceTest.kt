@@ -36,6 +36,10 @@ class AndroidPushSourceTest {
         assertTrue(service.contains("onMessageReceived"))
         assertTrue(service.contains("onNewToken"))
         assertTrue(service.contains("delivery_id"))
+        // The relay's fixed content-private data payload carries exactly these keys.
+        assertTrue(service.contains("silo_delivery_id"))
+        assertTrue(service.contains("silo_mode"))
+        assertTrue(service.contains("background_wake"))
         assertTrue(manifest.contains("SiloFirebaseMessagingService"))
         assertTrue(app.contains("AndroidPushRegistrationStarter"))
         assertTrue(presenter.contains("notificationContentFor"))

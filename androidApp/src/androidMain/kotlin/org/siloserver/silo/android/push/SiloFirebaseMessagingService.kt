@@ -18,6 +18,12 @@ class PushMessageHandler(
         fallbackBody: String? = null,
     ): Boolean {
         val deliveryId = deliveryIdFrom(data) ?: return false
+        // The relay's background_wake mode is a silent sync signal: refresh the
+        // inbox so content is ready, but never surface a visible notification.
+        if (data[MODE_KEY]?.trim() == MODE_BACKGROUND_WAKE) {
+            presenter.sync()
+            return true
+        }
         presenter.present(
             deliveryId = deliveryId,
             fallbackTitle = fallbackTitle ?: data["title"],
@@ -32,8 +38,14 @@ class PushMessageHandler(
         }
 
     companion object {
+        // The Silo push relay sends data-only messages carrying exactly
+        // silo_delivery_id and silo_mode; the legacy keys stay as fallbacks.
+        const val SILO_DELIVERY_ID_KEY = "silo_delivery_id"
         const val DELIVERY_ID_KEY = "delivery_id"
-        private val DELIVERY_ID_KEYS = listOf(DELIVERY_ID_KEY, "deliveryId", "deliveryID", "id")
+        const val MODE_KEY = "silo_mode"
+        const val MODE_BACKGROUND_WAKE = "background_wake"
+        private val DELIVERY_ID_KEYS =
+            listOf(SILO_DELIVERY_ID_KEY, DELIVERY_ID_KEY, "deliveryId", "deliveryID", "id")
     }
 }
 

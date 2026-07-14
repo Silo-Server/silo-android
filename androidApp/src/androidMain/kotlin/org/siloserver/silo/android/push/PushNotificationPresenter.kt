@@ -63,6 +63,12 @@ class PushNotificationPresenter(
         }
     }
 
+    // sync refreshes the inbox for a background_wake push without posting a
+    // visible notification.
+    suspend fun sync() {
+        runCatching { notificationsRepository.refresh() }
+    }
+
     private suspend fun fetch(deliveryId: String): NotificationRow? =
         when (val direct = notificationsRepository.get(deliveryId)) {
             is ApiResult.Success -> direct.data
