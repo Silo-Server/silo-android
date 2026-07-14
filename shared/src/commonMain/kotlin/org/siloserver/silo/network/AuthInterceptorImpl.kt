@@ -66,7 +66,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             // Replace (never append) the scoped headers; clear the profile token
             // header when the snapshot has none.
             request.headers.remove(HttpHeaders.Authorization)
-            tokenManager.getAccessTokenForScope(pinned.serverId)?.let { token ->
+            tokenManager.getAccessTokenForScope(pinned)?.let { token ->
                 request.header(HttpHeaders.Authorization, "Bearer $token")
             }
             request.headers.remove("X-Profile-Id")
@@ -140,11 +140,11 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             }
             val refreshed = refreshMutex.withLock {
                 // Another path may have refreshed this scope while we waited.
-                val current = tokenManager.getAccessTokenForScope(pinnedScope.serverId)?.let { "Bearer $it" }
+                val current = tokenManager.getAccessTokenForScope(pinnedScope)?.let { "Bearer $it" }
                 if (current != null && current != sentAuth) {
                     return@withLock true
                 }
-                val refreshToken = tokenManager.getRefreshTokenForScope(pinnedScope.serverId)
+                val refreshToken = tokenManager.getRefreshTokenForScope(pinnedScope)
                 if (refreshToken.isNullOrBlank() || pinnedScope.serverUrl.isBlank()) {
                     return@withLock false
                 }
@@ -156,16 +156,22 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                     if (refreshResponse.status.isSuccess()) {
                         val tokens = refreshResponse.body<RefreshResponse>()
                         tokenManager.saveTokensForScope(
-                            serverId = pinnedScope.serverId,
+                            scope = pinnedScope,
                             accessToken = tokens.accessToken,
                             refreshToken = tokens.refreshToken,
                             expiresIn = tokens.expiresIn,
                         )
-                        true
+                        // A temporary credential generation may have ended while
+                        // refresh was in flight. Its token manager deliberately
+                        // drops that stale response instead of falling through to
+                        // the saved account, so retry only when the exact scope now
+                        // exposes the rotated token.
+                        val after = tokenManager.getAccessTokenForScope(pinnedScope)?.let { "Bearer $it" }
+                        after != null && after != sentAuth
                     } else {
                         // Don't invalidate the active session for a background scope.
                         // Re-check in case a concurrent path refreshed it in flight.
-                        val after = tokenManager.getAccessTokenForScope(pinnedScope.serverId)?.let { "Bearer $it" }
+                        val after = tokenManager.getAccessTokenForScope(pinnedScope)?.let { "Bearer $it" }
                         after != null && after != sentAuth
                     }
                 } catch (e: Throwable) {
@@ -173,7 +179,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                 }
             }
             return@on if (refreshed) {
-                tokenManager.getAccessTokenForScope(pinnedScope.serverId)?.let { newToken ->
+                tokenManager.getAccessTokenForScope(pinnedScope)?.let { newToken ->
                     request.headers.remove(HttpHeaders.Authorization)
                     request.header(HttpHeaders.Authorization, "Bearer $newToken")
                 }

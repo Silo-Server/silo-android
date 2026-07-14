@@ -19,11 +19,10 @@ import org.siloserver.silo.repository.port.toWriteOutcome
  * which would re-enter the local-first port and re-enqueue the op forever.
  *
  * Every send is **pinned** to the scope captured at drain start via
- * [AuthScopeSnapshot]: the auth plugin binds the request to that server URL +
- * profile and the live per-server access token, so a server/profile switch
- * mid-drain can't send an op to the wrong account, and continuing to drain the
- * captured scope after a switch is correct. That makes the older scope-recheck /
- * generation-tracking dance unnecessary.
+ * [AuthScopeSnapshot]: the auth plugin binds the request to that server URL,
+ * profile, and exact live credential slot, so a scope switch mid-drain can't
+ * send an op to the wrong account, and continuing to drain the captured scope
+ * after a switch is correct.
  *
  * Correctness still rests on:
  * - **Atomic claim** ([DirtyOperationDao.claim]) — a row is sent at most once.
@@ -45,6 +44,7 @@ class SyncEngine(
 ) {
     private val dao = db.dirtyOperationDao()
     private val contentDao = db.contentItemStateDao()
+    private val userStateDao = db.userItemStateDao()
 
     data class DrainResult(
         val synced: Int = 0,
@@ -106,10 +106,13 @@ class SyncEngine(
                         synced++
                     }
                     WriteOutcome.TERMINAL -> {
-                        // Server rejected this op for good — drop it AND revert the
-                        // optimistic content projection so the card overlay defers to
-                        // server state (no fake local state after cold start).
-                        contentDao.revertForTerminalOp(op)
+                        // A stale in-flight op must not roll back a newer pending
+                        // intent with the same key. Otherwise revert both its
+                        // optimistic content field and any resume rows it cleared.
+                        if (dao.countNewerPending(op.coalesceKey, op.id) == 0) {
+                            contentDao.revertForTerminalOp(op)
+                            userStateDao.restorePlaybackProgressForTerminalOp(op)
+                        }
                         dao.deleteById(op.id)
                         dropped++
                     }

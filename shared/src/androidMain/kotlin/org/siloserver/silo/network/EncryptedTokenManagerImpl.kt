@@ -269,6 +269,7 @@ class EncryptedTokenManagerImpl(
                 profileId = scope.profileId,
                 serverUrl = scope.serverUrl,
                 profileToken = scope.profileToken,
+                credentialGenerationId = scope.generationId,
             )
         }
         val serverId = activeServerId ?: return@withLock null
@@ -288,15 +289,35 @@ class EncryptedTokenManagerImpl(
     }
 
     override suspend fun getAccessTokenForScope(serverId: String): String? = mutex.withLock {
-        if (serverId == temporaryScope?.serverId) temporaryScope?.accessToken
-        else if (serverId == activeServerId) accessToken
+        if (serverId == activeServerId) accessToken
         else prefs.getString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), null)
     }
 
     override suspend fun getRefreshTokenForScope(serverId: String): String? = mutex.withLock {
-        if (serverId == temporaryScope?.serverId) temporaryScope?.refreshToken
-        else if (serverId == activeServerId) refreshToken
+        if (serverId == activeServerId) refreshToken
         else prefs.getString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), null)
+    }
+
+    override suspend fun getAccessTokenForScope(scope: AuthScopeSnapshot): String? = mutex.withLock {
+        val generationId = scope.credentialGenerationId
+        if (generationId == null) {
+            persistentAccessToken(scope.serverId)
+        } else {
+            temporaryScope
+                ?.takeIf { it.generationId == generationId && it.serverId == scope.serverId }
+                ?.accessToken
+        }
+    }
+
+    override suspend fun getRefreshTokenForScope(scope: AuthScopeSnapshot): String? = mutex.withLock {
+        val generationId = scope.credentialGenerationId
+        if (generationId == null) {
+            persistentRefreshToken(scope.serverId)
+        } else {
+            temporaryScope
+                ?.takeIf { it.generationId == generationId && it.serverId == scope.serverId }
+                ?.refreshToken
+        }
     }
 
     override suspend fun saveTokensForScope(
@@ -307,25 +328,57 @@ class EncryptedTokenManagerImpl(
     ) {
         mutex.withLock {
             val expiryEpochMs = System.currentTimeMillis() + expiresIn * 1000L
-            temporaryScope?.takeIf { it.serverId == serverId }?.let { scope ->
-                temporaryScope = scope.copy(
-                    accessToken = accessToken,
-                    refreshToken = refreshToken,
-                    expiresAtEpochMs = expiryEpochMs,
-                )
+            savePersistentTokens(serverId, accessToken, refreshToken, expiryEpochMs)
+        }
+    }
+
+    override suspend fun saveTokensForScope(
+        scope: AuthScopeSnapshot,
+        accessToken: String,
+        refreshToken: String,
+        expiresIn: Long,
+    ) {
+        mutex.withLock {
+            val expiryEpochMs = System.currentTimeMillis() + expiresIn * 1000L
+            val generationId = scope.credentialGenerationId
+            if (generationId == null) {
+                savePersistentTokens(scope.serverId, accessToken, refreshToken, expiryEpochMs)
                 return@withLock
             }
-            prefs.edit()
-                .putString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), accessToken)
-                .putString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), refreshToken)
-                .putLong(serverScopedKey(serverId, KEY_TOKEN_EXPIRY), expiryEpochMs)
-                .apply()
-            // Keep the in-memory cache coherent if we just refreshed the active server.
-            if (serverId == activeServerId) {
-                this.accessToken = accessToken
-                this.refreshToken = refreshToken
-                this.tokenExpiryEpochMs = expiryEpochMs
-            }
+            val temporary = temporaryScope
+                ?.takeIf { it.generationId == generationId && it.serverId == scope.serverId }
+                ?: return@withLock
+            temporaryScope = temporary.copy(
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                expiresAtEpochMs = expiryEpochMs,
+            )
+        }
+    }
+
+    private fun persistentAccessToken(serverId: String): String? =
+        if (serverId == activeServerId) accessToken
+        else prefs.getString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), null)
+
+    private fun persistentRefreshToken(serverId: String): String? =
+        if (serverId == activeServerId) refreshToken
+        else prefs.getString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), null)
+
+    private fun savePersistentTokens(
+        serverId: String,
+        accessToken: String,
+        refreshToken: String,
+        expiryEpochMs: Long,
+    ) {
+        prefs.edit()
+            .putString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), accessToken)
+            .putString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), refreshToken)
+            .putLong(serverScopedKey(serverId, KEY_TOKEN_EXPIRY), expiryEpochMs)
+            .apply()
+        if (serverId == activeServerId) {
+            this.accessToken = accessToken
+            this.refreshToken = refreshToken
+            this.tokenExpiryEpochMs = expiryEpochMs
         }
     }
 

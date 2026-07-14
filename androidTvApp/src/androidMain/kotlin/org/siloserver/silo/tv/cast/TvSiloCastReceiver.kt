@@ -95,6 +95,9 @@ class TvSiloCastReceiver(
     val launchRequests: Flow<SiloCastLaunchRequest> = launchRequestChannel.receiveAsFlow()
     private var pendingPlayerIdentityGeneration: String? = null
     private var identityEndJob: Job? = null
+    // stop() cancels the receiver scope, so cleanup for a ready-but-unconsumed
+    // temporary identity must have an owner that survives that cancellation.
+    private val identityCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Synchronized
     fun start() {
@@ -139,6 +142,8 @@ class TvSiloCastReceiver(
     @Synchronized
     fun stop() {
         advertiser.stop()
+        val unusedReadyIdentity = identityManager.activeIdentity?.generationId
+            ?.takeIf { activePlayer == null && pendingPlayerIdentityGeneration != it }
         // Close the session directly (not via closePreviousController, which
         // launches the goodbye on `scope` — the scope we cancel a line later,
         // which would kill the goodbye before it writes). A direct close()
@@ -152,6 +157,16 @@ class TvSiloCastReceiver(
         serverSocket = null
         scope?.cancel()
         scope = null
+        if (unusedReadyIdentity != null) {
+            identityCleanupScope.launch {
+                val stillUnused = synchronized(this@TvSiloCastReceiver) {
+                    activePlayer == null && pendingPlayerIdentityGeneration != unusedReadyIdentity
+                }
+                if (stillUnused && identityManager.activeIdentity?.generationId == unusedReadyIdentity) {
+                    identityManager.end()
+                }
+            }
+        }
     }
 
     @Synchronized

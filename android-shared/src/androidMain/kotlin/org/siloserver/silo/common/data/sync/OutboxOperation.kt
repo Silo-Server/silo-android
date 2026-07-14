@@ -5,6 +5,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.intOrNull
@@ -30,6 +31,26 @@ data class OutboxOperation(
     /** Payload for [SET_EBOOK_PROGRESS]; serialized (CFI [location] needs escaping). */
     @Serializable
     data class EbookProgress(val fileId: Int, val location: String, val progress: Double)
+
+    /** Resume row cleared optimistically by a watched-state mutation. */
+    @Serializable
+    data class ClearedPlaybackProgress(
+        val fileId: Int,
+        val positionSeconds: Double,
+        val previousClientUpdatedAtMs: Long,
+        val clearedAtMs: Long,
+    )
+
+    /**
+     * Watched payload v2. Primitive boolean payloads remain readable for rows
+     * created by older app versions.
+     */
+    @Serializable
+    data class WatchedPayload(
+        val watched: Boolean,
+        val clearedProgress: List<ClearedPlaybackProgress> = emptyList(),
+        val requiresReplay: Boolean = false,
+    )
 
     companion object {
         const val SET_POSITION = "SET_POSITION"
@@ -69,8 +90,19 @@ data class OutboxOperation(
         fun setFavorite(profileId: String, contentId: String, favorite: Boolean, atMs: Long): OutboxOperation =
             OutboxOperation(SET_FAVORITE, "$profileId|$contentId|$SET_FAVORITE", JsonPrimitive(favorite).toString(), atMs)
 
-        fun decodeBooleanPayload(payloadJson: String): Boolean =
-            json.parseToJsonElement(payloadJson).let { (it as JsonPrimitive).boolean }
+        fun decodeBooleanPayload(payloadJson: String): Boolean {
+            val element = json.parseToJsonElement(payloadJson)
+            return if (element is JsonPrimitive) element.boolean
+            else json.decodeFromJsonElement<WatchedPayload>(element).watched
+        }
+
+        fun encodeWatchedPayload(payload: WatchedPayload): String = json.encodeToString(payload)
+
+        fun decodeWatchedPayload(payloadJson: String): WatchedPayload {
+            val element = json.parseToJsonElement(payloadJson)
+            return if (element is JsonPrimitive) WatchedPayload(watched = element.boolean)
+            else json.decodeFromJsonElement(element)
+        }
 
         /** Rating payload is the int value, or null for "clear rating". */
         fun decodeRatingPayload(payloadJson: String): Int? =

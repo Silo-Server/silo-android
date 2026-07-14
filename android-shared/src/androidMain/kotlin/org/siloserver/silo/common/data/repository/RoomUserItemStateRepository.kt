@@ -8,6 +8,7 @@ import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
 import org.siloserver.silo.common.data.sync.OutboxOperation
 import org.siloserver.silo.common.data.sync.OutboxSyncScheduler
 import org.siloserver.silo.common.data.sync.revertForTerminalOp
+import org.siloserver.silo.common.data.sync.restorePlaybackProgressForTerminalOp
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.port.EbookLocalProgress
 import org.siloserver.silo.repository.port.LocalContentState
@@ -266,13 +267,28 @@ class RoomUserItemStateRepository(
     override suspend fun resolve(handle: OutboxHandle, outcome: WriteOutcome) {
         if (handle.opId < 0) return
         when (outcome) {
-            // Acked: server matches our optimistic projection; just drop the op.
-            WriteOutcome.SYNCED -> outboxDao.deleteById(handle.opId)
+            // Acked: normally drop the op. A watched mutation recorded while an
+            // older position was already in flight stays queued for one final,
+            // idempotent replay so that position cannot land last and resurrect
+            // Continue Watching.
+            WriteOutcome.SYNCED -> {
+                val op = outboxDao.getById(handle.opId)
+                val requiresReplay = op?.takeIf { it.opKind == OutboxOperation.SET_WATCHED }
+                    ?.let { runCatching { OutboxOperation.decodeWatchedPayload(it.payloadJson).requiresReplay }.getOrDefault(false) }
+                    ?: false
+                if (requiresReplay) syncScheduler.requestSync()
+                else outboxDao.deleteById(handle.opId)
+            }
             // Rejected for good: drop the op AND revert the optimistic projection
             // field so the card overlay defers to server state (no fake local state
             // across cold starts).
             WriteOutcome.TERMINAL -> db.withTransaction {
-                outboxDao.getById(handle.opId)?.let { contentDao.revertForTerminalOp(it) }
+                outboxDao.getById(handle.opId)?.let {
+                    if (outboxDao.countNewerPending(it.coalesceKey, it.id) == 0) {
+                        contentDao.revertForTerminalOp(it)
+                        userStateDao.restorePlaybackProgressForTerminalOp(it)
+                    }
+                }
                 outboxDao.deleteById(handle.opId)
             }
             // Transient: leave the pending op and ask the sync engine to drain it.
@@ -318,8 +334,47 @@ class RoomUserItemStateRepository(
                 )
             contentDao.upsert(applyField(existing).copy(clientUpdatedAtMs = nowMs))
 
+            var operationPayload = payloadJson
             if (clearPlaybackProgress) {
+                val watchedCoalesceKey = "$serverId|$profileId|$contentId|${OutboxOperation.SET_WATCHED}"
+                // An older watched mutation may already be in flight. Preserve
+                // its rollback data too: if it fails after this newer intent is
+                // queued, the older op deliberately defers rollback to us.
+                val inheritedPayload = outboxDao.getLatestByCoalesceKey(watchedCoalesceKey)
+                    ?.let { runCatching { OutboxOperation.decodeWatchedPayload(it.payloadJson) }.getOrNull() }
+                val clearedByFile = inheritedPayload?.clearedProgress
+                    .orEmpty()
+                    .associateByTo(linkedMapOf()) { it.fileId }
+                userStateDao.getByContent(serverId, profileId, contentId)
+                    .filter { it.positionSeconds > 0.0 }
+                    .forEach { row ->
+                        clearedByFile[row.fileId] = OutboxOperation.ClearedPlaybackProgress(
+                            fileId = row.fileId,
+                            positionSeconds = row.positionSeconds,
+                            previousClientUpdatedAtMs = row.clientUpdatedAtMs,
+                            clearedAtMs = nowMs,
+                        )
+                    }
+                val hasInFlightPosition = outboxDao.countInFlightForTargetKind(
+                    serverId = serverId,
+                    profileId = profileId,
+                    contentId = contentId,
+                    opKind = OutboxOperation.SET_POSITION,
+                ) > 0
+                outboxDao.deletePendingForTargetKind(
+                    serverId = serverId,
+                    profileId = profileId,
+                    contentId = contentId,
+                    opKind = OutboxOperation.SET_POSITION,
+                )
                 userStateDao.clearPlaybackProgress(serverId, profileId, contentId, nowMs)
+                operationPayload = OutboxOperation.encodeWatchedPayload(
+                    OutboxOperation.WatchedPayload(
+                        watched = OutboxOperation.decodeBooleanPayload(payloadJson),
+                        clearedProgress = clearedByFile.values.toList(),
+                        requiresReplay = inheritedPayload?.requiresReplay == true || hasInFlightPosition,
+                    ),
+                )
             }
 
             opId = outboxDao.enqueueCoalescing(
@@ -331,7 +386,7 @@ class RoomUserItemStateRepository(
                     targetFileId = null,
                     coalesceKey = "$serverId|$profileId|$contentId|$opKind",
                     idempotencyKey = idGenerator(),
-                    payloadJson = payloadJson,
+                    payloadJson = operationPayload,
                     createdAtMs = nowMs,
                     nextAttemptAtMs = nowMs,
                 ),

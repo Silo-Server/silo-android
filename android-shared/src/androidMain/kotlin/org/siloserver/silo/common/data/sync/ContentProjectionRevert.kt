@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.data.sync
 
 import org.siloserver.silo.common.data.db.dao.ContentItemStateDao
+import org.siloserver.silo.common.data.db.dao.UserItemStateDao
 import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 
 /**
@@ -18,5 +19,22 @@ internal suspend fun ContentItemStateDao.revertForTerminalOp(op: DirtyOperationE
         OutboxOperation.SET_FAVORITE -> clearFavorite(op.serverId, op.profileId, op.targetContentId)
         OutboxOperation.SET_RATING -> clearRating(op.serverId, op.profileId, op.targetContentId)
         else -> Unit
+    }
+}
+
+/** Restore resume rows cleared by a terminally-rejected watched mutation. */
+internal suspend fun UserItemStateDao.restorePlaybackProgressForTerminalOp(op: DirtyOperationEntity) {
+    if (op.opKind != OutboxOperation.SET_WATCHED) return
+    val payload = runCatching { OutboxOperation.decodeWatchedPayload(op.payloadJson) }.getOrNull() ?: return
+    payload.clearedProgress.forEach { progress ->
+        restorePlaybackProgressIfUnchanged(
+            serverId = op.serverId,
+            profileId = op.profileId,
+            contentId = op.targetContentId,
+            fileId = progress.fileId,
+            positionSeconds = progress.positionSeconds,
+            previousUpdatedAtMs = progress.previousClientUpdatedAtMs,
+            clearedAtMs = progress.clearedAtMs,
+        )
     }
 }

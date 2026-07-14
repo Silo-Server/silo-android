@@ -105,8 +105,10 @@ class RemotePlaybackIdentityManager(
                             }
                             val expiresAtMs = poll.sessionExpiresAt?.let(::parseInstantMillis)
                                 ?: (System.currentTimeMillis() + DEFAULT_SESSION_MS)
+                            val generationId = UUID.randomUUID().toString()
                             tokenManager.beginTemporaryScope(
                                 TemporaryAuthScope(
+                                    generationId = generationId,
                                     serverId = offer.serverId,
                                     serverUrl = normalizedUrl(offer.serverURL),
                                     accessToken = accessToken,
@@ -117,7 +119,7 @@ class RemotePlaybackIdentityManager(
                                 ),
                             )
                             val active = ActiveIdentity(
-                                generationId = UUID.randomUUID().toString(),
+                                generationId = generationId,
                                 serverId = offer.serverId,
                                 serverUrl = normalizedUrl(offer.serverURL),
                                 serverName = offer.serverName,
@@ -157,6 +159,7 @@ class RemotePlaybackIdentityManager(
                     serverUrl = active.serverUrl,
                     profileId = active.profileId,
                     profileToken = null,
+                    credentialGenerationId = active.generationId,
                 ),
             )
         }

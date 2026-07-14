@@ -43,6 +43,22 @@ interface UserItemStateDao {
         updatedAtMs: Long,
     )
 
+    /** Restore a reset resume row only while it is still the untouched reset. */
+    @Query(
+        "UPDATE user_item_state SET positionSeconds = :positionSeconds, clientUpdatedAtMs = :previousUpdatedAtMs " +
+            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
+            "AND fileId = :fileId AND positionSeconds = 0 AND clientUpdatedAtMs = :clearedAtMs",
+    )
+    suspend fun restorePlaybackProgressIfUnchanged(
+        serverId: String,
+        profileId: String,
+        contentId: String,
+        fileId: Int,
+        positionSeconds: Double,
+        previousUpdatedAtMs: Long,
+        clearedAtMs: Long,
+    )
+
     @Query(
         "SELECT * FROM user_item_state " +
             "WHERE serverId = :serverId AND profileId = :profileId " +

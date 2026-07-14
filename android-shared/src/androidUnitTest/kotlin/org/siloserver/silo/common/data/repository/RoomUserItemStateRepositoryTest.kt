@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.sync.OutboxOperation
+import org.siloserver.silo.common.data.sync.OutboxSyncScheduler
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.port.OutboxHandle
 import org.siloserver.silo.repository.port.WriteOutcome
@@ -14,6 +15,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
@@ -73,6 +75,84 @@ class RoomUserItemStateRepositoryTest {
         row = db.userItemStateDao().get("s1", "p1", "c1", 7)
         assertEquals(0.0, row?.positionSeconds)
         assertNull(repo.localPlaybackProgress("c1"))
+    }
+
+    @Test
+    fun watchedChangeSupersedesAnOlderPendingPosition() = runTest {
+        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+
+        repo.recordWatched("c1", watched = true)
+
+        val op = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        assertEquals(OutboxOperation.SET_WATCHED, op.opKind)
+    }
+
+    @Test
+    fun terminalWatchedFailureRestoresClearedResumeUnlessPlaybackMovedOn() = runTest {
+        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        val rejected = repo.recordWatched("c1", watched = true)
+
+        repo.resolve(rejected, WriteOutcome.TERMINAL)
+
+        assertEquals(456.0, repo.localPosition("c1", fileId = 7))
+
+        val secondRejected = repo.recordWatched("c1", watched = true)
+        repo.recordPosition("c1", fileId = 7, positionSeconds = 789.0, durationSeconds = 3600.0)
+        repo.resolve(secondRejected, WriteOutcome.TERMINAL)
+        assertEquals(789.0, repo.localPosition("c1", fileId = 7))
+    }
+
+    @Test
+    fun repeatedWatchedChangesKeepTheOriginalResumeRollback() = runTest {
+        var currentTime = 1000L
+        val timedRepo = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { AuthScopeSnapshot("s1", "p1", "https://s1.example", "pt") },
+            now = { currentTime },
+            idGenerator = { "timed-${nextId++}" },
+        )
+        timedRepo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        timedRepo.recordWatched("c1", watched = true)
+
+        currentTime += 1
+        val latest = timedRepo.recordWatched("c1", watched = false)
+        timedRepo.resolve(latest, WriteOutcome.TERMINAL)
+
+        assertEquals(456.0, timedRepo.localPosition("c1", fileId = 7))
+    }
+
+    @Test
+    fun newerWatchedChangeInheritsRollbackFromAnInFlightChange() = runTest {
+        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        val older = repo.recordWatched("c1", watched = true)
+        assertEquals(1, db.dirtyOperationDao().claim(older.opId))
+
+        val newer = repo.recordWatched("c1", watched = false)
+        repo.resolve(older, WriteOutcome.TERMINAL)
+        repo.resolve(newer, WriteOutcome.TERMINAL)
+
+        assertEquals(456.0, repo.localPosition("c1", fileId = 7))
+    }
+
+    @Test
+    fun syncedWatchedChangeReplaysAfterAnInFlightPosition() = runTest {
+        repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        val position = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        assertEquals(1, db.dirtyOperationDao().claim(position.id))
+        var syncRequests = 0
+        val guardedRepo = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { AuthScopeSnapshot("s1", "p1", "https://s1.example", "pt") },
+            syncScheduler = OutboxSyncScheduler { syncRequests += 1 },
+            now = { 1000L },
+            idGenerator = { "guarded-${nextId++}" },
+        )
+
+        val watched = guardedRepo.recordWatched("c1", watched = true)
+        guardedRepo.resolve(watched, WriteOutcome.SYNCED)
+
+        assertNotNull(db.dirtyOperationDao().getById(watched.opId))
+        assertEquals(1, syncRequests)
     }
 
     @Test

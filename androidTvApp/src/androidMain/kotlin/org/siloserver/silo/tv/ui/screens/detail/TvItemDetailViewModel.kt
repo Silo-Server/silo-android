@@ -579,6 +579,9 @@ class TvItemDetailViewModel(
     // Lets a failed load revert the optimistic season selection so the chips and
     // the rail stay consistent (T15).
     private var loadedSeason: Int? = null
+    private var episodeListGeneration: Long = 0
+    private var nextEpisodeWatchMutationGeneration: Long = 0
+    private val episodeWatchMutationGenerations = mutableMapOf<String, Long>()
 
     /**
      * Loads a season's episodes. [quiet] suppresses the loading spinner and is
@@ -597,6 +600,7 @@ class TvItemDetailViewModel(
                 is ApiResult.Success -> {
                     val episodes = withLocalProgress(r.data.episodes.sortedBy { ep -> ep.episodeNumber })
                     loadedSeason = seasonNumber
+                    episodeListGeneration += 1
                     _uiState.update { it.copy(episodesLoading = false, episodes = episodes) }
                     refreshNextUp(episodes)
                     refreshEpisodeFavoriteStates(episodes)
@@ -641,6 +645,11 @@ class TvItemDetailViewModel(
     fun onSetEpisodeWatched(episodeContentId: String, watched: Boolean) {
         val current = _uiState.value
         val previousEpisodes = current.episodes
+        val previousEpisode = previousEpisodes.firstOrNull { it.contentId == episodeContentId }
+        val mutationSeason = current.selectedSeason
+        val listGeneration = episodeListGeneration
+        val mutationGeneration = ++nextEpisodeWatchMutationGeneration
+        episodeWatchMutationGenerations[episodeContentId] = mutationGeneration
         val updatedEpisodes = previousEpisodes.map { episode ->
             if (episode.contentId == episodeContentId) episode.withWatchedPlaybackState(watched) else episode
         }
@@ -648,10 +657,27 @@ class TvItemDetailViewModel(
         refreshNextUp(updatedEpisodes)
 
         viewModelScope.launch {
-            if (personalDataRepository.setWatched(episodeContentId, watched) !is ApiResult.Success) {
-                _uiState.update { it.copy(episodes = previousEpisodes) }
-                refreshNextUp(previousEpisodes)
-            } else {
+            val result = personalDataRepository.setWatched(episodeContentId, watched)
+            val isCurrentMutation = episodeWatchMutationGenerations[episodeContentId] == mutationGeneration
+            if (result !is ApiResult.Success) {
+                if (
+                    isCurrentMutation &&
+                    previousEpisode != null &&
+                    episodeListGeneration == listGeneration
+                ) {
+                    val live = _uiState.value
+                    if (live.selectedSeason == mutationSeason) {
+                        val restored = live.episodes.map { episode ->
+                            if (episode.contentId == episodeContentId) previousEpisode else episode
+                        }
+                        if (_uiState.compareAndSet(live, live.copy(episodes = restored))) {
+                            refreshNextUp(restored)
+                        }
+                    }
+                }
+                if (isCurrentMutation) episodeWatchMutationGenerations.remove(episodeContentId)
+            } else if (isCurrentMutation) {
+                episodeWatchMutationGenerations.remove(episodeContentId)
                 // Re-read the server-resolved season state without collapsing
                 // the rail or flashing its loading placeholder.
                 val detail = _uiState.value.detail

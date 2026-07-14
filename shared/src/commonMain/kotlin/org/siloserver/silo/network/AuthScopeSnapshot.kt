@@ -9,18 +9,24 @@ import io.ktor.util.AttributeKey
  * scope (Track B outbox drain). Without this, a background replay started for
  * server A could be sent with server B's headers if the user switches mid-send.
  *
- * Only the *profile* identity is frozen: [profileId] and [profileToken] (the
- * per-server stored profile token, of which there is exactly one — a p1→p2→p1
- * switch would otherwise lose p1's token). The *server* access/refresh tokens
- * are read live by [serverId] at send time, because they are per-server-account
- * (shared across profiles) and rotate on refresh — freezing them would break
- * the second op in a drain after the first triggers a token rotation.
+ * The credential identity is frozen by [credentialGenerationId] in addition to
+ * the profile identity ([profileId] and [profileToken]). A null generation is
+ * the saved per-server account; a non-null generation identifies one temporary
+ * remote-playback overlay. This prevents an in-flight request from falling
+ * through to the saved account when a temporary overlay ends, or vice versa.
+ *
+ * [profileToken] freezes the per-server stored profile token, of which there is
+ * exactly one — a p1→p2→p1 switch would otherwise lose p1's token. Access and
+ * refresh tokens are read live from the captured credential slot at send time
+ * because they rotate on refresh; freezing their values would break the second
+ * op in a drain after the first triggers a token rotation.
  */
 data class AuthScopeSnapshot(
     val serverId: String,
     val profileId: String?,
     val serverUrl: String,
     val profileToken: String?,
+    val credentialGenerationId: String? = null,
 )
 
 /** Attribute carrying the [AuthScopeSnapshot] that [SiloAuthPlugin] honors. */

@@ -6,11 +6,14 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -114,6 +117,12 @@ class SiloCastController(
     // targets otherwise interleave connect/teardown across IO coroutines and
     // tear the session vars.
     private val connectionMutex = Mutex()
+    // A handoff mutates connection-level request state. Newest launch wins,
+    // while this mutex lets the cancelled launch finish its HandoffCancel
+    // cleanup before its replacement begins.
+    private val launchMutex = Mutex()
+    private val launchJobLock = Any()
+    private var launchJob: Job? = null
     private val clock = SiloCastPlaybackClock()
 
     private val _state = MutableStateFlow(SiloCastControllerState())
@@ -145,9 +154,8 @@ class SiloCastController(
     private var remoteScreenVisible = false
 
     private var negotiatedVersion = CompletableDeferred<Int>()
-    private var pendingHandoffRequestId: String? = null
-    private var handoffChallenge = CompletableDeferred<SiloCastHandoffChallenge>()
-    private var handoffReady = CompletableDeferred<SiloCastHandoffReady>()
+    @Volatile
+    private var pendingHandoff: PendingHandoff? = null
 
     init {
         scope.launch {
@@ -166,16 +174,27 @@ class SiloCastController(
     }
 
     fun launchOnTarget(target: SiloCastTarget, request: SiloCastLaunchRequest) {
-        scope.launch {
-            runCatching {
-                ensureConnected(target)
-                // AFTER ensureConnected: its teardown of any previous session
-                // resets the flag, so setting it earlier would be undone.
-                _state.update { it.copy(isLaunching = true) }
-                prepareRemoteIdentity(request)
-                send(SiloCastMessage.Launch(request))
-            }.onFailure { error ->
-                if (error !is CancellationException) {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            val self = currentCoroutineContext()[Job] ?: return@launch
+            try {
+                launchMutex.withLock {
+                    ensureConnected(target)
+                    // AFTER ensureConnected: its teardown of any previous session
+                    // resets the flag, so setting it earlier would be undone.
+                    _state.update { it.copy(isLaunching = true) }
+                    prepareRemoteIdentity(request)
+                    send(SiloCastMessage.Launch(request))
+                }
+            } catch (error: CancellationException) {
+                // Transport teardown cancels the handoff deferreds. Clear the
+                // spinner when this is still the active launch, but do not let a
+                // superseded launch overwrite the replacement's state.
+                if (isCurrentLaunch(self)) {
+                    _state.update { it.copy(isConnecting = false, connectingDeviceId = null, isLaunching = false) }
+                }
+                throw error
+            } catch (error: Throwable) {
+                if (isCurrentLaunch(self)) {
                     _state.update {
                         it.copy(
                             isConnecting = false,
@@ -185,9 +204,22 @@ class SiloCastController(
                         )
                     }
                 }
+            } finally {
+                synchronized(launchJobLock) {
+                    if (launchJob === self) launchJob = null
+                }
             }
         }
+        val previous = synchronized(launchJobLock) {
+            val old = launchJob
+            launchJob = job
+            old
+        }
+        previous?.cancel(CancellationException("Superseded by a newer remote launch."))
+        job.start()
     }
+
+    private fun isCurrentLaunch(job: Job): Boolean = synchronized(launchJobLock) { launchJob === job }
 
     /**
      * Makes an active Remote Control session the destination for an ordinary
@@ -475,16 +507,14 @@ class SiloCastController(
             ?: error("The active Silo account is unavailable.")
         require(scope.serverId == server.id) { "The active server changed before playback started." }
 
-        val requestId = UUID.randomUUID().toString()
-        pendingHandoffRequestId = requestId
-        handoffChallenge = CompletableDeferred()
-        handoffReady = CompletableDeferred()
+        val handoff = PendingHandoff(requestId = UUID.randomUUID().toString())
+        pendingHandoff = handoff
         var challenge: SiloCastHandoffChallenge? = null
         try {
             send(
                 SiloCastMessage.HandoffOffer(
                     SiloCastHandoffOffer(
-                        requestId = requestId,
+                        requestId = handoff.requestId,
                         serverId = server.id,
                         serverURL = server.url,
                         serverName = server.displayName,
@@ -499,8 +529,8 @@ class SiloCastController(
             // waiting only on the challenge would deadlock into a timeout.
             val readyOrChallenge = awaitHandoffStep(CHALLENGE_TIMEOUT_MS, "The TV did not start the profile handshake.") {
                 select<Any> {
-                    handoffReady.onAwait { it }
-                    handoffChallenge.onAwait { it }
+                    handoff.handoffReady.onAwait { it }
+                    handoff.handoffChallenge.onAwait { it }
                 }
             }
             val ready: SiloCastHandoffReady = when (readyOrChallenge) {
@@ -520,7 +550,7 @@ class SiloCastController(
                         .approveRemotePlaybackForScope(scope.withProfile(profileId), readyOrChallenge.userCode)
                         .successOrThrow()
                     awaitHandoffStep(READY_TIMEOUT_MS, "The TV did not activate the profile in time.") {
-                        handoffReady.await()
+                        handoff.handoffReady.await()
                     }
                 }
                 else -> error("The TV sent an unexpected handoff reply.")
@@ -529,21 +559,30 @@ class SiloCastController(
                 "The TV activated a different remote playback profile."
             }
         } catch (t: Throwable) {
-            challenge?.let { deviceLoginApi.denyDeviceLoginForScope(scope.withProfile(profileId), it.userCode) }
-            runCatching {
-                send(
-                    SiloCastMessage.HandoffCancel(
-                        SiloCastHandoffCancel(
-                            requestId = requestId,
-                            reason = "controller_cancelled",
-                            message = t.message,
+            // Superseding a launch cancels this coroutine. Finish the old
+            // handoff's server/TV cleanup before releasing launchMutex so the
+            // replacement cannot overlap the abandoned credential exchange.
+            withContext(NonCancellable) {
+                runCatching {
+                    challenge?.let {
+                        deviceLoginApi.denyDeviceLoginForScope(scope.withProfile(profileId), it.userCode)
+                    }
+                }
+                runCatching {
+                    send(
+                        SiloCastMessage.HandoffCancel(
+                            SiloCastHandoffCancel(
+                                requestId = handoff.requestId,
+                                reason = "controller_cancelled",
+                                message = t.message,
+                            ),
                         ),
-                    ),
-                )
+                    )
+                }
             }
             throw t
         } finally {
-            if (pendingHandoffRequestId == requestId) pendingHandoffRequestId = null
+            if (pendingHandoff === handoff) pendingHandoff = null
         }
     }
 
@@ -621,7 +660,7 @@ class SiloCastController(
                 // opened.
                 if (session !== deadSession || suppressReconnect || reconnectJob != null) return@launch
                 teardownTransportLocked()
-                _state.update { it.copy(isReconnecting = true, isConnecting = false) }
+                _state.update { it.copy(isReconnecting = true, isConnecting = false, isLaunching = false) }
                 reconnectJob = scope.launch {
                     try {
                         for (attempt in 1..MAX_RECONNECT_ATTEMPTS) {
@@ -685,22 +724,22 @@ class SiloCastController(
                 negotiatedVersion.complete(version)
             }
             is SiloCastMessage.HandoffChallenge -> {
-                if (message.handoffChallenge.requestId == pendingHandoffRequestId) {
-                    handoffChallenge.complete(message.handoffChallenge)
+                pendingHandoff?.takeIf { message.handoffChallenge.requestId == it.requestId }?.let {
+                    it.handoffChallenge.complete(message.handoffChallenge)
                 }
             }
             is SiloCastMessage.HandoffReady -> {
-                if (message.handoffReady.requestId == pendingHandoffRequestId) {
-                    handoffReady.complete(message.handoffReady)
+                pendingHandoff?.takeIf { message.handoffReady.requestId == it.requestId }?.let {
+                    it.handoffReady.complete(message.handoffReady)
                 }
             }
             is SiloCastMessage.HandoffCancel -> {
-                if (message.handoffCancel.requestId == pendingHandoffRequestId) {
+                pendingHandoff?.takeIf { message.handoffCancel.requestId == it.requestId }?.let {
                     val error = IllegalStateException(
                         message.handoffCancel.message ?: "The TV cancelled profile setup.",
                     )
-                    handoffChallenge.completeExceptionally(error)
-                    handoffReady.completeExceptionally(error)
+                    it.handoffChallenge.completeExceptionally(error)
+                    it.handoffReady.completeExceptionally(error)
                 }
             }
             is SiloCastMessage.State -> {
@@ -767,10 +806,9 @@ class SiloCastController(
         readJob = null
         heartbeatJob?.cancel()
         heartbeatJob = null
-        pendingHandoffRequestId = null
+        pendingHandoff?.cancel()
+        pendingHandoff = null
         negotiatedVersion.cancel()
-        handoffChallenge.cancel()
-        handoffReady.cancel()
     }
 
     private fun closeConnectionLocked() {
@@ -798,10 +836,9 @@ class SiloCastController(
     }
 
     /**
-     * withTimeout that surfaces as a real failure: TimeoutCancellationException
-     * IS a CancellationException, and the launch path deliberately ignores
-     * cancellations — a raw timeout would vanish without an error banner and
-     * leave the launching spinner stuck.
+     * Convert a timeout into an ordinary failure so the UI gets a useful error;
+     * genuine cancellation remains cancellation and is handled by the launch
+     * owner without being mistaken for a timeout.
      */
     private suspend fun <T> awaitHandoffStep(timeoutMs: Long, timeoutMessage: String, block: suspend () -> T): T =
         try {
@@ -811,6 +848,17 @@ class SiloCastController(
         }
 
     private fun nowMs(): Long = android.os.SystemClock.elapsedRealtime()
+
+    private data class PendingHandoff(
+        val requestId: String,
+        val handoffChallenge: CompletableDeferred<SiloCastHandoffChallenge> = CompletableDeferred(),
+        val handoffReady: CompletableDeferred<SiloCastHandoffReady> = CompletableDeferred(),
+    ) {
+        fun cancel() {
+            handoffChallenge.cancel()
+            handoffReady.cancel()
+        }
+    }
 
     private fun AuthScopeSnapshot.withProfile(profileId: String) = copy(profileId = profileId)
 

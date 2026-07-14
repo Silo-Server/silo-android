@@ -39,6 +39,36 @@ interface DirtyOperationDao {
     )
     suspend fun deletePendingByCoalesceKey(coalesceKey: String)
 
+    @Query(
+        "SELECT * FROM dirty_operations WHERE coalesceKey = :coalesceKey " +
+            "ORDER BY id DESC LIMIT 1",
+    )
+    suspend fun getLatestByCoalesceKey(coalesceKey: String): DirtyOperationEntity?
+
+    @Query(
+        "DELETE FROM dirty_operations WHERE serverId = :serverId AND profileId = :profileId " +
+            "AND targetContentId = :contentId AND opKind = :opKind " +
+            "AND state = '${DirtyOperationEntity.STATE_PENDING}'",
+    )
+    suspend fun deletePendingForTargetKind(
+        serverId: String,
+        profileId: String,
+        contentId: String,
+        opKind: String,
+    )
+
+    @Query(
+        "SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND profileId = :profileId " +
+            "AND targetContentId = :contentId AND opKind = :opKind " +
+            "AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}'",
+    )
+    suspend fun countInFlightForTargetKind(
+        serverId: String,
+        profileId: String,
+        contentId: String,
+        opKind: String,
+    ): Int
+
     /**
      * Oldest-due-first batch of sendable ops for one server/profile scope
      * (FIFO via the nextAttemptAtMs,id index). Scoped because the shared HTTP
