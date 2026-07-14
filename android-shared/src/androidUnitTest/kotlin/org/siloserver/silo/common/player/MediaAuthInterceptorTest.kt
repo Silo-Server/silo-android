@@ -137,6 +137,32 @@ class MediaAuthInterceptorTest {
     }
 
     @Test
+    fun `refresh is not posted when active server changes while credentials are read`() {
+        val tokenManager = FakeTokenManager(
+            accessToken = "server-a-access",
+            refreshToken = "server-a-refresh",
+            serverUrl = "https://server-a.example",
+            serverId = "server-a",
+        )
+        var refreshRequests = 0
+        val refreshClient = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                refreshRequests += 1
+                responseFor(chain.request(), code = 500)
+            }
+            .build()
+        val session = MediaAuthSession(tokenManager, refreshClient)
+        val failedSnapshot = runBlocking { session.snapshot() }
+        tokenManager.onGetServerUrl = {
+            tokenManager.serverId = "server-b"
+            tokenManager.serverUrl = "https://server-b.example"
+        }
+
+        assertFalse(runBlocking { session.refreshIfStale(failedSnapshot) })
+        assertEquals(0, refreshRequests)
+    }
+
+    @Test
     fun `refresh response is discarded when active server changes mid refresh`() {
         val tokenManager = FakeTokenManager(
             accessToken = "expired-access",
@@ -272,9 +298,10 @@ class MediaAuthInterceptorTest {
     private class FakeTokenManager(
         private var accessToken: String?,
         private var refreshToken: String?,
-        private var serverUrl: String,
+        var serverUrl: String,
         var serverId: String?,
     ) : TokenManager {
+        var onGetServerUrl: (() -> Unit)? = null
         var invalidatedSession = false
             private set
         var savedTokens = false
@@ -321,7 +348,10 @@ class MediaAuthInterceptorTest {
             profileToken = token
         }
 
-        override suspend fun getServerUrl(): String = serverUrl
+        override suspend fun getServerUrl(): String {
+            onGetServerUrl?.invoke()
+            return serverUrl
+        }
         override suspend fun setServerUrl(url: String) {
             serverUrl = url
         }

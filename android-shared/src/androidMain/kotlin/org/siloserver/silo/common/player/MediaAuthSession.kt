@@ -50,6 +50,11 @@ class MediaAuthSession(
         val refreshToken = tokenManager.getRefreshToken() ?: return false
         val serverUrl = tokenManager.getServerUrl()
         if (refreshToken.isBlank() || serverUrl.isBlank()) return false
+        // Reading the refresh token and server URL is not atomic. A server
+        // switch between those reads can otherwise send server A's refresh
+        // token to server B before the response-time guard gets a chance to
+        // reject it.
+        if (tokenManager.getCurrentServerId() != serverIdBeforeRequest) return false
 
         val request = Request.Builder()
             .url(serverUrl.trimEnd('/') + "/api/v1/auth/refresh")

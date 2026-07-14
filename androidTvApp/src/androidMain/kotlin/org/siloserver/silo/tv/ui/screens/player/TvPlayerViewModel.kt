@@ -52,6 +52,7 @@ import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackRouteFamily
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
@@ -1270,10 +1271,38 @@ class TvPlayerViewModel(
             when (result) {
                 is ApiResult.Success -> when (val decision = result.data) {
                     is VideoSessionStartV3.Ready -> {
+                        val effectiveFileId = decision.session.mediaFileId.takeIf { it > 0 }
+                            ?: decision.plan.effectiveMediaFileId
+                            ?: fileId
+                        val effectiveVersion = state.fileVersions.firstOrNull {
+                            it.fileId == effectiveFileId
+                        }
+                        val effectiveResolution = effectiveVersion?.resolution
+                            ?: decision.plan.effectiveRecipe.height?.let { "${it}p" }
+                        val plannedSubtitles = decision.session.subtitleUrls.orEmpty()
+                        val plannedSubtitleIndexes = plannedSubtitles
+                            .mapTo(mutableSetOf(), PlayerSubtitleInfo::index)
+                        val preservedSubtitles = if (effectiveFileId == fileId) {
+                            state.subtitleUrls.filterNot { it.index in plannedSubtitleIndexes }
+                        } else {
+                            emptyList()
+                        }
+                        val effectiveSubtitleUrls = buildPlaybackSubtitleChoices(
+                            catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
+                            plannedTracks = plannedSubtitles + preservedSubtitles,
+                            sessionId = decision.session.sessionId,
+                        )
+                        val effectiveContainer = decision.plan.stream.container
+                            ?: effectiveVersion?.container
+                            ?: state.container.takeIf { effectiveFileId == fileId }
+                        val effectiveDuration = decision.session.durationSeconds
+                            ?: effectiveVersion?.duration?.takeIf { it > 0.0 }
+                            ?: state.duration.takeIf { effectiveFileId == fileId }
+                            ?: 0.0
                         sessionLifecycle.adoptActiveSession(
                             params = StartParams(
                                 contentId = contentId,
-                                fileId = fileId,
+                                fileId = effectiveFileId,
                                 capabilities = capabilities,
                                 audioTrackIndex = decision.session.audioTrackIndex,
                                 subtitleTrackIndex = selectedSubtitle,
@@ -1295,7 +1324,15 @@ class TvPlayerViewModel(
                                 streamUrl = decision.plan.stream.url,
                                 transportMountNonce = transportMountNonce,
                                 requestHeaders = decision.plan.stream.headers,
-                                container = decision.plan.stream.container ?: it.container,
+                                selectedFileId = effectiveFileId,
+                                mediaFileId = effectiveFileId,
+                                selectedFileResolution = effectiveResolution,
+                                container = effectiveContainer,
+                                duration = effectiveDuration,
+                                subtitleUrls = effectiveSubtitleUrls,
+                                chapters = effectiveVersion?.chapters.orEmpty().ifEmpty {
+                                    if (effectiveFileId == fileId) state.chapters else emptyList()
+                                },
                                 startPosition = decision.plan.timeline.playerStartSeconds,
                                 position = decision.plan.timeline.sourceStartSeconds
                                     .takeIf { it.isFinite() && it >= 0.0 }

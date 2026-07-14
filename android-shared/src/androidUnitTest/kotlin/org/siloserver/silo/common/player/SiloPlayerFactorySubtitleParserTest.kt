@@ -71,12 +71,13 @@ class SiloPlayerFactorySubtitleParserTest {
         assertTrue(
             source.contains("HlsMediaSource.Factory(dataSourceFactory)") &&
                 source.contains(".setExtractorFactory(hlsExtractorFactory)"),
-            "HLS playback must use the configured HLS extractor factory when it is safe to do so.",
+            "HLS playback must use the configured HLS extractor factory.",
         )
         assertTrue(
-            source.contains("hasExternalSubtitleSidecars") &&
-                source.contains("DefaultMediaSourceFactory is still the only public Media3 path"),
-            "HLS items with sidecar subtitles must preserve DefaultMediaSourceFactory subtitle merging.",
+            source.contains("return MergingMediaSource(*sources.toTypedArray())") &&
+                source.contains("SubtitleExtractor(") &&
+                source.contains("subtitleParserFactory.create(outputFormat)"),
+            "HLS sidecars must be merged without bypassing the configured DTS extractor or subtitle parser.",
         )
     }
 }

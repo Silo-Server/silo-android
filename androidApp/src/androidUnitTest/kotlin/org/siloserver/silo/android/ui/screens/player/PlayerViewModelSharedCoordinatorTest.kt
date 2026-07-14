@@ -141,7 +141,8 @@ class PlayerViewModelSharedCoordinatorTest {
         assertTrue(body.contains("clientPlaybackContext = playbackContext"))
         assertTrue(body.contains("capabilities = capabilities"))
         assertTrue(body.contains("positionSeconds = state.position"))
-        assertTrue(body.contains("audioTrackIndex = state.selectedAudioIndex"))
+        assertTrue(body.contains("audioTrackIndex = selectedAudioTrackIndex"))
+        assertTrue(body.contains("selectedServerAudioTrackIndex("))
         assertTrue(body.contains("subtitleTrackIndex = selectedSubtitleTrackIndex"))
     }
 

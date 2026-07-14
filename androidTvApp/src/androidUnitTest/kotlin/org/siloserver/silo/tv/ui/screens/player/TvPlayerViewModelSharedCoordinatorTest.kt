@@ -202,6 +202,10 @@ class TvPlayerViewModelSharedCoordinatorTest {
             viewModelSource.contains("selectedFileResolution = result.fileResolution"),
             "TV player state must retain the selected source resolution from startup",
         )
+        assertTrue(unsupportedBody.contains("fileId = effectiveFileId"))
+        assertTrue(unsupportedBody.contains("selectedFileId = effectiveFileId"))
+        assertTrue(unsupportedBody.contains("mediaFileId = effectiveFileId"))
+        assertTrue(unsupportedBody.contains("buildPlaybackSubtitleChoices("))
         assertTrue(
             viewModelSource.contains("fun onVideoQualitySelectionApplied(resolution: String?)"),
             "runtime quality switches must update the selected source resolution",

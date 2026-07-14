@@ -123,6 +123,19 @@ internal fun selectedServerSubtitleTrackIndex(
     else -> subtitleTracks.getOrNull(selectedOrdinal)?.index
 }
 
+internal fun selectedServerAudioTrackIndex(
+    selectedOrdinal: Int,
+    audioTracks: List<AudioTrack>,
+): Int? = audioTracks.getOrNull(selectedOrdinal)?.index
+
+internal fun selectedAudioTrackOrdinal(
+    selectedServerIndex: Int,
+    audioTracks: List<AudioTrack>,
+): Int = audioTracks.indexOfFirst { it.index == selectedServerIndex }
+    .takeIf { it >= 0 }
+    ?: selectedServerIndex.takeIf { it in audioTracks.indices }
+    ?: 0
+
 class PlayerViewModel(
     private val videoPlaybackCoordinator: VideoPlaybackSessionCoordinator,
     private val catalogRepository: CatalogRepository,
@@ -718,6 +731,10 @@ class PlayerViewModel(
             ?: watchDetail?.let { findPreferredVersion(it, preferredFileId, null) }
             ?: 0
         val version = versions.getOrNull(versionIndex)
+        val selectedAudioOrdinal = selectedAudioTrackOrdinal(
+            selectedServerIndex = playbackState.audioTrackIndex,
+            audioTracks = version?.audioTracks.orEmpty(),
+        )
         // Resolve the detail screen's explicit pick FIRST: the persisted/auto
         // chain below is suppressed only when the pick actually RESOLVES, so an
         // unmatchable pick falls through to persisted → auto instead of Off.
@@ -817,7 +834,7 @@ class PlayerViewModel(
                 isPaused = false,
                 subtitleTracks = playbackState.subtitleUrls,
                 audioTracks = version?.audioTracks ?: emptyList(),
-                selectedAudioIndex = playbackState.audioTrackIndex,
+                selectedAudioIndex = selectedAudioOrdinal,
                 selectedSubtitleIndex = resolvedSubtitleIndex,
                 intro = playbackState.intro,
                 credits = playbackState.credits,
@@ -847,7 +864,7 @@ class PlayerViewModel(
         }
         if (
             persistedAudioIndex != null &&
-            persistedAudioIndex != playbackState.audioTrackIndex &&
+            persistedAudioIndex != selectedAudioOrdinal &&
             persistedAudioIndex in _uiState.value.audioTracks.indices
         ) {
             onSelectAudio(persistedAudioIndex)
@@ -1114,6 +1131,10 @@ class PlayerViewModel(
                 selectedOrdinal = state.selectedSubtitleIndex,
                 subtitleTracks = state.subtitleTracks,
             )
+            val selectedAudioTrackIndex = selectedServerAudioTrackIndex(
+                selectedOrdinal = state.selectedAudioIndex,
+                audioTracks = state.versions.getOrNull(state.selectedVersionIndex)?.audioTracks.orEmpty(),
+            )
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
             val playbackContext = capabilityDetector.detectPlaybackContext(
@@ -1125,7 +1146,7 @@ class PlayerViewModel(
                 classification = classification,
                 message = notice,
                 positionSeconds = state.position,
-                audioTrackIndex = state.selectedAudioIndex,
+                audioTrackIndex = selectedAudioTrackIndex,
                 subtitleTrackIndex = selectedSubtitleTrackIndex,
                 diagnostics = diagnostics,
                 capabilities = capabilities,
