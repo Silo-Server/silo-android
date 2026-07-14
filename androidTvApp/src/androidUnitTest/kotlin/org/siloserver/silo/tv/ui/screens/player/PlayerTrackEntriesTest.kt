@@ -7,6 +7,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -14,6 +15,15 @@ import kotlin.test.assertTrue
 
 @OptIn(UnstableApi::class)
 class PlayerTrackEntriesTest {
+
+    @Test
+    fun replanSelectionMapsMedia3OrdinalToStableServerAudioIndex() {
+        val catalogTracks = listOf(AudioTrack(index = 1), AudioTrack(index = 5))
+
+        assertEquals(5, selectedServerAudioTrackIndex(1, catalogTracks, currentPlanTrackIndex = 1))
+        assertEquals(1, selectedServerAudioTrackIndex(null, catalogTracks, currentPlanTrackIndex = 1))
+        assertEquals(1, selectedServerAudioTrackIndex(4, catalogTracks, currentPlanTrackIndex = 1))
+    }
 
     @Test
     fun textTracksExposeEveryTrackInsideMedia3Group() {

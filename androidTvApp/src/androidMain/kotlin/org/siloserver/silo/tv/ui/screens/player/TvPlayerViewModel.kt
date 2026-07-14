@@ -42,6 +42,7 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
+import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -110,6 +111,14 @@ data class PlayerTrackEntry(
     val isForced: Boolean = false,
     val isHearingImpaired: Boolean = false,
 )
+
+internal fun selectedServerAudioTrackIndex(
+    selectedPlayerOrdinal: Int?,
+    catalogAudioTracks: List<AudioTrack>?,
+    currentPlanTrackIndex: Int?,
+): Int? = selectedPlayerOrdinal
+    ?.let { catalogAudioTracks?.getOrNull(it)?.index }
+    ?: currentPlanTrackIndex
 
 private val hearingImpairedSubtitleTokenRegex = Regex(
     pattern = """(^|[^a-z0-9])(cc|sdh|hi)([^a-z0-9]|$)""",
@@ -1227,7 +1236,11 @@ class TvPlayerViewModel(
         val fileId = state.selectedFileId ?: state.mediaFileId ?: return
         val recoveryContentGeneration = contentLoadGeneration
         recoveryJob = viewModelScope.launch {
-            val selectedAudio = state.audioTracks.firstOrNull { it.isSelected }?.index ?: 0
+            val selectedAudio = selectedServerAudioTrackIndex(
+                selectedPlayerOrdinal = state.audioTracks.firstOrNull { it.isSelected }?.index,
+                catalogAudioTracks = state.fileVersions.firstOrNull { it.fileId == fileId }?.audioTracks,
+                currentPlanTrackIndex = state.playbackPlan?.selectedTracks?.audioIndex,
+            )
             val selectedSubtitle = selectedSubtitleTrackIndex(state)
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
             coroutineContext.ensureActive()

@@ -171,13 +171,20 @@ open class PlaybackSessionManager(
                     )
                     videoAttemptMutex.withLock { activeVideoAttempt.set(active) }
                     PassthroughSuppressionRegistry.beginAttempt(active.planAttemptKey)
-                    replanActiveVideoSession(
+                    val replanResult = replanActiveVideoSession(
                         classification = validated.reason,
                         message = "The server returned a legacy player route.",
                         positionSeconds = startPosition ?: 0.0,
                         audioTrackIndex = audioTrackIndex,
                         subtitleTrackIndex = subtitleTrackIndex,
                     )
+                    if (replanResult is ApiResult.Error || replanResult is ApiResult.NetworkError) {
+                        val cleared = videoAttemptMutex.withLock {
+                            activeVideoAttempt.compareAndSet(active, null)
+                        }
+                        if (cleared) playbackRepository.stopPlayback(validated.sessionId)
+                    }
+                    replanResult
                 }
             }
             is ApiResult.Error -> result

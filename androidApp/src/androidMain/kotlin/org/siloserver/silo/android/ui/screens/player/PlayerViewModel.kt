@@ -115,6 +115,14 @@ import kotlinx.coroutines.withContext
 /** A transient remote "display_message"; [id] makes repeats re-trigger the toast. */
 data class RemoteMessage(val id: Long, val text: String)
 
+internal fun selectedServerSubtitleTrackIndex(
+    selectedOrdinal: Int,
+    subtitleTracks: List<PlayerSubtitleInfo>,
+): Int? = when (selectedOrdinal) {
+    -1 -> -1
+    else -> subtitleTracks.getOrNull(selectedOrdinal)?.index
+}
+
 class PlayerViewModel(
     private val videoPlaybackCoordinator: VideoPlaybackSessionCoordinator,
     private val catalogRepository: CatalogRepository,
@@ -1102,6 +1110,10 @@ class PlayerViewModel(
         val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId ?: return
         val recoveryGeneration = playbackRecoveryGeneration
         recoveryJob = viewModelScope.launch {
+            val selectedSubtitleTrackIndex = selectedServerSubtitleTrackIndex(
+                selectedOrdinal = state.selectedSubtitleIndex,
+                subtitleTracks = state.subtitleTracks,
+            )
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
             val playbackContext = capabilityDetector.detectPlaybackContext(
@@ -1114,7 +1126,7 @@ class PlayerViewModel(
                 message = notice,
                 positionSeconds = state.position,
                 audioTrackIndex = state.selectedAudioIndex,
-                subtitleTrackIndex = state.selectedSubtitleIndex,
+                subtitleTrackIndex = selectedSubtitleTrackIndex,
                 diagnostics = diagnostics,
                 capabilities = capabilities,
                 clientPlaybackContext = playbackContext,
@@ -1129,7 +1141,7 @@ class PlayerViewModel(
                                 fileId = fileId,
                                 capabilities = capabilities,
                                 audioTrackIndex = decision.session.audioTrackIndex,
-                                subtitleTrackIndex = state.selectedSubtitleIndex,
+                                subtitleTrackIndex = selectedSubtitleTrackIndex,
                                 startPosition = decision.session.position,
                             ),
                             session = decision.session,

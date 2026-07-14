@@ -6,6 +6,7 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
@@ -235,6 +236,27 @@ class PlaybackSessionManagerSeekReanchorTest {
     }
 
     @Test
+    fun failedImmediateStartupReplanStopsAllocatedSessionAndClearsAttempt() = runTest {
+        val harness = Harness(response(plan().copy(engine = PlaybackEngineKind.MPV_DIRECT))) { _, _ ->
+            MockResponse(
+                HttpStatusCode.InternalServerError,
+                """{"error":"replan_failed","message":"Could not replace legacy route"}""",
+            )
+        }
+
+        assertIs<ApiResult.Error>(harness.manager.startResult())
+        assertEquals(listOf("session-1"), harness.stoppedSessionIds)
+
+        val retry = harness.manager.replanActiveVideoSession(
+            classification = "player_failure",
+            positionSeconds = 0.0,
+            audioTrackIndex = 1,
+            subtitleTrackIndex = null,
+        )
+        assertEquals("playback_attempt_not_active", assertIs<ApiResult.Error>(retry).error)
+    }
+
+    @Test
     fun concurrentReanchorsAreSerialized() = runTest {
         val initial = plan()
         val firstEntered = CompletableDeferred<Unit>()
@@ -404,6 +426,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         private val replanResponse: suspend (Int, JsonObject) -> MockResponse,
     ) {
         val replanBodies: MutableList<JsonObject> = Collections.synchronizedList(mutableListOf())
+        val stoppedSessionIds: MutableList<String> = Collections.synchronizedList(mutableListOf())
         private val replanIndex = AtomicInteger()
         private val client = HttpClient(
             MockEngine { request ->
@@ -419,6 +442,10 @@ class PlaybackSessionManagerSeekReanchorTest {
                         ).jsonObject
                         replanBodies += body
                         replanResponse(replanIndex.getAndIncrement(), body)
+                    }
+                    request.method == HttpMethod.Delete && path.startsWith("/api/v1/playback/") -> {
+                        stoppedSessionIds += path.substringAfterLast('/')
+                        MockResponse(HttpStatusCode.OK, "{}")
                     }
                     else -> MockResponse(HttpStatusCode.OK, "{}")
                 }
@@ -439,8 +466,10 @@ class PlaybackSessionManagerSeekReanchorTest {
     }
 
     private suspend fun PlaybackSessionManager.start(): ApiResult.Success<VideoSessionStartV3> =
-        assertIs(
-            startVideoSessionV3(
+        assertIs(startResult())
+
+    private suspend fun PlaybackSessionManager.startResult(): ApiResult<VideoSessionStartV3> =
+        startVideoSessionV3(
                 fileId = 42,
                 profileId = "profile-1",
                 capabilities = ClientCodecCapabilities(
@@ -458,7 +487,6 @@ class PlaybackSessionManagerSeekReanchorTest {
                 qualityPreference = "original",
                 startPosition = 0.0,
                 subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
-            ),
         )
 
     private fun plan(): PlaybackPlanV3 = PlaybackPlanV3(

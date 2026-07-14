@@ -54,4 +54,13 @@ class SubtitleTrackSelectionTest {
     fun emptyDownloadListReturnsNull() {
         assertNull(downloadedTrackIndex(listOf(track(0)), emptyList(), subtitleId = 1))
     }
+
+    @Test
+    fun replanSelectionUsesStableServerTrackIndex() {
+        val tracks = listOf(track(3), track(7))
+
+        assertEquals(7, selectedServerSubtitleTrackIndex(1, tracks))
+        assertEquals(-1, selectedServerSubtitleTrackIndex(-1, tracks))
+        assertNull(selectedServerSubtitleTrackIndex(2, tracks))
+    }
 }
