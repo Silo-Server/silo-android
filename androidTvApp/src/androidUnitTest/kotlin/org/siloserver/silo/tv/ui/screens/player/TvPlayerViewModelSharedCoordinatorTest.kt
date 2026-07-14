@@ -161,9 +161,11 @@ class TvPlayerViewModelSharedCoordinatorTest {
             "TV starter must adopt the initial session into PlaybackSessionLifecycle",
         )
         assertTrue(
-            starterSource.contains("fileResolution = version.resolution"),
-            "TV starter must preserve the selected version resolution for later recovery fallbacks",
+            starterSource.contains("fileResolution = effectiveVersion.resolution"),
+            "TV starter must preserve the effective version resolution for later recovery fallbacks",
         )
+        assertTrue(starterSource.contains("fileId = effectiveFileId"))
+        assertTrue(starterSource.contains("subtitleUrls = buildPlaybackSubtitleChoices("))
         assertFalse(
             starterSource.contains("manageProgress = false"),
             "TV starter must let PlaybackSessionLifecycle own progress reporting and resume persistence",

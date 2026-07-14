@@ -13,9 +13,8 @@ import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.android.BuildConfig
-import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.WatchDetail
-import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.network.ApiResult
@@ -191,7 +190,7 @@ class MobileVideoPlaybackStarter(
                 mediaFileId = effectiveFileId,
                 audioTrackIndex = resolved.audioTrackIndex,
                 durationSeconds = resolved.durationSeconds ?: effectiveVersion.duration,
-                subtitleUrls = buildMobileSubtitleChoices(
+                subtitleUrls = buildPlaybackSubtitleChoices(
                     catalogTracks = effectiveVersion.subtitleTracks.orEmpty(),
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
                     sessionId = resolved.sessionId,
@@ -237,54 +236,4 @@ class MobileVideoPlaybackStarter(
     private companion object {
         const val TAG = "MobileVideoPlaybackStarter"
     }
-}
-
-internal fun buildMobileSubtitleChoices(
-    catalogTracks: List<SubtitleTrack>,
-    plannedTracks: List<PlayerSubtitleInfo>,
-    sessionId: String,
-): List<PlayerSubtitleInfo> {
-    if (catalogTracks.isEmpty()) return plannedTracks
-
-    val plannedByIndex = plannedTracks.associateBy(PlayerSubtitleInfo::index)
-    val catalogChoices = catalogTracks.map { track ->
-        plannedByIndex[track.index]?.let { planned ->
-            planned.copy(
-                language = planned.language ?: track.language,
-                codec = planned.codec ?: track.codec,
-                label = planned.label ?: track.title,
-                source = planned.source ?: if (track.external) "external" else "embedded",
-                forced = planned.forced ?: track.forced,
-            )
-        } ?: PlayerSubtitleInfo(
-            index = track.index,
-            language = track.language,
-            codec = track.codec,
-            label = track.title,
-            source = if (track.external) "external" else "embedded",
-            forced = track.forced,
-            url = mobileSubtitleTrackUrl(sessionId, track),
-        )
-    }
-    val catalogIndices = catalogTracks.mapTo(mutableSetOf(), SubtitleTrack::index)
-    return catalogChoices + plannedTracks.filterNot { it.index in catalogIndices }
-}
-
-private fun mobileSubtitleTrackUrl(sessionId: String, track: SubtitleTrack): String {
-    val format = track.codec?.trim()?.lowercase()
-    val isBitmap = format in setOf(
-        "pgs",
-        "hdmv_pgs_subtitle",
-        "dvd_subtitle",
-        "dvdsub",
-        "dvb_subtitle",
-    )
-    if (isBitmap && !track.external) return ""
-    val extension = when (format) {
-        "ass", "ssa" -> ".ass"
-        "pgs", "hdmv_pgs_subtitle" -> ".sup"
-        "ttml" -> ".ttml"
-        else -> ".vtt"
-    }
-    return "/stream/$sessionId/subtitles/${track.index}$extension"
 }

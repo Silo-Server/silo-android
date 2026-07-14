@@ -13,6 +13,7 @@ import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.model.playback.applyResumeRewind
+import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.selectPlaybackVersion
@@ -124,8 +125,12 @@ class TvVideoPlaybackStarter(
                     "This Silo server must be updated to support the Media3 playback protocol.",
                 )
             }
-            val session = readyV3.session
-            val resolved = session
+            val resolved = readyV3.session
+            val effectiveFileId = resolved.mediaFileId.takeIf { it > 0 }
+                ?: readyV3.plan.effectiveMediaFileId
+                ?: version.fileId
+            val effectiveVersion = watchDetail.versions.firstOrNull { it.fileId == effectiveFileId }
+                ?: version
             val resolvedDelivery = resolved.resolvedPlaybackDelivery()
             val resolvedStreamUrl = resolved.playbackPlan?.stream?.url
                 ?.takeIf { it.isNotBlank() }
@@ -145,7 +150,7 @@ class TvVideoPlaybackStarter(
             sessionLifecycle.adoptActiveSession(
                 params = StartParams(
                     contentId = request.contentId,
-                    fileId = version.fileId,
+                    fileId = effectiveFileId,
                     capabilities = capabilities,
                     audioTrackIndex = resolved.audioTrackIndex,
                     subtitleTrackIndex = request.subtitleTrackIndex,
@@ -159,9 +164,9 @@ class TvVideoPlaybackStarter(
 
             VideoPlaybackStartResult.Ready(
                 contentId = request.contentId,
-                fileId = version.fileId,
+                fileId = effectiveFileId,
                 versions = watchDetail.versions,
-                fileResolution = version.resolution,
+                fileResolution = effectiveVersion.resolution,
                 sessionId = resolved.sessionId,
                 streamUrl = resolvedStreamUrl,
                 playMethod = resolved.playMethod,
@@ -169,7 +174,7 @@ class TvVideoPlaybackStarter(
                 playbackPlanV3 = readyV3.plan,
                 requestHeaders = readyV3.plan.stream.headers,
                 delivery = resolvedDelivery,
-                container = version.container,
+                container = readyV3.plan.stream.container ?: effectiveVersion.container,
                 title = watchDetail.title,
                 subtitle = null,
                 artworkUrl = watchDetail.posterUrl?.takeIf { it.isNotBlank() }
@@ -178,10 +183,13 @@ class TvVideoPlaybackStarter(
                 sourceStartPositionSeconds = sourceStartPos,
                 serverUrl = serverUrl,
                 accessToken = accessToken,
-                mediaFileId = resolved.mediaFileId.takeIf { id -> id > 0 }
-                    ?: session.mediaFileId.takeIf { id -> id > 0 },
-                durationSeconds = resolved.durationSeconds ?: version.duration,
-                subtitleUrls = resolved.subtitleUrls ?: emptyList(),
+                mediaFileId = effectiveFileId,
+                durationSeconds = resolved.durationSeconds ?: effectiveVersion.duration,
+                subtitleUrls = buildPlaybackSubtitleChoices(
+                    catalogTracks = effectiveVersion.subtitleTracks.orEmpty(),
+                    plannedTracks = resolved.subtitleUrls.orEmpty(),
+                    sessionId = resolved.sessionId,
+                ),
                 preferredAudioLanguage = preferredAudioLanguage ?: activeProfile?.language,
                 preferredTextLanguage = watchDetail.effectiveSubtitleLanguage
                     ?: activeProfile?.subtitleLanguage,
@@ -192,7 +200,7 @@ class TvVideoPlaybackStarter(
                     ?: true,
                 intro = watchDetail.intro,
                 credits = watchDetail.credits,
-                chapters = version.chapters.orEmpty(),
+                chapters = effectiveVersion.chapters.orEmpty(),
                 seriesId = watchDetail.seriesId,
                 seasonNumber = watchDetail.seasonNumber,
                 episodeNumber = watchDetail.episodeNumber,
