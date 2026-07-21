@@ -112,6 +112,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
             audioCodec = effectiveRecipe.audioCodec,
             resolution = effectiveRecipe.height?.let { "${it}p" },
             hdrFormat = effectiveRecipe.dynamicRange,
+            colorRange = source.colorRange,
             subtitleCodec = subtitle.artifact?.format,
         ),
         claims = claims,

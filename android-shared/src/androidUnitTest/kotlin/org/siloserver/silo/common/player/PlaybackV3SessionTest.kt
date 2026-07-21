@@ -5,6 +5,7 @@ import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
+import org.siloserver.silo.model.playback.PlaybackSourceV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleArtifactV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
@@ -73,6 +74,7 @@ class PlaybackV3SessionTest {
         assertEquals(timeline.seekWindowEndSeconds, converted.seekWindowEndSeconds)
         assertEquals(timeline.canSeekAnywhere, converted.canSeekAnywhere)
         assertEquals(timeline.seekRestoration, converted.seekRestoration)
+        assertEquals("pc", response.playbackPlan?.source?.colorRange)
     }
 
     private fun plan(
@@ -93,6 +95,7 @@ class PlaybackV3SessionTest {
         selectedTracks = SelectedPlaybackTracksV3(
             subtitle = PlaybackTrackIdentityV3("subtitle", 2),
         ),
+        source = PlaybackSourceV3(colorRange = "pc"),
         subtitle = PlaybackSubtitleDecisionV3(
             mode = mode,
             trackId = "subtitle",

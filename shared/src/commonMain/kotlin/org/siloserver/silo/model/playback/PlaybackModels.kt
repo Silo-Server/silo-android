@@ -248,6 +248,7 @@ data class PlaybackSourceMetadata(
     @SerialName("audio_codec") val audioCodec: String? = null,
     val resolution: String? = null,
     @SerialName("hdr_format") val hdrFormat: String? = null,
+    @SerialName("color_range") val colorRange: String? = null,
     @SerialName("dolby_vision_profile") val dolbyVisionProfile: Int? = null,
     @SerialName("subtitle_codec") val subtitleCodec: String? = null,
 )

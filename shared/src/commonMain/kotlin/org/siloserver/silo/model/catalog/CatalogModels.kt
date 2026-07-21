@@ -300,6 +300,7 @@ data class VideoTrack(
     val profile: String? = null,
     val level: String? = null,
     @SerialName("bit_depth") val bitDepth: Int? = null,
+    @SerialName("color_range") val colorRange: String? = null,
     @SerialName("color_space") val colorSpace: String? = null,
     @SerialName("color_primaries") val colorPrimaries: String? = null,
     @SerialName("color_transfer") val colorTransfer: String? = null,

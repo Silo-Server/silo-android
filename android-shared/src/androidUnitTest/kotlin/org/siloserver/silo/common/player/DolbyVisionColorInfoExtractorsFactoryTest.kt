@@ -106,4 +106,40 @@ class DolbyVisionColorInfoExtractorsFactoryTest {
         assertSame(source, source.withValidatedDynamicRangeColorInfo(null))
         assertSame(source, source.withValidatedDynamicRangeColorInfo("hdr10"))
     }
+
+    @Test
+    fun suppliesLimitedRangeWhenContainerMetadataIsMissing() {
+        val source = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).build()
+
+        val repaired = source.withValidatedColorRange("tv")
+
+        assertEquals(C.COLOR_RANGE_LIMITED, repaired.colorInfo?.colorRange)
+    }
+
+    @Test
+    fun suppliesFullRangeWhenContainerMetadataIsMissing() {
+        val source = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).build()
+
+        val repaired = source.withValidatedColorRange("pc")
+
+        assertEquals(C.COLOR_RANGE_FULL, repaired.colorInfo?.colorRange)
+    }
+
+    @Test
+    fun preservesExplicitContainerRangeOverServerFallback() {
+        val source = Format.Builder()
+            .setSampleMimeType(MimeTypes.VIDEO_H264)
+            .setColorInfo(ColorInfo.Builder().setColorRange(C.COLOR_RANGE_FULL).build())
+            .build()
+
+        assertSame(source, source.withValidatedColorRange("tv"))
+    }
+
+    @Test
+    fun ignoresUnknownOrMissingServerRange() {
+        val source = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).build()
+
+        assertSame(source, source.withValidatedColorRange("unknown"))
+        assertSame(source, source.withValidatedColorRange(null))
+    }
 }
