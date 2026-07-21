@@ -36,6 +36,7 @@ internal class DolbyVisionColorInfoExtractorsFactory(
     private val transformMode: DolbyVisionTransformMode = DolbyVisionTransformMode.DISABLED,
     private val converter: DolbyVisionRpuConverter = NativeDolbyVisionRpuConverter,
     private val expectedDynamicRange: String? = null,
+    private val expectedColorRange: String? = null,
 ) : ExtractorsFactory {
     override fun createExtractors(): Array<Extractor> =
         delegate.createExtractors().map(::wrap).toTypedArray()
@@ -48,18 +49,25 @@ internal class DolbyVisionColorInfoExtractorsFactory(
         .toTypedArray()
 
     private fun wrap(extractor: Extractor): Extractor =
-        ColorInfoExtractor(extractor, transformMode, converter, expectedDynamicRange)
+        ColorInfoExtractor(extractor, transformMode, converter, expectedDynamicRange, expectedColorRange)
 
     private class ColorInfoExtractor(
         private val delegate: Extractor,
         private val transformMode: DolbyVisionTransformMode,
         private val converter: DolbyVisionRpuConverter,
         private val expectedDynamicRange: String?,
+        private val expectedColorRange: String?,
     ) : Extractor by delegate {
         private var output: ColorInfoExtractorOutput? = null
 
         override fun init(output: ExtractorOutput) {
-            val wrapped = ColorInfoExtractorOutput(output, transformMode, converter, expectedDynamicRange)
+            val wrapped = ColorInfoExtractorOutput(
+                output,
+                transformMode,
+                converter,
+                expectedDynamicRange,
+                expectedColorRange,
+            )
             this.output = wrapped
             delegate.init(wrapped)
         }
@@ -81,16 +89,21 @@ internal class DolbyVisionColorInfoExtractorsFactory(
         private val transformMode: DolbyVisionTransformMode,
         private val converter: DolbyVisionRpuConverter,
         private val expectedDynamicRange: String?,
+        private val expectedColorRange: String?,
     ) : ExtractorOutput {
         private val tracks = mutableMapOf<Int, TrackOutput>()
 
         override fun track(id: Int, type: Int): TrackOutput = tracks.getOrPut(id) {
             val output = delegate.track(id, type)
-            if (type == C.TRACK_TYPE_VIDEO && transformMode != DolbyVisionTransformMode.DISABLED) {
-                DolbyVisionTransformingTrackOutput(output, transformMode, converter)
-            } else {
-                ColorInfoTrackOutput(output, expectedDynamicRange)
-            }
+            if (type != C.TRACK_TYPE_VIDEO) return@getOrPut output
+
+            val colorInfoOutput = ColorInfoTrackOutput(
+                output,
+                expectedDynamicRange,
+                expectedColorRange,
+            )
+            if (transformMode == DolbyVisionTransformMode.DISABLED) colorInfoOutput
+            else DolbyVisionTransformingTrackOutput(colorInfoOutput, transformMode, converter)
         }
 
         override fun endTracks() = delegate.endTracks()
@@ -105,12 +118,14 @@ internal class DolbyVisionColorInfoExtractorsFactory(
     private class ColorInfoTrackOutput(
         private val delegate: TrackOutput,
         private val expectedDynamicRange: String?,
+        private val expectedColorRange: String?,
     ) : TrackOutput {
         override fun durationUs(durationUs: Long) = delegate.durationUs(durationUs)
 
         override fun format(format: Format) {
             delegate.format(
                 format
+                    .withValidatedColorRange(expectedColorRange)
                     .withValidatedDynamicRangeColorInfo(expectedDynamicRange)
                     .withDolbyVisionHdrColorInfo(),
             )
@@ -137,6 +152,23 @@ internal class DolbyVisionColorInfoExtractorsFactory(
             cryptoData: TrackOutput.CryptoData?,
         ) = delegate.sampleMetadata(timeUs, flags, size, offset, cryptoData)
     }
+}
+
+@UnstableApi
+internal fun Format.withValidatedColorRange(expectedColorRange: String?): Format {
+    if (!MimeTypes.isVideo(sampleMimeType)) return this
+    val expected = when (expectedColorRange?.trim()?.lowercase()) {
+        "tv" -> C.COLOR_RANGE_LIMITED
+        "pc" -> C.COLOR_RANGE_FULL
+        else -> return this
+    }
+    val current = colorInfo
+    if (current != null && current.colorRange != -1) return this
+
+    val repaired = (current?.buildUpon() ?: androidx.media3.common.ColorInfo.Builder())
+        .setColorRange(expected)
+        .build()
+    return buildUpon().setColorInfo(repaired).build()
 }
 
 @UnstableApi

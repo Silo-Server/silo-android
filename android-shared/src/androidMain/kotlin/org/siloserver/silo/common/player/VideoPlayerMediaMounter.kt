@@ -25,6 +25,7 @@ fun mountVideoMedia(
         durationMs = spec.durationMs,
         requestHeaders = spec.requestHeaders,
         expectedDynamicRange = spec.expectedDynamicRange,
+        expectedColorRange = spec.expectedColorRange,
         transformations = spec.transformations,
         runtimeCorrections = spec.runtimeCorrections,
     )
@@ -54,6 +55,7 @@ fun refreshMountedVideoMedia(
         durationMs = spec.durationMs,
         requestHeaders = spec.requestHeaders,
         expectedDynamicRange = spec.expectedDynamicRange,
+        expectedColorRange = spec.expectedColorRange,
         transformations = spec.transformations,
         runtimeCorrections = spec.runtimeCorrections,
     )

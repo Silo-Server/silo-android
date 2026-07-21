@@ -38,11 +38,12 @@ class CatalogTrackSerializationTest {
 
     @Test
     fun `VideoTrack preserves server Dolby Vision metadata`() {
-        val source = """{"codec":"hevc","dolby_vision":"Profile 8","dv_profile":8}"""
+        val source = """{"codec":"hevc","dolby_vision":"Profile 8","dv_profile":8,"color_range":"tv"}"""
 
         val track = json.decodeFromString<VideoTrack>(source)
 
         assertEquals("Profile 8", track.dolbyVision)
         assertEquals(8, track.dolbyVisionProfile)
+        assertEquals("tv", track.colorRange)
     }
 }

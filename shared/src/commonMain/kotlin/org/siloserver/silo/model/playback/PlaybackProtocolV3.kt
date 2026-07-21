@@ -113,6 +113,7 @@ data class PlaybackPlanV3(
     val timeline: PlaybackTimelineV3 = PlaybackTimelineV3(),
     @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracksV3 = SelectedPlaybackTracksV3(),
     @SerialName("effective_recipe") val effectiveRecipe: PlaybackEffectiveRecipeV3 = PlaybackEffectiveRecipeV3(),
+    val source: PlaybackSourceV3 = PlaybackSourceV3(),
     val claims: PlaybackValidationClaims = PlaybackValidationClaims(),
     val subtitle: PlaybackSubtitleDecisionV3 = PlaybackSubtitleDecisionV3(),
     val transformations: List<PlaybackTransformationV3> = emptyList(),
@@ -178,6 +179,16 @@ data class PlaybackEffectiveRecipeV3(
     @SerialName("dynamic_range") val dynamicRange: String? = null,
     @SerialName("audio_channels") val audioChannels: Int? = null,
     @SerialName("audio_layout") val audioLayout: String? = null,
+)
+
+/**
+ * Source fields consumed by the Android renderer. The server's source object
+ * contains additional planning metadata; SiloJson deliberately ignores those
+ * keys until a client behavior needs them.
+ */
+@Serializable
+data class PlaybackSourceV3(
+    @SerialName("color_range") val colorRange: String? = null,
 )
 
 @Serializable

@@ -463,6 +463,7 @@ fun PlayerScreen(
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = uiState.requestHeaders,
             expectedDynamicRange = plan?.source?.hdrFormat,
+            expectedColorRange = plan?.source?.colorRange,
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
         )
@@ -522,6 +523,7 @@ fun PlayerScreen(
             },
             requestHeaders = if (!isLocalMedia) uiState.requestHeaders else emptyMap(),
             expectedDynamicRange = plan?.source?.hdrFormat,
+            expectedColorRange = plan?.source?.colorRange,
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
         )

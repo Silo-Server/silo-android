@@ -1416,6 +1416,7 @@ fun TvPlayerScreen(
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,
             expectedDynamicRange = plan?.source?.hdrFormat,
+            expectedColorRange = plan?.source?.colorRange,
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
         )
@@ -1465,6 +1466,7 @@ fun TvPlayerScreen(
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,
             expectedDynamicRange = plan?.source?.hdrFormat,
+            expectedColorRange = plan?.source?.colorRange,
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
         )

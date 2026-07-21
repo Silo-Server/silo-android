@@ -31,6 +31,7 @@ class PlaybackProtocolV3Test {
             height = 2160,
             dynamicRange = "dolby_vision_p8_1",
         ),
+        source = PlaybackSourceV3(colorRange = "tv"),
         decisionReason = "original_compatible",
         requestedMediaFileId = 42,
         effectiveMediaFileId = 84,
@@ -77,6 +78,7 @@ class PlaybackProtocolV3Test {
         val decoded = SiloJson.decodeFromString<PlaybackPlanV3>(encoded)
         assertEquals(42, decoded.requestedMediaFileId)
         assertEquals(84, decoded.effectiveMediaFileId)
+        assertEquals("tv", decoded.source.colorRange)
     }
 
     @Test
