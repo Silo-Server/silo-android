@@ -13,8 +13,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.siloserver.silo.model.diagnostics.DiagnosticsArchive
@@ -27,6 +29,7 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsDestination
 import org.siloserver.silo.model.diagnostics.DiagnosticsDeviceProvenance
 import org.siloserver.silo.model.diagnostics.DiagnosticsDeviceSentinel
 import org.siloserver.silo.model.diagnostics.DiagnosticsDeviceSummary
+import org.siloserver.silo.model.diagnostics.DiagnosticsLogLine
 import org.siloserver.silo.model.diagnostics.DiagnosticsManifest
 import org.siloserver.silo.model.diagnostics.DiagnosticsPlatform
 import org.siloserver.silo.model.diagnostics.DiagnosticsReport
@@ -118,10 +121,11 @@ class FileJvmCrashMarkerSource(noBackupFilesDir: File) : JvmCrashMarkerSource {
 
     override fun records(): List<JvmCrashMarkerRecord> {
         directory.listFiles().orEmpty().filter { it.name.endsWith(".tmp") }.forEach(File::delete)
-        return directory.listFiles().orEmpty()
+        val files = directory.listFiles().orEmpty()
             .filter { it.isFile && MARKER_NAME.matches(it.name) && it.length() in 1..CrashMarkerRenderer.MAX_MARKER_BYTES.toLong() }
             .sortedBy(File::lastModified)
-            .takeLast(MAX_MARKERS)
+        files.dropLast(MAX_MARKERS).forEach(File::delete)
+        return files.takeLast(MAX_MARKERS)
             .mapNotNull { file ->
                 runCatching { JSON.decodeFromString<JvmCrashMarkerRecord>(file.readText()) }
                     .getOrNull()
@@ -140,7 +144,7 @@ class FileJvmCrashMarkerSource(noBackupFilesDir: File) : JvmCrashMarkerSource {
     }
 
     private companion object {
-        const val MAX_MARKERS = 64
+        const val MAX_MARKERS = 3
         val MARKER_NAME = Regex("^jvm-[0-9]+-[0-9]+\\.json$")
         val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
     }
@@ -164,6 +168,7 @@ class ExitInfoCollector(
     private val noticeVersion: () -> Int,
     private val consentMode: () -> DiagnosticsConsentMode = { DiagnosticsConsentMode.PROMPT },
     private val redactionTokens: () -> List<String> = { emptyList() },
+    private val breadcrumbs: DiagnosticsBreadcrumbSource = DiagnosticsBreadcrumbSource.None,
 ) {
     suspend fun collect(): List<PendingReport> {
         val exits = mutableListOf<CollectedExit>()
@@ -211,6 +216,12 @@ class ExitInfoCollector(
         run: DiagnosticsRunRecord,
         fingerprint: String,
     ): PendingReport? {
+        val redactor = DiagnosticsRedactor(
+            sensitiveValues = redactionTokens().filter(String::isNotEmpty).toSet(),
+        )
+        val safeStack = redactor.sanitize(marker.stack).truncateUtf8ForExit(MAX_TEXT_TRACE_BYTES)
+        val safeThrowableType = redactor.sanitize(marker.throwableType).truncateUtf8ForExit(MAX_STACK_EXCERPT_BYTES)
+        val safeThreadName = redactor.sanitize(marker.threadName).truncateUtf8ForExit(128)
         val binding = run.pendingBinding()
         val artifacts = linkedMapOf<String, ByteArray>()
         artifacts[DEVICE_FILE] = marker.deviceSnapshotJson?.encodeToByteArray()
@@ -222,10 +233,8 @@ class ExitInfoCollector(
             pid = null,
             status = null,
         )
-        artifacts[CRASH_STACK_FILE] = marker.stack.truncateUtf8ForExit(MAX_TEXT_TRACE_BYTES).encodeToByteArray()
-        if (marker.logLines.isNotEmpty()) {
-            artifacts[LOGS_FILE] = (marker.logLines.joinToString("\n") + "\n").encodeToByteArray()
-        }
+        artifacts[CRASH_STACK_FILE] = safeStack.encodeToByteArray()
+        sanitizedLogBytes(marker.logLines, redactor)?.let { artifacts[LOGS_FILE] = it }
         val manifest = manifest(
             reportType = DiagnosticsReportType.CRASH,
             crashSource = DiagnosticsCrashSource.UEH,
@@ -234,15 +243,46 @@ class ExitInfoCollector(
             captureSessionId = marker.captureSessionId ?: run.captureSessionId,
             profileId = run.profileId,
             binding = binding,
-            summary = marker.throwableType,
-            stackExcerpt = marker.stack.truncateUtf8ForExit(MAX_STACK_EXCERPT_BYTES),
-            thread = marker.threadName,
+            summary = safeThrowableType,
+            stackExcerpt = safeStack.truncateUtf8ForExit(MAX_STACK_EXCERPT_BYTES),
+            thread = safeThreadName,
             foreground = marker.foreground,
             playbackSessionIds = marker.playbackSessionIds,
             artifacts = artifacts,
             droppedLines = marker.logDroppedCount + marker.logTornCount,
         )
         return save(binding, manifest, artifacts, fingerprint, marker.occurredAtEpochMs)
+    }
+
+    private fun sanitizedLogBytes(
+        lines: List<String>,
+        redactor: DiagnosticsRedactor,
+    ): ByteArray? {
+        val output = ByteArrayOutputStream()
+        for (line in lines) {
+            val sanitized = runCatching {
+                val decoded = LOG_JSON.decodeFromString<DiagnosticsLogLine>(line)
+                val attributes = decoded.attributes?.mapValues { (_, value) ->
+                    if (value is JsonPrimitive && value.isString) {
+                        JsonPrimitive(redactor.sanitize(value.content))
+                    } else {
+                        value
+                    }
+                }
+                val encoded = LOG_JSON.encodeToString(
+                    decoded.copy(
+                        tag = redactor.sanitize(decoded.tag),
+                        message = redactor.sanitize(decoded.message),
+                        attributes = attributes,
+                    ),
+                )
+                encoded.takeIf { it.encodeToByteArray().size <= MAX_LOG_LINE_BYTES }
+            }.getOrNull() ?: continue
+            val bytes = (sanitized + "\n").encodeToByteArray()
+            if (output.size() + bytes.size > MAX_CRASH_LOG_BYTES) break
+            output.write(bytes)
+        }
+        return output.toByteArray().takeIf(ByteArray::isNotEmpty)
     }
 
     private fun saveExit(
@@ -262,6 +302,11 @@ class ExitInfoCollector(
             pid = exit.pid,
             status = exit.status,
         )
+        runCatching { breadcrumbs.linesForRun(run.captureSessionId, run.identityKey()) }
+            .getOrDefault(emptyList())
+            .takeIf(List<String>::isNotEmpty)?.let { lines ->
+            artifacts[BREADCRUMBS_FILE] = (lines.joinToString("\n") + "\n").encodeToByteArray()
+        }
         var stackExcerpt: String? = null
         when {
             classification.reportType == DiagnosticsReportType.NATIVE_CRASH && trace != null ->
@@ -379,6 +424,12 @@ class ExitInfoCollector(
         ownershipGeneration = ownershipGeneration,
     )
 
+    private fun DiagnosticsRunRecord.identityKey() = DiagnosticsIdentityKey(
+        binding = binding,
+        profileId = profileId,
+        ownershipGeneration = ownershipGeneration,
+    )
+
     internal data class ExitClassification(
         val reportType: DiagnosticsReportType,
         val label: String,
@@ -399,12 +450,16 @@ class ExitInfoCollector(
         const val MAX_TRACE_BYTES = 512 * 1_024
         const val MAX_TEXT_TRACE_BYTES = 256 * 1_024
         const val MAX_STACK_EXCERPT_BYTES = 8 * 1_024
+        const val MAX_LOG_LINE_BYTES = 8 * 1_024
+        const val MAX_CRASH_LOG_BYTES = 256 * 1_024
         const val DEVICE_FILE = "device.json"
         const val LOGS_FILE = "logs.jsonl"
         const val CRASH_SUMMARY_FILE = "crash/summary.json"
         const val CRASH_STACK_FILE = "crash/stack.txt"
         const val CRASH_TOMBSTONE_FILE = "crash/tombstone.pb"
+        const val BREADCRUMBS_FILE = "breadcrumbs.jsonl"
         const val REDACTION_FAILURE_SENTINEL = "{\"redaction_failure\":true}\n"
+        val LOG_JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
     }
 }
 

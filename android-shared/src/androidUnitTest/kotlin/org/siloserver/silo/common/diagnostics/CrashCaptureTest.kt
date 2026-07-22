@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.diagnostics
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.decodeFromString
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import kotlin.test.Test
@@ -46,7 +47,83 @@ class CrashCaptureTest {
 
         assertTrue(bytes.size <= CrashMarkerRenderer.MAX_MARKER_BYTES)
         Json.parseToJsonElement(bytes.decodeToString())
+        // Exact credential values are scrubbed cheaply; structural redaction still runs next launch.
         assertFalse(bytes.decodeToString().contains("secret-token"))
+        assertTrue(bytes.decodeToString().contains("[REDACTED]"))
+    }
+
+    @Test
+    fun rendererSnapshotsTheLiveRingAtCrashTime() {
+        val ring = LogRing()
+        ring.offer("{\"msg\":\"before publish\"}")
+        val runtime = runtime(logs = listOf("{\"msg\":\"stale cached line\"}"))
+            .copy(logBuffer = ring, logGeneration = ring.currentGeneration)
+        ring.offer("{\"msg\":\"secret-token immediately before crash\"}")
+
+        val bytes = CrashMarkerRenderer().render(
+            thread = Thread.currentThread(),
+            throwable = IllegalStateException("boom"),
+            runtime = runtime,
+            occurredAtEpochMs = 1_700_000_000_000,
+        )
+        val marker = Json.decodeFromString<JvmCrashMarkerRecord>(bytes.decodeToString())
+
+        assertEquals(
+            listOf("{\"msg\":\"before publish\"}", "{\"msg\":\"[REDACTED] immediately before crash\"}"),
+            marker.logLines,
+        )
+        assertFalse(marker.logLines.any { it.contains("stale cached line") })
+        assertFalse(marker.logLines.any { it.contains("secret-token") })
+    }
+
+    @Test
+    fun liveRingFromANewerIdentityGenerationIsNotAttachedToTheOldRuntime() {
+        val ring = LogRing()
+        val runtime = runtime().copy(logBuffer = ring, logGeneration = ring.currentGeneration)
+        ring.rotateGeneration()
+        ring.offer("{\"msg\":\"new identity\"}")
+
+        val bytes = CrashMarkerRenderer().render(
+            thread = Thread.currentThread(),
+            throwable = IllegalStateException("boom"),
+            runtime = runtime,
+            occurredAtEpochMs = 1_700_000_000_000,
+        )
+        val marker = Json.decodeFromString<JvmCrashMarkerRecord>(bytes.decodeToString())
+
+        assertTrue(marker.logLines.isEmpty())
+    }
+
+    @Test
+    fun exactRedactionProcessesLongerOverlappingValuesFirst() {
+        val bytes = CrashMarkerRenderer().render(
+            thread = Thread.currentThread(),
+            throwable = IllegalStateException("alice-secret"),
+            runtime = runtime().copy(redactionTokens = List(16) { "alice" } + "alice-secret"),
+            occurredAtEpochMs = 1_700_000_000_000,
+        )
+        val marker = Json.decodeFromString<JvmCrashMarkerRecord>(bytes.decodeToString())
+
+        assertTrue(marker.stack.contains("[REDACTED]"))
+        assertFalse(marker.stack.contains("secret"))
+    }
+
+    @Test
+    fun tooManyExactCredentialsFailClosedWithoutCrashMessagesOrLogs() {
+        val credentials = List(17) { index -> "credential-$index" }
+        val bytes = CrashMarkerRenderer().render(
+            thread = Thread.currentThread(),
+            throwable = IllegalStateException("credential-16"),
+            runtime = runtime(logs = listOf("{\"msg\":\"credential-16\"}"))
+                .copy(redactionTokens = credentials),
+            occurredAtEpochMs = 1_700_000_000_000,
+        )
+        val marker = Json.decodeFromString<JvmCrashMarkerRecord>(bytes.decodeToString())
+
+        assertEquals("", marker.threadName)
+        assertEquals("java.lang.IllegalStateException", marker.stack)
+        assertTrue(marker.logLines.isEmpty())
+        assertFalse(bytes.decodeToString().contains("credential-16"))
     }
 
     @Test

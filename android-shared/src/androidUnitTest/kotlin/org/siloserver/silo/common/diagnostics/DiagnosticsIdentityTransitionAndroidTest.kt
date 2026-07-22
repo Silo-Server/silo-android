@@ -72,9 +72,20 @@ class DiagnosticsIdentityTransitionAndroidTest {
         )
 
         observed.clear()
+        tokens.saveTokens("refreshed-access", "refreshed-refresh", 60)
+        assertEquals(emptyList(), observed, "background token refresh must not close the identity gate")
+
+        observed.clear()
         tokens.invalidateSession()
         assertEquals(
             listOf(IdentityTransitionKind.SIGN_OUT, IdentityTransitionKind.SIGN_OUT),
+            observed.map(IdentityTransition::kind),
+        )
+
+        observed.clear()
+        tokens.saveTokens("new-access", "new-refresh", 60)
+        assertEquals(
+            listOf(IdentityTransitionKind.SIGN_IN, IdentityTransitionKind.SIGN_IN),
             observed.map(IdentityTransition::kind),
         )
     }

@@ -11,8 +11,6 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 data class CrashRuntimeSnapshot(
     val identityKey: DiagnosticsIdentityKey? = null,
@@ -22,6 +20,8 @@ data class CrashRuntimeSnapshot(
     val foreground: Boolean? = null,
     val playbackSessionIds: List<String> = emptyList(),
     val deviceSnapshotJson: String? = null,
+    /** Live, pre-redacted ring. The crash path snapshots it at failure time. */
+    val logBuffer: DiagnosticsLogBuffer? = null,
     val logLines: List<String> = emptyList(),
     val logDroppedCount: Long = 0,
     val logTornCount: Long = 0,
@@ -81,34 +81,68 @@ class CrashMarkerRenderer {
         throwable: Throwable,
         runtime: CrashRuntimeSnapshot,
         occurredAtEpochMs: Long,
+        shouldStop: () -> Boolean = { false },
     ): ByteArray {
-        val redactor = DiagnosticsRedactor(sensitiveValues = runtime.redactionTokens.toSet())
+        val prioritizedRedactionValues = runtime.redactionTokens
+            .asSequence()
+            .filter(String::isNotEmpty)
+            .distinct()
+            .sortedByDescending(String::length)
+            .toList()
+        val redactionOverflow = prioritizedRedactionValues.size > MAX_EXACT_REDACTION_VALUES
+        val exactRedactionValues = prioritizedRedactionValues.take(MAX_EXACT_REDACTION_VALUES)
+        val logs = runtime.logBuffer?.snapshot(runtime.logGeneration)
+            ?: LogSnapshot(
+                lines = runtime.logLines,
+                droppedCount = runtime.logDroppedCount,
+                tornCount = runtime.logTornCount,
+                generation = runtime.logGeneration,
+            )
         val marker = JvmCrashMarkerRecord(
             occurredAtEpochMs = occurredAtEpochMs.coerceAtLeast(0),
-            threadName = redactor.sanitize(thread.name).truncateUtf8(MAX_FIELD_BYTES),
+            threadName = if (redactionOverflow) {
+                ""
+            } else {
+                scrubExact(thread.name, exactRedactionValues, shouldStop)
+                    .orEmpty()
+                    .truncateUtf8(MAX_FIELD_BYTES)
+            },
             threadId = thread.stableId(),
             throwableType = throwable.javaClass.name.truncateUtf8(MAX_FIELD_BYTES),
-            stack = renderThrowable(throwable, redactor, MAX_STACK_BYTES),
+            stack = if (redactionOverflow) {
+                throwable.javaClass.name.truncateUtf8(MAX_FIELD_BYTES)
+            } else {
+                renderThrowable(throwable, exactRedactionValues, MAX_STACK_BYTES, shouldStop)
+            },
             binding = runtime.binding?.bounded(),
-            captureSessionId = runtime.captureSessionId?.let(redactor::sanitize)?.truncateUtf8(MAX_FIELD_BYTES),
-            runToken = runtime.runToken?.let(redactor::sanitize)?.truncateUtf8(MAX_FIELD_BYTES),
+            captureSessionId = runtime.captureSessionId?.truncateUtf8(MAX_FIELD_BYTES),
+            runToken = runtime.runToken?.truncateUtf8(MAX_FIELD_BYTES),
             foreground = runtime.foreground,
             playbackSessionIds = runtime.playbackSessionIds.take(MAX_PLAYBACK_IDS).map {
-                redactor.sanitize(it).truncateUtf8(MAX_FIELD_BYTES)
+                it.truncateUtf8(MAX_FIELD_BYTES)
             },
             deviceSnapshotJson = runtime.deviceSnapshotJson?.truncateUtf8(MAX_DEVICE_BYTES),
-            logLines = boundedNewestLogs(runtime.logLines, runtime.redactionTokens, MAX_LOG_BYTES),
-            logDroppedCount = runtime.logDroppedCount.coerceAtLeast(0),
-            logTornCount = runtime.logTornCount.coerceAtLeast(0),
-            logGeneration = runtime.logGeneration.coerceAtLeast(0),
-            truncated = false,
+            logLines = if (redactionOverflow) {
+                emptyList()
+            } else {
+                boundedNewestLogs(
+                    lines = logs.lines,
+                    maxBytes = MAX_LOG_BYTES,
+                    exactRedactionValues = exactRedactionValues,
+                    shouldStop = shouldStop,
+                )
+            },
+            logDroppedCount = logs.droppedCount.coerceAtLeast(0),
+            logTornCount = logs.tornCount.coerceAtLeast(0),
+            logGeneration = logs.generation.coerceAtLeast(0),
+            truncated = shouldStop(),
         )
         encode(marker).takeIf { it.size <= MAX_MARKER_BYTES }?.let { return it }
 
         val reduced = marker.copy(
             stack = marker.stack.truncateUtf8(REDUCED_STACK_BYTES),
             deviceSnapshotJson = marker.deviceSnapshotJson?.truncateUtf8(REDUCED_DEVICE_BYTES),
-            logLines = boundedNewestLogs(marker.logLines, runtime.redactionTokens, REDUCED_LOG_BYTES),
+            logLines = boundedNewestLogs(marker.logLines, REDUCED_LOG_BYTES),
             truncated = true,
         )
         encode(reduced).takeIf { it.size <= MAX_MARKER_BYTES }?.let { return it }
@@ -127,21 +161,23 @@ class CrashMarkerRenderer {
 
     private fun renderThrowable(
         throwable: Throwable,
-        redactor: DiagnosticsRedactor,
+        exactRedactionValues: List<String>,
         maxBytes: Int,
+        shouldStop: () -> Boolean,
     ): String {
         val output = BoundedUtf8Builder(maxBytes)
         val seen = HashSet<Throwable>()
         var current: Throwable? = throwable
         var depth = 0
-        while (current != null && depth < MAX_CAUSE_DEPTH && seen.add(current)) {
+        while (current != null && depth < MAX_CAUSE_DEPTH && seen.add(current) && !shouldStop()) {
             val prefix = if (depth == 0) "" else "caused by "
             val message = current.message
                 ?.take(MAX_RAW_MESSAGE_CHARS)
-                ?.let(redactor::sanitize)
+                ?.let { scrubExact(it, exactRedactionValues, shouldStop) }
                 ?.truncateUtf8(MAX_MESSAGE_BYTES)
             if (!output.append("$prefix${current.javaClass.name}${message?.let { ": $it" }.orEmpty()}\n")) break
             for (frame in current.stackTrace) {
+                if (shouldStop()) return output.toString()
                 val rendered = "    at ${frame.className}.${frame.methodName}(${frame.fileName ?: "Unknown Source"}:${frame.lineNumber})\n"
                 if (!output.append(rendered)) return output.toString()
             }
@@ -151,18 +187,32 @@ class CrashMarkerRenderer {
         return output.toString()
     }
 
+    private fun scrubExact(
+        value: String,
+        exactRedactionValues: List<String>,
+        shouldStop: () -> Boolean,
+    ): String? {
+        var scrubbed = value
+        exactRedactionValues.forEach { sensitiveValue ->
+            if (shouldStop()) return null
+            scrubbed = scrubbed.replace(sensitiveValue, REDACTED_VALUE)
+        }
+        return scrubbed
+    }
+
     private fun boundedNewestLogs(
         lines: List<String>,
-        redactionTokens: List<String>,
         maxBytes: Int,
+        exactRedactionValues: List<String> = emptyList(),
+        shouldStop: () -> Boolean = { false },
     ): List<String> {
         val newestFirst = ArrayList<String>()
-        val tokens = redactionTokens.filter(String::isNotEmpty)
         var usedBytes = 0
         for (index in lines.lastIndex downTo 0) {
-            var line = lines[index]
-            tokens.forEach { token -> line = line.replace(token, REDACTED_VALUE) }
-            line = line.truncateUtf8(MAX_LOG_LINE_BYTES)
+            if (shouldStop()) break
+            val line = scrubExact(lines[index], exactRedactionValues, shouldStop)
+                ?.truncateUtf8(MAX_LOG_LINE_BYTES)
+                ?: break
             val bytes = line.encodeToByteArray().size
             if (usedBytes + bytes > maxBytes) break
             newestFirst += line
@@ -172,11 +222,53 @@ class CrashMarkerRenderer {
         return newestFirst
     }
 
-    private fun encode(marker: JvmCrashMarkerRecord): ByteArray = JSON.encodeToString(marker).encodeToByteArray()
+    /**
+     * Manual marker JSON keeps kotlinx serialization and its reflection/allocation graph off the
+     * dying thread. Raw exception text stays app-private and is redacted during next-launch
+     * assembly before it can enter a pending report.
+     */
+    private fun encode(marker: JvmCrashMarkerRecord): ByteArray = buildString(8 * 1_024) {
+        append('{')
+        append("\"schema_version\":").append(marker.schemaVersion)
+        append(",\"occurred_at_epoch_ms\":").append(marker.occurredAtEpochMs)
+        append(",\"thread_name\":").appendJsonString(marker.threadName)
+        append(",\"thread_id\":").append(marker.threadId)
+        append(",\"throwable_type\":").appendJsonString(marker.throwableType)
+        append(",\"stack\":").appendJsonString(marker.stack)
+        append(",\"binding\":")
+        marker.binding?.let { binding ->
+            append('{')
+            append("\"server_instance_id\":").appendJsonString(binding.serverInstanceId)
+            append(",\"account_user_id\":").appendJsonString(binding.accountUserId)
+            binding.profileId?.let { append(",\"profile_id\":").appendJsonString(it) }
+            append(",\"ownership_generation\":").append(binding.ownershipGeneration)
+            append('}')
+        } ?: append("null")
+        marker.captureSessionId?.let { append(",\"capture_session_id\":").appendJsonString(it) }
+        marker.runToken?.let { append(",\"run_token\":").appendJsonString(it) }
+        marker.foreground?.let { append(",\"foreground\":").append(it) }
+        append(",\"playback_session_ids\":[")
+        marker.playbackSessionIds.forEachIndexed { index, value ->
+            if (index > 0) append(',')
+            appendJsonString(value)
+        }
+        append(']')
+        marker.deviceSnapshotJson?.let { append(",\"device_snapshot_json\":").appendJsonString(it) }
+        append(",\"log_lines\":[")
+        marker.logLines.forEachIndexed { index, value ->
+            if (index > 0) append(',')
+            appendJsonString(value)
+        }
+        append(']')
+        append(",\"log_dropped_count\":").append(marker.logDroppedCount)
+        append(",\"log_torn_count\":").append(marker.logTornCount)
+        append(",\"log_generation\":").append(marker.logGeneration)
+        append(",\"truncated\":").append(marker.truncated)
+        append('}')
+    }.encodeToByteArray()
 
     companion object {
         const val MAX_MARKER_BYTES = 512 * 1_024
-        private const val REDACTED_VALUE = "[REDACTED]"
         private const val MAX_STACK_BYTES = 96 * 1_024
         private const val MAX_LOG_BYTES = 256 * 1_024
         private const val MAX_DEVICE_BYTES = 64 * 1_024
@@ -190,7 +282,8 @@ class CrashMarkerRenderer {
         private const val MAX_FIELD_BYTES = 512
         private const val MAX_PLAYBACK_IDS = 20
         private const val MAX_CAUSE_DEPTH = 8
-        private val JSON = Json { encodeDefaults = true; explicitNulls = false }
+        private const val MAX_EXACT_REDACTION_VALUES = 16
+        private const val REDACTED_VALUE = "[REDACTED]"
         private val MINIMAL_MARKER = "{\"schema_version\":1,\"truncated\":true}".encodeToByteArray()
     }
 }
@@ -211,7 +304,7 @@ class FileCrashMarkerWriter(
     override fun write(thread: Thread, throwable: Throwable, runtime: CrashRuntimeSnapshot) {
         val startedAt = nanoTime()
         val occurredAt = nowMs()
-        val bytes = renderer.render(thread, throwable, runtime, occurredAt)
+        val bytes = renderer.render(thread, throwable, runtime, occurredAt) { elapsed(startedAt) }
         if (elapsed(startedAt)) return
         if (!(directory.mkdirs() || directory.isDirectory)) return
         if (elapsed(startedAt)) return
@@ -262,16 +355,25 @@ class FileCrashMarkerWriter(
 object CrashCapture {
     private val installed = AtomicBoolean(false)
     private val runtime = AtomicReference(CrashRuntimeSnapshot.empty())
+    private val logBuffer = AtomicReference<DiagnosticsLogBuffer?>(null)
 
     fun install(context: Context) {
         if (!installed.compareAndSet(false, true)) return
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         val handler = CrashExceptionHandler(
             markerSink = FileCrashMarkerWriter(context.noBackupFilesDir),
-            runtimeSnapshot = runtime::get,
+            runtimeSnapshot = {
+                runtime.get().let { snapshot ->
+                    if (snapshot.identityKey == null) snapshot else snapshot.copy(logBuffer = logBuffer.get())
+                }
+            },
             previous = previous,
         )
         Thread.setDefaultUncaughtExceptionHandler(handler)
+    }
+
+    internal fun installLogBuffer(value: DiagnosticsLogBuffer) {
+        logBuffer.set(value)
     }
 
     fun updateSnapshot(snapshot: CrashRuntimeSnapshot) {
@@ -339,4 +441,27 @@ private fun String.truncateUtf8(maxBytes: Int): String {
         index += Character.charCount(codePoint)
     }
     return result.toString()
+}
+
+private fun StringBuilder.appendJsonString(value: String): StringBuilder {
+    append('"')
+    value.forEach { character ->
+        when (character) {
+            '"' -> append("\\\"")
+            '\\' -> append("\\\\")
+            '\b' -> append("\\b")
+            '\u000C' -> append("\\f")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> if (character.code < 0x20) {
+                append("\\u")
+                append(character.code.toString(16).padStart(4, '0'))
+            } else {
+                append(character)
+            }
+        }
+    }
+    append('"')
+    return this
 }

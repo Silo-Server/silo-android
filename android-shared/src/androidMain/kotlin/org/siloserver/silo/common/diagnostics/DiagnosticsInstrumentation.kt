@@ -198,7 +198,7 @@ object DiagnosticsPlaybackLogger {
 }
 
 object DiagnosticsLifecycleLogger {
-    fun state(state: String) = SiloLog.i(
+    fun state(state: String) = SiloLog.breadcrumb(
         DiagnosticsLogCategory.LIFECYCLE,
         "AppLifecycle",
         "app lifecycle changed",

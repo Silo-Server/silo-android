@@ -24,6 +24,7 @@ class TokenManagerImpl(
 ) : TokenManager {
 
     private val mutex = Mutex()
+    private val tokenWriteMutex = Mutex()
     private val timeSource = TimeSource.Monotonic
 
     private var accessToken: String? = null
@@ -56,36 +57,53 @@ class TokenManagerImpl(
     }
 
     override suspend fun saveTokens(accessToken: String, refreshToken: String, expiresIn: Long) {
-        identityTransitions.changing(IdentityTransitionKind.SIGN_IN) {
-            mutex.withLock {
-                temporaryScope?.let { scope ->
-                    temporaryScope = scope.copy(
-                        accessToken = accessToken,
-                        refreshToken = refreshToken,
-                    )
-                    return@withLock
+        tokenWriteMutex.withLock {
+            val isInitialSignIn = mutex.withLock {
+                temporaryScope == null && this.accessToken == null && this.refreshToken == null
+            }
+            if (isInitialSignIn) {
+                identityTransitions.changing(IdentityTransitionKind.SIGN_IN) {
+                    saveTokensLocked(accessToken, refreshToken, expiresIn)
                 }
-                this.accessToken = accessToken
-                this.refreshToken = refreshToken
-                this.tokenExpiry = timeSource.markNow() + expiresIn.seconds
+            } else {
+                saveTokensLocked(accessToken, refreshToken, expiresIn)
             }
         }
     }
 
+    private suspend fun saveTokensLocked(accessToken: String, refreshToken: String, expiresIn: Long) {
+        mutex.withLock {
+            temporaryScope?.let { scope ->
+                temporaryScope = scope.copy(
+                    accessToken = accessToken,
+                    refreshToken = refreshToken,
+                )
+                return@withLock
+            }
+            this.accessToken = accessToken
+            this.refreshToken = refreshToken
+            this.tokenExpiry = timeSource.markNow() + expiresIn.seconds
+        }
+    }
+
     override suspend fun clearTokens() {
-        identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
-            mutex.withLock { clearTokensLocked() }
+        tokenWriteMutex.withLock {
+            identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutex.withLock { clearTokensLocked() }
+            }
         }
     }
 
     override suspend fun invalidateSession() {
-        identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
-            mutex.withLock { clearTokensLocked() }
-            // Non-suspending emit so this method can be called from anywhere
-            // without caller cooperation. DROP_OLDEST buffer means a rapid
-            // succession of invalidations collapses into a single observer
-            // tick — fine since the observer's nav is idempotent.
-            _sessionExpired.tryEmit(Unit)
+        tokenWriteMutex.withLock {
+            identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutex.withLock { clearTokensLocked() }
+                // Non-suspending emit so this method can be called from anywhere
+                // without caller cooperation. DROP_OLDEST buffer means a rapid
+                // succession of invalidations collapses into a single observer
+                // tick — fine since the observer's nav is idempotent.
+                _sessionExpired.tryEmit(Unit)
+            }
         }
     }
 
@@ -137,8 +155,10 @@ class TokenManagerImpl(
         identityTransitions.changing(IdentityTransitionKind.SERVER_SWITCH) { /* no-op */ }
     }
     override suspend fun signOutCurrentServer() {
-        identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
-            mutex.withLock { clearTokensLocked() }
+        tokenWriteMutex.withLock {
+            identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutex.withLock { clearTokensLocked() }
+            }
         }
     }
 

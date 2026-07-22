@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.diagnostics
 
+import java.security.MessageDigest
 import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
 import org.siloserver.silo.model.diagnostics.DiagnosticsStatusResponse
 import org.siloserver.silo.network.IdentityTransitionBarrier
@@ -80,6 +81,8 @@ data class DiagnosticsCaptureContext(
     val maxBundleBytes: Long = Long.MAX_VALUE,
     val maxManifestBytes: Long = Long.MAX_VALUE,
     val retentionDays: Int = 7,
+    val localServerId: String? = null,
+    val credentialFingerprint: String? = null,
 ) {
     val identityKey: DiagnosticsIdentityKey = DiagnosticsIdentityKey(
         binding = binding,
@@ -90,6 +93,9 @@ data class DiagnosticsCaptureContext(
 
 interface DiagnosticsIdentityResolver {
     suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext?
+
+    /** Local-only attestation used before exposing a cached context while the server is offline. */
+    suspend fun matchesCachedIdentity(cached: CachedDiagnosticsContext): Boolean = false
 }
 
 class DefaultDiagnosticsIdentityResolver(
@@ -165,10 +171,42 @@ class DefaultDiagnosticsIdentityResolver(
                 maxBundleBytes = status.maxBundleBytes,
                 maxManifestBytes = status.maxManifestBytes,
                 retentionDays = status.retentionDays,
+                localServerId = server.id,
+                credentialFingerprint = currentCredentialFingerprint(),
             )
             return context
         }
         return null
+    }
+
+    override suspend fun matchesCachedIdentity(cached: CachedDiagnosticsContext): Boolean {
+        if (tokenManager.hasTemporaryScope()) return false
+        val localServerId = cached.localServerId?.takeIf(String::isNotBlank) ?: return false
+        val cachedCredential = cached.credentialFingerprint?.takeIf(String::isNotBlank) ?: return false
+        for (attempt in 0 until maxAttempts) {
+            val generation = identityTransitions.generation.value
+            val server = savedServerProvider.activeServer() ?: return false
+            val matches = server.id == localServerId &&
+                tokenManager.getCurrentServerId() == localServerId &&
+                tokenManager.getServerUrl().trimEnd('/') == server.url.trimEnd('/') &&
+                !tokenManager.getAccessToken().isNullOrBlank() &&
+                currentCredentialFingerprint()?.let { current ->
+                    MessageDigest.isEqual(current.encodeToByteArray(), cachedCredential.encodeToByteArray())
+                } == true &&
+                tokenManager.getProfileId() == cached.profileId
+            if (identityTransitions.generation.value != generation) continue
+            return matches
+        }
+        return false
+    }
+
+    private suspend fun currentCredentialFingerprint(): String? {
+        val credential = tokenManager.getRefreshToken()?.takeIf(String::isNotBlank)
+            ?: tokenManager.getAccessToken()?.takeIf(String::isNotBlank)
+            ?: return null
+        return MessageDigest.getInstance("SHA-256")
+            .digest(credential.encodeToByteArray())
+            .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
     }
 
     private companion object {

@@ -63,7 +63,7 @@ import org.koin.core.qualifier.named
 private const val RETURN_TO_MANAGE_SERVERS_KEY = "return_to_manage_servers"
 
 internal fun tvShouldShowDiagnosticsPrompt(currentRoute: String?): Boolean =
-    currentRoute != TvRoute.DiagnosticsReport.ROUTE
+    currentRoute != TvRoute.Diagnostics.route && currentRoute != TvRoute.DiagnosticsReport.ROUTE
 
 /**
  * Upper bound on re-navigations for one queued deep link. Arrival-gated
@@ -970,12 +970,10 @@ fun TvAppNavigation(
         ?.let { prompt ->
         TvDiagnosticsPromptScreen(
             prompt = prompt,
-            onReview = { navController.navigate(TvRoute.DiagnosticsReport(prompt.reportId).route) },
-            onSend = { diagnosticsViewModel.upload(prompt.reportId) },
-            onAlwaysSend = {
-                diagnosticsViewModel.setConsent(org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode.ALWAYS)
-            },
-            onDontSend = { diagnosticsViewModel.decline(prompt.reportId) },
+            onReview = { navController.navigate(TvRoute.Diagnostics.route) },
+            onSend = { diagnosticsViewModel.uploadPrompt(prompt) },
+            onAlwaysSend = { diagnosticsViewModel.alwaysSendPrompt(prompt) },
+            onDontSend = { diagnosticsViewModel.declinePrompt(prompt) },
         )
     }
     }

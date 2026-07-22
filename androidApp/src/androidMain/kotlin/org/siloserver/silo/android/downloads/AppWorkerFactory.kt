@@ -11,6 +11,7 @@ import org.siloserver.silo.common.downloads.DownloadStorage
 import org.siloserver.silo.common.downloads.DownloadSubscriptionEvaluatorFactory
 import org.siloserver.silo.common.downloads.DownloadSubscriptionWorker
 import org.siloserver.silo.common.downloads.DownloadWorker
+import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadWorker
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploader
 import org.siloserver.silo.repository.DownloadSubscriptionRepository
@@ -83,6 +84,7 @@ class AppWorkerFactory : WorkerFactory() {
                     appContext = appContext,
                     params = workerParameters,
                     uploader = koin.get<DiagnosticsUploader>(),
+                    coordinator = koin.get<DiagnosticsCoordinator>(),
                 )
             }
             else -> {

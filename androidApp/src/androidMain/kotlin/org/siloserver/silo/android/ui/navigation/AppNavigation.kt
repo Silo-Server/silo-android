@@ -853,16 +853,17 @@ fun AppNavigation(
 
     }
         diagnosticsState.prompt
-            ?.takeIf { currentEntry?.destination?.route != Route.DiagnosticsReport.ROUTE }
+            ?.takeIf {
+                currentEntry?.destination?.route != Route.Diagnostics.route &&
+                    currentEntry?.destination?.route != Route.DiagnosticsReport.ROUTE
+            }
             ?.let { prompt ->
             DiagnosticsPromptDialog(
                 prompt = prompt,
-                onReview = { navController.navigate(Route.DiagnosticsReport(prompt.reportId).route) },
-                onSend = { diagnosticsViewModel.upload(prompt.reportId) },
-                onAlwaysSend = {
-                    diagnosticsViewModel.setConsent(org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode.ALWAYS)
-                },
-                onDontSend = { diagnosticsViewModel.decline(prompt.reportId) },
+                onReview = { navController.navigate(Route.Diagnostics.route) },
+                onSend = { diagnosticsViewModel.uploadPrompt(prompt) },
+                onAlwaysSend = { diagnosticsViewModel.alwaysSendPrompt(prompt) },
+                onDontSend = { diagnosticsViewModel.declinePrompt(prompt) },
             )
         }
         // Menu-less routes (detail screens etc.) get the cast bar as a bottom

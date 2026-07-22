@@ -24,6 +24,8 @@ class DiagnosticsIdentityResolverTest {
         assertEquals("adult", context?.profileId)
         assertTrue(context?.profileEligible == true)
         assertEquals(7, context?.noticeVersion)
+        assertEquals("saved-server", context?.localServerId)
+        assertTrue(context?.credentialFingerprint?.matches(Regex("^[0-9a-f]{64}$")) == true)
         assertEquals(fixture.barrier.generation.value, context?.ownershipGeneration)
     }
 

@@ -7,13 +7,17 @@ import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.HttpRequestData
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
+import io.ktor.http.toHttpDate
+import io.ktor.util.date.GMTDate
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
+import org.siloserver.silo.model.diagnostics.DiagnosticsErrorCode
+import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResult
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.SiloAuthPlugin
 import org.siloserver.silo.network.SiloJson
@@ -63,7 +67,8 @@ class DiagnosticsApiTest {
             capturedProfileId = "captured-profile",
         )
 
-        assertIs<ApiResult.Success<*>>(result)
+        val upload = assertIs<DiagnosticsUploadResult.Success>(result)
+        assertEquals("ABC123", upload.response.shortId)
         assertEquals(HttpMethod.Post, fixture.request?.method)
         assertEquals("/api/v1/diagnostics/reports", fixture.request?.url?.encodedPath)
         assertTrue(fixture.request?.body?.contentType?.match(ContentType.MultiPart.FormData) == true)
@@ -112,12 +117,12 @@ class DiagnosticsApiTest {
             responseBody = """{"error":"unsupported_schema","message":"upgrade required"}""",
         )
 
-        val result = assertIs<ApiResult.Error>(
+        val result = assertIs<DiagnosticsUploadResult.Failure>(
             fixture.api.upload(byteArrayOf(1), byteArrayOf(2), capturedProfileId = null),
         )
 
-        assertEquals(400, result.code)
-        assertEquals("unsupported_schema", result.error)
+        assertEquals(400, result.httpStatus)
+        assertEquals(DiagnosticsErrorCode.UNSUPPORTED_SCHEMA, result.code)
         assertEquals("upgrade required", result.message)
     }
 
@@ -147,13 +152,44 @@ class DiagnosticsApiTest {
                 responseStatus = status,
                 responseBody = """{"error":"$errorCode","message":"message"}""",
             )
-            val result = assertIs<ApiResult.Error>(
+            val result = assertIs<DiagnosticsUploadResult.Failure>(
                 fixture.api.upload(byteArrayOf(1), byteArrayOf(2), capturedProfileId = null),
                 errorCode,
             )
-            assertEquals(status.value, result.code, errorCode)
-            assertEquals(errorCode, result.error, errorCode)
+            assertEquals(status.value, result.httpStatus, errorCode)
+            assertEquals(DiagnosticsErrorCode.fromWire(errorCode), result.code, errorCode)
         }
+    }
+
+    @Test
+    fun uploadPreservesRetryAfterForBindingScopedBackoff() = runTest {
+        val fixture = fixture(
+            responseStatus = HttpStatusCode.TooManyRequests,
+            responseBody = """{"error":"rate_limited","message":"slow down"}""",
+            retryAfterSeconds = 120,
+        )
+
+        val result = assertIs<DiagnosticsUploadResult.Failure>(
+            fixture.api.upload(byteArrayOf(1), byteArrayOf(2), capturedProfileId = null),
+        )
+
+        assertEquals(DiagnosticsErrorCode.RATE_LIMITED, result.code)
+        assertEquals(120, result.retryAfterSeconds)
+    }
+
+    @Test
+    fun uploadConvertsHttpDateRetryAfterToDelaySeconds() = runTest {
+        val fixture = fixture(
+            responseStatus = HttpStatusCode.ServiceUnavailable,
+            responseBody = """{"error":"busy","message":"try later"}""",
+            retryAfterHeader = GMTDate(NOW_MS + 120_000).toHttpDate(),
+        )
+
+        val result = assertIs<DiagnosticsUploadResult.Failure>(
+            fixture.api.upload(byteArrayOf(1), byteArrayOf(2), capturedProfileId = null),
+        )
+
+        assertEquals(120, result.retryAfterSeconds)
     }
 
     @Test
@@ -169,15 +205,21 @@ class DiagnosticsApiTest {
 
     private suspend fun fixture(
         responseStatus: HttpStatusCode = HttpStatusCode.OK,
-        responseBody: String = """{
-            "status":"disabled",
-            "server_instance_id":"server-1",
-            "accepted_schema_versions":[1],
-            "max_bundle_bytes":10485760,
-            "max_manifest_bytes":65536,
-            "retention_days":30,
-            "consent_notice_version":1
-        }""".trimIndent(),
+        responseBody: String = if (responseStatus == HttpStatusCode.Created) {
+            """{"report_id":"report-1","short_id":"ABC123"}"""
+        } else {
+            """{
+                "status":"disabled",
+                "server_instance_id":"server-1",
+                "accepted_schema_versions":[1],
+                "max_bundle_bytes":10485760,
+                "max_manifest_bytes":65536,
+                "retention_days":30,
+                "consent_notice_version":1
+            }""".trimIndent()
+        },
+        retryAfterSeconds: Long? = null,
+        retryAfterHeader: String? = retryAfterSeconds?.toString(),
     ): Fixture {
         val tokenManager = TokenManagerImpl().apply {
             setServerUrl("https://silo.example")
@@ -194,14 +236,17 @@ class DiagnosticsApiTest {
                 respond(
                     content = responseBody,
                     status = responseStatus,
-                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    headers = Headers.build {
+                        append(HttpHeaders.ContentType, "application/json")
+                        retryAfterHeader?.let { append(HttpHeaders.RetryAfter, it) }
+                    },
                 )
             },
         ) {
             install(ContentNegotiation) { json(SiloJson) }
             install(SiloAuthPlugin) { this.tokenManager = tokenManager }
         }
-        val api = DefaultDiagnosticsApi(client)
+        val api = DefaultDiagnosticsApi(client, nowMs = { NOW_MS })
         return Fixture(
             api = api,
             requestProvider = { capturedRequest },
@@ -216,5 +261,9 @@ class DiagnosticsApiTest {
     ) {
         val request: HttpRequestData? get() = requestProvider()
         val requestBody: String get() = bodyProvider()
+    }
+
+    private companion object {
+        const val NOW_MS = 1_700_000_000_000L
     }
 }

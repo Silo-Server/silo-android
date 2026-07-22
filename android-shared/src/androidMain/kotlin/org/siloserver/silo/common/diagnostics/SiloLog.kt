@@ -195,15 +195,24 @@ internal class DiagnosticsLogRenderer(
 }
 
 object SiloLog {
+    /** Stable app-run id shared by log lines and diagnostics manifests. */
+    val captureSessionId: String = "run_" + UUID.randomUUID().toString().replace("-", "")
+
     private val sink = AtomicReference<DiagnosticsLogSink?>()
+    private val breadcrumbSink = AtomicReference<DiagnosticsLogSink?>()
     private val defaultRenderer = DiagnosticsLogRenderer(
         redactor = DiagnosticsRedactor(),
         strictAttributeRegistry = BuildConfig.DEBUG,
+        runId = captureSessionId,
     )
     private val renderer = AtomicReference(defaultRenderer)
 
     fun installSink(value: DiagnosticsLogSink?) {
         sink.set(value)
+    }
+
+    fun installBreadcrumbSink(value: DiagnosticsLogSink?) {
+        breadcrumbSink.set(value)
     }
 
     internal fun installRenderer(value: DiagnosticsLogRenderer) {
@@ -231,6 +240,14 @@ object SiloLog {
     fun e(category: DiagnosticsLogCategory, tag: String, message: String, attributes: Map<String, SiloLogAttribute> = emptyMap(), throwable: Throwable? = null) =
         write(DiagnosticsLogLevel.ERROR, category, tag, message, attributes, throwable)
 
+    /** Curated context retained across process death for ANR/native-crash assembly. */
+    fun breadcrumb(
+        category: DiagnosticsLogCategory,
+        tag: String,
+        message: String,
+        attributes: Map<String, SiloLogAttribute> = emptyMap(),
+    ) = write(DiagnosticsLogLevel.INFO, category, tag, message, attributes, null, breadcrumb = true)
+
     private fun write(
         level: DiagnosticsLogLevel,
         category: DiagnosticsLogCategory,
@@ -238,6 +255,7 @@ object SiloLog {
         message: String,
         attributes: Map<String, SiloLogAttribute>,
         throwable: Throwable?,
+        breadcrumb: Boolean = false,
     ) {
         when (level) {
             DiagnosticsLogLevel.VERBOSE -> if (throwable == null) Log.v(tag, message) else Log.v(tag, message, throwable)
@@ -246,7 +264,12 @@ object SiloLog {
             DiagnosticsLogLevel.WARNING -> if (throwable == null) Log.w(tag, message) else Log.w(tag, message, throwable)
             DiagnosticsLogLevel.ERROR -> if (throwable == null) Log.e(tag, message) else Log.e(tag, message, throwable)
         }
-        renderer.get().render(level, category, tag, message, attributes, throwable)
-            ?.let { rendered -> runCatching { sink.get()?.offer(rendered) } }
+        val target = sink.get()
+        val breadcrumbTarget = breadcrumbSink.get().takeIf { breadcrumb }
+        if (target == null && breadcrumbTarget == null) return
+        renderer.get().render(level, category, tag, message, attributes, throwable)?.let { rendered ->
+            target?.let { runCatching { it.offer(rendered) } }
+            breadcrumbTarget?.let { runCatching { it.offer(rendered) } }
+        }
     }
 }

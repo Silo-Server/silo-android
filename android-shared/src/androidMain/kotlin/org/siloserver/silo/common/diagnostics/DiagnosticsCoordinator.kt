@@ -31,6 +31,7 @@ interface DiagnosticsCaptureController {
     suspend fun cancel(active: ActiveDiagnosticsCapture)
     suspend fun captureNow(context: DiagnosticsCaptureContext): PendingReport?
     suspend fun setDebugLogging(context: DiagnosticsCaptureContext?, enabled: Boolean) = Unit
+    suspend fun setPersistentBreadcrumbs(context: DiagnosticsCaptureContext?, enabled: Boolean) = Unit
     suspend fun purge(binding: DiagnosticsBinding)
 }
 
@@ -60,13 +61,13 @@ interface DiagnosticsCoordinator {
 
     fun start()
     suspend fun refresh()
-    suspend fun setConsent(mode: DiagnosticsConsentMode)
+    suspend fun setConsent(mode: DiagnosticsConsentMode, expectedNoticeVersion: Int? = null)
     suspend fun setDebugLogging(enabled: Boolean)
     suspend fun captureNow(): String?
     suspend fun startTimedCapture()
     suspend fun stopTimedCapture(): String?
     suspend fun cancelTimedCapture()
-    suspend fun upload(reportId: String): DiagnosticsUploadDecision
+    suspend fun upload(reportId: String, expectedNoticeVersion: Int? = null): DiagnosticsUploadDecision
     suspend fun delete(reportId: String)
     suspend fun decline(reportId: String)
 }
@@ -119,8 +120,8 @@ class DefaultDiagnosticsCoordinator(
 
     override suspend fun refresh() = request { Command.Refresh(it) }
 
-    override suspend fun setConsent(mode: DiagnosticsConsentMode) =
-        request { Command.SetConsent(mode, it) }
+    override suspend fun setConsent(mode: DiagnosticsConsentMode, expectedNoticeVersion: Int?) =
+        request { Command.SetConsent(mode, expectedNoticeVersion, it) }
 
     override suspend fun setDebugLogging(enabled: Boolean) =
         request { Command.SetDebugLogging(enabled, it) }
@@ -133,8 +134,8 @@ class DefaultDiagnosticsCoordinator(
 
     override suspend fun cancelTimedCapture() = request { Command.CancelTimedCapture(it) }
 
-    override suspend fun upload(reportId: String): DiagnosticsUploadDecision =
-        requestResult { Command.Upload(reportId, it) }
+    override suspend fun upload(reportId: String, expectedNoticeVersion: Int?): DiagnosticsUploadDecision =
+        requestResult { Command.Upload(reportId, expectedNoticeVersion, it) }
 
     override suspend fun delete(reportId: String) = request { Command.Delete(reportId, it) }
 
@@ -148,13 +149,17 @@ class DefaultDiagnosticsCoordinator(
                 refreshOwnedState()
             }
             is Command.Refresh -> completeOptional(command.completion) { refreshOwnedState() }
-            is Command.SetConsent -> complete(command.completion) { setConsentOwned(command.mode) }
+            is Command.SetConsent -> complete(command.completion) {
+                setConsentOwned(command.mode, command.expectedNoticeVersion)
+            }
             is Command.SetDebugLogging -> complete(command.completion) { setDebugLoggingOwned(command.enabled) }
             is Command.CaptureNow -> completeResult(command.completion) { captureNowOwned() }
             is Command.StartTimedCapture -> complete(command.completion) { startTimedCaptureOwned() }
             is Command.StopTimedCapture -> completeResult(command.completion) { stopTimedCaptureOwned() }
             is Command.CancelTimedCapture -> complete(command.completion) { cancelTimedCaptureOwned(false) }
-            is Command.Upload -> completeResult(command.completion) { uploadOwned(command.reportId) }
+            is Command.Upload -> completeResult(command.completion) {
+                uploadOwned(command.reportId, command.expectedNoticeVersion)
+            }
             is Command.Delete -> complete(command.completion) { deleteOwned(command.reportId) }
             is Command.Decline -> complete(command.completion) { declineOwned(command.reportId) }
         }
@@ -174,21 +179,34 @@ class DefaultDiagnosticsCoordinator(
 
         if (resolved == null) {
             runCatching { capture.setDebugLogging(null, false) }
+            runCatching { capture.setPersistentBreadcrumbs(null, false) }
             runtimePublisher.closeGate()
+            val cached = trustedCachedContext()
+            val cachedReports = cached?.let { context ->
+                runCatching { reports.list(context.binding) }.getOrDefault(emptyList())
+            }.orEmpty()
+            val cachedConsent = cached?.let { context ->
+                runCatching { settings.consent(context.binding, context.noticeVersion).mode }
+                    .getOrDefault(DiagnosticsConsentMode.ASK)
+            } ?: DiagnosticsConsentMode.ASK
             mutableState.value = mutableState.value.copy(
                 availability = DiagnosticsAvailabilityUi.OFFLINE,
-                profileEligible = false,
-                consent = DiagnosticsConsentMode.ASK,
-                debugLogging = false,
-                pending = emptyList(),
+                profileEligible = cached?.profileEligible == true,
+                consent = cachedConsent,
+                debugLogging = runCatching { settings.debugLogging() }.getOrDefault(false),
+                pending = cachedReports.map { report -> report.summary(cached?.retentionDays ?: 7) },
                 prompt = null,
-                sentHistory = emptyList(),
+                sentHistory = cached?.let { context ->
+                    runCatching { settings.sentHistory(context.binding) }.getOrDefault(emptyList())
+                }.orEmpty(),
             )
             return
         }
         if (!resolved.profileEligible) {
             runCatching { capture.setDebugLogging(null, false) }
+            runCatching { capture.setPersistentBreadcrumbs(null, false) }
             runtimePublisher.closeGate()
+            runCatching { settings.clearCachedContext(resolved.binding) }
             mutableState.value = mutableState.value.copy(
                 availability = DiagnosticsAvailabilityUi.INELIGIBLE,
                 profileEligible = false,
@@ -201,6 +219,7 @@ class DefaultDiagnosticsCoordinator(
             return
         }
 
+        runCatching { settings.cacheContext(resolved) }
         val consent = runCatching { settings.consent(resolved.binding, resolved.noticeVersion) }
             .getOrElse { DiagnosticsConsentRecord(DiagnosticsConsentMode.ASK, resolved.noticeVersion) }
         if (consent.mode == DiagnosticsConsentMode.NEVER) {
@@ -209,11 +228,10 @@ class DefaultDiagnosticsCoordinator(
             runCatching { runtimePublisher.publish(resolved) }
             runCatching { incidentCollector.collect(resolved, consent.mode) }
         }
-        val debugLogging = runCatching { settings.debugLogging(resolved.binding) }.getOrDefault(false)
+        val debugLogging = runCatching { settings.debugLogging() }.getOrDefault(false)
         val pendingReports = runCatching { reports.list(resolved.binding) }.getOrDefault(emptyList())
-            .filter { report -> report.binding.profileId == resolved.profileId }
         val summaries = pendingReports.map { report -> report.summary(resolved.retentionDays) }
-        val promptReport = pendingReports.firstOrNull { report ->
+        val promptReports = pendingReports.filter { report ->
             consent.mode == DiagnosticsConsentMode.ASK &&
                 !runCatching {
                     reports.isThrottled(promptThrottleKey(report), PROMPT_THROTTLE_MS)
@@ -226,14 +244,23 @@ class DefaultDiagnosticsCoordinator(
                 debugLogging && consent.mode != DiagnosticsConsentMode.NEVER && activeCapture == null,
             )
         }
+        runCatching {
+            capture.setPersistentBreadcrumbs(resolved, consent.mode != DiagnosticsConsentMode.NEVER)
+        }
         mutableState.value = mutableState.value.copy(
             availability = resolved.status.toUiAvailability(),
             profileEligible = true,
             consent = consent.mode,
             debugLogging = debugLogging,
             pending = summaries,
-            prompt = promptReport?.let {
-                DiagnosticsPrompt(it.id, it.manifest.report.type, it.manifest.report.capturedAt)
+            prompt = promptReports.firstOrNull()?.let { primary ->
+                DiagnosticsPrompt(
+                    reportId = primary.id,
+                    reportType = primary.manifest.report.type,
+                    capturedAt = primary.manifest.report.capturedAt,
+                    reportIds = promptReports.map(PendingReport::id),
+                    noticeVersion = resolved.noticeVersion,
+                )
             },
             sentHistory = history,
         )
@@ -242,8 +269,13 @@ class DefaultDiagnosticsCoordinator(
         }
     }
 
-    private suspend fun setConsentOwned(mode: DiagnosticsConsentMode) {
+    private suspend fun setConsentOwned(
+        mode: DiagnosticsConsentMode,
+        expectedNoticeVersion: Int?,
+    ) {
+        if (expectedNoticeVersion != null) refreshOwnedState()
         val context = currentEligibleContext() ?: return
+        if (expectedNoticeVersion != null && context.noticeVersion != expectedNoticeVersion) return
         if (mode == DiagnosticsConsentMode.NEVER) {
             capture.closeGate()
             val active = activeCapture
@@ -258,14 +290,13 @@ class DefaultDiagnosticsCoordinator(
     private suspend fun setDebugLoggingOwned(enabled: Boolean) {
         val context = currentEligibleContext() ?: return
         val allowed = enabled && mutableState.value.consent != DiagnosticsConsentMode.NEVER
-        settings.setDebugLogging(context.binding, allowed)
+        settings.setDebugLogging(allowed)
         if (activeCapture == null) capture.setDebugLogging(context, allowed)
         mutableState.value = mutableState.value.copy(debugLogging = allowed)
     }
 
     private suspend fun captureNowOwned(): String? {
         val context = currentEligibleContext() ?: return null
-        if (mutableState.value.consent == DiagnosticsConsentMode.NEVER) return null
         val report = runCatching { capture.captureNow(context) }.getOrNull() ?: return null
         refreshOwnedState()
         return report.id
@@ -273,7 +304,6 @@ class DefaultDiagnosticsCoordinator(
 
     private suspend fun startTimedCaptureOwned() {
         val context = currentEligibleContext() ?: return
-        if (mutableState.value.consent == DiagnosticsConsentMode.NEVER) return
         activeCapture?.let { previous -> runCatching { capture.cancel(previous) } }
         val active = runCatching { capture.start(context) }.getOrNull() ?: return
         activeCapture = active
@@ -324,44 +354,76 @@ class DefaultDiagnosticsCoordinator(
 
     private suspend fun identityWillChangeOwned(kind: IdentityTransitionKind) {
         val previousBinding = currentContext?.binding
+            ?: runCatching { settings.cachedContext()?.binding }.getOrNull()
         invalidateActiveCapture()
+        runCatching { settings.clearCachedContext(previousBinding) }
         if (
             previousBinding != null &&
             kind in setOf(IdentityTransitionKind.SIGN_OUT, IdentityTransitionKind.SERVER_REMOVE)
         ) {
             runCatching { settings.purgeBinding(previousBinding) }
+        } else if (kind in setOf(IdentityTransitionKind.SIGN_OUT, IdentityTransitionKind.SERVER_REMOVE)) {
+            runCatching { settings.clearCachedContext() }
         }
     }
 
-    private suspend fun uploadOwned(reportId: String): DiagnosticsUploadDecision {
+    private suspend fun uploadOwned(
+        reportId: String,
+        expectedNoticeVersion: Int?,
+    ): DiagnosticsUploadDecision {
         val report = reports.load(reportId) ?: return DiagnosticsUploadDecision.KeptInvalid
         val context = currentEligibleContext() ?: return DiagnosticsUploadDecision.KeptUnavailable
-        if (mutableState.value.consent == DiagnosticsConsentMode.NEVER) {
+        if (expectedNoticeVersion != null && context.noticeVersion != expectedNoticeVersion) {
+            return DiagnosticsUploadDecision.KeptConsentReviewRequired
+        }
+        if (
+            mutableState.value.consent == DiagnosticsConsentMode.NEVER &&
+            report.manifest.report.type != org.siloserver.silo.model.diagnostics.DiagnosticsReportType.MANUAL
+        ) {
             return DiagnosticsUploadDecision.KeptUnavailable
         }
         if (!report.binding.matches(context)) return DiagnosticsUploadDecision.KeptIdentityChanged
-        val decision = uploader.upload(reportId)
+        val decision = if (expectedNoticeVersion == null) {
+            uploader.upload(reportId)
+        } else {
+            uploader.upload(reportId, expectedNoticeVersion)
+        }
         refreshOwnedState()
         return decision
     }
 
     private suspend fun deleteOwned(reportId: String) {
         val report = reports.load(reportId) ?: return
-        val context = currentEligibleContext() ?: return
-        if (report.binding.matches(context)) reports.delete(reportId)
+        val liveBinding = currentEligibleContext()?.binding
+        val cachedBinding = if (liveBinding == null) {
+            trustedCachedContext()?.binding
+        } else {
+            null
+        }
+        if (report.binding.binding == (liveBinding ?: cachedBinding)) reports.delete(reportId)
         refreshOwnedState()
     }
 
     private suspend fun declineOwned(reportId: String) {
         val report = reports.load(reportId) ?: return
-        val context = currentEligibleContext() ?: return
-        if (!report.binding.matches(context)) return
+        val liveBinding = currentEligibleContext()?.binding
+        val cachedBinding = if (liveBinding == null) {
+            trustedCachedContext()?.binding
+        } else {
+            null
+        }
+        if (report.binding.binding != (liveBinding ?: cachedBinding)) return
         reports.markThrottled(promptThrottleKey(report), nowMs())
         mutableState.value = mutableState.value.copy(prompt = null)
     }
 
     private fun currentEligibleContext(): DiagnosticsCaptureContext? =
         currentContext?.takeIf(DiagnosticsCaptureContext::profileEligible)
+
+    private suspend fun trustedCachedContext(): CachedDiagnosticsContext? =
+        runCatching { settings.cachedContext() }.getOrNull()?.takeIf { cached ->
+            runCatching { identity.matchesCachedIdentity(cached) }.getOrDefault(false)
+        }
 
     private suspend fun request(command: (CompletableDeferred<Unit>) -> Command) {
         requestResult(command)
@@ -386,7 +448,11 @@ class DefaultDiagnosticsCoordinator(
         data class IdentityWillChange(val kind: IdentityTransitionKind) : Command
         data object IdentityDidChange : Command
         data class Refresh(val completion: CompletableDeferred<Unit>? = null) : Command
-        data class SetConsent(val mode: DiagnosticsConsentMode, val completion: CompletableDeferred<Unit>) : Command
+        data class SetConsent(
+            val mode: DiagnosticsConsentMode,
+            val expectedNoticeVersion: Int?,
+            val completion: CompletableDeferred<Unit>,
+        ) : Command
         data class SetDebugLogging(val enabled: Boolean, val completion: CompletableDeferred<Unit>) : Command
         data class CaptureNow(val completion: CompletableDeferred<String?>) : Command
         data class StartTimedCapture(val completion: CompletableDeferred<Unit>) : Command
@@ -394,6 +460,7 @@ class DefaultDiagnosticsCoordinator(
         data class CancelTimedCapture(val completion: CompletableDeferred<Unit>) : Command
         data class Upload(
             val reportId: String,
+            val expectedNoticeVersion: Int?,
             val completion: CompletableDeferred<DiagnosticsUploadDecision>,
         ) : Command
         data class Delete(val reportId: String, val completion: CompletableDeferred<Unit>) : Command

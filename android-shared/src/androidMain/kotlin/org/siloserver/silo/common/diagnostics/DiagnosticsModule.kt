@@ -37,6 +37,9 @@ val diagnosticsModule = module {
     }
     single<DiagnosticsPerformanceCapture> { get<AndroidDiagnosticsPerformanceRecorder>() }
     single { DiagnosticsFileLogger(androidContext().noBackupFilesDir) }
+    single {
+        BreadcrumbJournal(androidContext().noBackupFilesDir).also(SiloLog::installBreadcrumbSink)
+    }
 
     single<DiagnosticsSavedServerProvider> { RegistryDiagnosticsSavedServerProvider(get()) }
     single<DiagnosticsStatusProvider> { ApiDiagnosticsStatusProvider(get()) }
@@ -73,6 +76,7 @@ val diagnosticsModule = module {
             redactionTokens = get(),
             sentRecorder = get(),
             consentProvider = get(),
+            staleConsentHandler = get(),
         )
     }
 
@@ -88,6 +92,7 @@ val diagnosticsModule = module {
         FileDiagnosticsCaptureController(
             logBuffer = get(),
             fileLogger = get(),
+            breadcrumbJournal = get(),
             reports = get(),
             deviceSnapshots = get(),
             deviceSnapshotCache = get(),
@@ -98,6 +103,7 @@ val diagnosticsModule = module {
     }
     single<DiagnosticsRuntimePublisher> {
         DefaultDiagnosticsRuntimePublisher(
+            captureSessionIdFactory = { SiloLog.captureSessionId },
             ledger = get(),
             logBuffer = get(),
             deviceSnapshots = get(),
@@ -135,6 +141,7 @@ val diagnosticsModule = module {
                     }
                 },
                 redactionTokens = { tokens },
+                breadcrumbs = get<BreadcrumbJournal>(),
             ).collect()
         }
     }
@@ -144,10 +151,15 @@ val diagnosticsModule = module {
         val ledger = get<DiagnosticsRunLedger>()
         val markers = get<FileJvmCrashMarkerSource>()
         DiagnosticsBindingPurger { binding ->
-            runCatching { capture.purge(binding) }
-            runCatching { reports.purge(binding) }
-            runCatching { ledger.purge(binding) }
-            runCatching { markers.purge(binding) }
+            var failure: Throwable? = null
+            suspend fun attempt(block: suspend () -> Unit) {
+                runCatching { block() }.onFailure { error -> if (failure == null) failure = error }
+            }
+            attempt { capture.purge(binding) }
+            attempt { reports.purge(binding) }
+            attempt { ledger.purge(binding) }
+            attempt { markers.purge(binding) }
+            failure?.let { throw it }
         }
     }
     single { DiagnosticsSettingsStore(get(DIAGNOSTICS_DATA_STORE), get()) }
@@ -160,6 +172,9 @@ val diagnosticsModule = module {
     single<DiagnosticsSentRecorder> {
         val settings = get<DiagnosticsSettingsStore>()
         DiagnosticsSentRecorder(settings::recordSent)
+    }
+    single<DiagnosticsStaleConsentHandler> {
+        SettingsDiagnosticsStaleConsentHandler(get())
     }
     single<DiagnosticsUploadScheduler> {
         val context = androidContext()

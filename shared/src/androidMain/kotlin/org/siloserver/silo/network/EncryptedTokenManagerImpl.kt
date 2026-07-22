@@ -37,6 +37,7 @@ class EncryptedTokenManagerImpl(
 ) : TokenManager {
 
     private val mutex = Mutex()
+    private val tokenWriteMutex = Mutex()
     private val scope = CoroutineScope(Dispatchers.Default)
 
     private var activeServerId: String? = registry.activeServerId.value
@@ -106,42 +107,61 @@ class EncryptedTokenManagerImpl(
     }
 
     override suspend fun saveTokens(accessToken: String, refreshToken: String, expiresIn: Long) {
-        identityTransitions.changing(IdentityTransitionKind.SIGN_IN) {
-            mutex.withLock {
-                temporaryScope?.let { scope ->
-                    temporaryScope = scope.copy(
-                        accessToken = accessToken,
-                        refreshToken = refreshToken,
-                        expiresAtEpochMs = System.currentTimeMillis() + expiresIn * 1000L,
-                    )
-                    return@withLock
+        tokenWriteMutex.withLock {
+            val isInitialSignIn = mutex.withLock {
+                ensureCacheMatchesRegistryLocked()
+                temporaryScope == null && this.accessToken == null && this.refreshToken == null
+            }
+            if (isInitialSignIn) {
+                identityTransitions.changing(IdentityTransitionKind.SIGN_IN) {
+                    saveActiveTokensLocked(accessToken, refreshToken, expiresIn)
                 }
-                val serverId = activeServerId ?: return@withLock
-                this.accessToken = accessToken
-                this.refreshToken = refreshToken
-                val expiryEpochMs = System.currentTimeMillis() + expiresIn * 1000L
-                this.tokenExpiryEpochMs = expiryEpochMs
-                prefs.edit()
-                    .putString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), accessToken)
-                    .putString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), refreshToken)
-                    .putLong(serverScopedKey(serverId, KEY_TOKEN_EXPIRY), expiryEpochMs)
-                    .apply()
+            } else {
+                saveActiveTokensLocked(accessToken, refreshToken, expiresIn)
             }
         }
     }
 
+    private suspend fun saveActiveTokensLocked(accessToken: String, refreshToken: String, expiresIn: Long) {
+        mutex.withLock {
+            ensureCacheMatchesRegistryLocked()
+            temporaryScope?.let { scope ->
+                temporaryScope = scope.copy(
+                    accessToken = accessToken,
+                    refreshToken = refreshToken,
+                    expiresAtEpochMs = System.currentTimeMillis() + expiresIn * 1000L,
+                )
+                return@withLock
+            }
+            val serverId = activeServerId ?: return@withLock
+            this.accessToken = accessToken
+            this.refreshToken = refreshToken
+            val expiryEpochMs = System.currentTimeMillis() + expiresIn * 1000L
+            this.tokenExpiryEpochMs = expiryEpochMs
+            prefs.edit()
+                .putString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), accessToken)
+                .putString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), refreshToken)
+                .putLong(serverScopedKey(serverId, KEY_TOKEN_EXPIRY), expiryEpochMs)
+                .apply()
+        }
+    }
+
     override suspend fun clearTokens() {
-        identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
-            mutex.withLock { clearCurrentScopeLocked() }
+        tokenWriteMutex.withLock {
+            identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutex.withLock { clearCurrentScopeLocked() }
+            }
         }
     }
 
     override suspend fun invalidateSession() {
-        identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
-            mutex.withLock {
-                val wasTemporary = temporaryScope != null
-                clearCurrentScopeLocked()
-                if (!wasTemporary) _sessionExpired.tryEmit(Unit)
+        tokenWriteMutex.withLock {
+            identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutex.withLock {
+                    val wasTemporary = temporaryScope != null
+                    clearCurrentScopeLocked()
+                    if (!wasTemporary) _sessionExpired.tryEmit(Unit)
+                }
             }
         }
     }
@@ -251,8 +271,10 @@ class EncryptedTokenManagerImpl(
     }
 
     override suspend fun signOutCurrentServer() {
-        identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
-            mutex.withLock { clearCurrentScopeLocked() }
+        tokenWriteMutex.withLock {
+            identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutex.withLock { clearCurrentScopeLocked() }
+            }
         }
     }
 

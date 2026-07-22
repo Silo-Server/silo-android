@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
 
 @Serializable
 data class DiagnosticsBinding(
@@ -28,6 +29,21 @@ enum class DiagnosticsConsentMode { ASK, ALWAYS, NEVER }
 data class DiagnosticsConsentRecord(
     val mode: DiagnosticsConsentMode,
     val noticeVersion: Int,
+)
+
+@Serializable
+data class CachedDiagnosticsContext(
+    val binding: DiagnosticsBinding,
+    val localServerId: String? = null,
+    val credentialFingerprint: String? = null,
+    val profileId: String?,
+    val profileEligible: Boolean,
+    val noticeVersion: Int,
+    val status: DiagnosticsAvailabilityStatus,
+    val acceptedSchemaVersions: Set<Int>,
+    val maxBundleBytes: Long,
+    val maxManifestBytes: Long,
+    val retentionDays: Int,
 )
 
 @Serializable
@@ -55,20 +71,21 @@ class DiagnosticsSettingsStore(
     ): DiagnosticsConsentRecord {
         require(currentNoticeVersion > 0) { "currentNoticeVersion must be positive" }
         val keys = keys(binding)
-        val preferences = dataStore.data.first()
-        val storedMode = preferences[keys.consentMode]
-            ?.let { raw -> DiagnosticsConsentMode.entries.firstOrNull { it.name == raw } }
-            ?: DiagnosticsConsentMode.ASK
-        val storedNotice = preferences[keys.noticeVersion] ?: currentNoticeVersion
-        if (storedMode == DiagnosticsConsentMode.ALWAYS && storedNotice != currentNoticeVersion) {
-            dataStore.edit { mutable ->
-                mutable[keys.consentMode] = DiagnosticsConsentMode.ASK.name
-                mutable[keys.noticeVersion] = currentNoticeVersion
-                mutable[keys.debugLogging] = false
+        var result: DiagnosticsConsentRecord? = null
+        dataStore.edit { preferences ->
+            val storedMode = preferences[keys.consentMode]
+                ?.let { raw -> DiagnosticsConsentMode.entries.firstOrNull { it.name == raw } }
+                ?: DiagnosticsConsentMode.ASK
+            val storedNotice = preferences[keys.noticeVersion] ?: currentNoticeVersion
+            result = if (storedMode == DiagnosticsConsentMode.ALWAYS && storedNotice != currentNoticeVersion) {
+                preferences[keys.consentMode] = DiagnosticsConsentMode.ASK.name
+                preferences[keys.noticeVersion] = currentNoticeVersion
+                DiagnosticsConsentRecord(DiagnosticsConsentMode.ASK, currentNoticeVersion)
+            } else {
+                DiagnosticsConsentRecord(storedMode, storedNotice)
             }
-            return DiagnosticsConsentRecord(DiagnosticsConsentMode.ASK, currentNoticeVersion)
         }
-        return DiagnosticsConsentRecord(storedMode, storedNotice)
+        return checkNotNull(result)
     }
 
     suspend fun setConsent(
@@ -82,19 +99,66 @@ class DiagnosticsSettingsStore(
             preferences[keys.consentMode] = mode.name
             preferences[keys.noticeVersion] = noticeVersion
             if (mode == DiagnosticsConsentMode.NEVER) {
-                preferences[keys.debugLogging] = false
+                preferences[DEBUG_LOGGING_KEY] = false
                 preferences.remove(keys.sentHistory)
             }
         }
         if (mode == DiagnosticsConsentMode.NEVER) bindingPurger.purge(binding)
     }
 
-    suspend fun debugLogging(binding: DiagnosticsBinding): Boolean =
-        dataStore.data.first()[keys(binding).debugLogging] ?: false
-
-    suspend fun setDebugLogging(binding: DiagnosticsBinding, enabled: Boolean) {
+    suspend fun demoteAlwaysToAsk(binding: DiagnosticsBinding, noticeVersion: Int): Boolean {
+        require(noticeVersion > 0) { "noticeVersion must be positive" }
         val keys = keys(binding)
-        dataStore.edit { preferences -> preferences[keys.debugLogging] = enabled }
+        var demoted = false
+        dataStore.edit { preferences ->
+            if (
+                preferences[keys.consentMode] == DiagnosticsConsentMode.ALWAYS.name &&
+                preferences[keys.noticeVersion] == noticeVersion
+            ) {
+                preferences[keys.consentMode] = DiagnosticsConsentMode.ASK.name
+                preferences[keys.noticeVersion] = noticeVersion
+                demoted = true
+            }
+        }
+        return demoted
+    }
+
+    suspend fun debugLogging(): Boolean =
+        dataStore.data.first()[DEBUG_LOGGING_KEY] ?: false
+
+    suspend fun setDebugLogging(enabled: Boolean) {
+        dataStore.edit { preferences -> preferences[DEBUG_LOGGING_KEY] = enabled }
+    }
+
+    suspend fun cacheContext(context: DiagnosticsCaptureContext) {
+        val cached = CachedDiagnosticsContext(
+            binding = context.binding,
+            localServerId = context.localServerId,
+            credentialFingerprint = context.credentialFingerprint,
+            profileId = context.profileId,
+            profileEligible = context.profileEligible,
+            noticeVersion = context.noticeVersion,
+            status = context.status,
+            acceptedSchemaVersions = context.acceptedSchemaVersions,
+            maxBundleBytes = context.maxBundleBytes,
+            maxManifestBytes = context.maxManifestBytes,
+            retentionDays = context.retentionDays,
+        )
+        dataStore.edit { preferences -> preferences[CACHED_CONTEXT_KEY] = JSON.encodeToString(cached) }
+    }
+
+    suspend fun cachedContext(): CachedDiagnosticsContext? =
+        dataStore.data.first()[CACHED_CONTEXT_KEY]?.let { raw ->
+            runCatching { JSON.decodeFromString<CachedDiagnosticsContext>(raw) }.getOrNull()
+        }
+
+    suspend fun clearCachedContext(binding: DiagnosticsBinding? = null) {
+        dataStore.edit { preferences ->
+            val cached = preferences[CACHED_CONTEXT_KEY]?.let { raw ->
+                runCatching { JSON.decodeFromString<CachedDiagnosticsContext>(raw) }.getOrNull()
+            }
+            if (binding == null || cached?.binding == binding) preferences.remove(CACHED_CONTEXT_KEY)
+        }
     }
 
     suspend fun recordSent(binding: DiagnosticsBinding, shortId: String, sentAtEpochMs: Long) {
@@ -121,6 +185,10 @@ class DiagnosticsSettingsStore(
             preferences.asMap().keys
                 .filter { it.name.startsWith(prefix) }
                 .forEach { key -> preferences.removeUntyped(key) }
+            val cached = preferences[CACHED_CONTEXT_KEY]?.let { raw ->
+                runCatching { JSON.decodeFromString<CachedDiagnosticsContext>(raw) }.getOrNull()
+            }
+            if (cached?.binding == binding) preferences.remove(CACHED_CONTEXT_KEY)
         }
         bindingPurger.purge(binding)
     }
@@ -134,7 +202,6 @@ class DiagnosticsSettingsStore(
         return BindingKeys(
             consentMode = stringPreferencesKey("${prefix}consent_mode"),
             noticeVersion = intPreferencesKey("${prefix}notice_version"),
-            debugLogging = booleanPreferencesKey("${prefix}debug_logging"),
             sentHistory = stringPreferencesKey("${prefix}sent_history"),
         )
     }
@@ -152,7 +219,6 @@ class DiagnosticsSettingsStore(
     private data class BindingKeys(
         val consentMode: Preferences.Key<String>,
         val noticeVersion: Preferences.Key<Int>,
-        val debugLogging: Preferences.Key<Boolean>,
         val sentHistory: Preferences.Key<String>,
     )
 
@@ -163,6 +229,8 @@ class DiagnosticsSettingsStore(
 
     private companion object {
         const val DEFAULT_HISTORY_LIMIT = 20
+        val DEBUG_LOGGING_KEY = booleanPreferencesKey("diagnostics.device.debug_logging")
+        val CACHED_CONTEXT_KEY = stringPreferencesKey("diagnostics.last_context")
         val JSON = Json { ignoreUnknownKeys = true }
     }
 }

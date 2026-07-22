@@ -79,20 +79,38 @@ class ExitInfoCollectorTest {
     }
 
     @Test
+    fun anrIncludesPersistedBreadcrumbsFromTheExitedRun() = runTest {
+        val breadcrumb = "{\"run\":\"capture-1\",\"msg\":\"foreground\"}"
+        val fixture = fixture(
+            records = listOf(exit(reason = AndroidExitReason.ANR, trace = "main blocked".encodeToByteArray())),
+            breadcrumbs = DiagnosticsBreadcrumbSource { captureSessionId, _ ->
+                if (captureSessionId == "capture-1") listOf(breadcrumb) else emptyList()
+            },
+        )
+
+        val report = fixture.collector.collect().single()
+
+        assertEquals("$breadcrumb\n", report.directory.resolve("breadcrumbs.jsonl").readText())
+        assertTrue("breadcrumbs.jsonl" in report.manifest.archive.entries)
+    }
+
+    @Test
     fun matchingJvmMarkerWinsOverDuplicateExitRecord() = runTest {
         val marker = JvmCrashMarkerRecord(
             occurredAtEpochMs = EXIT_AT,
-            threadName = "main",
+            threadName = "main-secret-token",
             threadId = 1,
-            throwableType = "java.lang.IllegalStateException",
-            stack = "java.lang.IllegalStateException: boom",
+            throwableType = "java.lang.IllegalStateException-secret-token",
+            stack = "java.lang.IllegalStateException: secret-token",
             binding = PendingReportBinding("server-1", "user-1", "profile-1", 7),
             captureSessionId = "capture-1",
             runToken = RUN_TOKEN,
             foreground = true,
             playbackSessionIds = listOf("playback-1"),
             deviceSnapshotJson = DEVICE_JSON,
-            logLines = listOf("{\"msg\":\"before crash\"}"),
+            logLines = listOf(
+                "{\"ts\":\"2026-07-22T00:00:00Z\",\"run\":\"capture-1\",\"lvl\":\"I\",\"cat\":\"crash\",\"tag\":\"Test\",\"msg\":\"Authorization: Bearer secret-token\"}",
+            ),
             logDroppedCount = 0,
             logTornCount = 0,
             logGeneration = 7,
@@ -108,7 +126,12 @@ class ExitInfoCollectorTest {
 
         assertEquals(1, reports.size)
         assertEquals(DiagnosticsCrashSource.UEH, reports.single().manifest.crash?.source)
-        assertEquals("java.lang.IllegalStateException", reports.single().manifest.crash?.summary)
+        assertFalse(reports.single().manifest.crash?.summary.orEmpty().contains("secret-token"))
+        assertFalse(reports.single().manifest.crash?.thread.orEmpty().contains("secret-token"))
+        assertFalse(reports.single().directory.resolve("crash/stack.txt").readText().contains("secret-token"))
+        assertTrue(reports.single().directory.resolve("crash/stack.txt").readText().contains("[REDACTED]"))
+        assertFalse(reports.single().directory.resolve("logs.jsonl").readText().contains("secret-token"))
+        assertTrue(reports.single().directory.resolve("logs.jsonl").readText().contains("[REDACTED]"))
         assertEquals(listOf(marker), markers.deleted)
         assertTrue(fixture.collector.collect().isEmpty())
         assertEquals(1, fixture.store.list(BINDING).size)
@@ -117,6 +140,7 @@ class ExitInfoCollectorTest {
     private suspend fun fixture(
         records: List<AndroidExitInfoRecord>,
         markers: FakeMarkerSource = FakeMarkerSource(emptyList()),
+        breadcrumbs: DiagnosticsBreadcrumbSource = DiagnosticsBreadcrumbSource.None,
     ): Fixture {
         val root = temporaryFolder.newFolder()
         val ledger = DiagnosticsRunLedger(root, tokenFactory = { RUN_TOKEN })
@@ -148,6 +172,7 @@ class ExitInfoCollectorTest {
             deviceSnapshotBytes = { DEVICE_JSON.encodeToByteArray() },
             noticeVersion = { 2 },
             redactionTokens = { listOf("secret-token") },
+            breadcrumbs = breadcrumbs,
         )
         return Fixture(collector, store)
     }

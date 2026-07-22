@@ -7,7 +7,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.encodeToString
@@ -24,6 +23,7 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
 class FileDiagnosticsCaptureController(
     private val logBuffer: DiagnosticsLogBuffer,
     private val fileLogger: DiagnosticsFileLogger,
+    private val breadcrumbJournal: BreadcrumbJournal? = null,
     private val reports: PendingReportStore,
     private val deviceSnapshots: DeviceSnapshotCollector,
     private val deviceSnapshotCache: DeviceSnapshotCache,
@@ -31,12 +31,13 @@ class FileDiagnosticsCaptureController(
     private val playbackSessions: DiagnosticsPlaybackSessionTracker = DiagnosticsPlaybackSessionTracker(),
     private val performanceCapture: DiagnosticsPerformanceCapture = DiagnosticsPerformanceCapture.None,
     private val nowMs: () -> Long = System::currentTimeMillis,
-    private val sessionIdFactory: () -> String = { UUID.randomUUID().toString() },
+    private val sessionIdFactory: () -> String = { SiloLog.captureSessionId },
 ) : DiagnosticsCaptureController {
     private val generation = AtomicLong(0)
     private val active = AtomicReference<OwnedCapture?>(null)
 
     override fun closeGate() {
+        breadcrumbJournal?.closeGate()
         setDetailedCaptureEnabled(false)
         SiloLog.installSink(logBuffer)
         logBuffer.rotateGeneration()
@@ -116,6 +117,14 @@ class FileDiagnosticsCaptureController(
         setDetailedCaptureEnabled(true)
     }
 
+    override suspend fun setPersistentBreadcrumbs(context: DiagnosticsCaptureContext?, enabled: Boolean) {
+        if (enabled && context?.profileEligible == true) {
+            breadcrumbJournal?.setEnabled(context.identityKey)
+        } else {
+            breadcrumbJournal?.closeGate()
+        }
+    }
+
     private suspend fun cancelOwned(owned: OwnedCapture) {
         if (!active.compareAndSet(owned, null)) return
         setDetailedCaptureEnabled(false)
@@ -146,10 +155,16 @@ class FileDiagnosticsCaptureController(
     }
 
     override suspend fun purge(binding: DiagnosticsBinding) {
+        var failure: Throwable? = null
+        suspend fun attempt(block: suspend () -> Unit) {
+            runCatching { block() }.onFailure { error -> if (failure == null) failure = error }
+        }
         val owned = active.get()
-        if (owned != null && owned.capture.identityKey.binding == binding) cancelOwned(owned)
-        fileLogger.purgeStoredEvidence()
-        logBuffer.clear()
+        if (owned != null && owned.capture.identityKey.binding == binding) attempt { cancelOwned(owned) }
+        attempt { fileLogger.purgeStoredEvidence() }
+        attempt { breadcrumbJournal?.purge() }
+        attempt { logBuffer.clear() }
+        failure?.let { throw it }
     }
 
     private fun saveManual(

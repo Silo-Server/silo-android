@@ -36,7 +36,15 @@ fun DiagnosticsPromptDialog(
     AlertDialog(
         onDismissRequest = onDontSend,
         title = { Text("Silo encountered a problem") },
-        text = { Text("A ${prompt.reportType.displayName().lowercase()} report is ready. Review it before deciding whether to send it.") },
+        text = {
+            Text(
+                if (prompt.reportCount == 1) {
+                    "A ${prompt.reportType.displayName().lowercase()} report is ready. Review it before deciding whether to send it."
+                } else {
+                    "${prompt.reportCount} diagnostics reports are ready. Review them before deciding whether to send them."
+                },
+            )
+        },
         confirmButton = {
             TextButton(onClick = onReview) { Text("Review") }
         },

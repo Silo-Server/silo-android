@@ -74,6 +74,8 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             tokenManager.getAccessTokenForScope(pinned)?.let { token ->
                 request.header(HttpHeaders.Authorization, "Bearer $token")
             }
+            request.headers.remove("X-Profile-Id")
+            request.headers.remove("X-Profile-Token")
             request.applyProfileHeaders(
                 diagnosticsScope = diagnosticsScope,
                 activeProfileId = pinned.profileId,

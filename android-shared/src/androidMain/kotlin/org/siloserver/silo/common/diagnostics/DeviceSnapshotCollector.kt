@@ -3,6 +3,9 @@ package org.siloserver.silo.common.diagnostics
 import android.app.UiModeManager
 import android.content.Context
 import android.content.res.Configuration
+import android.media.AudioDeviceInfo
+import android.media.AudioFormat
+import android.media.AudioManager
 import android.os.Build
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
@@ -44,10 +47,20 @@ data class DiagnosticsDisplaySnapshot(
     @SerialName("width_px") val widthPx: Int,
     @SerialName("height_px") val heightPx: Int,
     @SerialName("refresh_rate_hz") val refreshRateHz: Double,
+    @SerialName("current_mode") val currentMode: String = "unknown",
+    @SerialName("supported_modes") val supportedModes: List<String> = emptyList(),
+    @SerialName("wide_color_gamut") val wideColorGamut: Boolean? = null,
     val hdr10: Boolean,
     @SerialName("hdr10_plus") val hdr10Plus: Boolean,
     val hlg: Boolean,
     @SerialName("dolby_vision_profiles") val dolbyVisionProfiles: List<Int>,
+)
+
+@Serializable
+data class DiagnosticsAudioOutputSnapshot(
+    val type: String,
+    val encodings: List<String>,
+    @SerialName("max_channels") val maxChannels: Int,
 )
 
 @Serializable
@@ -61,6 +74,7 @@ data class DiagnosticsAudioSnapshot(
     @SerialName("passthrough_entries") val passthroughEntries: List<AudioPassthroughEntry> = emptyList(),
     @SerialName("suppressed_formats") val suppressedFormats: List<String>,
     @SerialName("suppression_retry_used") val suppressionRetryUsed: Boolean = false,
+    val outputs: List<DiagnosticsAudioOutputSnapshot> = emptyList(),
 )
 
 @Serializable
@@ -162,6 +176,9 @@ class AndroidDiagnosticsDeviceProbe(
                 widthPx = snapshot.widthPx,
                 heightPx = snapshot.heightPx,
                 refreshRateHz = snapshot.refreshRateHz,
+                currentMode = snapshot.currentMode,
+                supportedModes = snapshot.supportedModes.take(MAX_NESTED_ITEMS),
+                wideColorGamut = snapshot.wideColorGamut,
                 hdr10 = snapshot.hdr.hdr10,
                 hdr10Plus = snapshot.hdr.hdr10Plus,
                 hlg = snapshot.hdr.hlg,
@@ -172,6 +189,7 @@ class AndroidDiagnosticsDeviceProbe(
     override fun audio(): DiagnosticsAudioSnapshot {
         val snapshot = audioCapabilityManager.diagnosticsSnapshot()
         val suppression = PassthroughSuppressionRegistry.diagnosticsSnapshot()
+        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         return DiagnosticsAudioSnapshot(
             sinkType = snapshot.sinkType,
             routeHashes = snapshot.routeHashes.toList(),
@@ -182,6 +200,20 @@ class AndroidDiagnosticsDeviceProbe(
             passthroughEntries = snapshot.capabilities.entries.toList(),
             suppressedFormats = suppression.suppressedFormats,
             suppressionRetryUsed = suppression.retryUsed,
+            outputs = audioManager
+                ?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                .orEmpty()
+                .take(MAX_NESTED_ITEMS)
+                .map { device ->
+                    DiagnosticsAudioOutputSnapshot(
+                        type = audioDeviceTypeName(device.type),
+                        encodings = device.encodings
+                            .map(::audioEncodingName)
+                            .distinct()
+                            .take(MAX_NESTED_ITEMS),
+                        maxChannels = device.channelCounts.maxOrNull() ?: 0,
+                    )
+                },
         )
     }
 
@@ -212,6 +244,38 @@ class AndroidDiagnosticsDeviceProbe(
             linkDownstreamKbps = snapshot.linkDownstreamKbps,
         )
     }
+}
+
+private fun audioDeviceTypeName(type: Int): String = when (type) {
+    AudioDeviceInfo.TYPE_HDMI -> "HDMI"
+    AudioDeviceInfo.TYPE_HDMI_ARC -> "HDMI_ARC"
+    AudioDeviceInfo.TYPE_HDMI_EARC -> "HDMI_EARC"
+    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "BLUETOOTH_A2DP"
+    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "BLUETOOTH_SCO"
+    AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "BUILTIN_SPEAKER"
+    AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "WIRED_HEADPHONES"
+    AudioDeviceInfo.TYPE_WIRED_HEADSET -> "WIRED_HEADSET"
+    AudioDeviceInfo.TYPE_USB_DEVICE -> "USB_DEVICE"
+    AudioDeviceInfo.TYPE_USB_HEADSET -> "USB_HEADSET"
+    AudioDeviceInfo.TYPE_DOCK -> "DOCK"
+    AudioDeviceInfo.TYPE_AUX_LINE -> "AUX_LINE"
+    else -> "TYPE_$type"
+}
+
+private fun audioEncodingName(encoding: Int): String = when (encoding) {
+    AudioFormat.ENCODING_PCM_16BIT -> "PCM_16BIT"
+    AudioFormat.ENCODING_PCM_8BIT -> "PCM_8BIT"
+    AudioFormat.ENCODING_PCM_FLOAT -> "PCM_FLOAT"
+    AudioFormat.ENCODING_AC3 -> "AC3"
+    AudioFormat.ENCODING_E_AC3 -> "EAC3"
+    AudioFormat.ENCODING_E_AC3_JOC -> "EAC3_JOC"
+    AudioFormat.ENCODING_DOLBY_TRUEHD -> "TRUEHD"
+    AudioFormat.ENCODING_DOLBY_MAT -> "DOLBY_MAT"
+    AudioFormat.ENCODING_DTS -> "DTS"
+    AudioFormat.ENCODING_DTS_HD -> "DTS_HD"
+    AudioFormat.ENCODING_DTS_UHD -> "DTS_UHD"
+    AudioFormat.ENCODING_AAC_LC -> "AAC_LC"
+    else -> "ENCODING_$encoding"
 }
 
 internal fun stableIdentifierHash(value: String): String =

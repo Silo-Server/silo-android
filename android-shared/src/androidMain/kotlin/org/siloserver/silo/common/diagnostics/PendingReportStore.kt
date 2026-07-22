@@ -5,6 +5,7 @@ import android.system.OsConstants
 import java.io.File
 import java.io.FileDescriptor
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -22,12 +23,12 @@ data class PendingReportBinding(
 ) {
     val binding: DiagnosticsBinding get() = DiagnosticsBinding(serverInstanceId, accountUserId)
 
-    // ownershipGeneration guards in-process capture races, but it restarts at zero with the
-    // process. Persisted reports remain owned by the same server/account/profile identity.
+    // ownershipGeneration and profileId describe capture-time attribution. Persisted ownership
+    // is deliberately account-scoped so another eligible adult profile on the same account can
+    // review and send a retained report using its captured X-Profile-Id.
     fun matches(context: DiagnosticsCaptureContext): Boolean =
         serverInstanceId == context.binding.serverInstanceId &&
-            accountUserId == context.binding.accountUserId &&
-            profileId == context.profileId
+            accountUserId == context.binding.accountUserId
 }
 
 @Serializable
@@ -71,6 +72,9 @@ interface PendingReportStore {
     fun hasSeenFingerprint(fingerprint: String): Boolean
     fun markThrottled(key: String, atEpochMs: Long)
     fun isThrottled(key: String, windowMs: Long): Boolean
+    fun retryAfterDeadline(binding: DiagnosticsBinding): Long?
+    fun setRetryAfterDeadline(binding: DiagnosticsBinding, deadlineEpochMs: Long)
+    fun clearRetryAfterDeadline(binding: DiagnosticsBinding)
 }
 
 class FilePendingReportStore(
@@ -168,7 +172,12 @@ class FilePendingReportStore(
         removed.forEach { deleteDirectory(it.directory) }
         val removedFingerprints = removed.mapTo(hashSetOf()) { it.state.fingerprint }
         val index = readIndex()
-        writeIndex(index.copy(fingerprints = index.fingerprints - removedFingerprints))
+        writeIndex(
+            index.copy(
+                fingerprints = index.fingerprints - removedFingerprints,
+                retryAfter = index.retryAfter - binding.scopeKey(),
+            ),
+        )
     }
 
     override fun markState(id: String, status: PendingReportStatus, errorCode: String?) = synchronized(lock) {
@@ -197,6 +206,22 @@ class FilePendingReportStore(
         require(windowMs > 0)
         pruneLocked()
         readIndex().throttles[key]?.let { nowMs() - it <= windowMs } == true
+    }
+
+    override fun retryAfterDeadline(binding: DiagnosticsBinding): Long? = synchronized(lock) {
+        readIndex().retryAfter[binding.scopeKey()]?.takeIf { it > nowMs() }
+    }
+
+    override fun setRetryAfterDeadline(binding: DiagnosticsBinding, deadlineEpochMs: Long) = synchronized(lock) {
+        val index = readIndex().pruned(nowMs(), retentionMs)
+        val scopeKey = binding.scopeKey()
+        val deadline = maxOf(index.retryAfter[scopeKey] ?: 0L, deadlineEpochMs)
+        writeIndex(index.copy(retryAfter = index.retryAfter + (scopeKey to deadline)))
+    }
+
+    override fun clearRetryAfterDeadline(binding: DiagnosticsBinding) = synchronized(lock) {
+        val index = readIndex().pruned(nowMs(), retentionMs)
+        writeIndex(index.copy(retryAfter = index.retryAfter - binding.scopeKey()))
     }
 
     private fun validateCapture(capture: PendingReportCapture) {
@@ -311,12 +336,14 @@ class FilePendingReportStore(
     private data class PendingIndex(
         val fingerprints: Map<String, Long> = emptyMap(),
         val throttles: Map<String, Long> = emptyMap(),
+        @SerialName("retry_after") val retryAfter: Map<String, Long> = emptyMap(),
     ) {
         fun pruned(now: Long, retention: Long): PendingIndex {
             val cutoff = now - retention
             return copy(
                 fingerprints = fingerprints.filterValues { it >= cutoff },
                 throttles = throttles.filterValues { it >= cutoff },
+                retryAfter = retryAfter.filterValues { it > now },
             )
         }
     }
@@ -343,5 +370,10 @@ class FilePendingReportStore(
         val JSON = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
     }
 }
+
+private fun DiagnosticsBinding.scopeKey(): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest("$serverInstanceId\u0000$accountUserId".encodeToByteArray())
+        .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
 private fun File.resolveSibling(name: String): File = checkNotNull(parentFile).resolve(name)

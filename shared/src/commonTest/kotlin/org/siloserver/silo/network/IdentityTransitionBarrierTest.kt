@@ -75,7 +75,11 @@ class IdentityTransitionBarrierTest {
         }
 
         assertMutation(IdentityTransitionKind.SIGN_IN) { tokens.saveTokens("a", "r", 60) }
+        observed.clear()
+        tokens.saveTokens("refreshed-a", "refreshed-r", 60)
+        assertEquals(emptyList(), observed, "background token refresh must not close the identity gate")
         assertMutation(IdentityTransitionKind.SIGN_OUT) { tokens.clearTokens() }
+        assertMutation(IdentityTransitionKind.SIGN_IN) { tokens.saveTokens("new-a", "new-r", 60) }
         assertMutation(IdentityTransitionKind.SIGN_OUT) { tokens.invalidateSession() }
         assertMutation(IdentityTransitionKind.SIGN_OUT) { tokens.signOutCurrentServer() }
         assertMutation(IdentityTransitionKind.TEMPORARY_SCOPE_BEGIN) { tokens.beginTemporaryScope(temporary) }

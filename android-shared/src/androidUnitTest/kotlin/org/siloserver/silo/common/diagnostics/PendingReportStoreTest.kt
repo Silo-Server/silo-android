@@ -129,6 +129,18 @@ class PendingReportStoreTest {
         assertNull(store.load(other.id))
     }
 
+    @Test
+    fun retryAfterIsAccountScopedPersistentAndClearedByPurge() {
+        val store = newStore(nowMs = { day(10) })
+        val binding = this.binding.binding
+
+        store.setRetryAfterDeadline(binding, day(11))
+
+        assertEquals(day(11), store.retryAfterDeadline(binding))
+        store.purge(binding)
+        assertNull(store.retryAfterDeadline(binding))
+    }
+
     private fun newStore(
         nowMs: () -> Long,
         maxReportsPerBinding: Int = 3,

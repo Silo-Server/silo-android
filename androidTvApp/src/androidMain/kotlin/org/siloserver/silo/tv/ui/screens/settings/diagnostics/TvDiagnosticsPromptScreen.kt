@@ -58,7 +58,13 @@ fun TvDiagnosticsPromptScreen(
                     )
                 } else {
                     Text("Silo encountered a problem", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                    Text("A ${prompt.reportType.tvDisplayName().lowercase()} report is ready. Review it before deciding whether to send it.")
+                    Text(
+                        if (prompt.reportCount == 1) {
+                            "A ${prompt.reportType.tvDisplayName().lowercase()} report is ready. Review it before deciding whether to send it."
+                        } else {
+                            "${prompt.reportCount} diagnostics reports are ready. Review them before deciding whether to send them."
+                        },
+                    )
                     TvDiagnosticsAction("Review", onClick = onReview)
                     TvDiagnosticsAction("Send", onClick = onSend)
                     TvDiagnosticsAction("Always send", onClick = { confirmAlways = true })

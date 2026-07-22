@@ -10,6 +10,9 @@ data class DisplayDiagnosticsSnapshot(
     val widthPx: Int,
     val heightPx: Int,
     val refreshRateHz: Double,
+    val currentMode: String,
+    val supportedModes: List<String>,
+    val wideColorGamut: Boolean?,
     val hdr: HdrCapabilities,
 )
 
@@ -32,6 +35,16 @@ object DisplayHdrProbe {
             widthPx = mode.physicalWidth,
             heightPx = mode.physicalHeight,
             refreshRateHz = mode.refreshRate.toDouble(),
+            currentMode = mode.diagnosticsLabel(),
+            supportedModes = display.supportedModes
+                .map(Display.Mode::diagnosticsLabel)
+                .distinct()
+                .sorted(),
+            wideColorGamut = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                display.isWideColorGamut
+            } else {
+                null
+            },
             hdr = hdrCapabilities(display),
         )
     }
@@ -101,3 +114,6 @@ object DisplayHdrProbe {
         return dm.getDisplay(Display.DEFAULT_DISPLAY)
     }
 }
+
+private fun Display.Mode.diagnosticsLabel(): String =
+    "${physicalWidth}x${physicalHeight}@${"%.2f".format(java.util.Locale.ROOT, refreshRate)}"

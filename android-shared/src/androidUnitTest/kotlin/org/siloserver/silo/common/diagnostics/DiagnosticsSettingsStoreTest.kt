@@ -25,7 +25,7 @@ class DiagnosticsSettingsStoreTest {
         val store = newStore()
 
         assertEquals(DiagnosticsConsentMode.ASK, store.consent(bindingA, currentNoticeVersion = 1).mode)
-        assertFalse(store.debugLogging(bindingA))
+        assertFalse(store.debugLogging())
 
         store.setConsent(bindingA, DiagnosticsConsentMode.ALWAYS, noticeVersion = 1)
         assertEquals(DiagnosticsConsentMode.ALWAYS, store.consent(bindingA, 1).mode)
@@ -36,26 +36,44 @@ class DiagnosticsSettingsStoreTest {
     }
 
     @Test
-    fun settingsAreIsolatedByServerAndAccountBinding() = runTest {
+    fun consentIsBindingScopedAndDebugLoggingIsDeviceScoped() = runTest {
         val store = newStore()
         store.setConsent(bindingA, DiagnosticsConsentMode.ALWAYS, noticeVersion = 4)
-        store.setDebugLogging(bindingA, enabled = true)
+        store.setDebugLogging(enabled = true)
 
         assertEquals(DiagnosticsConsentMode.ALWAYS, store.consent(bindingA, 4).mode)
-        assertTrue(store.debugLogging(bindingA))
+        assertTrue(store.debugLogging())
         assertEquals(DiagnosticsConsentMode.ASK, store.consent(bindingB, 4).mode)
-        assertFalse(store.debugLogging(bindingB))
+        assertTrue(store.debugLogging())
+    }
+
+    @Test
+    fun staleConsentDemotesAlwaysButPreservesNever() = runTest {
+        val store = newStore()
+        val handler = SettingsDiagnosticsStaleConsentHandler(store)
+
+        store.setConsent(bindingA, DiagnosticsConsentMode.ALWAYS, noticeVersion = 2)
+        handler.demote(bindingA, noticeVersion = 2)
+        assertEquals(DiagnosticsConsentMode.ASK, store.consent(bindingA, 2).mode)
+
+        store.setConsent(bindingA, DiagnosticsConsentMode.NEVER, noticeVersion = 2)
+        handler.demote(bindingA, noticeVersion = 2)
+        assertEquals(DiagnosticsConsentMode.NEVER, store.consent(bindingA, 2).mode)
+
+        store.setConsent(bindingA, DiagnosticsConsentMode.ALWAYS, noticeVersion = 3)
+        handler.demote(bindingA, noticeVersion = 2)
+        assertEquals(DiagnosticsConsentMode.ALWAYS, store.consent(bindingA, 3).mode)
     }
 
     @Test
     fun selectingNeverAndExplicitPurgeDeleteBindingEvidenceAndSettings() = runTest {
         val purger = RecordingBindingPurger()
         val store = newStore(purger)
-        store.setDebugLogging(bindingA, enabled = true)
+        store.setDebugLogging(enabled = true)
 
         store.setConsent(bindingA, DiagnosticsConsentMode.NEVER, noticeVersion = 1)
         assertEquals(listOf(bindingA), purger.bindings)
-        assertFalse(store.debugLogging(bindingA))
+        assertFalse(store.debugLogging())
 
         store.setConsent(bindingA, DiagnosticsConsentMode.ALWAYS, noticeVersion = 1)
         store.purgeBinding(bindingA)

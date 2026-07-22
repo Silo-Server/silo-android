@@ -14,6 +14,7 @@ class DiagnosticsUploadWorker(
     appContext: Context,
     params: WorkerParameters,
     private val uploader: DiagnosticsUploader,
+    private val coordinator: DiagnosticsCoordinator,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val reportId = inputData.getString(KEY_REPORT_ID)?.takeIf(String::isNotBlank)
@@ -27,6 +28,11 @@ class DiagnosticsUploadWorker(
             DiagnosticsUploadDecision.KeptUnavailable,
             DiagnosticsUploadDecision.KeptInvalid,
             -> Result.success()
+            DiagnosticsUploadDecision.KeptConsentReviewRequired -> {
+                coordinator.start()
+                coordinator.refresh()
+                Result.success()
+            }
         }
     }
 

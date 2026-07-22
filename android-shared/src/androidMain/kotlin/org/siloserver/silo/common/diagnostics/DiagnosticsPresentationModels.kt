@@ -28,7 +28,17 @@ data class DiagnosticsPrompt(
     val reportId: String,
     val reportType: DiagnosticsReportType,
     val capturedAt: String,
-)
+    val reportIds: List<String> = listOf(reportId),
+    val noticeVersion: Int = 1,
+) {
+    init {
+        require(reportId.isNotBlank())
+        require(reportIds.isNotEmpty() && reportIds.all(String::isNotBlank))
+        require(noticeVersion > 0)
+    }
+
+    val reportCount: Int get() = reportIds.size
+}
 
 enum class TimedCaptureStatus { IDLE, ACTIVE, INVALIDATED }
 

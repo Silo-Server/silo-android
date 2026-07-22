@@ -51,7 +51,7 @@ The work is kept navigable through ordered commits inside the one PR. It is not 
 
 ### `shared/commonMain`
 
-Owns platform-neutral wire models, schema validation helpers, `DiagnosticsApi`, multipart request construction, upload response/error mapping, and canonical fixture tests. It follows the existing Ktor, `ApiResult`, `safeApiCall`, Koin, and kotlinx.serialization patterns.
+Owns platform-neutral wire models, schema validation helpers, `DiagnosticsApi`, multipart request construction, upload response/error mapping, and canonical fixture tests. Upload uses a diagnostics-specific result so stable error codes and `Retry-After` survive Ktor response handling.
 
 ### `android-shared`
 
@@ -130,11 +130,13 @@ Process-only `TemporaryAuthScope` sessions do not replace the saved diagnostics 
 Rules:
 
 - Consent modes are Ask, Always Send, and Never. Manual sends use manifest mode `manual`.
-- The default is Ask. Debug logging defaults off.
+- The default is Ask. The device-wide debug-logging preference defaults off.
 - Bumping the notice version demotes Always to Ask.
+- Ask still permits user-enabled local debug capture, so a notice bump does not change the device-wide debug preference. Never is the only consent mode that disables and purges persistent capture.
 - Reports never migrate or retarget to another server or account.
 - Signing out or removing a server purges that binding's reports, persistent logs, sessions, breadcrumbs, marker ownership, status cache, and consent history as required by the canonical contract.
 - Selecting Never purges the same evidence immediately and disarms persistent capture.
+- Never still permits an explicit one-shot or timed manual report; it never enables background capture or automatic upload.
 - Leaving authenticated state closes the capture gate before navigation or lifecycle state is published.
 - Server, account, and profile changes close the old gate before the new identity becomes visible.
 - Child profiles cannot manage, review, send, or persist diagnostics. A crash confirmed to have occurred under a child profile is discarded because the shipped server rejects child-profile attribution.
@@ -142,7 +144,7 @@ Rules:
 - Profile-generation rotation prevents child or unresolved-profile logs from entering an adult manual report.
 - A timed manual capture is bound to the identity and eligible profile active at Start. Any identity/profile change stops and invalidates it.
 
-Upload checks the active server, server instance, account, profile, access token, consent notice, consent mode, and server availability both before bundle construction and immediately before the request. The diagnostics request sends an `X-Profile-Id` only when it exactly equals the adult profile recorded in the manifest; an unattributed report suppresses that header. A mismatch retains or purges according to its classification; it never retargets.
+Upload checks the active server, server instance, account, active-profile eligibility, access token, consent notice, consent mode, and server availability both before bundle construction and immediately before the request. Retained reports are account-scoped, while their captured profile remains immutable attribution. Another eligible adult profile on that account may review or send the report, and the diagnostics request uses the captured `X-Profile-Id`; an unattributed report suppresses that header. A server or account mismatch retains or purges according to its classification; it never retargets.
 
 ## JVM crash capture
 
@@ -150,6 +152,7 @@ Upload checks the active server, server instance, account, profile, access token
 
 - Performs no networking, coroutines, DataStore operations, service probes, Koin access, or archive construction.
 - Renders a bounded stack trace and captures only the ring snapshot available within a hard time/size budget.
+- Avoids regex redaction and serialization frameworks on the dying thread. A bounded exact-value replacement protects captured credentials before the app-private marker is written; structural redaction runs during next-launch report assembly.
 - Uses pre-rendered identity, foreground, playback-session, and device-snapshot state maintained during normal execution.
 - Writes one marker no larger than 512 KiB using a temporary file and atomic rename where supported.
 - Always calls the previous handler in `finally`.
@@ -169,6 +172,7 @@ Each process run receives an opaque run-correlation token. Once identity is reso
 - ANR/JVM trace text becomes `crash/stack.txt`.
 - API 31+ native tombstones become opaque `crash/tombstone.pb`.
 - No tombstone content is placed in the manifest.
+- A two-segment, 128 KiB-per-segment journal retains only explicit, already-redacted lifecycle breadcrumbs. Opaque segment ownership hashes bind lines to server/account/profile/generation as well as capture-session ID, so a process death during asynchronous rotation cannot cross-attribute stale evidence. Identity gates rotate the journal and Never/sign-out purge it.
 
 Deduplication uses a bounded persisted fingerprint derived from process name, PID, timestamp, reason, status, and trace hash. JVM markers participate in the same deduplication so a death produces one report. Fingerprints are recorded only after the pending report survives validation and retention enforcement.
 
@@ -176,7 +180,7 @@ Deduplication uses a bounded persisted fingerprint derived from process name, PI
 
 `DeviceSnapshotCollector` composes existing probes with new read-only accessors for:
 
-- Manufacturer, model, `Build.DEVICE`, form factor, OS, app version/build, and a privacy-safe device identifier.
+- Manufacturer, model, `Build.DEVICE`, form factor, OS, app version/build, and a one-way build-fingerprint hash.
 - Current and supported display modes, HDR types, and wide-color support.
 - Current audio outputs, channel/encoding capabilities, passthrough formats, and active suppressions.
 - Hardware/software video decoders and relevant profile/capability limits.
@@ -217,7 +221,7 @@ The embedded manifest omits the archive object. The external manifest contains f
 Upload outcomes:
 
 - Success: delete local evidence and record short ID/date.
-- Offline, HTTP 429, server 5xx, busy, or quota exceeded: retain with bounded retry/backoff.
+- Offline, HTTP 429, server 5xx, busy, or quota exceeded: retain with bounded retry/backoff; persist and honor server `Retry-After` per account binding.
 - Too large: retain and mark locally unsendable.
 - Disabled or storage unavailable: retain without retry storms.
 - Unsupported schema: retain and show Server update required.
@@ -229,7 +233,7 @@ Automatic uploads use WorkManager network constraints but still perform all iden
 
 ## Phone and TV UX
 
-Diagnostics is visible in Settings only to non-child profiles. For eligible profiles it remains visible when uploads are unavailable so users can inspect and delete local reports. Status copy distinguishes Available, Disabled by server, Storage unavailable, and Offline.
+Diagnostics is visible in Settings only to non-child profiles. For eligible profiles it remains visible when uploads are unavailable so users can inspect and delete local reports. The last positively validated binding is cached so retained reports and sent history remain visible while that same profile goes offline; every profile transition clears the cache until the new profile is positively verified. Status copy distinguishes Available, Disabled by server, Storage unavailable, and Offline.
 
 Settings include:
 
@@ -240,7 +244,7 @@ Settings include:
 - Send diagnostics now.
 - Start diagnostic capture.
 
-Ask mode presents one incident prompt for eligible pending reports. Review shows incident type/time, app and device identity, evidence categories, log counts and size, destination server, captured profile, expiry, and exact archive entries. Always Send requires a second confirmation.
+Ask mode presents one aggregate incident prompt for eligible pending reports, and each prompt action applies to the displayed batch. Review shows incident type/time, app and device identity, evidence categories, log counts and size, destination server, captured profile, expiry, and exact archive entries. Always Send requires a second confirmation.
 
 Phone uses Compose settings, sheets, and detail screens. TV uses full-screen, remote-friendly screens. The TV incident prompt focuses Don't send by default.
 

@@ -10,15 +10,23 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
+import org.siloserver.silo.model.diagnostics.DiagnosticsArchive
+import org.siloserver.silo.model.diagnostics.DiagnosticsConsent
+import org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode as ManifestConsentMode
+import org.siloserver.silo.model.diagnostics.DiagnosticsDestination
 import org.siloserver.silo.model.diagnostics.DiagnosticsDeviceSummary
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
+import org.siloserver.silo.model.diagnostics.DiagnosticsLogSummary
+import org.siloserver.silo.model.diagnostics.DiagnosticsManifest
 import org.siloserver.silo.model.diagnostics.DiagnosticsPlatform
+import org.siloserver.silo.model.diagnostics.DiagnosticsReport
 import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -76,6 +84,176 @@ class DiagnosticsCoordinatorTest {
         assertFalse(capture.hasPersistentEvidence)
         assertFalse(ADULT_A.binding in fixture.evidence)
         assertEquals(listOf(ADULT_A.binding), fixture.purgedBindings)
+
+        fixture.coordinator.captureNow()
+        assertEquals(1, capture.captureNowCalls)
+        assertFalse(capture.hasPersistentEvidence)
+    }
+
+    @Test
+    fun promptAggregatesAccountReportsAcrossProfilesAndTheyRemainVisibleOffline() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A)
+        val fixture = fixture(
+            identity,
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        fixture.reports.save(reportCapture(ADULT_A, "first"))
+        fixture.reports.save(reportCapture(ADULT_B, "second"))
+
+        fixture.coordinator.refresh()
+
+        assertEquals(2, fixture.coordinator.state.value.pending.size)
+        assertEquals(2, fixture.coordinator.state.value.prompt?.reportCount)
+
+        identity.current = null
+        fixture.coordinator.refresh()
+
+        assertEquals(DiagnosticsAvailabilityUi.OFFLINE, fixture.coordinator.state.value.availability)
+        assertEquals(2, fixture.coordinator.state.value.pending.size)
+        assertEquals(null, fixture.coordinator.state.value.prompt)
+    }
+
+    @Test
+    fun unresolvedProfileSwitchCannotRestoreAnAdultOfflineCache() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A)
+        val transitions = DefaultIdentityTransitionBarrier()
+        val fixture = fixture(
+            identity,
+            transitions,
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        fixture.reports.save(reportCapture(ADULT_A, "adult"))
+
+        transitions.changing(IdentityTransitionKind.PROFILE_SWITCH) {
+            identity.current = null
+        }
+        fixture.coordinator.refresh()
+
+        assertEquals(DiagnosticsAvailabilityUi.OFFLINE, fixture.coordinator.state.value.availability)
+        assertFalse(fixture.coordinator.state.value.profileEligible)
+        assertTrue(fixture.coordinator.state.value.pending.isEmpty())
+    }
+
+    @Test
+    fun confirmedIneligibleProfileClearsThePreviousAdultOfflineCache() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A)
+        val fixture = fixture(
+            identity,
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        fixture.reports.save(reportCapture(ADULT_A, "adult"))
+
+        identity.current = ADULT_A.copy(profileEligible = false, ownershipGeneration = 2)
+        fixture.coordinator.refresh()
+        identity.current = null
+        fixture.coordinator.refresh()
+
+        assertEquals(DiagnosticsAvailabilityUi.OFFLINE, fixture.coordinator.state.value.availability)
+        assertFalse(fixture.coordinator.state.value.profileEligible)
+        assertTrue(fixture.coordinator.state.value.pending.isEmpty())
+    }
+
+    @Test
+    fun offlineCacheIsHiddenWhenLocalIdentityCannotBeAttested() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A)
+        val fixture = fixture(
+            identity,
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        fixture.reports.save(reportCapture(ADULT_A, "adult"))
+
+        identity.current = null
+        identity.trustCachedIdentity = false
+        fixture.coordinator.refresh()
+
+        assertFalse(fixture.coordinator.state.value.profileEligible)
+        assertTrue(fixture.coordinator.state.value.pending.isEmpty())
+    }
+
+    @Test
+    fun promptUploadRejectsANoticeVersionDifferentFromTheApprovedBatch() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A)
+        val fixture = fixture(
+            identity,
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        val report = fixture.reports.save(reportCapture(ADULT_A, "adult"))
+
+        val decision = fixture.coordinator.upload(report.id, expectedNoticeVersion = ADULT_A.noticeVersion + 1)
+
+        assertEquals(DiagnosticsUploadDecision.KeptConsentReviewRequired, decision)
+        assertNotNull(fixture.reports.load(report.id))
+    }
+
+    @Test
+    fun stalePromptCannotGrantAlwaysForADifferentNoticeVersion() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A)
+        val fixture = fixture(
+            identity,
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+
+        fixture.coordinator.setConsent(
+            DiagnosticsConsentMode.ALWAYS,
+            expectedNoticeVersion = ADULT_A.noticeVersion + 1,
+        )
+
+        assertEquals(DiagnosticsConsentMode.ASK, fixture.coordinator.state.value.consent)
+    }
+
+    @Test
+    fun offlineStatePreservesTheCachedConsentChoice() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A)
+        val fixture = fixture(
+            identity,
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+
+        fixture.coordinator.setConsent(DiagnosticsConsentMode.ALWAYS)
+        identity.current = null
+        fixture.coordinator.refresh()
+        assertEquals(DiagnosticsConsentMode.ALWAYS, fixture.coordinator.state.value.consent)
+
+        identity.current = ADULT_A
+        fixture.coordinator.refresh()
+        fixture.coordinator.setConsent(DiagnosticsConsentMode.NEVER)
+        identity.current = null
+        fixture.coordinator.refresh()
+        assertEquals(DiagnosticsConsentMode.NEVER, fixture.coordinator.state.value.consent)
     }
 
     @Test
@@ -98,6 +276,30 @@ class DiagnosticsCoordinatorTest {
             assertTrue(capture.gateClosed)
             identity.current = null
         }
+        fixture.coordinator.refresh()
+
+        assertFalse(ADULT_A.binding in fixture.evidence)
+        assertEquals(listOf(ADULT_A.binding), fixture.purgedBindings)
+    }
+
+    @Test
+    fun offlineSignOutPurgesTheCachedBinding() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A)
+        val transitions = DefaultIdentityTransitionBarrier()
+        val fixture = fixture(
+            identity,
+            transitions,
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        fixture.evidence.add(ADULT_A.binding)
+
+        identity.current = null
+        fixture.coordinator.refresh()
+        transitions.changing(IdentityTransitionKind.SIGN_OUT) { }
         fixture.coordinator.refresh()
 
         assertFalse(ADULT_A.binding in fixture.evidence)
@@ -173,7 +375,7 @@ class DiagnosticsCoordinatorTest {
                 capture.purge(binding)
             },
         )
-        val reports = FilePendingReportStore(files)
+        val reports = FilePendingReportStore(files, nowMs = { CAPTURED_AT })
         val coordinator = DefaultDiagnosticsCoordinator(
             scope = scope,
             actorDispatcher = actorDispatcher,
@@ -185,19 +387,53 @@ class DiagnosticsCoordinatorTest {
             uploader = DiagnosticsUploader { DiagnosticsUploadDecision.KeptUnavailable },
             uploadScheduler = DiagnosticsUploadScheduler { },
         )
-        return Fixture(coordinator, evidence, purgedBindings)
+        return Fixture(coordinator, reports, evidence, purgedBindings)
     }
+
+    private fun reportCapture(context: DiagnosticsCaptureContext, fingerprint: String) = PendingReportCapture(
+        binding = PendingReportBinding(
+            serverInstanceId = context.binding.serverInstanceId,
+            accountUserId = context.binding.accountUserId,
+            profileId = context.profileId,
+            ownershipGeneration = context.ownershipGeneration,
+        ),
+        manifest = DiagnosticsManifest(
+            schemaVersion = 1,
+            report = DiagnosticsReport(
+                type = DiagnosticsReportType.MANUAL,
+                capturedAt = "2026-07-22T00:00:00Z",
+                captureSessionId = "capture-$fingerprint",
+                appVersion = "1.0",
+                appBuild = "1",
+                platform = DiagnosticsPlatform.ANDROID_TV,
+                osVersion = "36",
+                profileId = context.profileId,
+            ),
+            destination = DiagnosticsDestination(context.binding.serverInstanceId),
+            consent = DiagnosticsConsent(ManifestConsentMode.MANUAL, context.noticeVersion),
+            deviceSummary = DiagnosticsDeviceSummary("NVIDIA", "Shield", "Android 36", "tv"),
+            playbackSessionIds = emptyList(),
+            logSummary = DiagnosticsLogSummary(0, 0, 0, listOf(DiagnosticsLogCategory.OTHER), false),
+            archive = DiagnosticsArchive(listOf("manifest.json", "device.json"), 0, 0, "0".repeat(64)),
+        ),
+        artifacts = mapOf("device.json" to "{}".encodeToByteArray()),
+        fingerprint = fingerprint,
+        capturedAtEpochMs = CAPTURED_AT,
+    )
 
     private class MutableIdentityResolver(
         var current: DiagnosticsCaptureContext?,
     ) : DiagnosticsIdentityResolver {
+        var trustCachedIdentity = true
         override suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? = current
+        override suspend fun matchesCachedIdentity(cached: CachedDiagnosticsContext): Boolean = trustCachedIdentity
     }
 
     private class RecordingCaptureController : DiagnosticsCaptureController {
         var gateClosed = false
         var hasPersistentEvidence = false
         val cancelled = mutableListOf<Long>()
+        var captureNowCalls = 0
         private var nextGeneration = 0L
 
         override fun closeGate() {
@@ -224,7 +460,10 @@ class DiagnosticsCoordinatorTest {
             hasPersistentEvidence = false
         }
 
-        override suspend fun captureNow(context: DiagnosticsCaptureContext): PendingReport? = null
+        override suspend fun captureNow(context: DiagnosticsCaptureContext): PendingReport? {
+            captureNowCalls += 1
+            return null
+        }
 
         override suspend fun purge(binding: DiagnosticsBinding) {
             hasPersistentEvidence = false
@@ -250,6 +489,7 @@ class DiagnosticsCoordinatorTest {
 
     private data class Fixture(
         val coordinator: DiagnosticsCoordinator,
+        val reports: PendingReportStore,
         val evidence: MutableSet<DiagnosticsBinding>,
         val purgedBindings: MutableList<DiagnosticsBinding>,
     )
@@ -262,7 +502,9 @@ class DiagnosticsCoordinatorTest {
             noticeVersion = 2,
             status = DiagnosticsAvailabilityStatus.AVAILABLE,
             ownershipGeneration = 1,
+            localServerId = "local-server-1",
         )
         val ADULT_B = ADULT_A.copy(profileId = "adult-b", ownershipGeneration = 2)
+        const val CAPTURED_AT = 1_700_000_000_000L
     }
 }

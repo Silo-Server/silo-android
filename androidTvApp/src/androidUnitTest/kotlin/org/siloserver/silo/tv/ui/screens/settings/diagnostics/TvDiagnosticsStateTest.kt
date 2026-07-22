@@ -37,6 +37,7 @@ class TvDiagnosticsStateTest {
     @Test
     fun reportRouteHidesPromptSoReviewIsVisible() {
         assertFalse(tvShouldShowDiagnosticsPrompt(TvRoute.DiagnosticsReport.ROUTE))
+        assertFalse(tvShouldShowDiagnosticsPrompt(TvRoute.Diagnostics.route))
         assertTrue(tvShouldShowDiagnosticsPrompt(TvRoute.Main.route))
     }
 

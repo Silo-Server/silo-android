@@ -1,6 +1,8 @@
 package org.siloserver.silo.common.diagnostics
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import org.siloserver.silo.model.diagnostics.DiagnosticsArchive
@@ -9,6 +11,7 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsConsent
 import org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode as ManifestConsentMode
 import org.siloserver.silo.model.diagnostics.DiagnosticsDestination
 import org.siloserver.silo.model.diagnostics.DiagnosticsDeviceSummary
+import org.siloserver.silo.model.diagnostics.DiagnosticsErrorCode
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogSummary
 import org.siloserver.silo.model.diagnostics.DiagnosticsManifest
@@ -16,7 +19,7 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsPlatform
 import org.siloserver.silo.model.diagnostics.DiagnosticsReport
 import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResponse
-import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResult
 import org.siloserver.silo.network.api.DiagnosticsApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -50,29 +53,50 @@ class DiagnosticsUploaderTest {
 
         val decision = fixture.uploader.upload(fixture.report.id)
 
-        assertEquals(DiagnosticsUploadDecision.KeptInvalid, decision)
+        assertEquals(DiagnosticsUploadDecision.KeptConsentReviewRequired, decision)
         assertEquals(0, fixture.api.uploadCalls)
         val report = assertNotNull(fixture.store.load(fixture.report.id))
-        assertEquals(PendingReportStatus.PERMANENT_FAILURE, report.state.status)
-        assertEquals("stale_consent", report.state.errorCode)
+        assertEquals(PendingReportStatus.PENDING, report.state.status)
     }
 
     @Test
-    fun automaticUploadStopsWhenAlwaysConsentIsDemotedDuringBuild() = runTest {
+    fun promptApprovedNoticeChangeBeforePreflightPreventsPost() = runTest {
+        val fixture = fixture()
+        fixture.identity.current = fixture.identity.current?.copy(noticeVersion = 3)
+
+        val decision = fixture.uploader.upload(fixture.report.id, expectedNoticeVersion = 2)
+
+        assertEquals(DiagnosticsUploadDecision.KeptConsentReviewRequired, decision)
+        assertEquals(0, fixture.api.uploadCalls)
+    }
+
+    @Test
+    fun automaticUploadRequestsReviewWhenAlwaysConsentIsDemotedDuringBuild() = runTest {
         val fixture = fixture()
         fixture.builder.onBuild = { fixture.consent.mode = DiagnosticsConsentMode.ASK }
 
         val decision = fixture.uploader.uploadAutomatically(fixture.report.id)
 
-        assertEquals(DiagnosticsUploadDecision.KeptUnavailable, decision)
+        assertEquals(DiagnosticsUploadDecision.KeptConsentReviewRequired, decision)
         assertEquals(0, fixture.api.uploadCalls)
         assertNotNull(fixture.store.load(fixture.report.id))
     }
 
     @Test
+    fun automaticUploadRequestsReviewWhenConsentIsAlreadyAsk() = runTest {
+        val fixture = fixture()
+        fixture.consent.mode = DiagnosticsConsentMode.ASK
+
+        val decision = fixture.uploader.uploadAutomatically(fixture.report.id)
+
+        assertEquals(DiagnosticsUploadDecision.KeptConsentReviewRequired, decision)
+        assertEquals(0, fixture.api.uploadCalls)
+    }
+
+    @Test
     fun successfulUploadUsesCapturedProfileRecordsHistoryAndDeletesReport() = runTest {
         val fixture = fixture()
-        fixture.api.result = ApiResult.Success(DiagnosticsUploadResponse("report-1", "ABC123"))
+        fixture.api.result = DiagnosticsUploadResult.Success(DiagnosticsUploadResponse("report-1", "ABC123"))
 
         val decision = fixture.uploader.upload(fixture.report.id)
 
@@ -83,10 +107,79 @@ class DiagnosticsUploaderTest {
     }
 
     @Test
+    fun anotherEligibleProfileOnTheSameAccountCanSendWithCapturedAttribution() = runTest {
+        val fixture = fixture()
+        fixture.identity.current = fixture.identity.current?.copy(
+            profileId = "profile-2",
+            ownershipGeneration = 8,
+        )
+        fixture.api.result = DiagnosticsUploadResult.Success(DiagnosticsUploadResponse("report-1", "ABC123"))
+
+        val decision = fixture.uploader.upload(fixture.report.id)
+
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123"), decision)
+        assertEquals("profile-1", fixture.api.capturedProfileId)
+    }
+
+    @Test
+    fun manualReportCanBeExplicitlySentUnderNeverConsent() = runTest {
+        val fixture = fixture()
+        fixture.consent.mode = DiagnosticsConsentMode.NEVER
+        fixture.api.result = DiagnosticsUploadResult.Success(DiagnosticsUploadResponse("report-1", "ABC123"))
+
+        val decision = fixture.uploader.upload(fixture.report.id)
+
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123"), decision)
+        assertEquals(ManifestConsentMode.MANUAL, fixture.api.capturedManifest?.consent?.mode)
+    }
+
+    @Test
+    fun retryAfterIsPersistedAndPreventsAnotherNetworkAttempt() = runTest {
+        val fixture = fixture()
+        fixture.api.result = DiagnosticsUploadResult.Failure(
+            code = DiagnosticsErrorCode.QUOTA_EXCEEDED,
+            httpStatus = 429,
+            retryAfterSeconds = 120,
+        )
+
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        assertEquals(1, fixture.api.uploadCalls)
+        assertNotNull(fixture.store.retryAfterDeadline(BINDING))
+
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        assertEquals(1, fixture.api.uploadCalls)
+    }
+
+    @Test
+    fun successfulInFlightUploadDoesNotClearANewerRetryAfterDeadline() = runTest {
+        val fixture = fixture()
+        fixture.api.result = DiagnosticsUploadResult.Success(DiagnosticsUploadResponse("report-1", "ABC123"))
+        fixture.api.onUpload = {
+            fixture.store.setRetryAfterDeadline(BINDING, CAPTURED_AT + 121_000)
+        }
+
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123"), fixture.uploader.upload(fixture.report.id))
+        assertEquals(CAPTURED_AT + 121_000, fixture.store.retryAfterDeadline(BINDING))
+    }
+
+    @Test
+    fun nonRetryableResponseDoesNotPersistRetryAfter() = runTest {
+        val fixture = fixture()
+        fixture.api.result = DiagnosticsUploadResult.Failure(
+            code = DiagnosticsErrorCode.TOO_LARGE,
+            httpStatus = 413,
+            retryAfterSeconds = 120,
+        )
+
+        assertEquals(DiagnosticsUploadDecision.KeptTooLarge, fixture.uploader.upload(fixture.report.id))
+        assertNull(fixture.store.retryAfterDeadline(BINDING))
+    }
+
+    @Test
     fun reportCapturedBeforeProcessRestartUploadsForTheSameIdentity() = runTest {
         val fixture = fixture()
         fixture.identity.current = fixture.identity.current?.copy(ownershipGeneration = 0)
-        fixture.api.result = ApiResult.Success(DiagnosticsUploadResponse("report-1", "ABC123"))
+        fixture.api.result = DiagnosticsUploadResult.Success(DiagnosticsUploadResponse("report-1", "ABC123"))
 
         val decision = fixture.uploader.upload(fixture.report.id)
 
@@ -98,7 +191,7 @@ class DiagnosticsUploaderTest {
     @Test
     fun unsupportedSchemaMarksServerUpdateRequired() = runTest {
         val fixture = fixture()
-        fixture.api.result = ApiResult.Error(400, "unsupported_schema", "upgrade")
+        fixture.api.result = DiagnosticsUploadResult.Failure(DiagnosticsErrorCode.UNSUPPORTED_SCHEMA, 400)
 
         val decision = fixture.uploader.upload(fixture.report.id)
 
@@ -139,7 +232,7 @@ class DiagnosticsUploaderTest {
             "invalid_manifest" to DiagnosticsUploadDecision.KeptInvalid,
             "archive_mismatch" to DiagnosticsUploadDecision.KeptInvalid,
             "stale_report" to DiagnosticsUploadDecision.KeptInvalid,
-            "stale_consent" to DiagnosticsUploadDecision.KeptInvalid,
+            "stale_consent" to DiagnosticsUploadDecision.KeptConsentReviewRequired,
             "unauthorized" to DiagnosticsUploadDecision.KeptInvalid,
             "api_key_not_allowed" to DiagnosticsUploadDecision.KeptInvalid,
             "forbidden" to DiagnosticsUploadDecision.KeptInvalid,
@@ -147,18 +240,53 @@ class DiagnosticsUploaderTest {
 
         cases.forEach { (code, expected) ->
             val fixture = fixture()
-            fixture.api.result = ApiResult.Error(if (code in setOf("busy", "internal_error")) 503 else 400, code, "message")
+            val httpStatus = if (code in setOf("busy", "internal_error")) 503 else 400
+            fixture.api.result = DiagnosticsUploadResult.Failure(
+                code = DiagnosticsErrorCode.fromWire(code),
+                httpStatus = httpStatus,
+            )
 
             assertEquals(expected, fixture.uploader.upload(fixture.report.id), code)
             val state = assertNotNull(fixture.store.load(fixture.report.id)).state
-            val expectedStatus = if (expected == DiagnosticsUploadDecision.KeptRetryable) {
+            val expectedStatus = if (
+                expected in setOf(
+                    DiagnosticsUploadDecision.KeptRetryable,
+                    DiagnosticsUploadDecision.KeptUnavailable,
+                    DiagnosticsUploadDecision.KeptIdentityChanged,
+                    DiagnosticsUploadDecision.KeptConsentReviewRequired,
+                )
+            ) {
                 PendingReportStatus.RETRYABLE
             } else {
                 PendingReportStatus.PERMANENT_FAILURE
             }
             assertEquals(expectedStatus, state.status, code)
-            assertEquals(code, state.errorCode, code)
+            assertEquals(DiagnosticsErrorCode.fromWire(code).wire, state.errorCode, code)
         }
+    }
+
+    @Test
+    fun staleConsentDemotesAlwaysAndKeepsTheReportForReview() = runTest {
+        val fixture = fixture()
+        fixture.api.result = DiagnosticsUploadResult.Failure(DiagnosticsErrorCode.STALE_CONSENT, 409)
+
+        val decision = fixture.uploader.upload(fixture.report.id)
+
+        assertEquals(DiagnosticsUploadDecision.KeptConsentReviewRequired, decision)
+        assertEquals(listOf(BINDING to 2), fixture.staleConsent.demotions)
+        assertNotNull(fixture.store.load(fixture.report.id))
+    }
+
+    @Test
+    fun staleConsentPersistenceFailureRemainsRetryable() = runTest {
+        val fixture = fixture()
+        fixture.staleConsent.failure = IllegalStateException("storage unavailable")
+        fixture.api.result = DiagnosticsUploadResult.Failure(DiagnosticsErrorCode.STALE_CONSENT, 409)
+
+        val decision = fixture.uploader.upload(fixture.report.id)
+
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, decision)
+        assertEquals(PendingReportStatus.RETRYABLE, assertNotNull(fixture.store.load(fixture.report.id)).state.status)
     }
 
     private fun fixture(maxBundleBytes: Long = 1_024 * 1_024): Fixture {
@@ -180,6 +308,7 @@ class DiagnosticsUploaderTest {
         val api = FakeDiagnosticsApi()
         val sent = FakeSentRecorder()
         val consent = FakeConsentProvider()
+        val staleConsent = FakeStaleConsentHandler()
         val uploader = DefaultDiagnosticsUploader(
             reports = store,
             identity = identity,
@@ -188,9 +317,10 @@ class DiagnosticsUploaderTest {
             redactionTokens = DiagnosticsRedactionTokenProvider { listOf("secret-token") },
             sentRecorder = sent,
             consentProvider = consent,
+            staleConsentHandler = staleConsent,
             nowMs = { CAPTURED_AT + 1_000 },
         )
-        return Fixture(store, report, identity, builder, api, sent, consent, uploader)
+        return Fixture(store, report, identity, builder, api, sent, consent, staleConsent, uploader)
     }
 
     private fun context(maxBundleBytes: Long) = DiagnosticsCaptureContext(
@@ -234,22 +364,32 @@ class DiagnosticsUploaderTest {
         var bundleBytes = byteArrayOf(1, 2, 3)
         override fun build(report: PendingReport, redactionTokens: List<String>): DiagnosticsBundle {
             onBuild()
-            return DiagnosticsBundle(report.manifest, "{}".encodeToByteArray(), bundleBytes)
+            return DiagnosticsBundle(
+                report.manifest,
+                Json.encodeToString(report.manifest).encodeToByteArray(),
+                bundleBytes,
+            )
         }
     }
 
     private class FakeDiagnosticsApi : DiagnosticsApi {
-        var result: ApiResult<DiagnosticsUploadResponse> = ApiResult.NetworkError(IllegalStateException("offline"))
+        var result: DiagnosticsUploadResult = DiagnosticsUploadResult.NetworkError(IllegalStateException("offline"))
+        var onUpload: () -> Unit = {}
         var uploadCalls = 0
         var capturedProfileId: String? = null
+        var capturedManifest: DiagnosticsManifest? = null
         override suspend fun getStatus() = error("unused")
         override suspend fun upload(
             manifestJson: ByteArray,
             bundleBytes: ByteArray,
             capturedProfileId: String?,
-        ): ApiResult<DiagnosticsUploadResponse> {
+        ): DiagnosticsUploadResult {
+            onUpload()
             uploadCalls += 1
             this.capturedProfileId = capturedProfileId
+            capturedManifest = org.siloserver.silo.model.diagnostics.decodeDiagnosticsManifest(
+                manifestJson.decodeToString(),
+            )
             return result
         }
     }
@@ -267,6 +407,15 @@ class DiagnosticsUploaderTest {
         override suspend fun consent(binding: DiagnosticsBinding, noticeVersion: Int): DiagnosticsConsentMode = mode
     }
 
+    private class FakeStaleConsentHandler : DiagnosticsStaleConsentHandler {
+        val demotions = mutableListOf<Pair<DiagnosticsBinding, Int>>()
+        var failure: Throwable? = null
+        override suspend fun demote(binding: DiagnosticsBinding, noticeVersion: Int) {
+            failure?.let { throw it }
+            demotions += binding to noticeVersion
+        }
+    }
+
     private data class Fixture(
         val store: FilePendingReportStore,
         val report: PendingReport,
@@ -275,6 +424,7 @@ class DiagnosticsUploaderTest {
         val api: FakeDiagnosticsApi,
         val sent: FakeSentRecorder,
         val consent: FakeConsentProvider,
+        val staleConsent: FakeStaleConsentHandler,
         val uploader: DefaultDiagnosticsUploader,
     )
 

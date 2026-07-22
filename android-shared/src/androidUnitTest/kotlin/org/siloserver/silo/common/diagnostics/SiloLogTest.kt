@@ -170,4 +170,27 @@ class SiloLogTest {
         assertEquals("failed", logcat.last().msg)
         assertTrue(logcat.last().throwable is IllegalStateException)
     }
+
+    @Test
+    fun onlyExplicitBreadcrumbsReachThePersistentSink() {
+        val lines = mutableListOf<String>()
+        SiloLog.setRendererForTests(
+            DiagnosticsLogRenderer(
+                redactor = redactor,
+                strictAttributeRegistry = true,
+                runId = "run-breadcrumb",
+            ),
+        )
+        SiloLog.installSink(null)
+        SiloLog.installBreadcrumbSink { lines += it }
+        try {
+            SiloLog.i(DiagnosticsLogCategory.LIFECYCLE, "Test", "ordinary")
+            SiloLog.breadcrumb(DiagnosticsLogCategory.LIFECYCLE, "Test", "foreground")
+        } finally {
+            SiloLog.installBreadcrumbSink(null)
+        }
+
+        assertEquals(1, lines.size)
+        assertTrue(lines.single().contains("foreground"))
+    }
 }

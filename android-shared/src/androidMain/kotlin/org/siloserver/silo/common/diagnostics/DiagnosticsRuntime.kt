@@ -23,6 +23,7 @@ class DefaultDiagnosticsRuntimePublisher(
 
     override suspend fun publish(context: DiagnosticsCaptureContext) {
         require(context.profileEligible)
+        CrashCapture.installLogBuffer(logBuffer)
         val playbackScope = playbackSessions.open(context.identityKey)
         val existing = active.get()?.takeIf { it.identityKey == context.identityKey }
         val published = existing ?: run {
