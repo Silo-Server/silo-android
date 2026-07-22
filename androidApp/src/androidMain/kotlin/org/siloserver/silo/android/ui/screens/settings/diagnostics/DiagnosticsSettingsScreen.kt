@@ -10,9 +10,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -28,6 +33,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.text.DateFormat
@@ -191,17 +198,39 @@ internal fun DiagnosticsSettingsContent(
             }
             if (state.sentHistory.isNotEmpty()) {
                 item {
-                    SettingsSectionCard {
-                        SettingsSectionHeader("Recently sent")
-                        state.sentHistory.forEach { sent ->
-                            SettingsRow(label = sent.shortId) {
-                                Text(
-                                    formatDiagnosticDate(sent.sentAtEpochMs),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+                    val clipboard = LocalClipboardManager.current
+                    Column {
+                        SettingsSectionCard {
+                            SettingsSectionHeader("Recently sent")
+                            state.sentHistory.forEach { sent ->
+                                SettingsRow(label = sent.shortId) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            formatDiagnosticDate(sent.sentAtEpochMs),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                        IconButton(
+                                            onClick = { clipboard.setText(AnnotatedString(sent.shortId)) },
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.ContentCopy,
+                                                contentDescription = "Copy reference ID",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
+                        Text(
+                            "Sent reports are removed from this device once your server has a copy. " +
+                                "Use the reference ID when asking for help.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp),
+                        )
                     }
                 }
             }

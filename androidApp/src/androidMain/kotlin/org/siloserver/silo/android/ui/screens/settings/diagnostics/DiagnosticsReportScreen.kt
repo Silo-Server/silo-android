@@ -9,9 +9,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -23,7 +29,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,6 +41,7 @@ import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.settings.SettingsSectionCard
 import org.siloserver.silo.android.ui.screens.settings.SettingsSectionHeader
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
+import org.siloserver.silo.common.diagnostics.DiagnosticsUploadDecision
 
 @Composable
 fun DiagnosticsReportScreen(
@@ -42,16 +52,37 @@ fun DiagnosticsReportScreen(
     val state by viewModel.state.collectAsState()
     val report = state.pending.firstOrNull { it.id == reportId }
     var confirmDelete by remember { mutableStateOf(false) }
+    var uploading by remember { mutableStateOf(false) }
+    var sentShortId by remember { mutableStateOf<String?>(null) }
+    var uploadNotice by remember { mutableStateOf<String?>(null) }
     Scaffold(
         topBar = { SiloTopBar(title = "Report details", onBackClick = onBackClick) },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
-        if (report == null) {
-            Column(Modifier.fillMaxSize().padding(padding).padding(24.dp)) {
-                Text("This report is no longer on this device.")
+        val shortId = sentShortId
+        when {
+            // A successful send removes the pending report, so this must render
+            // before the null-report fallback — otherwise a completed upload
+            // reads as the report having vanished.
+            shortId != null -> DiagnosticsSentConfirmation(
+                shortId = shortId,
+                modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+                onDone = onBackClick,
+            )
+            report == null -> Column(Modifier.fillMaxSize().padding(padding).padding(24.dp)) {
+                if (uploading) {
+                    // The pending list can drop the report a frame before the
+                    // upload callback delivers the reference id.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.size(12.dp))
+                        Text("Sending report to your server…")
+                    }
+                } else {
+                    Text("This report is no longer on this device.")
+                }
             }
-        } else {
-            LazyColumn(
+            else -> LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -85,16 +116,42 @@ fun DiagnosticsReportScreen(
                     }
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(
-                            enabled = state.availability == DiagnosticsAvailabilityUi.AVAILABLE,
-                            onClick = { viewModel.upload(report.id) },
-                            modifier = Modifier.weight(1f),
-                        ) { Text("Send") }
-                        OutlinedButton(
-                            onClick = { confirmDelete = true },
-                            modifier = Modifier.weight(1f),
-                        ) { Text("Delete") }
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (uploading) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.size(12.dp))
+                                Text(
+                                    "Sending report to your server…",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        uploadNotice?.let { notice ->
+                            Text(notice, color = MaterialTheme.colorScheme.error)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                            Button(
+                                enabled = state.availability == DiagnosticsAvailabilityUi.AVAILABLE && !uploading,
+                                onClick = {
+                                    uploading = true
+                                    uploadNotice = null
+                                    viewModel.upload(report.id) { decision ->
+                                        uploading = false
+                                        when (decision) {
+                                            is DiagnosticsUploadDecision.Uploaded -> sentShortId = decision.shortId
+                                            else -> uploadNotice = uploadKeptMessage(decision)
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text(if (uploading) "Sending…" else "Send") }
+                            OutlinedButton(
+                                enabled = !uploading,
+                                onClick = { confirmDelete = true },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Delete") }
+                        }
                     }
                 }
             }
@@ -115,6 +172,62 @@ fun DiagnosticsReportScreen(
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
     }
+}
+
+@Composable
+private fun DiagnosticsSentConfirmation(
+    shortId: String,
+    modifier: Modifier,
+    onDone: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        SettingsSectionCard {
+            Column(Modifier.padding(16.dp)) {
+                Text("Report sent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Reference ID", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Text(shortId, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.titleMedium)
+                    }
+                    IconButton(onClick = { clipboard.setText(AnnotatedString(shortId)) }) {
+                        Icon(
+                            imageVector = Icons.Outlined.ContentCopy,
+                            contentDescription = "Copy reference ID",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "The report was removed from this device once your server received a copy. " +
+                        "Share the reference ID with your server admin so they can find it.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+        Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+    }
+}
+
+internal fun uploadKeptMessage(decision: DiagnosticsUploadDecision): String = when (decision) {
+    is DiagnosticsUploadDecision.Uploaded -> "" // handled by the caller
+    DiagnosticsUploadDecision.KeptRetryable ->
+        "The upload didn't go through. The report stays on this device to try again later."
+    DiagnosticsUploadDecision.KeptIdentityChanged ->
+        "Sign-in changed during the upload. The report stays on this device."
+    DiagnosticsUploadDecision.KeptTooLarge ->
+        "This report is larger than the server accepts."
+    DiagnosticsUploadDecision.KeptServerUpdateRequired ->
+        "Your server needs an update to accept this report."
+    DiagnosticsUploadDecision.KeptUnavailable ->
+        "Diagnostics uploads aren't available right now. The report stays on this device."
+    DiagnosticsUploadDecision.KeptInvalid ->
+        "This report couldn't be read and can't be sent."
+    DiagnosticsUploadDecision.KeptConsentReviewRequired ->
+        "The server's consent notice changed. Review it and send again."
 }
 
 @Composable

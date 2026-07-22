@@ -21,6 +21,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
+import org.siloserver.silo.common.diagnostics.DiagnosticsUploadDecision
 
 @Composable
 fun TvDiagnosticsReportScreen(
@@ -31,10 +32,31 @@ fun TvDiagnosticsReportScreen(
     val state by viewModel.state.collectAsState()
     val report = state.pending.firstOrNull { it.id == reportId }
     var confirmDelete by remember { mutableStateOf(false) }
+    var uploading by remember { mutableStateOf(false) }
+    var sentShortId by remember { mutableStateOf<String?>(null) }
+    var uploadNotice by remember { mutableStateOf<String?>(null) }
     BackHandler(onBack = onBack)
     TvDiagnosticsPage(title = "Report details") {
-        if (report == null) {
-            Text("This report is no longer on this device.")
+        val shortId = sentShortId
+        if (shortId != null) {
+            // Successful sends delete the local report, so this renders before
+            // the null-report fallback — otherwise success reads as data loss.
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("Report sent", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+                TvReportLine("Reference ID", shortId)
+                Text(
+                    "The report was removed from this device once your server received a copy. " +
+                        "Share the reference ID with your server admin so they can find it.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TvDiagnosticsAction(label = "Done", onClick = onBack)
+            }
+        } else if (report == null) {
+            if (uploading) {
+                Text("Sending report to your server…")
+            } else {
+                Text("This report is no longer on this device.")
+            }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 item {
@@ -57,18 +79,40 @@ fun TvDiagnosticsReportScreen(
                     }
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        TvDiagnosticsAction(
-                            label = "Send",
-                            enabled = state.availability == DiagnosticsAvailabilityUi.AVAILABLE,
-                            onClick = { viewModel.upload(report.id) },
-                            modifier = Modifier.weight(1f),
-                        )
-                        TvDiagnosticsAction(
-                            label = "Delete",
-                            onClick = { confirmDelete = true },
-                            modifier = Modifier.weight(1f),
-                        )
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (uploading) {
+                            Text(
+                                "Sending report to your server…",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        uploadNotice?.let { notice ->
+                            Text(notice, color = MaterialTheme.colorScheme.error)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            TvDiagnosticsAction(
+                                label = if (uploading) "Sending…" else "Send",
+                                enabled = state.availability == DiagnosticsAvailabilityUi.AVAILABLE && !uploading,
+                                onClick = {
+                                    uploading = true
+                                    uploadNotice = null
+                                    viewModel.upload(report.id) { decision ->
+                                        uploading = false
+                                        when (decision) {
+                                            is DiagnosticsUploadDecision.Uploaded -> sentShortId = decision.shortId
+                                            else -> uploadNotice = tvUploadKeptMessage(decision)
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            TvDiagnosticsAction(
+                                label = "Delete",
+                                enabled = !uploading,
+                                onClick = { confirmDelete = true },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
             }
@@ -86,6 +130,24 @@ fun TvDiagnosticsReportScreen(
             onDismiss = { confirmDelete = false },
         )
     }
+}
+
+internal fun tvUploadKeptMessage(decision: DiagnosticsUploadDecision): String = when (decision) {
+    is DiagnosticsUploadDecision.Uploaded -> "" // handled by the caller
+    DiagnosticsUploadDecision.KeptRetryable ->
+        "The upload didn't go through. The report stays on this device to try again later."
+    DiagnosticsUploadDecision.KeptIdentityChanged ->
+        "Sign-in changed during the upload. The report stays on this device."
+    DiagnosticsUploadDecision.KeptTooLarge ->
+        "This report is larger than the server accepts."
+    DiagnosticsUploadDecision.KeptServerUpdateRequired ->
+        "Your server needs an update to accept this report."
+    DiagnosticsUploadDecision.KeptUnavailable ->
+        "Diagnostics uploads aren't available right now. The report stays on this device."
+    DiagnosticsUploadDecision.KeptInvalid ->
+        "This report couldn't be read and can't be sent."
+    DiagnosticsUploadDecision.KeptConsentReviewRequired ->
+        "The server's consent notice changed. Review it and send again."
 }
 
 @Composable

@@ -149,6 +149,12 @@ fun TvDiagnosticsSettingsScreen(
                                 Text(tvFormatDate(sent.sentAtEpochMs), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
+                        Text(
+                            "Sent reports are removed from this device once your server has a copy. " +
+                                "Use the reference ID when asking for help.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                 }
             }
