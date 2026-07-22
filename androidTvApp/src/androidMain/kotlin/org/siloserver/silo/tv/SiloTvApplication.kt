@@ -31,9 +31,29 @@ import org.koin.core.context.startKoin
 class SiloTvApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
+        // Crash capture installs before anything else can fail — no DI, no IO
+        // beyond one mkdirs; the handler itself only writes a bounded marker.
+        runCatching { org.siloserver.silo.common.diagnostics.crash.CrashCapture.install(this) }
         val koinApp = startKoin {
             androidContext(this@SiloTvApplication)
-            modules(sharedModules() + playerModule + playerInfraModule + androidTvModule)
+            modules(
+                sharedModules() + playerModule + playerInfraModule +
+                    org.siloserver.silo.common.di.diagnosticsModule("android-tv") + androidTvModule,
+            )
+        }
+        // Diagnostics bring-up: foreground observer, playback log wiring,
+        // crash-marker/exit-info collection, status refresh. Guarded — never
+        // load-bearing for cold start.
+        runCatching {
+            org.siloserver.silo.common.diagnostics.DiagnosticsAppStarter(
+                coordinator = koinApp.koin.get(),
+                playbackDiagnosticsLogger = koinApp.koin.get(),
+                analyticsEvents = koinApp.koin
+                    .get<org.siloserver.silo.common.player.PlaybackAnalyticsListener>().events,
+                profileRepository = koinApp.koin.get(),
+            ).start()
+        }.onFailure {
+            android.util.Log.w("SiloTvApplication", "Diagnostics starter init failed", it)
         }
         // Live-home socket (Apple realtime-updates spec). Guarded — a dead
         // socket just means Home refreshes on open only.

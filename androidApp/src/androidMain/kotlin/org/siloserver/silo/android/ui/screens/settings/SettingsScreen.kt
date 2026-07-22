@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.GridView
@@ -55,6 +56,7 @@ import org.siloserver.silo.android.ui.util.formatBytes
 import org.siloserver.silo.model.download.DownloadQuality
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 
@@ -81,6 +83,7 @@ fun SettingsScreen(
     onNavigateToHistory: () -> Unit = {},
     onNavigateToCollections: () -> Unit = {},
     onNavigateToCardOverlays: () -> Unit = {},
+    onNavigateToDiagnostics: () -> Unit = {},
     showTopBar: Boolean = false,
     onBackClick: (() -> Unit)? = null,
     viewModel: SettingsViewModel = koinViewModel(),
@@ -95,6 +98,13 @@ fun SettingsScreen(
         onDismiss = { subtitleStyleVisible = false },
     )
     val downloadsState by downloadsViewModel.uiState.collectAsState()
+    // Diagnostics entry visibility: hidden only for child profiles (a binding
+    // exists but they can't manage it); every other signed-in state routes to
+    // the state-aware Diagnostics screen. Collected here (not inside an item)
+    // so a hidden entry contributes no empty LazyColumn item.
+    val diagnosticsCoordinator: DiagnosticsCoordinator = koinInject()
+    val diagnosticsState by diagnosticsCoordinator.state.collectAsState()
+    val showDiagnosticsEntry = diagnosticsState.canManage || diagnosticsState.binding == null
     val sessionsSheetState = rememberModalBottomSheetState()
     var showRemoveAllDownloadsConfirm by remember { mutableStateOf(false) }
 
@@ -157,6 +167,20 @@ fun SettingsScreen(
                         onClick = onNavigateToCardOverlays,
                         showChevron = true,
                     )
+                }
+            }
+
+            if (showDiagnosticsEntry) {
+                item {
+                    SettingsSectionCard {
+                        SettingsRowLabel(
+                            title = "Diagnostics",
+                            icon = Icons.Outlined.BugReport,
+                            badgeColor = SettingsBadgeGray,
+                            onClick = onNavigateToDiagnostics,
+                            showChevron = true,
+                        )
+                    }
                 }
             }
 

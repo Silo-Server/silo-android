@@ -37,6 +37,7 @@ class TvServerListViewModel(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
     private val authRepository: AuthRepository,
+    private val diagnosticsAccountEvents: org.siloserver.silo.model.feature.DiagnosticsAccountEvents? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvServerListUiState())
@@ -96,6 +97,7 @@ class TvServerListViewModel(
         viewModelScope.launch {
             val wasActive = serverRegistry.activeServerId.value == serverId
             serverRegistry.remove(serverId)
+            diagnosticsAccountEvents?.onServerRemoved(serverId)
 
             // Removing a *non-active* server is a passive list edit — the shell
             // behind us is unaffected, so leave navigation exactly as before.

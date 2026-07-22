@@ -37,6 +37,7 @@ data class ServerListUiState(
 class ServerListViewModel(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
+    private val diagnosticsAccountEvents: org.siloserver.silo.model.feature.DiagnosticsAccountEvents? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerListUiState())
@@ -104,6 +105,7 @@ class ServerListViewModel(
     fun onRemove(serverId: String) {
         viewModelScope.launch {
             serverRegistry.remove(serverId)
+            diagnosticsAccountEvents?.onServerRemoved(serverId)
         }
     }
 }

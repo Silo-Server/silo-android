@@ -74,6 +74,9 @@ kotlin {
             // both the phone and TV apps can consume it; `shared` pulls this in
             // only as `implementation`, so it is not transitively visible.
             implementation(libs.lifecycle.viewmodel.kmp)
+            // ProcessLifecycleOwner — diagnostics foreground observer
+            // (crash-context foreground flag + throttled status refresh).
+            implementation(libs.lifecycle.process)
 
             // Serialization (media auth refresh path encodes RefreshRequest / decodes RefreshResponse)
             implementation(libs.kotlinx.serialization.json)

@@ -19,6 +19,7 @@ class AuthRepository(
     private val tokenManager: TokenManager,
     private val serverRegistry: ServerRegistry? = null,
     private val healthApi: HealthApi? = null,
+    private val diagnosticsAccountEvents: org.siloserver.silo.model.feature.DiagnosticsAccountEvents? = null,
 ) {
     /**
      * Logs in with username and password.
@@ -140,6 +141,9 @@ class AuthRepository(
             if (activeId != null) {
                 serverRegistry?.signOut(activeId)
             }
+            // Immediate diagnostics purge for this binding (consent contract) —
+            // the coordinator's lazy token-loss detection is only the backstop.
+            diagnosticsAccountEvents?.onSignedOut(activeId)
         }
     }
 

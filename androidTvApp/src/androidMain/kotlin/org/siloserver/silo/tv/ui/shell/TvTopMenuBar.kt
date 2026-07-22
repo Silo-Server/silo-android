@@ -56,6 +56,9 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.diagnostics.logging.SiloLog
+import org.siloserver.silo.model.diagnostics.DiagnosticsAttrRegistry.Attr
+import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
 import org.siloserver.silo.tv.ui.theme.ChromeSelectedBorder
@@ -109,6 +112,16 @@ private sealed class TvTopMenuFocus {
     data object Calendar : TvTopMenuFocus()
     data object Search : TvTopMenuFocus()
     data object Profile : TvTopMenuFocus()
+}
+
+/** Stable component name for the diagnostics FOCUS breadcrumb (no content, ever). */
+private fun topMenuFocusTarget(focus: TvTopMenuFocus): String = when (focus) {
+    TvTopMenuFocus.Home -> "Home"
+    is TvTopMenuFocus.Tab -> "tab.${focus.type.name}"
+    TvTopMenuFocus.ForYou -> "ForYou"
+    TvTopMenuFocus.Calendar -> "Calendar"
+    TvTopMenuFocus.Search -> "Search"
+    TvTopMenuFocus.Profile -> "Profile"
 }
 
 /**
@@ -242,6 +255,20 @@ fun TvTopMenuBar(
 
     LaunchedEffect(focusedButton) {
         onMenuFocusChange(focusedButton != null)
+        // Curated diagnostics focus breadcrumb: fires only when the focused
+        // top-menu button actually changes (never per-DPAD-event), and logs
+        // UI component names only — library-type tab names, never content.
+        focusedButton?.let { button ->
+            SiloLog.d(
+                DiagnosticsLogCategory.FOCUS,
+                "TvFocus",
+                "top menu button focused",
+                mapOf(
+                    "target" to Attr.Str("topMenu.${topMenuFocusTarget(button)}"),
+                    "action" to Attr.Str("focused"),
+                ),
+            )
+        }
     }
 
     // Dedicated focus path for closing the profile dropdown: return focus to the

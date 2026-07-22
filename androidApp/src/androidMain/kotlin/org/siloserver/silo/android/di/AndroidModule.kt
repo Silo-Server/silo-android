@@ -231,7 +231,13 @@ val androidModule = module {
             libassBridge = get(),
         )
     }
-    single { PlaybackSessionManager(get(), get(), get()) }
+    single {
+        val sessionTracker = get<org.siloserver.silo.common.diagnostics.consent.RecentSessionTracker>()
+        PlaybackSessionManager(
+            get(), get(), get(),
+            sessionDiagnosticsSink = { sessionTracker.recordSession(it) },
+        )
+    }
     factory<VideoPlaybackStarter>(named("mobileVideoPlaybackStarter")) {
         MobileVideoPlaybackStarter(
             catalogRepository = get(),
@@ -391,7 +397,7 @@ val androidModule = module {
     viewModel { ProfileSelectionViewModel(get()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
-    viewModel { ServerListViewModel(get(), get()) }
+    viewModel { ServerListViewModel(get(), get(), getOrNull()) }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
         DevicePairingViewModel(

@@ -61,6 +61,10 @@ class TvTypographyReadabilityTest {
             "org/siloserver/silo/tv/ui/screens/recommendations/TvRecommendationsScreen.kt",
             "org/siloserver/silo/tv/ui/screens/search/TvSearchScreen.kt",
             "org/siloserver/silo/tv/ui/screens/settings/TvSettingsScreen.kt",
+            // Diagnostics surfaces reuse TvSettingsScreen's halved-tvOS row and
+            // dialog metrics, so they share its small-text allowance.
+            "org/siloserver/silo/tv/ui/screens/settings/TvDiagnosticsPane.kt",
+            "org/siloserver/silo/tv/ui/screens/diagnostics/TvCrashPromptScreen.kt",
             "org/siloserver/silo/tv/ui/shell/TvTopMenuBar.kt",
         )
         val offenders = File("src/androidMain/kotlin/org/siloserver/silo/tv")

@@ -158,7 +158,13 @@ val androidTvModule = module {
             libassBridge = get(),
         )
     }
-    single { PlaybackSessionManager(get(), get(), get()) }
+    single {
+        val sessionTracker = get<org.siloserver.silo.common.diagnostics.consent.RecentSessionTracker>()
+        PlaybackSessionManager(
+            get(), get(), get(),
+            sessionDiagnosticsSink = { sessionTracker.recordSession(it) },
+        )
+    }
     factory<VideoPlaybackStarter>(named("tvVideoPlaybackStarter")) {
         TvVideoPlaybackStarter(
             catalogRepository = get(),
@@ -329,7 +335,7 @@ val androidTvModule = module {
             profileId = params.get(),
         )
     }
-    viewModel { TvServerListViewModel(get(), get(), get()) }
+    viewModel { TvServerListViewModel(get(), get(), get(), getOrNull()) }
 
     // Admin ViewModels
     viewModel { AdminStatsViewModel(get()) }

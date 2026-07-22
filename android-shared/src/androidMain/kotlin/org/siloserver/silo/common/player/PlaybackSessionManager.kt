@@ -50,6 +50,10 @@ open class PlaybackSessionManager(
     private val playbackRepository: PlaybackRepository,
     private val tokenManager: TokenManager,
     private val networkEvidenceProvider: PlaybackNetworkEvidenceProvider = PlaybackNetworkEvidenceProvider.None,
+    // Diagnostics recent-session tracker (crash reports pivot into the server's
+    // playback-session log filter). Optional so tests and non-diagnostics
+    // callers are unaffected; failures must never touch playback.
+    private val sessionDiagnosticsSink: ((String) -> Unit)? = null,
 ) {
     private data class ActiveVideoAttempt(
         val fileId: Int,
@@ -122,6 +126,7 @@ open class PlaybackSessionManager(
                         planAttemptId = planAttemptId,
                     )
                     videoAttemptMutex.withLock { activeVideoAttempt.set(active) }
+                    trackSessionForDiagnostics(active.sessionId)
                     PassthroughSuppressionRegistry.beginAttempt(active.planAttemptKey)
                     reportActiveVideoEvent("plan_selected", network.asRouteDiagnostics())
                     ApiResult.Success(
@@ -170,6 +175,7 @@ open class PlaybackSessionManager(
                         planAttemptId = planAttemptId,
                     )
                     videoAttemptMutex.withLock { activeVideoAttempt.set(active) }
+                    trackSessionForDiagnostics(active.sessionId)
                     PassthroughSuppressionRegistry.beginAttempt(active.planAttemptKey)
                     val replanResult = replanActiveVideoSession(
                         classification = validated.reason,
@@ -190,6 +196,10 @@ open class PlaybackSessionManager(
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
+
+    private fun trackSessionForDiagnostics(sessionId: String) {
+        runCatching { sessionDiagnosticsSink?.invoke(sessionId) }
     }
 
     private fun newActiveAttempt(
@@ -337,6 +347,7 @@ open class PlaybackSessionManager(
                         firstFrameReported = false,
                     )
                     activeVideoAttempt.set(next)
+                    if (validated.sessionId != active.sessionId) trackSessionForDiagnostics(validated.sessionId)
                     PassthroughSuppressionRegistry.beginAttempt(nextKey)
                     if (validated.sessionId != active.sessionId) playbackRepository.stopPlayback(active.sessionId)
                     emitRouteEvent(

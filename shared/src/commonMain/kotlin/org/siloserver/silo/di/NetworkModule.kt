@@ -8,7 +8,7 @@ import org.koin.dsl.module
 
 val networkModule = module {
     single<TokenManager> { TokenManagerImpl() }
-    single { createSiloClient(get(), getOrNull()) }
+    single { createSiloClient(get(), getOrNull(), getOrNull()) }
     single { AuthApi(get()) }
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get()) }
     single { CatalogApi(get()) }
@@ -32,4 +32,5 @@ val networkModule = module {
     single<PushRegistrationApi> { DefaultPushRegistrationApi(get()) }
     single<AdminApi> { DefaultAdminApi(get()) }
     single<WatchTogetherApi> { DefaultWatchTogetherApi(get()) }
+    single<DiagnosticsApi> { DefaultDiagnosticsApi(get()) }
 }

@@ -37,12 +37,22 @@ val SiloJson = Json {
 fun createSiloClient(
     tokenManager: TokenManager,
     deviceMetadataProvider: DeviceMetadataProvider? = null,
+    networkDiagnosticsHook: NetworkDiagnosticsHook? = null,
 ): HttpClient {
     val platformClient = createPlatformHttpClient()
 
     return platformClient.config {
         install(ContentNegotiation) {
             json(SiloJson)
+        }
+
+        // Diagnostics network-category logging (method/templated path/status/
+        // duration only). Optional collaborator like deviceMetadataProvider;
+        // platforms without a sink pay nothing.
+        if (networkDiagnosticsHook != null) {
+            install(NetworkDiagnosticsPlugin) {
+                hook = networkDiagnosticsHook
+            }
         }
 
         // Foreground notifications accelerator (events websocket). REST stays

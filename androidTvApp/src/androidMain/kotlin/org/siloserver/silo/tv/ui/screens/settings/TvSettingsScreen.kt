@@ -34,6 +34,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
@@ -83,6 +84,9 @@ import org.siloserver.silo.tv.BuildConfig
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.ui.screens.player.TvSubtitleAppearanceOptions
+import org.siloserver.silo.common.diagnostics.logging.SiloLog
+import org.siloserver.silo.model.diagnostics.DiagnosticsAttrRegistry.Attr
+import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.Spacing
@@ -148,6 +152,31 @@ fun TvSettingsScreen(
 
     LaunchedEffect(detailFocusRequest) {
         if (detailFocusRequest > 0) runCatching { detailFocusRequester.requestFocus() }
+    }
+
+    // Curated diagnostics focus breadcrumbs: category-level rail movement and
+    // rail↔detail hand-offs only — never per-row focus, never content.
+    LaunchedEffect(selectedCategory) {
+        SiloLog.d(
+            DiagnosticsLogCategory.FOCUS,
+            "TvFocus",
+            "settings rail category focused",
+            mapOf(
+                "target" to Attr.Str("settings.rail.${selectedCategory.name}"),
+                "action" to Attr.Str("focused"),
+            ),
+        )
+    }
+    LaunchedEffect(detailHasFocus) {
+        SiloLog.d(
+            DiagnosticsLogCategory.FOCUS,
+            "TvFocus",
+            "settings zone focused",
+            mapOf(
+                "target" to Attr.Str(if (detailHasFocus) "settings.detailPane" else "settings.rail"),
+                "action" to Attr.Str("focused"),
+            ),
+        )
     }
 
     BackHandler {
@@ -262,6 +291,12 @@ private enum class TvSettingsCategory(
         eyebrow = "CONNECTION",
         blurb = "Active server, device pairing, and account tools.",
         icon = Icons.Filled.Dns,
+    ),
+    Diagnostics(
+        title = "Diagnostics",
+        eyebrow = "SUPPORT",
+        blurb = "Crash reports and debug logs for this server account.",
+        icon = Icons.Filled.BugReport,
     ),
 }
 
@@ -718,6 +753,12 @@ private fun SettingsDetailPane(
                 state = state,
                 firstFocusRequester = detailFocusRequester,
                 onManageServers = onManageServers,
+            )
+            // Self-contained pane: it obtains the shared DiagnosticsViewModel
+            // via Koin itself so the split layout's parameter list stays flat
+            // and only this pane recomposes on diagnostics state changes.
+            TvSettingsCategory.Diagnostics -> TvDiagnosticsPane(
+                firstFocusRequester = detailFocusRequester,
             )
         }
       }
@@ -1492,7 +1533,7 @@ private fun TvSettingsPickerOptionRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvSettingsConfirmDialog(
+internal fun TvSettingsConfirmDialog(
     title: String,
     message: String,
     confirmLabel: String,
@@ -1595,7 +1636,7 @@ private fun DialogButton(
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsGroup(
+internal fun SettingsGroup(
     title: String,
     content: @Composable () -> Unit,
 ) {
@@ -1737,7 +1778,7 @@ private fun SettingsAccountRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsValueRow(
+internal fun SettingsValueRow(
     label: String,
     value: String,
     onClick: () -> Unit,
@@ -1798,7 +1839,7 @@ private fun SettingsValueRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsActionRow(
+internal fun SettingsActionRow(
     label: String,
     onClick: () -> Unit,
     destructive: Boolean = false,
@@ -1856,7 +1897,7 @@ private fun SettingsActionRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsToggleRow(
+internal fun SettingsToggleRow(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
@@ -1910,7 +1951,7 @@ private fun SettingsToggleRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsInfoRow(label: String, value: String, singleLine: Boolean = true) {
+internal fun SettingsInfoRow(label: String, value: String, singleLine: Boolean = true) {
     Row(
         modifier = Modifier
             .widthIn(max = RowMaxWidth)
@@ -1944,7 +1985,7 @@ private fun SettingsInfoRow(label: String, value: String, singleLine: Boolean = 
 
 /** Non-focusable explanatory footer below a settings group (tvOS `TVSettingsFooter`). */
 @Composable
-private fun SettingsFooterText(text: String) {
+internal fun SettingsFooterText(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp, lineHeight = 15.sp),

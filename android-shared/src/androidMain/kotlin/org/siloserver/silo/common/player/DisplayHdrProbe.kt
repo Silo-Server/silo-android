@@ -73,6 +73,37 @@ object DisplayHdrProbe {
         )
     }
 
+    /** Current and supported display modes, formatted `WIDTHxHEIGHT@RATE`. */
+    data class DisplayModeInfo(
+        val currentMode: String?,
+        val supportedModes: List<String>,
+        val wideColorGamut: Boolean,
+    )
+
+    /**
+     * Diagnostics accessor: exact mode list for `device.json`. Separate from
+     * [probe] because playback only needs HDR types, while a diagnostics
+     * bundle needs the full mode inventory to reason about HDMI mode switches.
+     */
+    fun probeModes(context: Context): DisplayModeInfo {
+        val display = defaultDisplay(context)
+            ?: return DisplayModeInfo(currentMode = null, supportedModes = emptyList(), wideColorGamut = false)
+        val current = runCatching { display.mode }.getOrNull()?.let(::formatMode)
+        val supported = runCatching { display.supportedModes }.getOrNull()
+            ?.map(::formatMode)
+            ?.distinct()
+            .orEmpty()
+        val wideGamut = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            runCatching { display.isWideColorGamut }.getOrDefault(false)
+        return DisplayModeInfo(currentMode = current, supportedModes = supported, wideColorGamut = wideGamut)
+    }
+
+    private fun formatMode(mode: Display.Mode): String {
+        val rate = mode.refreshRate
+        val rateText = if (rate % 1f == 0f) rate.toInt().toString() else String.format(java.util.Locale.US, "%.2f", rate)
+        return "${mode.physicalWidth}x${mode.physicalHeight}@$rateText"
+    }
+
     private fun defaultDisplay(context: Context): Display? {
         val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return null
         return dm.getDisplay(Display.DEFAULT_DISPLAY)

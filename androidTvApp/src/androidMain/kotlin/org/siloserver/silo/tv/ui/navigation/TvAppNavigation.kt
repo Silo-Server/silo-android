@@ -20,6 +20,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import org.siloserver.silo.common.diagnostics.DiagnosticsViewModel
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
@@ -49,9 +50,11 @@ import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.tv.ui.screens.cast.TvSiloCastStandbyView
+import org.siloserver.silo.tv.ui.screens.diagnostics.TvCrashPromptScreen
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.qualifier.named
 
 private const val RETURN_TO_MANAGE_SERVERS_KEY = "return_to_manage_servers"
@@ -113,6 +116,10 @@ fun TvAppNavigation(
     val pendingDeepLink: MutableStateFlow<Uri?> =
         koinInject(qualifier = named("pendingDeepLink"))
     val siloCastStandby by siloCastReceiver.standbyState.collectAsState()
+    // Crash-report consent prompt: coordinator state is app-scoped, so the
+    // prompt overlays whatever screen the user is on, player included.
+    val diagnosticsViewModel: DiagnosticsViewModel = koinViewModel()
+    val diagnosticsPrompt by diagnosticsViewModel.prompt.collectAsState()
 
     LaunchedEffect(siloCastReceiver) {
         siloCastReceiver.launchRequests.collect { request ->
@@ -923,6 +930,16 @@ fun TvAppNavigation(
         TvSiloCastStandbyView(
             state = state,
             onDisconnect = siloCastReceiver::disconnectRemoteControl,
+        )
+    }
+    diagnosticsPrompt?.let { prompt ->
+        val diagnosticsState by diagnosticsViewModel.state.collectAsState()
+        TvCrashPromptScreen(
+            prompt = prompt,
+            serverName = diagnosticsState.serverName,
+            onSend = { diagnosticsViewModel.acceptPrompt(always = false) },
+            onAlwaysSend = { diagnosticsViewModel.acceptPrompt(always = true) },
+            onDecline = diagnosticsViewModel::declinePrompt,
         )
     }
     }

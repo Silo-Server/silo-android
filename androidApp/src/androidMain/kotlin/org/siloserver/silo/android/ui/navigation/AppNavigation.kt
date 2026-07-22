@@ -44,6 +44,8 @@ import org.siloserver.silo.android.ui.screens.collections.CollectionsScreen
 import org.siloserver.silo.android.ui.screens.collections.LibraryCollectionsScreen
 import org.siloserver.silo.android.ui.screens.detail.ItemDetailScreen
 import org.siloserver.silo.android.ui.screens.detail.ItemDetailViewModel
+import org.siloserver.silo.android.ui.screens.diagnostics.CrashPromptDialog
+import org.siloserver.silo.android.ui.screens.diagnostics.DiagnosticsScreen
 import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherEntrySheet
 import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherLobbyScreen
 import org.siloserver.silo.android.ui.screens.people.PersonDetailScreen
@@ -68,6 +70,7 @@ import org.siloserver.silo.android.ui.screens.servers.ServerSwitchDestination
 import org.siloserver.silo.android.ui.screens.settings.CardOverlaySettingsScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsScreen
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
+import org.siloserver.silo.common.diagnostics.DiagnosticsViewModel
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.settings.OverlayPrefsStore
@@ -398,6 +401,9 @@ fun AppNavigation(
                 onNavigateToCardOverlays = {
                     navController.navigate(Route.CardOverlays.route)
                 },
+                onNavigateToDiagnostics = {
+                    navController.navigate(Route.Diagnostics.route)
+                },
                 onLoggedOut = {
                     navController.navigate(Route.Login.route) {
                         popUpTo(0) { inclusive = true }
@@ -410,6 +416,11 @@ fun AppNavigation(
         composable(Route.CardOverlays.route) {
             CardOverlaySettingsScreen(
                 store = overlayPrefsStore,
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        composable(Route.Diagnostics.route) {
+            DiagnosticsScreen(
                 onBackClick = { navController.popBackStack() },
             )
         }
@@ -840,6 +851,13 @@ fun AppNavigation(
                     .navigationBarsPadding(),
             )
         }
+        // Root-level crash/ANR consent prompt: rendered above whatever
+        // destination is showing (same altitude as the sessionExpired
+        // collector) so a pending report is offered no matter where the
+        // user is. The dialog collects from the view model and renders
+        // nothing while no prompt is pending.
+        val diagnosticsViewModel = koinViewModel<DiagnosticsViewModel>()
+        CrashPromptDialog(viewModel = diagnosticsViewModel)
     }
     }
     }

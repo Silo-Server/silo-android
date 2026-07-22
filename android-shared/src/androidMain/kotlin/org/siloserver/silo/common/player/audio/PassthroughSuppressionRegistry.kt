@@ -37,6 +37,12 @@ object PassthroughSuppressionRegistry {
         val channels = format.channelCount.coerceAtLeast(0)
         return blocked.any { it.mime == mime && (it.channels == 0 || channels == 0 || it.channels == channels) }
     }
+
+    /** Read-only export of the active suppression set for device diagnostics. */
+    data class SuppressionEntry(val mime: String, val channels: Int)
+
+    @Synchronized
+    fun snapshot(): List<SuppressionEntry> = blocked.map { SuppressionEntry(it.mime, it.channels) }
 }
 
 class PassthroughSuppressingAudioSink(

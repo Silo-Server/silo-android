@@ -41,7 +41,7 @@ val repositoryModule = module {
     // working when the multi-server platform binding isn't installed
     // (commonMain tests, hypothetical iOS reuse). Both repos no-op the
     // multi-server side effects when the registry is null.
-    single { AuthRepository(get(), get(), getOrNull(), getOrNull()) }
+    single { AuthRepository(get(), get(), getOrNull(), getOrNull(), getOrNull()) }
     single { DeviceLoginRepository(get()) }
     single { CatalogRepository(get(), getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>() ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort) }
     single { CalendarRepository(get()) }
@@ -62,6 +62,8 @@ val repositoryModule = module {
     single { RecommendationRepository(get()) }
     single { RequestsRepository(get()) }
     single { RequestsFeatureStore(get()) }
+    single { org.siloserver.silo.repository.DiagnosticsRepository(get()) }
+    single { org.siloserver.silo.model.feature.DiagnosticsFeatureStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
     single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get()) }
