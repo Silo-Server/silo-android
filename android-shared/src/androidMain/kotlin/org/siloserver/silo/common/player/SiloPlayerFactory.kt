@@ -88,6 +88,7 @@ class SiloPlayerFactory(
     )
 
     @Volatile private var requestHeaderScope: RequestHeaderScope? = null
+    @Volatile private var resumableProgressiveDirectPlay: Boolean = false
     private val runtimeCorrectionState = PlaybackRuntimeCorrectionState()
 
     private val dataSourceFactory = AuthenticatedDataSourceFactory(
@@ -250,7 +251,9 @@ class SiloPlayerFactory(
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
             .build()
 
-        val mediaLoadErrorHandlingPolicy = SiloMediaLoadErrorHandlingPolicy()
+        val mediaLoadErrorHandlingPolicy = SiloMediaLoadErrorHandlingPolicy(
+            isResumableProgressiveDirectPlay = { resumableProgressiveDirectPlay },
+        )
         fun defaultMediaSourceFactory(
             mode: DolbyVisionTransformMode,
             expectedDynamicRange: String? = null,
@@ -406,6 +409,7 @@ class SiloPlayerFactory(
         runtimeCorrections: List<String> = emptyList(),
     ): MediaItem {
         this.serverUrl = serverUrl
+        resumableProgressiveDirectPlay = delivery == PlaybackDelivery.ORIGINAL_HTTP
         runtimeCorrectionState.activate(runtimeCorrections)
         subtitleOffsetHolder.setTimelineOffsetSeconds(timelineOffsetSeconds)
         val absoluteUrl = buildAbsoluteUrl(serverUrl, streamUrl)

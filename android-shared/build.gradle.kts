@@ -112,6 +112,9 @@ kotlin {
             // stubs provide. androidx-test-core supplies ApplicationProvider.
             implementation(libs.androidx.test.core)
             implementation(libs.robolectric)
+            implementation(libs.media3.test.utils)
+            implementation(libs.media3.test.utils.robolectric)
+            implementation(libs.okhttp.mockwebserver)
 
             // SyncEngine tests drive a real PersonalDataApi over a MockEngine
             // HttpClient to exercise the outbox drain end-to-end.

@@ -12,6 +12,7 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.TransferListener
 import org.siloserver.silo.common.player.subtitle.normalizeSubripPayloadIfNeeded
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -62,6 +63,8 @@ internal class RefreshingHttpDataSource(
     private val transferListeners = mutableListOf<TransferListener>()
     private val requestProperties = linkedMapOf<String, String>()
     private var active: HttpDataSource? = null
+    private var entityUri: Uri? = null
+    private var entityEtag: String? = null
 
     override fun addTransferListener(transferListener: TransferListener) {
         transferListeners += transferListener
@@ -69,11 +72,12 @@ internal class RefreshingHttpDataSource(
     }
 
     override fun open(dataSpec: DataSpec): Long {
+        prepareEntityGuard(dataSpec.uri)
         val failedSnapshot = runBlocking { authSession.snapshot() }
         val first = newDataSource()
         active = first
         return try {
-            first.open(dataSpec.withAuthHeaders(failedSnapshot))
+            first.openWithGuards(dataSpec, failedSnapshot)
         } catch (error: HttpDataSource.InvalidResponseCodeException) {
             if (error.responseCode != 401 || !runBlocking { authSession.refreshIfStale(failedSnapshot) }) {
                 throw error
@@ -81,7 +85,7 @@ internal class RefreshingHttpDataSource(
             first.close()
             val retry = newDataSource()
             active = retry
-            retry.open(dataSpec.withAuthHeaders(runBlocking { authSession.snapshot() }))
+            retry.openWithGuards(dataSpec, runBlocking { authSession.snapshot() })
         }
     }
 
@@ -120,6 +124,41 @@ internal class RefreshingHttpDataSource(
         transferListeners.forEach(dataSource::addTransferListener)
     }
 
+    private fun prepareEntityGuard(openedUri: Uri) {
+        if (openedUri != entityUri) {
+            entityUri = openedUri
+            entityEtag = null
+        }
+    }
+
+    private fun HttpDataSource.openWithGuards(
+        dataSpec: DataSpec,
+        snapshot: MediaAuthSnapshot,
+    ): Long {
+        val guardedDataSpec = dataSpec
+            .withIfRangeHeader()
+            .withAuthHeaders(snapshot)
+        val length = open(guardedDataSpec)
+        val responseEtag = responseHeaders.headerValue("ETag")
+        val previousEtag = entityEtag
+        if (previousEtag != null && responseEtag != null && responseEtag != previousEtag) {
+            runCatching(::close)
+            throw EntityChangedException()
+        }
+        if (responseEtag != null) {
+            entityEtag = responseEtag
+        }
+        return length
+    }
+
+    private fun DataSpec.withIfRangeHeader(): DataSpec {
+        val etag = entityEtag
+        if (position <= 0L || etag == null) return this
+        return buildUpon()
+            .setHttpRequestHeaders(httpRequestHeaders.withHeader("If-Range", etag))
+            .build()
+    }
+
     private fun DataSpec.withAuthHeaders(snapshot: MediaAuthSnapshot): DataSpec = buildUpon()
         // A V3 plan may carry a stream-scoped credential (for example, a
         // signed CDN Authorization value). Treat those explicit DataSpec
@@ -130,6 +169,23 @@ internal class RefreshingHttpDataSource(
         )
         .build()
 }
+
+internal class EntityChangedException :
+    IOException("HTTP entity changed during ranged resume")
+
+private fun Map<String, List<String>>.headerValue(name: String): String? =
+    entries.firstOrNull { (key, _) -> key.equals(name, ignoreCase = true) }
+        ?.value
+        ?.firstOrNull()
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+
+private fun Map<String, String>.withHeader(name: String, value: String): Map<String, String> =
+    buildMap {
+        putAll(this@withHeader)
+        keys.firstOrNull { it.equals(name, ignoreCase = true) }?.let(::remove)
+        put(name, value)
+    }
 
 internal fun mergeSessionAuthHeaders(
     sessionHeaders: Map<String, String>,

@@ -1,38 +1,126 @@
 package org.siloserver.silo.common.player
 
+import android.util.Log
 import androidx.media3.common.C
+import androidx.media3.common.ParserException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import java.io.EOFException
 import java.net.ConnectException
 import java.net.ProtocolException
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.concurrent.ConcurrentHashMap
+import okhttp3.internal.http2.ConnectionShutdownException
+import okhttp3.internal.http2.StreamResetException
 
 /**
- * Keeps HLS manifest/segment loads alive across short server restarts.
+ * Keeps transient HLS loads alive and resumes eligible progressive direct play
+ * after mid-body transport failures.
  *
- * The server can reconstruct transcode sessions after restart, but only if the
- * client keeps retrying instead of letting Media3's short default retry budget
- * turn the outage into a fatal PlaybackException.
+ * HLS retains its existing server-restart retries. Original-file progressive
+ * loads additionally reopen only after real byte progress, allowing Media3 to
+ * continue at its current extraction position without surfacing a player error.
  */
 @UnstableApi
-internal class SiloMediaLoadErrorHandlingPolicy : DefaultLoadErrorHandlingPolicy() {
+internal class SiloMediaLoadErrorHandlingPolicy(
+    private val isResumableProgressiveDirectPlay: () -> Boolean = { false },
+) : DefaultLoadErrorHandlingPolicy() {
+    private val attemptBytesTracker = MediaLoadAttemptBytesTracker()
 
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
         val invalidResponse = loadErrorInfo.exception as? HttpDataSource.InvalidResponseCodeException
-        return siloMediaLoadRetryDelayMs(
+        val cumulativeBytesLoaded = loadErrorInfo.loadEventInfo.bytesLoaded
+        val bytesLoaded = attemptBytesTracker.bytesLoadedForAttempt(
+            loadTaskId = loadErrorInfo.loadEventInfo.loadTaskId,
+            cumulativeBytesLoaded = cumulativeBytesLoaded,
+        )
+        val resumableDirectPlay = isResumableProgressiveDirectPlay()
+        val delayMs = siloMediaLoadRetryDelayMs(
             responseCode = invalidResponse?.responseCode,
             retryAfterHeaders = invalidResponse?.retryAfterHeaders().orEmpty(),
             cause = loadErrorInfo.exception,
             errorCount = loadErrorInfo.errorCount,
+            isResumableProgressiveDirectPlay = resumableDirectPlay,
+            bytesLoaded = bytesLoaded,
         )
+        logProgressiveResumeDecision(
+            loadErrorInfo = loadErrorInfo,
+            resumableDirectPlay = resumableDirectPlay,
+            bytesLoaded = bytesLoaded,
+            delayMs = delayMs,
+        )
+        return delayMs
+    }
+
+    override fun onLoadTaskConcluded(loadTaskId: Long) {
+        attemptBytesTracker.onLoadTaskConcluded(loadTaskId)
+        super.onLoadTaskConcluded(loadTaskId)
     }
 
     override fun getMinimumLoadableRetryCount(dataType: Int): Int =
         Int.MAX_VALUE
+
+    private fun logProgressiveResumeDecision(
+        loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo,
+        resumableDirectPlay: Boolean,
+        bytesLoaded: Long,
+        delayMs: Long,
+    ) {
+        if (!resumableDirectPlay) return
+        val transportFailure = loadErrorInfo.exception.findResumableTransportFailure() ?: return
+        val resumeOffset = loadErrorInfo.loadEventInfo.dataSpec.position.coerceAtLeast(0L) +
+            bytesLoaded.coerceAtLeast(0L)
+        val errorDescription = buildString {
+            append(transportFailure.javaClass.simpleName)
+            transportFailure.message?.takeIf(String::isNotBlank)?.let {
+                append(": ")
+                append(it)
+            }
+        }
+        if (delayMs != C.TIME_UNSET) {
+            Log.i(
+                TAG,
+                "progressive direct-play retry error=$errorDescription " +
+                    "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
+                    "attempt=${loadErrorInfo.errorCount} retry_delay_ms=$delayMs",
+            )
+        } else {
+            Log.w(
+                TAG,
+                "progressive direct-play retry exhausted error=$errorDescription " +
+                    "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
+                    "attempt=${loadErrorInfo.errorCount}",
+            )
+        }
+    }
+
+    private companion object {
+        const val TAG = "MediaLoadRetry"
+    }
+}
+
+internal class MediaLoadAttemptBytesTracker {
+    private val cumulativeBytesByLoadTask = ConcurrentHashMap<Long, Long>()
+
+    fun bytesLoadedForAttempt(
+        loadTaskId: Long,
+        cumulativeBytesLoaded: Long,
+    ): Long {
+        val sanitizedCumulativeBytes = cumulativeBytesLoaded.coerceAtLeast(0L)
+        val previousCumulativeBytes = cumulativeBytesByLoadTask.put(
+            loadTaskId,
+            sanitizedCumulativeBytes,
+        ) ?: 0L
+        return (sanitizedCumulativeBytes - previousCumulativeBytes).coerceAtLeast(0L)
+    }
+
+    fun onLoadTaskConcluded(loadTaskId: Long) {
+        cumulativeBytesByLoadTask.remove(loadTaskId)
+    }
 }
 
 internal fun siloMediaLoadRetryDelayMs(
@@ -40,9 +128,20 @@ internal fun siloMediaLoadRetryDelayMs(
     retryAfterHeaders: List<String> = emptyList(),
     cause: Throwable? = null,
     errorCount: Int,
+    isResumableProgressiveDirectPlay: Boolean = false,
+    bytesLoaded: Long = 0L,
     retryWindowMs: Long = MEDIA_LOAD_RETRY_WINDOW_MS,
 ): Long {
-    if (!isRetryableMediaLoadFailure(responseCode, cause)) return C.TIME_UNSET
+    if (
+        !isRetryableMediaLoadFailure(
+            responseCode = responseCode,
+            cause = cause,
+            isResumableProgressiveDirectPlay = isResumableProgressiveDirectPlay,
+            bytesLoaded = bytesLoaded,
+        )
+    ) {
+        return C.TIME_UNSET
+    }
 
     val delayMs = retryAfterHeaders.firstNotNullOfOrNull(::parseRetryAfterDelayMs)
         ?: mediaLoadBackoffDelayMs(errorCount)
@@ -50,7 +149,18 @@ internal fun siloMediaLoadRetryDelayMs(
     return if (elapsedBeforeRetry + delayMs <= retryWindowMs) delayMs else C.TIME_UNSET
 }
 
-private fun isRetryableMediaLoadFailure(responseCode: Int?, cause: Throwable?): Boolean {
+private fun isRetryableMediaLoadFailure(
+    responseCode: Int?,
+    cause: Throwable?,
+    isResumableProgressiveDirectPlay: Boolean,
+    bytesLoaded: Long,
+): Boolean {
+    if (
+        generateSequence(cause) { it.cause }
+            .any { it is EntityChangedException || it is ParserException }
+    ) {
+        return false
+    }
     if (responseCode != null) return responseCode.isRetryableMediaStatus()
     return generateSequence(cause) { it.cause }
         .any { error ->
@@ -58,20 +168,45 @@ private fun isRetryableMediaLoadFailure(responseCode: Int?, cause: Throwable?): 
                 error is ConnectException ||
                 error is SocketException ||
                 error is UnknownHostException ||
-                error.isPrematureHttpEndOfStream()
+                error.isRetryablePrematureEnd(
+                    isResumableProgressiveDirectPlay = isResumableProgressiveDirectPlay,
+                    bytesLoaded = bytesLoaded,
+                )
         }
+}
+
+private fun Throwable.isRetryablePrematureEnd(
+    isResumableProgressiveDirectPlay: Boolean,
+    bytesLoaded: Long,
+): Boolean {
+    val madeProgress = bytesLoaded > 0L
+    return when {
+        this is ProtocolException && isUnexpectedEndOfStream() ->
+            !isResumableProgressiveDirectPlay || madeProgress
+        isResumableTransportFailure() ->
+            isResumableProgressiveDirectPlay && madeProgress
+        else -> false
+    }
 }
 
 /**
  * OkHttp reports a response that closes before its declared Content-Length as
  * a ProtocolException wrapped by Media3's HttpDataSourceException. Progressive
- * extractors can safely reopen their current byte range, so keep this narrowly
- * scoped transport failure retryable without masking unrelated protocol or
- * container errors.
+ * extractors can safely reopen their current byte range after real byte
+ * progress. HTTP/2 stream and connection shutdowns are similarly resumable,
+ * but only for original-file progressive delivery.
  */
-private fun Throwable.isPrematureHttpEndOfStream(): Boolean =
-    this is ProtocolException &&
-        message?.contains("unexpected end of stream", ignoreCase = true) == true
+private fun Throwable.isResumableTransportFailure(): Boolean =
+    this is StreamResetException ||
+        this is ConnectionShutdownException ||
+        this is EOFException ||
+        (this is ProtocolException && isUnexpectedEndOfStream())
+
+private fun ProtocolException.isUnexpectedEndOfStream(): Boolean =
+    message?.contains("unexpected end of stream", ignoreCase = true) == true
+
+private fun Throwable?.findResumableTransportFailure(): Throwable? =
+    generateSequence(this) { it.cause }.firstOrNull(Throwable::isResumableTransportFailure)
 
 private fun Int.isRetryableMediaStatus(): Boolean =
     this == 404 ||

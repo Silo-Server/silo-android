@@ -20,6 +20,7 @@ const val LAYOUT_AWARE_PASSTHROUGH_FEATURE = "layout_aware_passthrough"
 const val CLIENT_VIDEO_TRANSFORMATIONS_FEATURE = "client_video_transformations_v1"
 const val DEVICE_QUIRKS_V3_FEATURE = "device_quirks_v1"
 const val SEEK_REANCHOR_V3_FEATURE = "seek_reanchor_v1"
+const val DIRECT_STREAM_RESUME_V1_FEATURE = "direct_stream_resume_v1"
 const val SEEK_REANCHOR_V3_OPERATION = "seek_reanchor"
 const val SEEK_FAILURE_RECOVERY_V3_OPERATION = "seek_failure_recovery"
 const val CLIENT_DV7_TO_DV81 = "client_dv7_to_dv81"
@@ -226,6 +227,7 @@ data class PlaybackStartRequestV3(
         CLIENT_VIDEO_TRANSFORMATIONS_FEATURE,
         DEVICE_QUIRKS_V3_FEATURE,
         SEEK_REANCHOR_V3_FEATURE,
+        DIRECT_STREAM_RESUME_V1_FEATURE,
     ),
     @SerialName("file_id") val fileId: Int,
     @SerialName("profile_id") val profileId: String,
