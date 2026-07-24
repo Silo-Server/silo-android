@@ -6,6 +6,7 @@ import java.io.EOFException
 import java.io.IOException
 import java.net.ConnectException
 import java.net.ProtocolException
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -127,7 +128,7 @@ class MediaLoadRetryPolicyTest {
             ),
         )
         assertEquals(
-            C.TIME_UNSET,
+            1_000L,
             siloMediaLoadRetryDelayMs(
                 cause = ProtocolException("unexpected end of stream"),
                 errorCount = 1,
@@ -185,6 +186,22 @@ class MediaLoadRetryPolicyTest {
             C.TIME_UNSET,
             siloMediaLoadRetryDelayMs(
                 cause = EntityChangedException(),
+                errorCount = 1,
+                isResumableProgressiveDirectPlay = true,
+                bytesLoaded = 32_768L,
+            ),
+        )
+    }
+
+    @Test
+    fun `parser failures still retry when wrapping a socket failure`() {
+        assertEquals(
+            1_000L,
+            siloMediaLoadRetryDelayMs(
+                cause = ParserException.createForMalformedContainer(
+                    "parser observed transport failure",
+                    SocketException("connection reset"),
+                ),
                 errorCount = 1,
                 isResumableProgressiveDirectPlay = true,
                 bytesLoaded = 32_768L,

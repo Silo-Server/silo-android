@@ -33,10 +33,15 @@ class AuthenticatedDataSourceFactory(
     private val authSession: MediaAuthSession,
     private val serverUrlProvider: () -> String,
     private val requestHeadersProvider: (Uri) -> Map<String, String> = { emptyMap() },
+    private val isResumableDirectPlayUri: (Uri) -> Boolean = { false },
 ) : DataSource.Factory {
 
     override fun createDataSource(): DataSource {
-        val http = RefreshingHttpDataSource(httpDataSourceFactory, authSession)
+        val http = RefreshingHttpDataSource(
+            factory = httpDataSourceFactory,
+            authSession = authSession,
+            isResumableDirectPlayUri = isResumableDirectPlayUri,
+        )
         val file = FileDataSource()
         val content = ContentDataSource(context)
         return RoutedDataSource(
@@ -59,6 +64,7 @@ class AuthenticatedDataSourceFactory(
 internal class RefreshingHttpDataSource(
     private val factory: HttpDataSource.Factory,
     private val authSession: MediaAuthSession,
+    private val isResumableDirectPlayUri: (Uri) -> Boolean = { false },
 ) : HttpDataSource {
     private val transferListeners = mutableListOf<TransferListener>()
     private val requestProperties = linkedMapOf<String, String>()
@@ -72,12 +78,15 @@ internal class RefreshingHttpDataSource(
     }
 
     override fun open(dataSpec: DataSpec): Long {
-        prepareEntityGuard(dataSpec.uri)
+        val guardEnabled = isResumableDirectPlayUri(dataSpec.uri)
+        if (guardEnabled) {
+            prepareEntityGuard(dataSpec.uri)
+        }
         val failedSnapshot = runBlocking { authSession.snapshot() }
         val first = newDataSource()
         active = first
         return try {
-            first.openWithGuards(dataSpec, failedSnapshot)
+            first.openWithGuards(dataSpec, failedSnapshot, guardEnabled)
         } catch (error: HttpDataSource.InvalidResponseCodeException) {
             if (error.responseCode != 401 || !runBlocking { authSession.refreshIfStale(failedSnapshot) }) {
                 throw error
@@ -85,7 +94,7 @@ internal class RefreshingHttpDataSource(
             first.close()
             val retry = newDataSource()
             active = retry
-            retry.openWithGuards(dataSpec, runBlocking { authSession.snapshot() })
+            retry.openWithGuards(dataSpec, runBlocking { authSession.snapshot() }, guardEnabled)
         }
     }
 
@@ -134,16 +143,25 @@ internal class RefreshingHttpDataSource(
     private fun HttpDataSource.openWithGuards(
         dataSpec: DataSpec,
         snapshot: MediaAuthSnapshot,
+        guardEnabled: Boolean,
     ): Long {
+        if (!guardEnabled) {
+            return open(dataSpec.withAuthHeaders(snapshot))
+        }
+
+        val previousEtag = entityEtag
         val guardedDataSpec = dataSpec
             .withIfRangeHeader()
             .withAuthHeaders(snapshot)
         val length = open(guardedDataSpec)
         val responseEtag = responseHeaders.headerValue("ETag")
-        val previousEtag = entityEtag
-        if (previousEtag != null && responseEtag != null && responseEtag != previousEtag) {
-            runCatching(::close)
-            throw EntityChangedException()
+        if (previousEtag != null && dataSpec.position > 0L) {
+            if (responseEtag != null && responseEtag != previousEtag) {
+                failEntityChanged()
+            }
+            if (responseCode == 200 && responseEtag != previousEtag) {
+                failEntityChanged()
+            }
         }
         if (responseEtag != null) {
             entityEtag = responseEtag
@@ -153,10 +171,16 @@ internal class RefreshingHttpDataSource(
 
     private fun DataSpec.withIfRangeHeader(): DataSpec {
         val etag = entityEtag
-        if (position <= 0L || etag == null) return this
+        if (position <= 0L || etag == null || !etag.isStrongEtagValidator()) return this
         return buildUpon()
             .setHttpRequestHeaders(httpRequestHeaders.withHeader("If-Range", etag))
             .build()
+    }
+
+    private fun HttpDataSource.failEntityChanged(): Nothing {
+        runCatching(::close)
+        active = null
+        throw EntityChangedException()
     }
 
     private fun DataSpec.withAuthHeaders(snapshot: MediaAuthSnapshot): DataSpec = buildUpon()
@@ -179,6 +203,9 @@ private fun Map<String, List<String>>.headerValue(name: String): String? =
         ?.firstOrNull()
         ?.trim()
         ?.takeIf(String::isNotEmpty)
+
+private fun String.isStrongEtagValidator(): Boolean =
+    !startsWith("W/", ignoreCase = true)
 
 private fun Map<String, String>.withHeader(name: String, value: String): Map<String, String> =
     buildMap {

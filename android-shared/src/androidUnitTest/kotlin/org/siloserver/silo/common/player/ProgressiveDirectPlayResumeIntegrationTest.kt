@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player
 
 import android.content.Context
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.OptIn
@@ -81,22 +82,32 @@ class ProgressiveDirectPlayResumeIntegrationTest {
     }
 
     @Test
-    fun `zero progress on ranged reopen escapes instead of retrying again`() {
+    fun `zero progress unexpected end on ranged reopen retries again`() {
         val dispatcher = RangeFixtureDispatcher(fixture, ResumeResponse.NO_PROGRESS)
         val harness = prepareHarness(dispatcher)
 
         awaitResumeRequest(harness.player, dispatcher)
-        val terminal = awaitTerminalLoadError(harness, dispatcher)
+        try {
+            RobolectricUtil.runMainLooperUntil { dispatcher.requests.size >= 3 }
+        } catch (error: TimeoutException) {
+            val retryLogs = ShadowLog.getLogsForTag("MediaLoadRetry")
+                .joinToString(separator = " | ") { it.msg }
+            throw AssertionError(
+                "third retry request not observed: requests=${dispatcher.requests.size}, " +
+                    "loadErrors=${harness.loadErrors.size}, state=${harness.player.playbackState}, " +
+                    "isLoading=${harness.player.isLoading}, playerError=${harness.player.playerError}, " +
+                    "retryLogs=[$retryLogs]",
+                error,
+            )
+        }
 
-        assertEquals(
-            harness.loadErrors[0].cumulativeBytesLoaded,
-            terminal.cumulativeBytesLoaded,
-        )
-        assertTrue(terminal.wasCanceled)
-        assertEquals(2, dispatcher.requests.size)
         assertEquals(
             "bytes=${fixture.size / 2}-",
             dispatcher.requests[1].getHeader("Range"),
+        )
+        assertEquals(
+            "bytes=${fixture.size / 2}-",
+            dispatcher.requests[2].getHeader("Range"),
         )
     }
 
@@ -183,18 +194,23 @@ class ProgressiveDirectPlayResumeIntegrationTest {
         }
         val authSession = MediaAuthSession(TokenManagerImpl(), refreshClient)
         val upstreamFactory = OkHttpDataSource.Factory(mediaClient)
+        val mediaUri = Uri.parse(server.url("/fixture.wav").toString())
         val guardedFactory = DataSource.Factory {
-            RefreshingHttpDataSource(upstreamFactory, authSession)
+            RefreshingHttpDataSource(
+                factory = upstreamFactory,
+                authSession = authSession,
+                isResumableDirectPlayUri = { it == mediaUri },
+            )
         }
         val mediaSourceFactory = ProgressiveMediaSource.Factory(guardedFactory)
             .setLoadErrorHandlingPolicy(
                 SiloMediaLoadErrorHandlingPolicy(
-                    isResumableProgressiveDirectPlay = { true },
+                    isResumableProgressiveDirectPlay = { it == mediaUri },
                 ),
             )
         val context = ApplicationProvider.getApplicationContext<Context>()
         val mediaSource = mediaSourceFactory.createMediaSource(
-            MediaItem.fromUri(server.url("/fixture.wav").toString()),
+            MediaItem.fromUri(mediaUri),
         )
         val loadErrors = CopyOnWriteArrayList<ObservedLoadError>()
         mediaSource.addEventListener(

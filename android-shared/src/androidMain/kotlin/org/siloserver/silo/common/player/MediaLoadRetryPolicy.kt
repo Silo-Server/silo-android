@@ -1,12 +1,14 @@
 package org.siloserver.silo.common.player
 
-import android.util.Log
+import android.net.Uri
 import androidx.media3.common.C
 import androidx.media3.common.ParserException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import org.siloserver.silo.common.diagnostics.SiloLog
+import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import java.io.EOFException
 import java.net.ConnectException
 import java.net.ProtocolException
@@ -18,16 +20,20 @@ import okhttp3.internal.http2.ConnectionShutdownException
 import okhttp3.internal.http2.StreamResetException
 
 /**
- * Keeps transient HLS loads alive and resumes eligible progressive direct play
- * after mid-body transport failures.
+ * Keeps transient media loads alive and resumes eligible progressive direct
+ * play after mid-body transport failures.
  *
- * HLS retains its existing server-restart retries. Original-file progressive
- * loads additionally reopen only after real byte progress, allowing Media3 to
- * continue at its current extraction position without surfacing a player error.
+ * Eligibility is classified per load URI because the source factories are
+ * shared by HLS, progressive, and sidecar subtitle loads. HLS retains its
+ * existing server-restart retries, including zero-progress unexpected-end
+ * failures. Original-file progressive loads additionally reopen stream resets
+ * and EOF-style transport failures only after real byte progress, allowing
+ * Media3 to continue at its current extraction position without surfacing a
+ * player error.
  */
 @UnstableApi
 internal class SiloMediaLoadErrorHandlingPolicy(
-    private val isResumableProgressiveDirectPlay: () -> Boolean = { false },
+    private val isResumableProgressiveDirectPlay: (Uri) -> Boolean = { false },
 ) : DefaultLoadErrorHandlingPolicy() {
     private val attemptBytesTracker = MediaLoadAttemptBytesTracker()
 
@@ -38,7 +44,9 @@ internal class SiloMediaLoadErrorHandlingPolicy(
             loadTaskId = loadErrorInfo.loadEventInfo.loadTaskId,
             cumulativeBytesLoaded = cumulativeBytesLoaded,
         )
-        val resumableDirectPlay = isResumableProgressiveDirectPlay()
+        val resumableDirectPlay = isResumableProgressiveDirectPlay(
+            loadErrorInfo.loadEventInfo.dataSpec.uri,
+        )
         val delayMs = siloMediaLoadRetryDelayMs(
             responseCode = invalidResponse?.responseCode,
             retryAfterHeaders = invalidResponse?.retryAfterHeaders().orEmpty(),
@@ -82,14 +90,16 @@ internal class SiloMediaLoadErrorHandlingPolicy(
             }
         }
         if (delayMs != C.TIME_UNSET) {
-            Log.i(
+            SiloLog.i(
+                DiagnosticsLogCategory.PLAYBACK,
                 TAG,
                 "progressive direct-play retry error=$errorDescription " +
                     "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
                     "attempt=${loadErrorInfo.errorCount} retry_delay_ms=$delayMs",
             )
         } else {
-            Log.w(
+            SiloLog.w(
+                DiagnosticsLogCategory.PLAYBACK,
                 TAG,
                 "progressive direct-play retry exhausted error=$errorDescription " +
                     "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
@@ -155,24 +165,29 @@ private fun isRetryableMediaLoadFailure(
     isResumableProgressiveDirectPlay: Boolean,
     bytesLoaded: Long,
 ): Boolean {
-    if (
-        generateSequence(cause) { it.cause }
-            .any { it is EntityChangedException || it is ParserException }
-    ) {
-        return false
-    }
+    val chain = generateSequence(cause) { it.cause }.toList()
+    if (chain.any { it is EntityChangedException }) return false
     if (responseCode != null) return responseCode.isRetryableMediaStatus()
-    return generateSequence(cause) { it.cause }
-        .any { error ->
+
+    if (
+        chain.any { error ->
             error is SocketTimeoutException ||
                 error is ConnectException ||
                 error is SocketException ||
-                error is UnknownHostException ||
-                error.isRetryablePrematureEnd(
-                    isResumableProgressiveDirectPlay = isResumableProgressiveDirectPlay,
-                    bytesLoaded = bytesLoaded,
-                )
+                error is UnknownHostException
         }
+    ) {
+        return true
+    }
+
+    if (chain.any { it is ParserException }) return false
+
+    return chain.any { error ->
+        error.isRetryablePrematureEnd(
+            isResumableProgressiveDirectPlay = isResumableProgressiveDirectPlay,
+            bytesLoaded = bytesLoaded,
+        )
+    }
 }
 
 private fun Throwable.isRetryablePrematureEnd(
@@ -182,7 +197,7 @@ private fun Throwable.isRetryablePrematureEnd(
     val madeProgress = bytesLoaded > 0L
     return when {
         this is ProtocolException && isUnexpectedEndOfStream() ->
-            !isResumableProgressiveDirectPlay || madeProgress
+            true
         isResumableTransportFailure() ->
             isResumableProgressiveDirectPlay && madeProgress
         else -> false

@@ -102,9 +102,49 @@ class AuthenticatedDataSourceFactoryTest {
     }
 
     @Test
-    fun `etag is captured and attached as if-range on ranged reopen`() {
+    fun `guard disabled skips if-range and entity-change validation`() {
         val initial = FakeHttpDataSource(responseHeaders = mapOf("ETag" to listOf("\"v1\"")))
-        val resumed = FakeHttpDataSource(responseHeaders = mapOf("etag" to listOf("\"v1\"")))
+        val changed = FakeHttpDataSource(responseHeaders = mapOf("ETag" to listOf("\"v2\"")))
+        val source = refreshingSource(
+            initial,
+            changed,
+            isResumableDirectPlayUri = { false },
+        )
+        val uri = Uri.parse("https://cdn.example/video.mp4")
+
+        source.open(DataSpec(uri))
+        source.close()
+        source.open(DataSpec.Builder().setUri(uri).setPosition(4_096L).build())
+
+        assertFalse(initial.openedDataSpecs.single().httpRequestHeaders.containsKey("If-Range"))
+        assertFalse(changed.openedDataSpecs.single().httpRequestHeaders.containsKey("If-Range"))
+        assertFalse(changed.closed)
+    }
+
+    @Test
+    fun `weak etag is captured but not sent as if-range on ranged reopen`() {
+        val initial = FakeHttpDataSource(responseHeaders = mapOf("ETag" to listOf("""W/"v1"""")))
+        val resumed = FakeHttpDataSource(
+            responseHeaders = mapOf("etag" to listOf("""W/"v1"""")),
+            responseCode = 200,
+        )
+        val source = refreshingSource(initial, resumed)
+        val uri = Uri.parse("https://cdn.example/video.mp4")
+
+        source.open(DataSpec(uri))
+        source.close()
+        source.open(DataSpec.Builder().setUri(uri).setPosition(4_096L).build())
+
+        assertFalse(resumed.openedDataSpecs.single().httpRequestHeaders.containsKey("If-Range"))
+    }
+
+    @Test
+    fun `strong etag is captured and attached as if-range on ranged reopen`() {
+        val initial = FakeHttpDataSource(responseHeaders = mapOf("ETag" to listOf("\"v1\"")))
+        val resumed = FakeHttpDataSource(
+            responseHeaders = mapOf("etag" to listOf("\"v1\"")),
+            responseCode = 206,
+        )
         val source = refreshingSource(initial, resumed)
         val uri = Uri.parse("https://cdn.example/video.mp4")
 
@@ -130,6 +170,57 @@ class AuthenticatedDataSourceFactoryTest {
             source.open(DataSpec.Builder().setUri(uri).setPosition(8_192L).build())
         }
         assertTrue(changed.closed)
+        assertEquals(C.RESULT_END_OF_INPUT, source.read(ByteArray(1), 0, 1))
+    }
+
+    @Test
+    fun `ranged reopen with prior etag rejects 200 without matching etag`() {
+        val initial = FakeHttpDataSource(responseHeaders = mapOf("ETag" to listOf("\"v1\"")))
+        val full = FakeHttpDataSource(responseCode = 200)
+        val source = refreshingSource(initial, full)
+        val uri = Uri.parse("https://cdn.example/video.mp4")
+
+        source.open(DataSpec(uri))
+        source.close()
+
+        assertFailsWith<EntityChangedException> {
+            source.open(DataSpec.Builder().setUri(uri).setPosition(8_192L).build())
+        }
+        assertTrue(full.closed)
+        assertEquals(C.RESULT_END_OF_INPUT, source.read(ByteArray(1), 0, 1))
+    }
+
+    @Test
+    fun `ranged reopen with prior etag accepts 200 with matching etag`() {
+        val initial = FakeHttpDataSource(responseHeaders = mapOf("ETag" to listOf("\"v1\"")))
+        val full = FakeHttpDataSource(
+            responseHeaders = mapOf("ETag" to listOf("\"v1\"")),
+            responseCode = 200,
+        )
+        val source = refreshingSource(initial, full)
+        val uri = Uri.parse("https://cdn.example/video.mp4")
+
+        source.open(DataSpec(uri))
+        source.close()
+        source.open(DataSpec.Builder().setUri(uri).setPosition(8_192L).build())
+
+        assertEquals("\"v1\"", full.openedDataSpecs.single().httpRequestHeaders["If-Range"])
+        assertFalse(full.closed)
+    }
+
+    @Test
+    fun `ranged reopen with prior etag accepts 206 without response etag`() {
+        val initial = FakeHttpDataSource(responseHeaders = mapOf("ETag" to listOf("\"v1\"")))
+        val partial = FakeHttpDataSource(responseCode = 206)
+        val source = refreshingSource(initial, partial)
+        val uri = Uri.parse("https://cdn.example/video.mp4")
+
+        source.open(DataSpec(uri))
+        source.close()
+        source.open(DataSpec.Builder().setUri(uri).setPosition(8_192L).build())
+
+        assertEquals("\"v1\"", partial.openedDataSpecs.single().httpRequestHeaders["If-Range"])
+        assertFalse(partial.closed)
     }
 
     @Test
@@ -205,6 +296,7 @@ class AuthenticatedDataSourceFactoryTest {
 
     private fun refreshingSource(
         vararg dataSources: FakeHttpDataSource,
+        isResumableDirectPlayUri: (Uri) -> Boolean = { true },
     ): RefreshingHttpDataSource {
         val client = OkHttpClient().also {
             closeables += it
@@ -212,6 +304,7 @@ class AuthenticatedDataSourceFactoryTest {
         return RefreshingHttpDataSource(
             factory = FakeHttpDataSourceFactory(ArrayDeque(dataSources.toList())),
             authSession = MediaAuthSession(TokenManagerImpl(), client),
+            isResumableDirectPlayUri = isResumableDirectPlayUri,
         )
     }
 
@@ -227,6 +320,7 @@ class AuthenticatedDataSourceFactoryTest {
 
     private class FakeHttpDataSource(
         private val responseHeaders: Map<String, List<String>> = emptyMap(),
+        private val responseCode: Int = 200,
         private val onOpen: (DataSpec) -> Long = { C.LENGTH_UNSET.toLong() },
     ) : HttpDataSource {
         val openedDataSpecs = mutableListOf<DataSpec>()
@@ -244,7 +338,7 @@ class AuthenticatedDataSourceFactoryTest {
 
         override fun getUri(): Uri? = openedDataSpecs.lastOrNull()?.uri
 
-        override fun getResponseCode(): Int = 200
+        override fun getResponseCode(): Int = responseCode
 
         override fun getResponseHeaders(): Map<String, List<String>> = responseHeaders
 

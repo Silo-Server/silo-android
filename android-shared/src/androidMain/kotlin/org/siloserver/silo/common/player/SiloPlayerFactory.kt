@@ -88,7 +88,7 @@ class SiloPlayerFactory(
     )
 
     @Volatile private var requestHeaderScope: RequestHeaderScope? = null
-    @Volatile private var resumableProgressiveDirectPlay: Boolean = false
+    @Volatile private var resumableDirectPlayUri: android.net.Uri? = null
     private val runtimeCorrectionState = PlaybackRuntimeCorrectionState()
 
     private val dataSourceFactory = AuthenticatedDataSourceFactory(
@@ -97,6 +97,7 @@ class SiloPlayerFactory(
         authSession = mediaAuthSession,
         serverUrlProvider = { serverUrl },
         requestHeadersProvider = ::requestHeadersFor,
+        isResumableDirectPlayUri = ::isResumableDirectPlayUri,
     )
 
     private val embeddedSubtitleParserFactory = OffsetSubtitleParserFactory(
@@ -252,7 +253,7 @@ class SiloPlayerFactory(
             .build()
 
         val mediaLoadErrorHandlingPolicy = SiloMediaLoadErrorHandlingPolicy(
-            isResumableProgressiveDirectPlay = { resumableProgressiveDirectPlay },
+            isResumableProgressiveDirectPlay = ::isResumableDirectPlayUri,
         )
         fun defaultMediaSourceFactory(
             mode: DolbyVisionTransformMode,
@@ -409,10 +410,14 @@ class SiloPlayerFactory(
         runtimeCorrections: List<String> = emptyList(),
     ): MediaItem {
         this.serverUrl = serverUrl
-        resumableProgressiveDirectPlay = delivery == PlaybackDelivery.ORIGINAL_HTTP
         runtimeCorrectionState.activate(runtimeCorrections)
         subtitleOffsetHolder.setTimelineOffsetSeconds(timelineOffsetSeconds)
         val absoluteUrl = buildAbsoluteUrl(serverUrl, streamUrl)
+        resumableDirectPlayUri = if (delivery == PlaybackDelivery.ORIGINAL_HTTP) {
+            android.net.Uri.parse(absoluteUrl)
+        } else {
+            null
+        }
         requestHeaderScope = requestHeaders.takeIf { it.isNotEmpty() }?.let {
             RequestHeaderScope(android.net.Uri.parse(absoluteUrl), it)
         }
@@ -481,6 +486,9 @@ class SiloPlayerFactory(
             emptyMap()
         }
     }
+
+    private fun isResumableDirectPlayUri(uri: android.net.Uri): Boolean =
+        uri == resumableDirectPlayUri
 
     private fun buildAbsoluteUrl(serverUrl: String, streamUrl: String): String =
         resolvePlaybackStreamUrl(serverUrl, streamUrl)
