@@ -13,11 +13,32 @@ object PlaybackSettingsKeys {
     const val SubtitleSyncMs = "player.subtitle_sync_ms"
     const val VideoGravity = "player.video_gravity"
     const val OrientationMode = "player.orientation_mode"
-    const val NextUpPromptSeconds = "player.next_up_prompt_seconds"
+    const val NextUpPromptSeconds = "playback.next_up_prompt_seconds"
     const val DvProfile7HDR10Fallback = "player.dv_profile7_hdr10_fallback"
     const val DolbyVisionEnabled = "player.dolby_vision_enabled"
+
+    /**
+     * Local-only per-profile setting: switch the display refresh rate to match
+     * the content frame rate. Not server-registered → excluded from
+     * [DeviceSettings] (Apple keeps the equivalent toggle local too).
+     */
     const val MatchContentFrameRate = "player.match_frame_rate"
+
+    /**
+     * Local-only per-profile setting: default duration preselected in the
+     * player's sleep timer. Not server-registered → excluded from
+     * [DeviceSettings].
+     */
     const val SleepTimerDefaultMinutes = "player.sleep_timer_default_minutes"
+
+    /*
+     * Legacy per-field subtitle appearance names. The server registers subtitle
+     * appearance as a single JSON blob under [SubtitleAppearance]
+     * (`subtitle_appearance`), which is Android's source of truth — nothing
+     * reads or writes these individual fields. They are not server-registered,
+     * so they stay out of [DeviceSettings]; unifying or deleting them is
+     * follow-up work (see issue #376).
+     */
     const val SubtitleFontSize = "subtitle.font_size"
     const val SubtitleFontFamily = "subtitle.font_family"
     const val SubtitleTextColor = "subtitle.text_color"
@@ -88,6 +109,16 @@ object PlaybackSettingsKeys {
      */
     const val PictureInPictureEnabled = "player.picture_in_picture_enabled"
 
+    /**
+     * Keys that participate in the server's device-scope settings cascade:
+     * pulled by `GET /settings/effective`, pushed by
+     * `PUT /settings/device/{key}`, cleared by `DELETE /settings/device/{key}`.
+     *
+     * Every entry MUST be registered server-side; the server rejects writes and
+     * resets for unregistered keys with HTTP 400. Keys Silo stores only on the
+     * device stay out of this list and are written through the store's
+     * `*Local` helpers.
+     */
     val DeviceSettings = listOf(
         PreferredQuality,
         AudioLanguage,
@@ -104,16 +135,5 @@ object PlaybackSettingsKeys {
         NextUpPromptSeconds,
         DvProfile7HDR10Fallback,
         DolbyVisionEnabled,
-        MatchContentFrameRate,
-        SleepTimerDefaultMinutes,
-        SubtitleFontSize,
-        SubtitleFontFamily,
-        SubtitleTextColor,
-        SubtitleBackgroundColor,
-        SubtitleBackgroundStyle,
-        SubtitleBackgroundOpacity,
-        SubtitleTextOutline,
-        SubtitleTextOutlineColor,
-        SubtitlePosition,
     )
 }

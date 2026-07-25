@@ -140,8 +140,10 @@ class AndroidPlayerSettingsStore(
     override val hdrEnabledFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.HdrEnabled, true) }
 
+    // Default OFF, mirroring the server registry default for
+    // `player.dv_profile7_hdr10_fallback` and Apple's client default.
     override val dvProfile7HDR10FallbackFlow: Flow<Boolean> =
-        profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.DvProfile7HDR10Fallback, true) }
+        profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.DvProfile7HDR10Fallback, false) }
 
     override val dolbyVisionEnabledFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.DolbyVisionEnabled, true) }
@@ -186,8 +188,18 @@ class AndroidPlayerSettingsStore(
     override val subtitleSyncMsFlow: Flow<Int> =
         profileScopedFlow(0) { p, s -> p.intFor(s, PlaybackSettingsKeys.SubtitleSyncMs, 0) }
 
+    // The canonical key was renamed from `player.next_up_prompt_seconds` to
+    // `playback.next_up_prompt_seconds`; fall back to the old DataStore slot so
+    // installs that stored a value under the previous name keep it until the
+    // next write or server refresh migrates it forward.
     override val nextUpPromptSecondsFlow: Flow<Int> =
-        profileScopedFlow(30) { p, s -> p.intFor(s, PlaybackSettingsKeys.NextUpPromptSeconds, 30) }
+        profileScopedFlow(30) { p, s ->
+            p.intFor(
+                s,
+                PlaybackSettingsKeys.NextUpPromptSeconds,
+                p.intFor(s, LEGACY_NEXT_UP_PROMPT_SECONDS, 30),
+            )
+        }
 
     override val sleepTimerDefaultMinutesFlow: Flow<Int> =
         profileScopedFlow(30) { p, s -> p.intFor(s, PlaybackSettingsKeys.SleepTimerDefaultMinutes, 30) }
@@ -271,7 +283,7 @@ class AndroidPlayerSettingsStore(
         writeBool(PlaybackSettingsKeys.DolbyVisionEnabled, value)
 
     override suspend fun setMatchContentFrameRate(value: Boolean) =
-        writeBool(PlaybackSettingsKeys.MatchContentFrameRate, value)
+        writeBoolLocal(PlaybackSettingsKeys.MatchContentFrameRate, value)
 
     override suspend fun setPictureInPictureEnabled(value: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.PictureInPictureEnabled, value)
@@ -286,7 +298,9 @@ class AndroidPlayerSettingsStore(
         writeStringLocal(PlaybackSettingsKeys.DefaultDownloadQuality, DownloadQuality.fromWire(value).wire)
 
     override suspend fun setPlaybackSpeed(value: Double) {
-        val clamped = value.coerceIn(0.25, 4.0)
+        // Matches the server's validateFloatRange("player.playback_speed", 0.25, 3.0);
+        // anything outside that range is rejected with HTTP 400.
+        val clamped = value.coerceIn(0.25, 3.0)
         withScope { scope, store ->
             store.edit { it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PlaybackSpeed)] = clamped.toString() }
             serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.PlaybackSpeed, clamped.toString())
@@ -309,7 +323,7 @@ class AndroidPlayerSettingsStore(
         writeIntLocal(PlaybackSettingsKeys.PassOutThreshold, value.coerceIn(0, 10))
 
     override suspend fun setSleepTimerDefaultMinutes(value: Int) =
-        writeInt(PlaybackSettingsKeys.SleepTimerDefaultMinutes, value.coerceIn(0, 240))
+        writeIntLocal(PlaybackSettingsKeys.SleepTimerDefaultMinutes, value.coerceIn(0, 240))
 
     override suspend fun setPreferredQuality(value: String) =
         writeString(PlaybackSettingsKeys.PreferredQuality, value)
@@ -540,6 +554,16 @@ class AndroidPlayerSettingsStore(
         const val DEFAULT_PASSOUT_THRESHOLD = 3
         val VALID_VIDEO_GRAVITY = setOf("fit", "fill", "stretch")
 
+        // DataStore slot written before the key was renamed to
+        // PlaybackSettingsKeys.NextUpPromptSeconds ("playback." namespace).
+        // Read-only fallback; nothing writes it any more.
+        const val LEGACY_NEXT_UP_PROMPT_SECONDS = "player.next_up_prompt_seconds"
+
+        // Type dispatch for `writeRawString`, which only ever sees keys from
+        // PlaybackSettingsKeys.DeviceSettings (legacy-cache import and the
+        // effective-settings apply both iterate that list). Device-local keys
+        // are written through the typed `*Local` helpers instead and must not
+        // be listed here.
         val BOOLEAN_KEYS: Set<String> = setOf(
             PlaybackSettingsKeys.AutoSkipIntro,
             PlaybackSettingsKeys.AutoSkipCredits,
@@ -547,16 +571,12 @@ class AndroidPlayerSettingsStore(
             PlaybackSettingsKeys.HdrEnabled,
             PlaybackSettingsKeys.DvProfile7HDR10Fallback,
             PlaybackSettingsKeys.DolbyVisionEnabled,
-            PlaybackSettingsKeys.MatchContentFrameRate,
-            PlaybackSettingsKeys.SubtitleTextOutline,
         )
 
         val INT_KEYS: Set<String> = setOf(
             PlaybackSettingsKeys.AudioSyncMs,
             PlaybackSettingsKeys.SubtitleSyncMs,
             PlaybackSettingsKeys.NextUpPromptSeconds,
-            PlaybackSettingsKeys.SleepTimerDefaultMinutes,
-            PlaybackSettingsKeys.SubtitleBackgroundOpacity,
         )
 
         val DOUBLE_KEYS: Set<String> = setOf(

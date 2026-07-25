@@ -84,7 +84,7 @@ class TvSettingsViewModel(
         val dolbyVisionEnabled: Boolean = true,
         val showAudiobooksTab: Boolean = false,
         val subtitleMatchesDevice: Boolean = false,
-        val dvProfile7HDR10Fallback: Boolean = true,
+        val dvProfile7HDR10Fallback: Boolean = false,
         val autoSkipCredits: Boolean = false,
         // Seconds to skip back on resume (0 = off); consecutive auto-advances
         // before the "Still watching?" prompt (0 = off).

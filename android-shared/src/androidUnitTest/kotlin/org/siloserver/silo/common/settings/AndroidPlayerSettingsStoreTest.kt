@@ -3,6 +3,8 @@ package org.siloserver.silo.common.settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import org.siloserver.silo.model.settings.EffectiveSetting
 import org.siloserver.silo.model.settings.EffectiveSettingsResponse
 import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
@@ -50,8 +52,11 @@ class AndroidPlayerSettingsStoreTest {
         server: String? = serverUrl,
         repository: SettingsRepository? = null,
         deviceId: String? = null,
+        dataStore: DataStore<Preferences>? = null,
     ): AndroidPlayerSettingsStore {
-        // In-process DataStore factory backed by a temp directory.
+        // In-process DataStore factory backed by a temp directory. Tests that
+        // need to seed the file up front pass the instance in — DataStore
+        // rejects two live instances over the same file.
         return AndroidPlayerSettingsStore(
             context = mockContextStub(),
             legacyCache = legacy,
@@ -62,11 +67,13 @@ class AndroidPlayerSettingsStoreTest {
             profileChangeSignal = flowOf(Unit),
             settingsRepository = repository,
             getDeviceId = { deviceId },
-            dataStoreFactory = { id ->
-                val file = File(tempFolder.root, "ds_$id.preferences_pb")
-                PreferenceDataStoreFactory.create(produceFile = { file })
-            },
+            dataStoreFactory = { id -> dataStore ?: newDataStore(id) },
         )
+    }
+
+    private fun newDataStore(id: String): DataStore<Preferences> {
+        val file = File(tempFolder.root, "ds_$id.preferences_pb")
+        return PreferenceDataStoreFactory.create(produceFile = { file })
     }
 
     @Test
@@ -105,10 +112,52 @@ class AndroidPlayerSettingsStoreTest {
     @Test
     fun `setPlaybackSpeed clamps out-of-range values`() = runTest {
         val store = newStore()
+        // Upper bound mirrors the server's validateFloatRange("player.playback_speed", 0.25, 3.0).
         store.setPlaybackSpeed(10.0)
-        assertEquals(4.0, store.playbackSpeedFlow.first(), 0.0)
+        assertEquals(3.0, store.playbackSpeedFlow.first(), 0.0)
         store.setPlaybackSpeed(0.01)
         assertEquals(0.25, store.playbackSpeedFlow.first(), 0.0)
+    }
+
+    @Test
+    fun `match frame rate and sleep timer stay local`() = runTest {
+        val store = newStore()
+        assertEquals(false, store.matchContentFrameRateFlow.first())
+        assertEquals(30, store.sleepTimerDefaultMinutesFlow.first())
+
+        store.setMatchContentFrameRate(true)
+        store.setSleepTimerDefaultMinutes(45)
+
+        assertEquals(true, store.matchContentFrameRateFlow.first())
+        assertEquals(45, store.sleepTimerDefaultMinutesFlow.first())
+        assertFalse(
+            fakeFlusher.calls.any {
+                it.key == PlaybackSettingsKeys.MatchContentFrameRate ||
+                    it.key == PlaybackSettingsKeys.SleepTimerDefaultMinutes
+            },
+            "Neither key is registered server-side; flushing them would only earn an HTTP 400.",
+        )
+    }
+
+    @Test
+    fun `nextUpPromptSeconds falls back to the pre-rename local key`() = runTest {
+        // Simulate an install that stored the value under the old
+        // "player.next_up_prompt_seconds" DataStore slot. `deviceId` is null in
+        // these tests, so the scope prefix is empty.
+        val dataStore = newDataStore(activeProfileId)
+        dataStore.edit { it[intPreferencesKey("player.next_up_prompt_seconds")] = 15 }
+
+        val store = newStore(dataStore = dataStore)
+        assertEquals(15, store.nextUpPromptSecondsFlow.first())
+
+        // A write lands on the canonical key and takes precedence from then on.
+        store.setNextUpPromptSeconds(20)
+        assertEquals(20, store.nextUpPromptSecondsFlow.first())
+        assertTrue(
+            fakeFlusher.calls.any {
+                it.key == PlaybackSettingsKeys.NextUpPromptSeconds && it.value == "20"
+            },
+        )
     }
 
     @Test
@@ -117,6 +166,8 @@ class AndroidPlayerSettingsStoreTest {
         assertEquals(false, store.autoSkipIntroFlow.first())
         assertEquals(true, store.autoPlayNextFlow.first())
         assertEquals(true, store.hdrEnabledFlow.first())
+        // Server registry default for player.dv_profile7_hdr10_fallback is false.
+        assertEquals(false, store.dvProfile7HDR10FallbackFlow.first())
         assertEquals(true, store.pictureInPictureEnabledFlow.first())
         assertEquals(1.0, store.playbackSpeedFlow.first(), 0.0)
         assertEquals(0, store.audioSyncMsFlow.first())

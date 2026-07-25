@@ -33,7 +33,7 @@ These correct real bugs Codex found in the original tasks — they affect **mobi
 - **R2 — F3 hello race (Tasks 8, 11).** The base plan's separate `scope.launch { client.sendHello(sessionId) }` can run before `connect()` assigns `session`, so hello is a no-op and the server never marks the connection realtime-ready. **Fix:** add a `PlaybackRealtimeEvent.Opened` emitted from inside the opened-socket block, and have the controller `sendHello` when it observes `Opened` (not in a parallel launch). Applies to the mobile controller and the TV one.
 - **R3 — F3 seek payload aliases (Task 9).** The web issuer sends the seek position as `position`, `position_seconds`, **or** `seconds`. `decidePlaybackAction` must accept all three (try in that order) — don't pin tests to a single spelling.
 - **R4 — server-contract checks (do before/during DI + settings tasks).**
-  - `PlaybackSettingsKeys.NextUpPromptSeconds` is `player.next_up_prompt_seconds` but the server registry uses `playback.next_up_prompt_seconds` — reconcile.
+  - `PlaybackSettingsKeys.NextUpPromptSeconds` is `player.next_up_prompt_seconds` but the server registry uses `playback.next_up_prompt_seconds` — reconcile. *(Resolved 2026-07-25: Android now uses the canonical `playback.next_up_prompt_seconds`.)*
   - The new `player.resume_rewind_seconds` and `player.passout_threshold_episodes` keys are **not** registered server-side. Either register them server-side or keep them device-local (don't add to the server-synced `DeviceSettings` list until registered).
   - Realtime endpoint/hello/ack/result contract must be preserved; the server requires `hello` before `HasRealtimeConnection`.
 
