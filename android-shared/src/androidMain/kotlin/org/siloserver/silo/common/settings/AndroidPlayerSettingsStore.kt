@@ -69,6 +69,11 @@ class AndroidPlayerSettingsStore(
             }
         val migrationSentinel: String =
             if (keyPrefix.isEmpty()) MIGRATION_SENTINEL_LEGACY else "migration_v2_$keyPrefix"
+
+        // Separate from [migrationSentinel] on purpose: existing installs have
+        // already recorded that one, so a rename migration folded into it would
+        // never run for exactly the users who need it.
+        val nextUpRenameSentinel: String = "migration_nextup_key_v1_$keyPrefix"
     }
 
     // Re-derive scope on every (profile or server) change.
@@ -95,6 +100,13 @@ class AndroidPlayerSettingsStore(
         }
 
     private suspend fun ensureMigrated(scope: Scope, store: DataStore<Preferences>) {
+        // Must run before the sentinel check below, and before anything else
+        // touches the store: every read path (profileScopedFlow) and every
+        // write path (withScope, and therefore refreshFromServer) funnels
+        // through here, so this is the one place that is guaranteed to happen
+        // first.
+        migrateNextUpPromptKey(scope, store)
+
         val token = scope.profileId + "/" + scope.migrationSentinel
         if (synchronized(migrationDone) { token in migrationDone }) return
         val sentinelKey = booleanPreferencesKey(scope.migrationSentinel)
@@ -105,13 +117,82 @@ class AndroidPlayerSettingsStore(
         }
         store.edit { prefs ->
             for (key in PlaybackSettingsKeys.DeviceSettings) {
-                val legacy = legacyCache.getString(scope.serverUrl, key, MISSING_SENTINEL)
+                var legacy = legacyCache.getString(scope.serverUrl, key, MISSING_SENTINEL)
+                if (legacy == MISSING_SENTINEL && key == PlaybackSettingsKeys.NextUpPromptSeconds) {
+                    // The cache predates the key rename, so an old install
+                    // stored this entry under the "player." spelling.
+                    legacy = legacyCache.getString(
+                        scope.serverUrl,
+                        LEGACY_NEXT_UP_PROMPT_SECONDS,
+                        MISSING_SENTINEL,
+                    )
+                }
                 if (legacy == MISSING_SENTINEL) continue
                 writeRawString(prefs, scope, key, legacy)
             }
             prefs[sentinelKey] = true
         }
         synchronized(migrationDone) { migrationDone.add(token) }
+    }
+
+    /**
+     * Move a value stored under the pre-rename `player.next_up_prompt_seconds`
+     * DataStore slot into the canonical `playback.` slot, once per scope.
+     *
+     * Copying locally is not enough on its own, and neither would a read-time
+     * fallback be. [applyEffectiveLocally] writes the server's effective value
+     * into the canonical slot on every [refreshFromServer], and the server
+     * registry defaults this key to 30. Before the rename that could not clobber
+     * anything — the "player." spelling was unregistered, so the server returned
+     * an empty effective value and writeRawString's Int branch skipped it — but
+     * the canonical key IS registered, so a refresh now returns "30" whenever
+     * the server holds no device row, and that would overwrite the migrated
+     * value. refreshFromServer runs within seconds of upgrade (settings screen,
+     * player load, TV detail, ServerDrivenConfigRefresher).
+     *
+     * So the migrated value is also enqueued for the server, which makes the
+     * server's effective value the user's own rather than the registry default.
+     * The users this matters for are exactly those whose value never reached the
+     * server: an install talking to a pre-alias server, or one whose flush
+     * failed silently.
+     *
+     * Suppressing the write instead — skipping keys the server reports without a
+     * device override — was rejected: the subtitle-appearance block in
+     * [applyEffectiveLocally] deliberately propagates a server-side reset, and a
+     * blanket guard would break that for every key.
+     *
+     * The legacy slot is removed once copied, so a stale value cannot resurface
+     * if the canonical slot is later cleared.
+     */
+    private suspend fun migrateNextUpPromptKey(scope: Scope, store: DataStore<Preferences>) {
+        val token = scope.profileId + "/" + scope.nextUpRenameSentinel
+        if (synchronized(migrationDone) { token in migrationDone }) return
+
+        val sentinelKey = booleanPreferencesKey(scope.nextUpRenameSentinel)
+        var migratedValue: Int? = null
+        if (store.data.first()[sentinelKey] != true) {
+            val canonicalKey =
+                intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.NextUpPromptSeconds)
+            val legacyKey = intPreferencesKey(scope.keyPrefix + LEGACY_NEXT_UP_PROMPT_SECONDS)
+            store.edit { prefs ->
+                val legacyValue = prefs[legacyKey]
+                if (legacyValue != null && prefs[canonicalKey] == null) {
+                    prefs[canonicalKey] = legacyValue
+                    migratedValue = legacyValue
+                }
+                prefs.remove(legacyKey)
+                prefs[sentinelKey] = true
+            }
+        }
+        synchronized(migrationDone) { migrationDone.add(token) }
+
+        migratedValue?.let {
+            serverSettingsFlusher.enqueue(
+                scope.profileId,
+                PlaybackSettingsKeys.NextUpPromptSeconds,
+                it.toString(),
+            )
+        }
     }
 
     private fun <T> profileScopedFlow(default: T, read: (Preferences, Scope) -> T): Flow<T> =
@@ -188,18 +269,12 @@ class AndroidPlayerSettingsStore(
     override val subtitleSyncMsFlow: Flow<Int> =
         profileScopedFlow(0) { p, s -> p.intFor(s, PlaybackSettingsKeys.SubtitleSyncMs, 0) }
 
-    // The canonical key was renamed from `player.next_up_prompt_seconds` to
-    // `playback.next_up_prompt_seconds`; fall back to the old DataStore slot so
-    // installs that stored a value under the previous name keep it until the
-    // next write or server refresh migrates it forward.
+    // Reads the canonical `playback.next_up_prompt_seconds` slot only.
+    // migrateNextUpPromptKey has already copied any pre-rename value forward
+    // by the time this flow emits, so a read-time fallback would be dead code
+    // that could only resurface a stale value after a reset.
     override val nextUpPromptSecondsFlow: Flow<Int> =
-        profileScopedFlow(30) { p, s ->
-            p.intFor(
-                s,
-                PlaybackSettingsKeys.NextUpPromptSeconds,
-                p.intFor(s, LEGACY_NEXT_UP_PROMPT_SECONDS, 30),
-            )
-        }
+        profileScopedFlow(30) { p, s -> p.intFor(s, PlaybackSettingsKeys.NextUpPromptSeconds, 30) }
 
     override val sleepTimerDefaultMinutesFlow: Flow<Int> =
         profileScopedFlow(30) { p, s -> p.intFor(s, PlaybackSettingsKeys.SleepTimerDefaultMinutes, 30) }
@@ -554,9 +629,10 @@ class AndroidPlayerSettingsStore(
         const val DEFAULT_PASSOUT_THRESHOLD = 3
         val VALID_VIDEO_GRAVITY = setOf("fit", "fill", "stretch")
 
-        // DataStore slot written before the key was renamed to
-        // PlaybackSettingsKeys.NextUpPromptSeconds ("playback." namespace).
-        // Read-only fallback; nothing writes it any more.
+        // DataStore slot and server-settings-cache entry written before the key
+        // was renamed to PlaybackSettingsKeys.NextUpPromptSeconds ("playback."
+        // namespace). Consumed only by migrateNextUpPromptKey, which copies the
+        // value forward and then removes the slot.
         const val LEGACY_NEXT_UP_PROMPT_SECONDS = "player.next_up_prompt_seconds"
 
         // Type dispatch for `writeRawString`, which only ever sees keys from

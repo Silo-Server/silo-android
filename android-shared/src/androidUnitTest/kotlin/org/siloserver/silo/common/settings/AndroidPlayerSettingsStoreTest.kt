@@ -26,6 +26,7 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -140,8 +141,8 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
-    fun `nextUpPromptSeconds falls back to the pre-rename local key`() = runTest {
-        // Simulate an install that stored the value under the old
+    fun `pre-rename nextUpPromptSeconds migrates forward and is pushed to the server`() = runTest {
+        // An install that stored the value under the old
         // "player.next_up_prompt_seconds" DataStore slot. `deviceId` is null in
         // these tests, so the scope prefix is empty.
         val dataStore = newDataStore(activeProfileId)
@@ -150,14 +151,61 @@ class AndroidPlayerSettingsStoreTest {
         val store = newStore(dataStore = dataStore)
         assertEquals(15, store.nextUpPromptSecondsFlow.first())
 
-        // A write lands on the canonical key and takes precedence from then on.
-        store.setNextUpPromptSeconds(20)
-        assertEquals(20, store.nextUpPromptSecondsFlow.first())
+        val prefs = dataStore.data.first()
+        assertEquals(
+            15,
+            prefs[intPreferencesKey(PlaybackSettingsKeys.NextUpPromptSeconds)],
+            "The value must be copied into the canonical slot, not merely read through a fallback.",
+        )
+        assertNull(
+            prefs[intPreferencesKey("player.next_up_prompt_seconds")],
+            "The legacy slot must be cleared so a stale value cannot resurface after a reset.",
+        )
+
+        // The push is what actually protects the value. applyEffectiveLocally
+        // writes the server's effective value for every registered DeviceSettings
+        // key on refresh, and the canonical key defaults to 30 server-side, so
+        // without this the first refresh after upgrade would overwrite 15 with 30.
         assertTrue(
             fakeFlusher.calls.any {
-                it.key == PlaybackSettingsKeys.NextUpPromptSeconds && it.value == "20"
+                it.key == PlaybackSettingsKeys.NextUpPromptSeconds && it.value == "15"
             },
+            "The migrated value must be enqueued so the server stops reporting the default.",
         )
+    }
+
+    @Test
+    fun `nextUpPromptSeconds migration does not clobber an existing canonical value`() = runTest {
+        val dataStore = newDataStore(activeProfileId)
+        dataStore.edit {
+            it[intPreferencesKey("player.next_up_prompt_seconds")] = 15
+            it[intPreferencesKey(PlaybackSettingsKeys.NextUpPromptSeconds)] = 45
+        }
+
+        val store = newStore(dataStore = dataStore)
+        assertEquals(45, store.nextUpPromptSecondsFlow.first())
+        assertNull(dataStore.data.first()[intPreferencesKey("player.next_up_prompt_seconds")])
+        assertTrue(
+            fakeFlusher.calls.none { it.key == PlaybackSettingsKeys.NextUpPromptSeconds },
+            "Nothing was migrated, so nothing should be pushed to the server.",
+        )
+    }
+
+    @Test
+    fun `nextUpPromptSeconds migration runs once and leaves later values alone`() = runTest {
+        val dataStore = newDataStore(activeProfileId)
+        dataStore.edit { it[intPreferencesKey("player.next_up_prompt_seconds")] = 15 }
+
+        val store = newStore(dataStore = dataStore)
+        assertEquals(15, store.nextUpPromptSecondsFlow.first())
+
+        // A later write wins, and re-reading must not re-run the migration and
+        // resurrect the pre-rename value.
+        store.setNextUpPromptSeconds(20)
+        assertEquals(20, store.nextUpPromptSecondsFlow.first())
+
+        val fresh = newStore(dataStore = dataStore)
+        assertEquals(20, fresh.nextUpPromptSecondsFlow.first())
     }
 
     @Test
