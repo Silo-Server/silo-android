@@ -11,18 +11,25 @@ require "tmpdir"
 # constants. Nothing secret is hardcoded — this file is safe to commit to a
 # public repo.
 #
-# Unlike Apple (where TestFlight reviews per marketing version, so one
-# version is reused across many builds), Play keys everything on versionCode
-# and has no version/build split. The versionCode base is derived from the
-# marketing version (major*1_000_000 + minor*1_000 + patch) and Gradle ships
-# phone = base*2, TV = base*2+1 — so every Play release needs a new
-# major.minor.patch version. Both artifacts always ship together: they share
-# one applicationId, and a new track release supersedes the previous one, so
-# releasing one artifact would drop the other from the track.
+# Play keys everything on versionCode and has no version/build split, but
+# versionName is a free-form display string that may repeat. So Apple's
+# marketing-version + build-number model is reproduced by folding the build
+# into the versionCode while versionName stays put — 1.0.0 can ship as build
+# 1, 2, 3 the way TestFlight does:
+#
+#   base = VERSION_CODE_EPOCH + (major*10_000 + minor*100 + patch)*1_000 + build
+#
+# Gradle then ships phone = base*2, TV = base*2+1. Both artifacts always ship
+# together: they share one applicationId, and a new track release supersedes
+# the previous one, so releasing one artifact would drop the other from the
+# track.
 
 default_platform(:android)
 
 PACKAGE_NAME = "org.siloserver.silo"
+# Keeps every versionCode from the version+build scheme above the largest the
+# previous major*1e6+minor*1e3+patch scheme could emit. Must match release.yml.
+VERSION_CODE_EPOCH = 100_000_000
 PHONE_AAB = File.expand_path("../androidApp/build/outputs/bundle/release/androidApp-release.aab", __dir__)
 TV_AAB = File.expand_path("../androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab", __dir__)
 
@@ -46,14 +53,16 @@ def play_json_key_data
   File.read(key_path)
 end
 
-# Resolves and validates the marketing version, returning [version, base_code].
+# Resolves and validates the marketing version and build number, returning
+# [version, base_code, build].
 #
-# Only a plain dotted version is accepted: the versionCode is derived from
-# major.minor.patch, so a prerelease suffix (1.4.0-rc.1) would collide with
-# the base version's code and Play would reject the upload. The value also
-# flows into Gradle -P properties, so the strict format doubles as the last
-# gate against shell/property injection (same threat model as silo-apple's
-# marketing_version_xcarg).
+# Only a plain dotted version is accepted. A prerelease suffix (1.4.0-rc.1)
+# would strip to the same versionCode as the base version, so re-releasing the
+# same marketing version is expressed with SILO_BUILD_NUMBER instead — the
+# TestFlight model, folded into the versionCode because Play has no separate
+# build-number field. The value also flows into Gradle -P properties, so the
+# strict format doubles as the last gate against shell/property injection
+# (same threat model as silo-apple's marketing_version_xcarg).
 def resolve_release_version
   version = ENV["SILO_VERSION_NAME"].to_s.strip
   UI.user_error!("SILO_VERSION_NAME must be set (e.g. 1.4.0)") if version.empty?
@@ -66,20 +75,35 @@ def resolve_release_version
     )
   end
 
+  build = ENV.fetch("SILO_BUILD_NUMBER", "1").to_s.strip
+  build = "1" if build.empty?
+  unless build.match?(/\A\d+\z/)
+    UI.user_error!("SILO_BUILD_NUMBER must be a plain integer (got #{build.inspect}).")
+  end
+  build = build.to_i
+
   major, minor, patch = version.split(".").map(&:to_i)
-  if minor > 999 || patch > 999
+  UI.user_error!("Major version must be <= 94 to stay under Play's versionCode ceiling.") if major > 94
+  if minor > 99 || patch > 99
     UI.user_error!(
-      "minor and patch must each be < 1000 — the versionCode packs them into " \
-      "three decimal digits each (base = major*1e6 + minor*1e3 + patch)."
+      "minor and patch must each be <= 99 — the versionCode packs them into " \
+      "two decimal digits each."
     )
   end
+  UI.user_error!("Build number must be between 1 and 999 (got #{build}).") unless build.between?(1, 999)
 
-  base_code = major * 1_000_000 + minor * 1_000 + patch
+  # Mirrors release.yml. VERSION_CODE_EPOCH lifts this scheme above every code
+  # the previous major*1e6+minor*1e3+patch scheme could emit, so codes stay
+  # strictly increasing across the switchover — Play rejects any reuse.
+  base_code = VERSION_CODE_EPOCH + (major * 10_000 + minor * 100 + patch) * 1_000 + build
   UI.user_error!("Version code base must be positive (0.0.0 is not releasable).") unless base_code.positive?
   # Gradle additionally enforces base <= 1_049_999_999 so base*2+1 stays
   # under Play's 2_100_000_000 versionCode ceiling.
+  if base_code > 1_049_999_999
+    UI.user_error!("Version code base #{base_code} exceeds Gradle's 1_049_999_999 cap.")
+  end
 
-  [version, base_code]
+  [version, base_code, build]
 end
 
 def play_track
@@ -173,7 +197,7 @@ end
 platform :android do
   desc "Build both App Bundles (phone + TV) and upload to a Google Play track"
   lane :beta do
-    version, base_code = resolve_release_version
+    version, base_code, build = resolve_release_version
     track = play_track
     json_key = play_json_key_data
     require_signing_env!
@@ -182,7 +206,7 @@ platform :android do
     write_play_changelog
 
     UI.message(
-      "Releasing Silo #{version} to the #{track} track " \
+      "Releasing Silo #{version} build #{build} to the #{track} track " \
       "(base code #{base_code} → phone #{base_code * 2}, TV #{base_code * 2 + 1})"
     )
 
@@ -231,6 +255,6 @@ platform :android do
       timeout: 900,
     )
 
-    UI.success("Uploaded Silo #{version} (phone #{base_code * 2} + TV #{base_code * 2 + 1}) to the #{track} track.")
+    UI.success("Uploaded Silo #{version} build #{build} (phone #{base_code * 2} + TV #{base_code * 2 + 1}) to the #{track} track.")
   end
 end

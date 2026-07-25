@@ -7,14 +7,23 @@ name: Release
 # the same version. Dispatch runs mint the v<version> tag when creating the
 # GitHub release — no manual tagging is necessary (apple's sideload pattern).
 #
-# Differences from Apple, rooted in how Play versioning works (no
-# marketing-version/build-number split — everything keys on versionCode,
-# derived here from the version):
+# Versioning mirrors silo-apple's marketing-version + build-number split.
+# Play itself has no such split — versionCode is the only monotonic counter,
+# and versionName is a free-form display string that may repeat. So a build
+# number is folded into the versionCode while versionName stays put, letting
+# 1.0.0 ship repeatedly as build 1, 2, 3 the way TestFlight does.
 #
-#   - Every Play release needs a new major.minor.patch version. Prerelease-
-#     suffixed tags (v1.2.3-rc.1) skip the Play publish (they'd strip to the
-#     same versionCode as the base version, which Play rejects as a
-#     duplicate) but still produce sideload APKs and a GitHub release.
+#   base = VERSION_CODE_EPOCH + (major*10000 + minor*100 + patch)*1000 + build
+#
+# Gradle then ships phone = base*2 and TV = base*2+1. VERSION_CODE_EPOCH
+# (100_000_000) lifts every code produced by this scheme above the largest
+# code the previous major*1e6+minor*1e3+patch scheme could emit, so the
+# switchover stays strictly increasing — Play rejects any code it has seen.
+# Bounds: major <= 94, minor/patch <= 99, build <= 999 (enforced below and
+# again in the Fastfile), keeping base under Gradle's 1_049_999_999 cap.
+#
+#   - Prerelease-suffixed tags (v1.2.3-rc.1) still skip the Play publish but
+#     produce sideload APKs and a GitHub release.
 #   - No per-platform selection: phone and TV share one applicationId, and a
 #     new Play track release supersedes the previous one, so both artifacts
 #     always ship together in a single Play edit.
@@ -31,6 +40,11 @@ on:
       version:
         description: "Marketing version (e.g. 1.4.0)"
         required: true
+        type: string
+      build_number:
+        description: "Build number for this version (1-999; bump to re-release the same version)"
+        required: false
+        default: "1"
         type: string
       track:
         description: "Play track to publish to"
@@ -53,14 +67,15 @@ permissions:
   contents: read
 
 jobs:
-  # Resolve the version once so every job agrees on it, and gate prerelease
-  # tags out of Play publishing. The versionCode base is
-  # major*1000000 + minor*1000 + patch; Gradle ships phone = base*2,
-  # TV = base*2+1.
+  # Resolve version + build number once so every job agrees on them, and gate
+  # prerelease tags out of Play publishing. See the versionCode scheme at the
+  # top of this file; Gradle ships phone = base*2, TV = base*2+1.
   setup:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      version_name: ${{ steps.ver.outputs.version_name }}
+      build_number: ${{ steps.ver.outputs.build_number }}
       version_code: ${{ steps.ver.outputs.version_code }}
       play_publish: ${{ steps.ver.outputs.play_publish }}
       tag: ${{ steps.ver.outputs.tag }}
@@ -71,26 +86,51 @@ jobs:
           GH_EVENT_NAME: ${{ github.event_name }}
           GH_REF_NAME: ${{ github.ref_name }}
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
 
+          # Lifts this scheme above every code the old
+          # major*1e6+minor*1e3+patch scheme could emit, so codes stay
+          # strictly increasing across the switchover.
+          epoch=100000000
+
           if [[ "${GH_EVENT_NAME}" == "workflow_dispatch" ]]; then
             version="${INPUT_VERSION#v}"
-            # Dispatch runs always publish to Play, so only a plain dotted
-            # version is accepted (prerelease suffixes collide on versionCode).
+            # Dispatch runs always publish to Play. The version is a display
+            # string, but it also feeds the versionCode, so keep it strict —
+            # this doubles as the gate against shell/property injection.
             if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "::error::Version must look like 1.4.0 (no prerelease suffix for Play releases)."
               exit 1
             fi
-            play_publish=true
-            tag="v${version}"
-          else
-            version="${GH_REF_NAME#v}"
-            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
-              echo "::error::Tag must look like v1.2.3 (optionally with a -rc.1 style suffix)."
+            build="${INPUT_BUILD_NUMBER:-1}"
+            if [[ ! "${build}" =~ ^[0-9]+$ ]]; then
+              echo "::error::Build number must be a plain integer (got '${build}')."
               exit 1
             fi
-            if [[ "${version}" == *[-+]* ]]; then
+            play_publish=true
+            # Build 1 keeps the bare vX.Y.Z tag; later builds of the same
+            # version get their own tag so GitHub releases never collide.
+            if (( 10#$build == 1 )); then
+              tag="v${version}"
+            else
+              tag="v${version}+${build}"
+            fi
+          else
+            version="${GH_REF_NAME#v}"
+            # -suffix marks a prerelease (no Play publish); +N is build
+            # metadata and still publishes.
+            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9]+)?$ ]]; then
+              echo "::error::Tag must look like v1.2.3, v1.2.3+2, or v1.2.3-rc.1."
+              exit 1
+            fi
+            if [[ "${version}" == *+* ]]; then
+              build="${version##*+}"
+            else
+              build=1
+            fi
+            if [[ "${version}" == *-* ]]; then
               echo "Prerelease tag ${GH_REF_NAME} — skipping Play publish (sideload-only release)."
               play_publish=false
             else
@@ -101,19 +141,37 @@ jobs:
 
           base_version="${version%%[-+]*}"
           IFS=. read -r major minor patch <<< "${base_version}"
-          version_code=$((10#$major * 1000000 + 10#$minor * 1000 + 10#$patch))
-          if (( version_code <= 0 )); then
-            echo "::error::Version code must be positive."
+          if (( 10#$major > 94 )); then
+            echo "::error::Major version must be <= 94 to stay under Play's versionCode ceiling."
+            exit 1
+          fi
+          if (( 10#$minor > 99 || 10#$patch > 99 )); then
+            echo "::error::Minor and patch must each be <= 99 (the versionCode packs them into two digits each)."
+            exit 1
+          fi
+          if (( 10#$build < 1 || 10#$build > 999 )); then
+            echo "::error::Build number must be between 1 and 999."
+            exit 1
+          fi
+
+          version_part=$((10#$major * 10000 + 10#$minor * 100 + 10#$patch))
+          version_code=$((epoch + version_part * 1000 + 10#$build))
+          if (( version_code <= 0 || version_code > 1049999999 )); then
+            echo "::error::Version code ${version_code} is out of range."
             exit 1
           fi
 
           {
             echo "version=${version}"
+            # The plain major.minor.patch that Gradle and Play see as the
+            # versionName; ${version} may still carry a -rc/+build suffix.
+            echo "version_name=${base_version}"
+            echo "build_number=${build}"
             echo "version_code=${version_code}"
             echo "play_publish=${play_publish}"
             echo "tag=${tag}"
           } >> "${GITHUB_OUTPUT}"
-          echo "Releasing ${version} (base code ${version_code}, tag ${tag}, play_publish=${play_publish})."
+          echo "Releasing ${version} build ${build} (base code ${version_code}, phone $((version_code * 2)), TV $((version_code * 2 + 1)), tag ${tag}, play_publish=${play_publish})."
 
   # Releases stay gated on unit tests, as they were when android-build.yml
   # owned the APK release path.
@@ -188,7 +246,8 @@ jobs:
       - name: Build & upload to Google Play
         run: bundle exec fastlane android beta
         env:
-          SILO_VERSION_NAME: ${{ needs.setup.outputs.version }}
+          SILO_VERSION_NAME: ${{ needs.setup.outputs.version_name }}
+          SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
           PLAY_TRACK: ${{ inputs.track || 'beta' }}
           PLAY_RELEASE_NOTES: ${{ vars.PLAY_RELEASE_NOTES }}
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
@@ -278,7 +337,7 @@ jobs:
       - name: Build release APK
         shell: bash
         env:
-          SILO_VERSION_NAME: ${{ needs.setup.outputs.version }}
+          SILO_VERSION_NAME: ${{ needs.setup.outputs.version_name }}
           SILO_VERSION_CODE: ${{ needs.setup.outputs.version_code }}
           SILO_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SILO_RELEASE_KEYSTORE_PASSWORD }}
           SILO_RELEASE_KEY_PASSWORD: ${{ secrets.SILO_RELEASE_KEY_PASSWORD }}
