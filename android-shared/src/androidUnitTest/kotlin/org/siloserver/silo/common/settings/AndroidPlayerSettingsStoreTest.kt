@@ -136,7 +136,11 @@ class AndroidPlayerSettingsStoreTest {
                 it.key == PlaybackSettingsKeys.MatchContentFrameRate ||
                     it.key == PlaybackSettingsKeys.SleepTimerDefaultMinutes
             },
-            "Neither key is registered server-side; flushing them would only earn an HTTP 400.",
+            "Neither key is in the server's settingsRegistry today, so a write would earn an " +
+                "HTTP 400 that the flusher logs and drops. Both ARE registered as remote " +
+                "profile_device settings in contracts/settings/v1/manifest.json, so this " +
+                "assertion inverts when the server implements the manifest — it is pinning " +
+                "current behaviour, not the end state.",
         )
     }
 
@@ -206,6 +210,125 @@ class AndroidPlayerSettingsStoreTest {
 
         val fresh = newStore(dataStore = dataStore)
         assertEquals(20, fresh.nextUpPromptSecondsFlow.first())
+    }
+
+    @Test
+    fun `refreshFromServer pushes the migrated value before it reads`() = runTest {
+        // The regression this guards: withScope runs the migration and then
+        // falls straight into the refresh. The migration's push is debounced, so
+        // unless the refresh flushes first, the GET answers with the registry
+        // default (30) and applyEffectiveLocally writes it over the 15 that was
+        // just recovered — losing the value for exactly the users the migration
+        // exists to protect.
+        val dataStore = newDataStore(activeProfileId)
+        dataStore.edit { it[intPreferencesKey("player.next_up_prompt_seconds")] = 15 }
+
+        val api = FakeSettingsApi(
+            effective = mapOf(PlaybackSettingsKeys.NextUpPromptSeconds to "30"),
+        )
+        fakeFlusher.sink = api
+
+        val store = newStore(dataStore = dataStore, repository = SettingsRepository(api))
+        store.refreshFromServer()
+
+        assertEquals(
+            15,
+            store.nextUpPromptSecondsFlow.first(),
+            "The refresh must flush the migrated value before reading, or it reads the default over it.",
+        )
+        assertTrue(fakeFlusher.flushNowCount > 0, "refreshFromServer must flush before it reads.")
+    }
+
+    @Test
+    fun `legacy cache imports are pushed so the next refresh cannot overwrite them`() = runTest {
+        // Importing into the local slot is only half the job: every DeviceSettings
+        // key is server-registered, so the next refresh writes the registry
+        // default back over anything that was not also pushed.
+        fakeLegacyCache.putString(serverUrl, PlaybackSettingsKeys.AutoSkipIntro, "true")
+        fakeLegacyCache.putString(serverUrl, PlaybackSettingsKeys.PreferredQuality, "1080p")
+
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                PlaybackSettingsKeys.AutoSkipIntro to "false",
+                PlaybackSettingsKeys.PreferredQuality to "auto",
+            ),
+        )
+        fakeFlusher.sink = api
+
+        val store = newStore(repository = SettingsRepository(api))
+        store.refreshFromServer()
+
+        assertEquals(true, store.autoSkipIntroFlow.first())
+        assertEquals("1080p", store.preferredQualityFlow.first())
+        assertTrue(
+            fakeFlusher.calls.any {
+                it.key == PlaybackSettingsKeys.AutoSkipIntro && it.value == "true"
+            },
+            "An imported legacy value must be enqueued, not just written locally.",
+        )
+    }
+
+    @Test
+    fun `migrated value is clamped to the range the server accepts`() = runTest {
+        // An out-of-range legacy value would be rejected with a 400 that the
+        // flusher logs and drops, leaving the local slot holding something the
+        // server will never agree with.
+        val dataStore = newDataStore(activeProfileId)
+        dataStore.edit { it[intPreferencesKey("player.next_up_prompt_seconds")] = 300 }
+
+        val store = newStore(dataStore = dataStore)
+        store.nextUpPromptSecondsFlow.first()
+
+        assertTrue(
+            fakeFlusher.calls.any {
+                it.key == PlaybackSettingsKeys.NextUpPromptSeconds && it.value == "120"
+            },
+            "300 is outside 0..120 and must be clamped before being sent.",
+        )
+    }
+
+    @Test
+    fun `migration works on the scoped key path that actually ships`() = runTest {
+        // Every other migration test runs with a null deviceId, which makes
+        // keyPrefix empty. In production getDeviceId always resolves, so the
+        // scoped prefix is the only path that ever runs.
+        val deviceId = "device-abc"
+        val prefix = "scope_" + sha256Hex("$serverUrl|$activeProfileId|$deviceId").take(24) + "."
+
+        val dataStore = newDataStore(activeProfileId)
+        dataStore.edit { it[intPreferencesKey(prefix + "player.next_up_prompt_seconds")] = 15 }
+
+        val store = newStore(dataStore = dataStore, deviceId = deviceId)
+        assertEquals(15, store.nextUpPromptSecondsFlow.first())
+
+        val prefs = dataStore.data.first()
+        assertEquals(
+            15,
+            prefs[intPreferencesKey(prefix + PlaybackSettingsKeys.NextUpPromptSeconds)],
+            "The value must land in the scoped canonical slot.",
+        )
+        assertNull(
+            prefs[intPreferencesKey(prefix + "player.next_up_prompt_seconds")],
+            "The scoped legacy slot must be cleared.",
+        )
+        assertTrue(
+            fakeFlusher.calls.any {
+                it.key == PlaybackSettingsKeys.NextUpPromptSeconds && it.value == "15"
+            },
+        )
+    }
+
+    @Test
+    fun `resetDeviceSetting refuses a key that is not server-synced`() = runTest {
+        val store = newStore(repository = SettingsRepository(FakeSettingsApi()))
+        var threw = false
+        try {
+            store.resetDeviceSetting(PlaybackSettingsKeys.PictureInPictureEnabled)
+        } catch (_: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw, "A device-local key must not reach DELETE /settings/device/{key}.")
+        assertTrue(fakeFlusher.calls.isEmpty(), "Nothing should have been queued for the server.")
     }
 
     @Test
@@ -474,20 +597,57 @@ class AndroidPlayerSettingsStoreTest {
     }
 }
 
+/**
+ * Mirrors AndroidPlayerSettingsStore's scope hashing so a test can address the
+ * scoped DataStore slots the shipping configuration actually uses.
+ */
+private fun sha256Hex(s: String): String =
+    java.security.MessageDigest.getInstance("SHA-256")
+        .digest(s.toByteArray(Charsets.UTF_8))
+        .joinToString(separator = "") { "%02x".format(it) }
+
 private class FakeServerSettingsFlusher : ServerSettingsFlusher {
     data class Call(val profileId: String, val key: String, val value: String?, val isDelete: Boolean)
     val calls = mutableListOf<Call>()
     var flushNowCount: Int = 0
+
+    /**
+     * When set, [flushNow] applies queued ops to this API stub, the way a real
+     * flush makes a value visible to the next `GET /settings/effective`.
+     *
+     * Tests that leave it null keep the old record-only behaviour. Tests that
+     * set it can observe ordering: whether a value was pushed *before* the
+     * refresh read, or after, when the read has already overwritten it.
+     */
+    var sink: FakeSettingsApi? = null
+    private val pending = mutableListOf<Call>()
+
     override fun enqueue(profileId: String, key: String, value: String) {
-        calls.add(Call(profileId, key, value, isDelete = false))
+        val call = Call(profileId, key, value, isDelete = false)
+        calls.add(call)
+        pending.add(call)
     }
 
     override fun enqueueDelete(profileId: String, key: String) {
-        calls.add(Call(profileId, key, value = null, isDelete = true))
+        val call = Call(profileId, key, value = null, isDelete = true)
+        calls.add(call)
+        pending.add(call)
     }
 
     override suspend fun flushNow() {
         flushNowCount++
+        sink?.let { api ->
+            for (call in pending) {
+                if (call.isDelete) {
+                    api.effective = api.effective - call.key
+                    api.hasDeviceOverride = api.hasDeviceOverride - call.key
+                } else {
+                    api.effective = api.effective + (call.key to call.value!!)
+                    api.hasDeviceOverride = api.hasDeviceOverride + call.key
+                }
+            }
+        }
+        pending.clear()
     }
 }
 

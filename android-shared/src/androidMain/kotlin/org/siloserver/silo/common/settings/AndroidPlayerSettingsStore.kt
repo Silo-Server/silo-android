@@ -115,6 +115,7 @@ class AndroidPlayerSettingsStore(
             synchronized(migrationDone) { migrationDone.add(token) }
             return
         }
+        val imported = mutableMapOf<String, String>()
         store.edit { prefs ->
             for (key in PlaybackSettingsKeys.DeviceSettings) {
                 var legacy = legacyCache.getString(scope.serverUrl, key, MISSING_SENTINEL)
@@ -129,10 +130,36 @@ class AndroidPlayerSettingsStore(
                 }
                 if (legacy == MISSING_SENTINEL) continue
                 writeRawString(prefs, scope, key, legacy)
+                imported[key] = legacy
             }
             prefs[sentinelKey] = true
         }
         synchronized(migrationDone) { migrationDone.add(token) }
+
+        // Recovering a value into the local slot is only half the job: every one
+        // of these keys is server-registered, so the next refreshFromServer
+        // would write the registry default straight back over it. Pushing them
+        // makes the server's effective value the user's own, which is the whole
+        // point of importing them. refreshFromServer flushes before it reads, so
+        // these land ahead of the GET in the same call.
+        imported.forEach { (key, value) ->
+            serverSettingsFlusher.enqueue(scope.profileId, key, clampForServer(key, value))
+        }
+    }
+
+    /**
+     * Clamp a legacy value to the range the server accepts, so an out-of-band
+     * value imported from an old cache is stored rather than 400'd and dropped.
+     */
+    private fun clampForServer(key: String, raw: String): String = when (key) {
+        PlaybackSettingsKeys.NextUpPromptSeconds ->
+            raw.toIntOrNull()
+                ?.coerceIn(NEXT_UP_PROMPT_MIN_SECONDS, NEXT_UP_PROMPT_MAX_SECONDS)
+                ?.toString()
+                ?: raw
+        PlaybackSettingsKeys.PlaybackSpeed ->
+            raw.toDoubleOrNull()?.coerceIn(MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED)?.toString() ?: raw
+        else -> raw
     }
 
     /**
@@ -156,10 +183,24 @@ class AndroidPlayerSettingsStore(
      * server: an install talking to a pre-alias server, or one whose flush
      * failed silently.
      *
+     * The enqueue alone is not enough, because it is debounced: [refreshFromServer]
+     * flushes pending writes before it reads, which is what actually orders the
+     * PUT ahead of the GET. Without that flush this copy is overwritten by the
+     * registry default within the same call.
+     *
      * Suppressing the write instead — skipping keys the server reports without a
-     * device override — was rejected: the subtitle-appearance block in
-     * [applyEffectiveLocally] deliberately propagates a server-side reset, and a
-     * blanket guard would break that for every key.
+     * device override — is not viable, though not for the reason previously
+     * given here. The subtitle-appearance block in [applyEffectiveLocally] sits
+     * outside the key loop and reads `hasDeviceOverride` itself, so gating the
+     * loop would not affect it. The real objection is [resetAllDeviceSettings]:
+     * it deletes every device row and then refreshes precisely to pull the
+     * defaults back down, and a `hasDeviceOverride` gate would make reset a
+     * no-op.
+     *
+     * The value is clamped to the server's accepted range before being sent. An
+     * out-of-range legacy value would otherwise be rejected with a 400 that the
+     * flusher logs and drops, leaving the local slot holding a value the server
+     * will never agree with.
      *
      * The legacy slot is removed once copied, so a stale value cannot resurface
      * if the canonical slot is later cleared.
@@ -190,7 +231,7 @@ class AndroidPlayerSettingsStore(
             serverSettingsFlusher.enqueue(
                 scope.profileId,
                 PlaybackSettingsKeys.NextUpPromptSeconds,
-                it.toString(),
+                it.coerceIn(NEXT_UP_PROMPT_MIN_SECONDS, NEXT_UP_PROMPT_MAX_SECONDS).toString(),
             )
         }
     }
@@ -375,7 +416,7 @@ class AndroidPlayerSettingsStore(
     override suspend fun setPlaybackSpeed(value: Double) {
         // Matches the server's validateFloatRange("player.playback_speed", 0.25, 3.0);
         // anything outside that range is rejected with HTTP 400.
-        val clamped = value.coerceIn(0.25, 3.0)
+        val clamped = value.coerceIn(MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED)
         withScope { scope, store ->
             store.edit { it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PlaybackSpeed)] = clamped.toString() }
             serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.PlaybackSpeed, clamped.toString())
@@ -389,7 +430,10 @@ class AndroidPlayerSettingsStore(
         writeInt(PlaybackSettingsKeys.SubtitleSyncMs, value.coerceIn(-10000, 10000))
 
     override suspend fun setNextUpPromptSeconds(value: Int) =
-        writeInt(PlaybackSettingsKeys.NextUpPromptSeconds, value.coerceIn(0, 120))
+        writeInt(
+            PlaybackSettingsKeys.NextUpPromptSeconds,
+            value.coerceIn(NEXT_UP_PROMPT_MIN_SECONDS, NEXT_UP_PROMPT_MAX_SECONDS),
+        )
 
     override suspend fun setResumeRewindSeconds(value: Int) =
         writeIntLocal(PlaybackSettingsKeys.ResumeRewindSeconds, value.coerceIn(0, 30))
@@ -433,6 +477,21 @@ class AndroidPlayerSettingsStore(
     override suspend fun refreshFromServer() {
         val repo = settingsRepository ?: return
         withScope { scope, store ->
+            // Push everything still queued before asking the server what the
+            // effective values are.
+            //
+            // Without this, a write made moments ago is still sitting behind the
+            // flusher's 750 ms debounce when the GET goes out, so the server
+            // answers with the registry default and applyEffectiveLocally writes
+            // that default straight over the local value — a silent reset of a
+            // setting the user just changed. The migration in ensureMigrated is
+            // the worst case: withScope runs it and then falls into this block,
+            // so on a LAN server the GET returns and clobbers the migrated value
+            // hundreds of milliseconds before its own PUT would have been sent.
+            //
+            // If the flush fails the GET almost always fails with it, and the
+            // early return below leaves the local value untouched.
+            serverSettingsFlusher.flushNow()
             val result = repo.getEffectiveSettings(PlaybackSettingsKeys.DeviceSettings)
             if (result !is ApiResult.Success) return@withScope
             applyEffectiveLocally(scope, store, result.data)
@@ -476,6 +535,14 @@ class AndroidPlayerSettingsStore(
     }
 
     override suspend fun resetDeviceSetting(key: String) {
+        // The only path that can reach the server with a caller-supplied key.
+        // A key outside DeviceSettings is either device-local or unregistered:
+        // the DELETE would 400, the flusher would log and drop it, and the
+        // round trip would look like it succeeded while the setting was
+        // untouched. Refusing here keeps that failure visible in one place.
+        require(key in PlaybackSettingsKeys.DeviceSettings) {
+            "resetDeviceSetting($key) is not a server-synced device setting"
+        }
         withScope { scope, _ ->
             serverSettingsFlusher.enqueueDelete(scope.profileId, key)
             serverSettingsFlusher.flushNow()
@@ -627,6 +694,16 @@ class AndroidPlayerSettingsStore(
         // the previous hardcoded AutoPlayGuard threshold of 3).
         const val DEFAULT_RESUME_REWIND_SECONDS = 7
         const val DEFAULT_PASSOUT_THRESHOLD = 3
+
+        // The server's accepted range for playback.next_up_prompt_seconds.
+        // Anything outside it is rejected with a 400 that the flusher logs and
+        // drops, so every path that sends this key clamps first.
+        const val NEXT_UP_PROMPT_MIN_SECONDS = 0
+        const val NEXT_UP_PROMPT_MAX_SECONDS = 120
+
+        // The contract's declared range for player.playback_speed.
+        const val MIN_PLAYBACK_SPEED = 0.25
+        const val MAX_PLAYBACK_SPEED = 3.0
         val VALID_VIDEO_GRAVITY = setOf("fit", "fill", "stretch")
 
         // DataStore slot and server-settings-cache entry written before the key
