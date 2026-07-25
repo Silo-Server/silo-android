@@ -27,6 +27,9 @@ class PushNotificationPresenter(
         fallbackTitle: String? = null,
         fallbackBody: String? = null,
     ) {
+        // Fetch before the permission check: on a direct-lookup miss the fallback
+        // refreshes the inbox, which keeps the in-app badge current even for a
+        // profile that has denied POST_NOTIFICATIONS.
         val row = fetch(deliveryId)
         if (!canPostNotifications()) return
         ensureChannel()
@@ -66,16 +69,24 @@ class PushNotificationPresenter(
     // sync refreshes the inbox for a background_wake push without posting a
     // visible notification.
     suspend fun sync() {
-        runCatching { notificationsRepository.refresh() }
+        withinPushBudget { notificationsRepository.refresh() }
     }
 
+    /**
+     * Budgeted because the shared client allows a 60s request timeout — far
+     * past the window FCM gives us — and a null row here only costs generic
+     * notification text, whereas overrunning the window costs the whole
+     * notification.
+     */
     private suspend fun fetch(deliveryId: String): NotificationRow? =
-        when (val direct = notificationsRepository.get(deliveryId)) {
-            is ApiResult.Success -> direct.data
-            else -> runCatching {
-                notificationsRepository.refresh()
-                notificationsRepository.rows.value.firstOrNull { it.id == deliveryId }
-            }.getOrNull()
+        withinPushBudget {
+            when (val direct = notificationsRepository.get(deliveryId)) {
+                is ApiResult.Success -> direct.data
+                else -> {
+                    notificationsRepository.refresh()
+                    notificationsRepository.rows.value.firstOrNull { it.id == deliveryId }
+                }
+            }
         }
 
     private fun notificationContentFor(
