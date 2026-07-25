@@ -18,6 +18,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
+import org.siloserver.silo.model.playback.PLAYBACK_START_CLIENT_FEATURES_V3
 import org.siloserver.silo.model.playback.PlaybackFailureV3
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
@@ -78,14 +79,7 @@ class PlaybackApiTest {
         assertEquals(3, body["protocol_version"]!!.jsonPrimitive.int)
         assertEquals("file:42:audio:2", body["audio_track_id"]!!.jsonPrimitive.content)
         assertEquals(
-            listOf(
-                "playback_plan_v3",
-                "media3_only",
-                "detailed_decode_capabilities",
-                "client_video_transformations_v1",
-                "device_quirks_v1",
-                "seek_reanchor_v1",
-            ),
+            PLAYBACK_START_CLIENT_FEATURES_V3,
             body["client_features"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
     }

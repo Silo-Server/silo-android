@@ -30,6 +30,17 @@ const val CLIENT_DV8_HDR10_PLUS_SANITIZER = "client_dv8_hdr10plus_sanitizer_v1"
 const val CLIENT_POST_RESUME_VIDEO_RECOVERY = "client_post_resume_video_recovery_v1"
 const val CLIENT_SURFACE_RECOVERY = "client_surface_recovery_v1"
 
+/** Features the client advertises on `POST /api/v1/playback/start`. */
+val PLAYBACK_START_CLIENT_FEATURES_V3 = listOf(
+    PLAYBACK_PLAN_V3_FEATURE,
+    MEDIA3_ONLY_FEATURE,
+    DETAILED_DECODE_CAPABILITIES_FEATURE,
+    CLIENT_VIDEO_TRANSFORMATIONS_FEATURE,
+    DEVICE_QUIRKS_V3_FEATURE,
+    SEEK_REANCHOR_V3_FEATURE,
+    DIRECT_STREAM_RESUME_V1_FEATURE,
+)
+
 @Serializable
 enum class PlaybackDecisionOutcome {
     @SerialName("playable") PLAYABLE,
@@ -220,15 +231,7 @@ data class PlaybackTerminalV3(
 @Serializable
 data class PlaybackStartRequestV3(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
-    @SerialName("client_features") val clientFeatures: List<String> = listOf(
-        PLAYBACK_PLAN_V3_FEATURE,
-        MEDIA3_ONLY_FEATURE,
-        DETAILED_DECODE_CAPABILITIES_FEATURE,
-        CLIENT_VIDEO_TRANSFORMATIONS_FEATURE,
-        DEVICE_QUIRKS_V3_FEATURE,
-        SEEK_REANCHOR_V3_FEATURE,
-        DIRECT_STREAM_RESUME_V1_FEATURE,
-    ),
+    @SerialName("client_features") val clientFeatures: List<String> = PLAYBACK_START_CLIENT_FEATURES_V3,
     @SerialName("file_id") val fileId: Int,
     @SerialName("profile_id") val profileId: String,
     @SerialName("playback_attempt_id") val playbackAttemptId: String,

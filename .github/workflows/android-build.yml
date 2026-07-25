@@ -43,9 +43,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Debug-variant unit tests only. The release variant compiles and runs
+          # the exact same sources for no extra signal, and doubles CI time.
           ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
-            test \
+            testDebugUnitTest \
             --max-workers=2
 
       - name: Upload test reports
