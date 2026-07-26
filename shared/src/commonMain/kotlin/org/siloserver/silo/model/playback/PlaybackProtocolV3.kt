@@ -134,6 +134,30 @@ data class PlaybackPlanV3(
     @SerialName("decision_reason") val decisionReason: String,
     @SerialName("requested_media_file_id") val requestedMediaFileId: Int? = null,
     @SerialName("effective_media_file_id") val effectiveMediaFileId: Int? = null,
+    val source: PlaybackSourceDescriptorV3 = PlaybackSourceDescriptorV3(),
+)
+
+/**
+ * Facts about the media file the plan resolved to, as opposed to the transport
+ * carrying it. Defaulted throughout so a server that predates the descriptor
+ * still decodes.
+ */
+@Serializable
+data class PlaybackSourceDescriptorV3(
+    @SerialName("media_file_id") val mediaFileId: Int? = null,
+    /**
+     * Full runtime of the source, or null when the server does not know it.
+     *
+     * Null must survive as null: `SiloJson` sets `coerceInputValues`, so a
+     * non-nullable `Double` here would silently become 0.0 — the very value
+     * this field exists to stop the player inventing.
+     *
+     * This is the whole file, never `total - sourceStartSeconds`, and it is
+     * never adjusted by `timelineOffsetSeconds`. Do not substitute the
+     * engine's reported duration for it: on an HLS copy remux the engine
+     * reports the window produced so far, not the runtime.
+     */
+    @SerialName("duration_seconds") val durationSeconds: Double? = null,
 )
 
 @Serializable

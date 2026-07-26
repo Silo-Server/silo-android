@@ -134,6 +134,12 @@ internal fun PlaybackPlanV3.toSessionResponse(
         position = timeline.sourceStartSeconds,
         streamUrl = stream.url,
         audioTrackIndex = selectedTracks.audio?.index ?: 0,
+        // The server's runtime for the effective file, or null when it does
+        // not know. Callers must keep null as null rather than substituting
+        // the engine's duration: on an HLS copy remux the engine reports the
+        // window produced so far, so adopting it shows a feature film as a
+        // couple of minutes.
+        durationSeconds = source.durationSeconds,
         subtitleUrls = subtitles,
         playbackPlan = legacyPlan,
     )
