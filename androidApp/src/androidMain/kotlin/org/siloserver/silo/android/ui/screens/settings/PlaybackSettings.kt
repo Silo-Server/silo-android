@@ -15,9 +15,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.model.settings.LanguageOptions
 
 private val qualityOptions = listOf("Auto", "Original", "4K", "1080p", "720p", "480p")
-private val languageOptions = listOf("Default", "English", "Spanish", "French", "German", "Japanese", "Korean", "Chinese", "Portuguese", "Italian", "Russian")
+
+// Audio language stores BCP 47 tags ("" = no preference) — display labels,
+// persist codes, as the server's settings contract requires. Shared with the TV
+// UI and with subtitles so the four surfaces cannot drift apart again.
+private val audioLanguageOptions = LanguageOptions.options(unsetLabel = "Default")
 
 // Discrete choices for the two behavior settings (0 = off). Dropdown idiom
 // matches the rest of this section; the label↔value maps below convert.
@@ -77,9 +82,11 @@ fun PlaybackSettings(
 
         SettingsDropdownRow(
             label = "Audio Language",
-            value = audioLanguage,
-            options = languageOptions,
-            onOptionSelected = onAudioLanguageChanged,
+            value = LanguageOptions.label(audioLanguage, unsetLabel = "Default"),
+            options = audioLanguageOptions.map { it.second },
+            onOptionSelected = { label ->
+                onAudioLanguageChanged(LanguageOptions.wireValue(label))
+            },
         )
 
         SettingsSwitchRow(

@@ -48,7 +48,8 @@ data class SettingsUiState(
 
     // Playback
     val defaultQuality: String = "Auto",
-    val audioLanguage: String = "Default",
+    // BCP 47 tag, "" = no preference. The picker converts to and from labels.
+    val audioLanguage: String = "",
     val autoSkipIntro: Boolean = false,
     val autoSkipCredits: Boolean = false,
     val pictureInPictureEnabled: Boolean = true,
@@ -73,7 +74,8 @@ data class SettingsUiState(
     val defaultDownloadQuality: String = DownloadQuality.Original.label,
 
     // Subtitles
-    val subtitleLanguage: String = "Off",
+    // BCP 47 tag, "" = off. The picker converts to and from labels.
+    val subtitleLanguage: String = "",
     // Metadata AI: preferred description/metadata language.
     // ISO 639-1 code; "" = inherit library metadata language.
     val metadataLanguage: String = "",
@@ -131,7 +133,7 @@ class SettingsViewModel(
                     val profile = profileResult.data
                     _uiState.update {
                         it.copy(
-                            subtitleLanguage = profile.subtitleLanguage?.ifBlank { "Off" } ?: "Off",
+                            subtitleLanguage = profile.subtitleLanguage.orEmpty(),
                             metadataLanguage = profile.preferredMetadataLanguage.orEmpty(),
                             subtitleMode = subtitleModeFromServer(profile.subtitleMode),
                             showForcedSubtitles = profile.showForcedSubtitles ?: true,
@@ -168,7 +170,7 @@ class SettingsViewModel(
             _uiState.update {
                 it.copy(
                     defaultQuality = qualityLabel(snap.quality),
-                    audioLanguage = audioLanguageLabel(snap.audioLanguage),
+                    audioLanguage = snap.audioLanguage,
                     autoSkipIntro = snap.autoSkipIntro,
                     autoSkipCredits = snap.autoSkipCredits,
                 )
@@ -373,9 +375,10 @@ class SettingsViewModel(
         }
     }
 
+    /** [language] is a BCP 47 tag, or "" for no preference. */
     fun setAudioLanguage(language: String) {
         viewModelScope.launch {
-            playerSettingsStore.setAudioLanguage(audioLanguageWireValue(language))
+            playerSettingsStore.setAudioLanguage(language)
         }
     }
 
@@ -433,6 +436,7 @@ class SettingsViewModel(
         }
     }
 
+    /** [language] is a BCP 47 tag, or "" for off. */
     fun setSubtitleLanguage(language: String) {
         _uiState.update { it.copy(subtitleLanguage = language) }
         persistProfileSubtitleSettings()
@@ -453,7 +457,7 @@ class SettingsViewModel(
         viewModelScope.launch {
             profileRepository.updateActiveProfile(
                 UpdateProfileRequest(
-                    subtitleLanguage = state.subtitleLanguage.takeUnless { it == "Off" },
+                    subtitleLanguage = state.subtitleLanguage.ifBlank { null },
                     subtitleMode = state.subtitleMode.toServerValue(),
                     showForcedSubtitles = state.showForcedSubtitles,
                 )
@@ -482,12 +486,6 @@ class SettingsViewModel(
 
     private fun downloadQualityWireValue(value: String): String =
         DownloadQuality.entries.firstOrNull { it.label == value }?.wire ?: DownloadQuality.Original.wire
-
-    private fun audioLanguageLabel(value: String): String =
-        value.ifBlank { "Default" }
-
-    private fun audioLanguageWireValue(value: String): String =
-        value.takeUnless { it == "Default" }.orEmpty()
 
     private fun subtitleModeFromServer(value: String?): SubtitleMode =
         when (value?.lowercase()) {

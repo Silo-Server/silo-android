@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import org.siloserver.silo.model.settings.EffectiveSetting
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.network.ApiResult
@@ -218,8 +219,16 @@ class AndroidPlayerSettingsStore(
     override val preferredQualityFlow: Flow<String> =
         profileScopedFlow("auto") { p, s -> p.stringFor(s, PlaybackSettingsKeys.PreferredQuality, "auto") }
 
+    // Older builds stored the display name ("English") here rather than a BCP 47
+    // tag. Those values are rejected by the server and never matched a track, so
+    // they are translated on read instead of being handed to ExoPlayer or
+    // re-sent. Anything already a tag passes through untouched.
     override val audioLanguageFlow: Flow<String> =
-        profileScopedFlow("") { p, s -> p.stringFor(s, PlaybackSettingsKeys.AudioLanguage, "") }
+        profileScopedFlow("") { p, s ->
+            LanguageOptions.migrateLegacyValue(
+                p.stringFor(s, PlaybackSettingsKeys.AudioLanguage, ""),
+            )
+        }
 
     override val videoGravityFlow: Flow<String> =
         profileScopedFlow("fit") { p, s -> p.stringFor(s, PlaybackSettingsKeys.VideoGravity, "fit") }

@@ -1,0 +1,63 @@
+package org.siloserver.silo.model.settings
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+class LanguageOptionsTest {
+
+    @Test
+    fun everyOptionPersistsALanguageTagRatherThanItsLabel() {
+        // The server validates playback.audio_language and the profile's
+        // subtitle_language as BCP 47. A display name is rejected outright, and
+        // never matched a track even when it was accepted.
+        val tagShape = Regex("^[a-z]{2,3}$")
+        for ((wire, label) in LanguageOptions.TAGS) {
+            assertTrue(tagShape.matches(wire), "$label persists \"$wire\", which is not a tag")
+        }
+    }
+
+    @Test
+    fun optionsLeadWithTheUnsetChoiceUnderTheCallersLabel() {
+        val audio = LanguageOptions.options(unsetLabel = "Default")
+        val subtitles = LanguageOptions.options(unsetLabel = "Off")
+
+        assertEquals(LanguageOptions.UNSET to "Default", audio.first())
+        assertEquals(LanguageOptions.UNSET to "Off", subtitles.first())
+        assertEquals(LanguageOptions.TAGS.size + 1, audio.size)
+        assertEquals(audio.drop(1), subtitles.drop(1))
+    }
+
+    @Test
+    fun labelsAndWireValuesRoundTrip() {
+        for ((wire, label) in LanguageOptions.TAGS) {
+            assertEquals(label, LanguageOptions.label(wire, unsetLabel = "Default"))
+            assertEquals(wire, LanguageOptions.wireValue(label))
+        }
+    }
+
+    @Test
+    fun anUnsetOrUnknownValueReadsAsTheUnsetLabel() {
+        assertEquals("Default", LanguageOptions.label("", unsetLabel = "Default"))
+        assertEquals("Default", LanguageOptions.label(null, unsetLabel = "Default"))
+        assertEquals("Off", LanguageOptions.label("kl", unsetLabel = "Off"))
+        // A value stored by a build that persisted labels must not be echoed
+        // back as if it were a choice the server holds.
+        assertEquals("Off", LanguageOptions.label("English", unsetLabel = "Off"))
+    }
+
+    @Test
+    fun legacyLabelValuesMigrateToTheirTags() {
+        // What older builds actually wrote to DataStore and PUT to the server.
+        assertEquals("en", LanguageOptions.migrateLegacyValue("English"))
+        assertEquals("ja", LanguageOptions.migrateLegacyValue("Japanese"))
+        // Already-correct values survive untouched.
+        assertEquals("en", LanguageOptions.migrateLegacyValue("en"))
+        assertEquals("pt", LanguageOptions.migrateLegacyValue("pt"))
+        // Unset stays unset, and anything unrecognized clears rather than
+        // continuing to fail validation on every flush.
+        assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue(""))
+        assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue(null))
+        assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue("Klingon"))
+    }
+}

@@ -76,6 +76,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
@@ -2026,41 +2027,19 @@ private val PassOutThresholdOptions = listOf(0, 2, 3, 4, 5)
 // Up-Next prompt timing (seconds before end; 0 = at end). Mirrors tvOS.
 private val NextUpPromptOptions = listOf(0, 10, 30, 60, 120)
 
-// Audio-language options mirror the phone: the stored value IS the display
-// name (Default => "" locally), persisted to playerSettingsStore.audioLanguage.
-private val AudioLanguages = listOf(
-    "" to "Default",
-    "English" to "English",
-    "Spanish" to "Spanish",
-    "French" to "French",
-    "German" to "German",
-    "Japanese" to "Japanese",
-    "Korean" to "Korean",
-    "Chinese" to "Chinese",
-    "Portuguese" to "Portuguese",
-    "Italian" to "Italian",
-    "Russian" to "Russian",
-)
+// Both store BCP 47 tags, which is what the server's settings contract declares
+// for playback.audio_language and the profile's subtitle_language. Audio used
+// to store the display name here, which the server now rejects — and which
+// never matched a track anyway, since ExoPlayer compares against `eng`.
+private val AudioLanguages = LanguageOptions.options(unsetLabel = "Default")
 
-private val SubtitleLanguages = listOf(
-    "" to "Off",
-    "en" to "English",
-    "es" to "Spanish",
-    "fr" to "French",
-    "de" to "German",
-    "ja" to "Japanese",
-    "ko" to "Korean",
-    "zh" to "Chinese",
-    "pt" to "Portuguese",
-    "it" to "Italian",
-    "ru" to "Russian",
-)
+private val SubtitleLanguages = LanguageOptions.options(unsetLabel = "Off")
 
 private fun audioLanguageLabel(wire: String): String =
-    AudioLanguages.firstOrNull { it.first == wire }?.second ?: "Default"
+    LanguageOptions.label(wire, unsetLabel = "Default")
 
 private fun subtitleLanguageLabel(wire: String): String =
-    SubtitleLanguages.firstOrNull { it.first == wire }?.second ?: "Off"
+    LanguageOptions.label(wire, unsetLabel = "Off")
 
 private fun resumeRewindLabel(seconds: Int): String =
     if (seconds <= 0) "Off" else "${seconds}s"
