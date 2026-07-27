@@ -64,6 +64,35 @@ class AuthApi(private val client: HttpClient) {
         }
     }
 
+    /**
+     * Resolves an emailed-invitation claim token against the given server.
+     * Unauthenticated: this runs before any account exists.
+     */
+    suspend fun lookupInvitation(
+        serverUrl: String,
+        token: String,
+    ): ApiResult<InvitationLookupResponse> = safeApiCall {
+        client.get("${serverUrl.trimEnd('/')}/api/v1/invitations/$token") {
+            skipSiloAuth()
+        }
+    }
+
+    /**
+     * Accepts an invitation: creates the account (username = the invitation's
+     * email) and returns a normal login response.
+     */
+    suspend fun acceptInvitation(
+        serverUrl: String,
+        token: String,
+        password: String,
+    ): ApiResult<LoginResponse> = safeApiCall {
+        client.post("${serverUrl.trimEnd('/')}/api/v1/invitations/$token/accept") {
+            skipSiloAuth()
+            contentType(ContentType.Application.Json)
+            setBody(AcceptInvitationRequest(password = password))
+        }
+    }
+
     suspend fun getMe(): ApiResult<User> = safeApiCall {
         client.get("/api/v1/auth/me")
     }

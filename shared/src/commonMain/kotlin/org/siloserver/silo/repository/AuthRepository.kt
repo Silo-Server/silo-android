@@ -11,6 +11,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.AuthApi
+import org.siloserver.silo.model.auth.InvitationLookupResponse
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.map
 
@@ -113,6 +114,41 @@ class AuthRepository(
 
     suspend fun getSetupStatus(serverUrl: String): ApiResult<SetupStatusResponse> =
         authApi.getSetupStatus(serverUrl)
+
+    /**
+     * Resolves an emailed-invitation claim token against a server the app is
+     * not signed into yet.
+     */
+    suspend fun lookupInvitation(
+        serverUrl: String,
+        token: String,
+    ): ApiResult<InvitationLookupResponse> = authApi.lookupInvitation(serverUrl, token)
+
+    /**
+     * Accepts an emailed invitation: the account is created with the
+     * invitation's email as username, tokens are persisted, and the new
+     * [User] is returned — same post-conditions as [signup].
+     */
+    suspend fun acceptInvitation(
+        serverUrl: String,
+        token: String,
+        password: String,
+    ): ApiResult<User> {
+        val result = authApi.acceptInvitation(serverUrl, token, password)
+        return when (result) {
+            is ApiResult.Success -> {
+                val data = result.data
+                tokenManager.saveTokens(
+                    accessToken = data.accessToken,
+                    refreshToken = data.refreshToken,
+                    expiresIn = data.expiresIn,
+                )
+                ApiResult.Success(data.user)
+            }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
+    }
 
     /** Checks whether public signups are enabled. */
     suspend fun getSignupStatus(): ApiResult<SignupStatusResponse> =

@@ -61,7 +61,9 @@ import org.siloserver.silo.android.ui.screens.people.PersonDetailViewModel
 import org.siloserver.silo.android.ui.screens.auth.LoginViewModel
 import org.siloserver.silo.android.ui.screens.auth.ServerSetupViewModel
 import org.siloserver.silo.android.ui.screens.auth.SetupViewModel
+import org.siloserver.silo.android.ui.screens.auth.InviteClaimViewModel
 import org.siloserver.silo.android.ui.screens.auth.SignupViewModel
+import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourViewModel
 import org.siloserver.silo.android.ui.screens.MainHeaderViewModel
 import org.siloserver.silo.viewmodel.DevicePairingViewModel
 import org.siloserver.silo.android.ui.screens.profiles.CreateProfileViewModel
@@ -411,6 +413,8 @@ val androidModule = module {
     viewModel { LoginViewModel(get()) }
     viewModel { SetupViewModel(get()) }
     viewModel { SignupViewModel(get()) }
+    viewModel { InviteClaimViewModel(get()) }
+    viewModel { OnboardingTourViewModel(get(), get()) }
     viewModel { ProfileSelectionViewModel(get()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }

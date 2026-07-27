@@ -19,6 +19,21 @@ sealed class Route(val route: String) {
     data object Setup : Route("setup")
     data object Signup : Route("signup")
 
+    /**
+     * Emailed-invitation claim. The deep link carries the server URL and the
+     * single-use token, so the app skips its "which server?" step entirely.
+     */
+    data class InviteClaim(val server: String, val token: String) : Route(
+        "invite_claim?server=${Uri.encode(server)}&token=${Uri.encode(token)}",
+    ) {
+        companion object {
+            const val ROUTE = "invite_claim?server={server}&token={token}"
+        }
+    }
+
+    /** Server-driven first-run feature tour, shown after profile selection. */
+    data object OnboardingTour : Route("onboarding_tour")
+
     data class PairDevice(
         val token: String? = null,
         val code: String? = null,

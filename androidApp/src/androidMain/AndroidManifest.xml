@@ -54,6 +54,7 @@
 
                 <data android:scheme="silo" />
                 <data android:host="device" />
+                <data android:host="invite" />
                 <data android:host="item" />
                 <data android:host="play" />
                 <data android:host="downloads" />

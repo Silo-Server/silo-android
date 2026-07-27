@@ -40,7 +40,9 @@ import org.siloserver.silo.android.ui.screens.auth.LoginScreen
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingScreen
 import org.siloserver.silo.android.ui.screens.auth.ServerSetupScreen
 import org.siloserver.silo.android.ui.screens.auth.SetupScreen
+import org.siloserver.silo.android.ui.screens.auth.InviteClaimScreen
 import org.siloserver.silo.android.ui.screens.auth.SignupScreen
+import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseViewModel
 import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
@@ -252,6 +254,44 @@ fun AppNavigation(
             )
         }
         composable(
+            route = Route.InviteClaim.ROUTE,
+            arguments = listOf(
+                navArgument("server") { type = NavType.StringType },
+                navArgument("token") { type = NavType.StringType },
+            ),
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "silo://invite?server={server}&token={token}" },
+            ),
+        ) { backStackEntry ->
+            val server = backStackEntry.arguments?.getString("server").orEmpty()
+            val claimToken = backStackEntry.arguments?.getString("token").orEmpty()
+            InviteClaimScreen(
+                serverUrl = server,
+                token = claimToken,
+                onNavigateToLogin = {
+                    navController.navigate(Route.Login.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onClaimComplete = {
+                    navController.navigate(Route.ProfileSelection.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        composable(Route.OnboardingTour.route) {
+            OnboardingTourScreen(
+                onDone = {
+                    navController.navigate(Route.Home.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        composable(
             route = Route.PairDevice.ROUTE,
             arguments = listOf(
                 navArgument("token") {
@@ -317,7 +357,10 @@ fun AppNavigation(
         composable(Route.ProfileSelection.route) {
             ProfileSelectionScreen(
                 onNavigateToHome = {
-                    navController.navigate(Route.Home.route) {
+                    // Route through the tour gate: OnboardingTourScreen checks
+                    // server-side state and immediately hands off to Home when
+                    // the profile has already completed or skipped the tour.
+                    navController.navigate(Route.OnboardingTour.route) {
                         popUpTo(0) { inclusive = true }
                     }
                 },
