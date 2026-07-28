@@ -131,10 +131,20 @@ fun AuroraErrorLabel(text: String, modifier: Modifier = Modifier) {
  * sheen + soft drop shadow; optional gold halo). Compose has no backdrop blur,
  * so the tint is kept translucent enough for the aurora to glow through.
  */
-fun Modifier.auroraGlass(cornerRadius: Dp = 28.dp, emphasized: Boolean = false): Modifier {
+fun Modifier.auroraGlass(
+    cornerRadius: Dp = 28.dp,
+    emphasized: Boolean = false,
+    /**
+     * The drop shadow reads as depth under a small panel floating on a static
+     * screen. Pass 0.dp for a large or moving panel: the fill is translucent,
+     * so at full size the shadow's own outline shows *through* the glass as a
+     * faint hard-edged box rather than sitting behind it.
+     */
+    elevation: Dp = 60.dp,
+): Modifier {
     val shape = RoundedCornerShape(cornerRadius)
     return this
-        .shadow(elevation = 60.dp, shape = shape, clip = false)
+        .then(if (elevation > 0.dp) Modifier.shadow(elevation, shape, clip = false) else Modifier)
         .clip(shape)
         .background(AuroraGlassTint.copy(alpha = 0.62f))
         .background(

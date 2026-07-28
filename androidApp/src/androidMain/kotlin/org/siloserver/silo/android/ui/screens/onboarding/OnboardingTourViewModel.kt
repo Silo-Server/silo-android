@@ -143,20 +143,47 @@ class OnboardingTourViewModel(
 
     fun onAdvance() {
         val current = _uiState.value
-        persistChoiceIfAny(current.steps.getOrNull(current.currentIndex))
         val next = current.currentIndex + 1
         if (next >= current.steps.size) {
-            finish(skipped = false, persistCurrentChoice = false)
+            finish(skipped = false, persistCurrentChoice = true)
             return
         }
-        viewModelScope.launch {
-            onboardingRepository.recordStep(current.tourId, current.steps[next].id)
-        }
-        _uiState.update { it.copy(currentIndex = next) }
+        moveTo(next)
     }
 
     fun onBack() {
-        _uiState.update { it.copy(currentIndex = (it.currentIndex - 1).coerceAtLeast(0)) }
+        moveTo(_uiState.value.currentIndex - 1)
+    }
+
+    /**
+     * Settle handler for swipe navigation. The pager is the one that moved, so
+     * this only reconciles state; the screen must not echo it back as a scroll
+     * or the two chase each other.
+     */
+    fun onPageSettled(index: Int) {
+        if (index == _uiState.value.currentIndex) return
+        moveTo(index)
+    }
+
+    /**
+     * Single path for every index change — button or swipe — so a step reached
+     * by swiping records and persists exactly like one reached by tapping.
+     */
+    private fun moveTo(target: Int) {
+        val current = _uiState.value
+        val index = target.coerceIn(0, current.steps.lastIndex.coerceAtLeast(0))
+        if (index == current.currentIndex) return
+        // Advancing past a setting_choice commits it; going back doesn't, so a
+        // user who swipes backwards to reconsider isn't saving on the way out.
+        if (index > current.currentIndex) {
+            persistChoiceIfAny(current.steps.getOrNull(current.currentIndex))
+            viewModelScope.launch {
+                current.steps.getOrNull(index)?.let {
+                    onboardingRepository.recordStep(current.tourId, it.id)
+                }
+            }
+        }
+        _uiState.update { it.copy(currentIndex = index) }
     }
 
     fun onSkip() = finish(skipped = true, persistCurrentChoice = false)
