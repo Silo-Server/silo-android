@@ -897,7 +897,7 @@ private fun TvPlaybackSettingsPane(
         )
         PlaybackPicker.AudioLanguage -> TvSettingsPickerSheet(
             title = "Audio Language",
-            options = AudioLanguages.map { PickerOption(it.first, it.second) },
+            options = audioLanguages.map { PickerOption(it.first, it.second) },
             selectedId = state.audioLanguage,
             onSelect = { onAudioLanguageChanged(it); activePicker = null },
             onDismiss = { activePicker = null },
@@ -1101,14 +1101,14 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.Language -> TvSettingsPickerSheet(
             title = "Language",
-            options = SubtitleLanguages.map { PickerOption(it.first, it.second) },
+            options = subtitleLanguages.map { PickerOption(it.first, it.second) },
             selectedId = state.subtitleLanguage,
             onSelect = { onSubtitleLanguageChanged(it); activePicker = null },
             onDismiss = { activePicker = null },
         )
         SubtitlePicker.MetadataLanguage -> TvSettingsPickerSheet(
             title = "Metadata Language",
-            options = SubtitleLanguages.map { PickerOption(it.first, it.second) },
+            options = subtitleLanguages.map { PickerOption(it.first, it.second) },
             selectedId = state.metadataLanguage,
             onSelect = { onMetadataLanguageChanged(it); activePicker = null },
             onDismiss = { activePicker = null },
@@ -2031,9 +2031,9 @@ private val NextUpPromptOptions = listOf(0, 10, 30, 60, 120)
 // for playback.audio_language and the profile's subtitle_language. Audio used
 // to store the display name here, which the server now rejects — and which
 // never matched a track anyway, since ExoPlayer compares against `eng`.
-private val AudioLanguages = LanguageOptions.options(unsetLabel = "Default")
+private val audioLanguages = LanguageOptions.options(unsetLabel = "Default")
 
-private val SubtitleLanguages = LanguageOptions.options(unsetLabel = "Off")
+private val subtitleLanguages = LanguageOptions.options(unsetLabel = "Off")
 
 private fun audioLanguageLabel(wire: String): String =
     LanguageOptions.label(wire, unsetLabel = "Default")

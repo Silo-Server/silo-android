@@ -26,7 +26,7 @@ object LanguageOptions {
      * entry is the unset choice, whose label differs by context — "Default" for
      * audio, "Off" for subtitles — so callers supply it.
      */
-    val TAGS: List<Pair<String, String>> = listOf(
+    val tags: List<Pair<String, String>> = listOf(
         "en" to "English",
         "es" to "Spanish",
         "fr" to "French",
@@ -41,7 +41,7 @@ object LanguageOptions {
 
     /** The full option list for a picker, led by [unsetLabel]. */
     fun options(unsetLabel: String): List<Pair<String, String>> =
-        listOf(UNSET to unsetLabel) + TAGS
+        listOf(UNSET to unsetLabel) + tags
 
     /**
      * The label for a stored wire value.
@@ -54,7 +54,7 @@ object LanguageOptions {
      */
     fun label(wire: String?, unsetLabel: String): String {
         if (wire.isNullOrBlank()) return unsetLabel
-        TAGS.firstOrNull { it.first == wire }?.let { return it.second }
+        tags.firstOrNull { it.first == wire }?.let { return it.second }
         return if (isPreservableTag(wire)) wire else unsetLabel
     }
 
@@ -63,7 +63,7 @@ object LanguageOptions {
      * is the one value the server always accepts.
      */
     fun wireValue(label: String?): String =
-        TAGS.firstOrNull { it.second == label }?.first ?: UNSET
+        tags.firstOrNull { it.second == label }?.first ?: UNSET
 
     /**
      * Translates a value stored by a build that persisted display names.
@@ -81,8 +81,8 @@ object LanguageOptions {
      */
     fun migrateLegacyValue(stored: String?): String = when {
         stored.isNullOrBlank() -> UNSET
-        TAGS.any { it.first == stored } -> stored
-        TAGS.any { it.second == stored } -> wireValue(stored)
+        tags.any { it.first == stored } -> stored
+        tags.any { it.second == stored } -> wireValue(stored)
         isPreservableTag(stored) -> stored
         else -> UNSET
     }

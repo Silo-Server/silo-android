@@ -2,6 +2,7 @@ package org.siloserver.silo.network.api
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
@@ -20,7 +21,9 @@ class OnboardingApi(private val client: HttpClient) {
 
     /** surface is "phone" or "tv"; the server filters unsuitable steps. */
     suspend fun getFlow(surface: String): ApiResult<OnboardingFlow> = safeApiCall {
-        client.get("/api/v1/onboarding/flow?surface=$surface")
+        client.get("/api/v1/onboarding/flow") {
+            parameter("surface", surface)
+        }
     }
 
     suspend fun getState(): ApiResult<OnboardingState> = safeApiCall {

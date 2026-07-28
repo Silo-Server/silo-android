@@ -72,7 +72,9 @@ class AuthApi(private val client: HttpClient) {
         serverUrl: String,
         token: String,
     ): ApiResult<InvitationLookupResponse> = safeApiCall {
-        client.get("${serverUrl.trimEnd('/')}/api/v1/invitations/$token") {
+        // The token arrives from an emailed link and is not ours to trust as
+        // path-safe: a '/' or '?' in it would otherwise re-shape the request.
+        client.get("${serverUrl.trimEnd('/')}/api/v1/invitations/${token.encodeURLPathPart()}") {
             skipSiloAuth()
         }
     }
@@ -86,7 +88,7 @@ class AuthApi(private val client: HttpClient) {
         token: String,
         password: String,
     ): ApiResult<LoginResponse> = safeApiCall {
-        client.post("${serverUrl.trimEnd('/')}/api/v1/invitations/$token/accept") {
+        client.post("${serverUrl.trimEnd('/')}/api/v1/invitations/${token.encodeURLPathPart()}/accept") {
             skipSiloAuth()
             contentType(ContentType.Application.Json)
             setBody(AcceptInvitationRequest(password = password))

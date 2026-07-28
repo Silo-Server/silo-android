@@ -12,7 +12,7 @@ class LanguageOptionsTest {
         // subtitle_language as BCP 47. A display name is rejected outright, and
         // never matched a track even when it was accepted.
         val tagShape = Regex("^[a-z]{2,3}$")
-        for ((wire, label) in LanguageOptions.TAGS) {
+        for ((wire, label) in LanguageOptions.tags) {
             assertTrue(tagShape.matches(wire), "$label persists \"$wire\", which is not a tag")
         }
     }
@@ -24,13 +24,13 @@ class LanguageOptionsTest {
 
         assertEquals(LanguageOptions.UNSET to "Default", audio.first())
         assertEquals(LanguageOptions.UNSET to "Off", subtitles.first())
-        assertEquals(LanguageOptions.TAGS.size + 1, audio.size)
+        assertEquals(LanguageOptions.tags.size + 1, audio.size)
         assertEquals(audio.drop(1), subtitles.drop(1))
     }
 
     @Test
     fun labelsAndWireValuesRoundTrip() {
-        for ((wire, label) in LanguageOptions.TAGS) {
+        for ((wire, label) in LanguageOptions.tags) {
             assertEquals(label, LanguageOptions.label(wire, unsetLabel = "Default"))
             assertEquals(wire, LanguageOptions.wireValue(label))
         }
