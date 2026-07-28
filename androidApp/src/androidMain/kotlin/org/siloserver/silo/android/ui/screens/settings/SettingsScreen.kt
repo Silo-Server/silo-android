@@ -187,9 +187,16 @@ fun SettingsScreen(
                 }
             }
 
+            if (state.settingsAvailability ==
+                org.siloserver.silo.domain.settings.ProfileSettingsController.Availability.SERVER_UPGRADE_REQUIRED
+            ) {
+                item { SettingsUpgradeRequiredNotice() }
+            }
+
             item {
                 PlaybackSettings(
-                    defaultQuality = state.defaultQuality,
+                    qualityResolution = state.qualityResolution,
+                    maxBitrateKbps = state.maxBitrateKbps,
                     audioLanguage = state.audioLanguage,
                     autoSkipIntro = state.autoSkipIntro,
                     autoSkipCredits = state.autoSkipCredits,
@@ -200,7 +207,7 @@ fun SettingsScreen(
                     nextUpPromptSeconds = state.nextUpPromptSeconds,
                     resumeRewindSeconds = state.resumeRewindSeconds,
                     passOutThreshold = state.passOutThreshold,
-                    onQualityChanged = viewModel::setDefaultQuality,
+                    onQualityPresetSelected = viewModel::setQualityPreset,
                     onAudioLanguageChanged = viewModel::setAudioLanguage,
                     onAutoSkipIntroChanged = viewModel::setAutoSkipIntro,
                     onAutoSkipCreditsChanged = viewModel::setAutoSkipCredits,
@@ -388,6 +395,37 @@ fun SettingsScreen(
                 }
             },
         )
+    }
+}
+
+/**
+ * Shown when the connected server predates the canonical settings API.
+ *
+ * The failure mode this replaces was an empty (or silently non-saving)
+ * settings screen: the profile preferences resolve to nothing, so the rows
+ * render defaults and an edit goes nowhere with no explanation. Saying so is
+ * the whole point — playback keeps working from the device's local defaults,
+ * only the profile-wide preferences are unavailable.
+ */
+@Composable
+fun SettingsUpgradeRequiredNotice(modifier: Modifier = Modifier) {
+    SettingsSectionCard(modifier = modifier) {
+        SettingsSectionHeader(title = "Server Update Needed")
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp)) {
+            Text(
+                text = "This server is too old for profile settings",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Subtitle and metadata preferences are stored by the server, and this one " +
+                    "does not support them yet. Playback still works using this device's settings. " +
+                    "Ask whoever runs the server to update it.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

@@ -1,0 +1,173 @@
+package org.siloserver.silo.domain.settings
+
+import org.siloserver.silo.model.settings.EffectiveSettingValue
+import org.siloserver.silo.model.settings.SettingKeys
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.api.SettingsCapabilitiesResult
+import org.siloserver.silo.repository.SettingsRepository
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
+
+/**
+ * The profile-scoped half of the settings screens, shared by the phone and TV
+ * apps.
+ *
+ * These preferences used to ride `PUT /profiles/{id}` as named columns. They
+ * are canonical settings now: reads come from the batched effective endpoint
+ * (so a value set from another device, or narrowed by policy, is what the
+ * screen shows) and writes address `scope=profile` explicitly. Android no
+ * longer depends on the profile endpoint accepting `subtitle_language`,
+ * `subtitle_mode`, `show_forced_subtitles` or `preferred_metadata_language`,
+ * even though the server still mirrors them until the cutover.
+ *
+ * Both apps route through this one class deliberately: the two settings
+ * screens have drifted apart before, and a behavior that lives here cannot be
+ * present on one and missing on the other.
+ */
+class ProfileSettingsController(
+    private val repository: SettingsRepository,
+) {
+
+    /**
+     * Whether the connected server can serve canonical settings at all.
+     * [ServerUpgradeRequired] is not an error to swallow — the screen says so,
+     * and playback continues on local defaults.
+     */
+    enum class Availability {
+        /** Not probed yet. */
+        UNKNOWN,
+        AVAILABLE,
+        /** The server predates the canonical settings API (404 on the contract). */
+        SERVER_UPGRADE_REQUIRED,
+        /** Reachable server, failed probe — transient, retryable. */
+        UNAVAILABLE,
+    }
+
+    /** The resolved profile preferences a settings screen renders. */
+    data class Snapshot(
+        /** BCP 47 tag; "" is "no subtitle preference". */
+        val subtitleLanguage: String = "",
+        /** One of "auto", "always", "off". */
+        val subtitleMode: String = DEFAULT_SUBTITLE_MODE,
+        val showForcedSubtitles: Boolean = true,
+        /** BCP 47 tag; "" inherits the library metadata language. */
+        val metadataLanguage: String = "",
+    )
+
+    /** Probe result plus the values, so a screen loads both in one call. */
+    data class LoadResult(
+        val availability: Availability,
+        val snapshot: Snapshot?,
+    )
+
+    /**
+     * Probes the contract and, when the server speaks it, resolves the profile
+     * keys. A failed *probe* leaves the snapshot null so the caller keeps
+     * whatever it had; a successful probe with a failed resolve is reported as
+     * [Availability.UNAVAILABLE] for the same reason.
+     */
+    suspend fun load(): LoadResult {
+        val availability = when (repository.contractCapabilities()) {
+            is SettingsCapabilitiesResult.Available -> Availability.AVAILABLE
+            is SettingsCapabilitiesResult.ServerUpgradeRequired ->
+                Availability.SERVER_UPGRADE_REQUIRED
+            is SettingsCapabilitiesResult.Error,
+            is SettingsCapabilitiesResult.NetworkError -> Availability.UNAVAILABLE
+        }
+        if (availability != Availability.AVAILABLE) return LoadResult(availability, null)
+
+        return when (val result = repository.getEffectiveValues(PROFILE_KEYS)) {
+            is ApiResult.Success -> LoadResult(availability, snapshotOf(result.data))
+            is ApiResult.Error, is ApiResult.NetworkError ->
+                LoadResult(Availability.UNAVAILABLE, null)
+        }
+    }
+
+    /** [language] is a BCP 47 tag, or "" for no preference. */
+    suspend fun setSubtitleLanguage(language: String): ApiResult<Unit> =
+        writeLanguage(SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE, language)
+
+    /** [mode] is a `playback.subtitle_mode` member: "auto", "always" or "off". */
+    suspend fun setSubtitleMode(mode: String): ApiResult<Unit> =
+        write(SettingKeys.PLAYBACK_SUBTITLE_MODE, JsonPrimitive(normalizeSubtitleMode(mode)))
+
+    suspend fun setShowForcedSubtitles(enabled: Boolean): ApiResult<Unit> =
+        write(SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES, JsonPrimitive(enabled))
+
+    /** [language] is a BCP 47 tag, or "" to inherit the library's language. */
+    suspend fun setMetadataLanguage(language: String): ApiResult<Unit> =
+        writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language)
+
+    private suspend fun writeLanguage(key: String, language: String): ApiResult<Unit> {
+        val tag = language.trim()
+        // The store spells "no preference" as the empty string; the contract
+        // spells it as no row at all (the server's language_tag validator
+        // refuses ""). Clearing rather than writing null keeps the two the
+        // same statement and matches how the server mirrors the legacy column.
+        return if (tag.isEmpty()) repository.clearProfileValue(key) else write(key, JsonPrimitive(tag))
+    }
+
+    private suspend fun write(key: String, value: JsonElement): ApiResult<Unit> =
+        when (val result = repository.setProfileValue(key, value)) {
+            is ApiResult.Success -> ApiResult.Success(Unit)
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
+
+    private fun snapshotOf(effective: Map<String, EffectiveSettingValue>): Snapshot =
+        Snapshot(
+            subtitleLanguage = effective.stringOrEmpty(SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE),
+            subtitleMode = normalizeSubtitleMode(
+                effective.stringOrEmpty(SettingKeys.PLAYBACK_SUBTITLE_MODE),
+            ),
+            showForcedSubtitles = effective.boolOr(SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES, true),
+            metadataLanguage = effective.stringOrEmpty(SettingKeys.CATALOG_METADATA_LANGUAGE),
+        )
+
+    private companion object {
+        const val DEFAULT_SUBTITLE_MODE = "auto"
+        val SUBTITLE_MODES = setOf("auto", "always", "off")
+
+        /**
+         * Every profile-scoped key these screens read, in one round trip.
+         *
+         * Quality is deliberately absent: on Android the two quality axes are
+         * device-scoped (the store owns them and "Reset Playback Overrides"
+         * clears them), so a profile-scope write would be shadowed by this
+         * device's own row and the picker would appear not to save.
+         */
+        val PROFILE_KEYS: List<String> = listOf(
+            SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
+            SettingKeys.PLAYBACK_SUBTITLE_MODE,
+            SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES,
+            SettingKeys.CATALOG_METADATA_LANGUAGE,
+        )
+
+        fun normalizeSubtitleMode(value: String): String {
+            val v = value.trim().lowercase()
+            // The legacy empty string means unset, not a fourth mode.
+            return if (v in SUBTITLE_MODES) v else DEFAULT_SUBTITLE_MODE
+        }
+
+        fun Map<String, EffectiveSettingValue>.stringOrEmpty(key: String): String {
+            val value = this[key]?.value ?: return ""
+            if (value is JsonNull) return ""
+            return runCatching { value.jsonPrimitive.content }.getOrDefault("")
+        }
+
+        fun Map<String, EffectiveSettingValue>.boolOr(key: String, fallback: Boolean): Boolean {
+            val value = this[key]?.value ?: return fallback
+            return runCatching { value.jsonPrimitive.booleanOrNull }.getOrNull() ?: fallback
+        }
+
+        fun Map<String, EffectiveSettingValue>.intOrNull(key: String): Int? {
+            val value = this[key]?.value ?: return null
+            if (value is JsonNull) return null
+            return runCatching { value.jsonPrimitive.intOrNull }.getOrNull()
+        }
+    }
+}

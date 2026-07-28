@@ -2,6 +2,14 @@ package org.siloserver.silo.model.settings
 
 object PlaybackSettingsKeys {
     const val PreferredQuality = "playback.preferred_quality"
+
+    /**
+     * The bandwidth half of the quality choice, orthogonal to
+     * [PreferredQuality]. Nullable on the wire — uncapped is the *absence* of
+     * a value, not a large number — which the local store spells as 0, the one
+     * value the contract's 100..200000 range cannot hold.
+     */
+    const val MaxBitrateKbps = "playback.max_bitrate_kbps"
     const val AudioLanguage = "playback.audio_language"
     const val AutoSkipIntro = "playback.auto_skip_intro"
     const val AutoSkipCredits = "playback.auto_skip_credits"
@@ -105,6 +113,7 @@ object PlaybackSettingsKeys {
 
     val DeviceSettings = listOf(
         PreferredQuality,
+        MaxBitrateKbps,
         AudioLanguage,
         AutoSkipIntro,
         AutoSkipCredits,

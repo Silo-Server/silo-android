@@ -303,6 +303,17 @@ private val NULLABLE_LANGUAGE_KEYS: Set<String> = setOf(
     SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
 )
 
+/**
+ * Nullable integer keys, where the contract's null means "no cap" and the
+ * local store has to spell that as some in-band value. Zero is chosen because
+ * the contract's range (100..200000) cannot hold it, so it can never collide
+ * with a real cap — but it is not a value the server would accept, so it is
+ * translated to JSON null rather than sent.
+ */
+private val NULLABLE_INT_KEYS: Set<String> = setOf(
+    SettingKeys.PLAYBACK_MAX_BITRATE_KBPS,
+)
+
 /** Keys whose store-side string is itself a JSON object document. */
 private val SETTING_OBJECT_KEYS: Set<String> = setOf(
     SettingKeys.PLAYBACK_SUBTITLE_APPEARANCE,
@@ -318,6 +329,8 @@ private val SETTING_OBJECT_KEYS: Set<String> = setOf(
  */
 internal fun encodeSettingWireValue(key: String, raw: String): JsonElement? = when {
     key in SettingKeys.BOOLEAN_KEYS -> raw.toBooleanStrictOrNull()?.let(::JsonPrimitive)
+    key in NULLABLE_INT_KEYS ->
+        raw.toLongOrNull()?.let { if (it <= 0L) JsonNull else JsonPrimitive(it) }
     key in SettingKeys.INT_KEYS -> raw.toLongOrNull()?.let(::JsonPrimitive)
     key in SettingKeys.DOUBLE_KEYS -> raw.toDoubleOrNull()?.let(::JsonPrimitive)
     key in SETTING_OBJECT_KEYS ->

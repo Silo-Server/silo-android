@@ -453,6 +453,87 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `setQuality writes both axes and flushes them together`() = runTest {
+        val store = newStore()
+        store.setQuality("1080p", 10000)
+
+        assertEquals("1080p", store.preferredQualityFlow.first())
+        assertEquals(10000, store.maxBitrateKbpsFlow.first())
+        val flushed = fakeFlusher.calls.filterNot { it.isDelete }.associate { it.key to it.value }
+        assertEquals("1080p", flushed[PlaybackSettingsKeys.PreferredQuality])
+        assertEquals("10000", flushed[PlaybackSettingsKeys.MaxBitrateKbps])
+    }
+
+    @Test
+    fun `an uncapped preset stores no bitrate`() = runTest {
+        val store = newStore()
+        store.setQuality("1080p", 6000)
+        store.setQuality("original", null)
+
+        // null is uncapped, which the store spells as 0 — outside the
+        // contract's range, so it can never read back as a real cap.
+        assertEquals(null, store.maxBitrateKbpsFlow.first())
+        assertEquals(
+            "0",
+            fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.MaxBitrateKbps }.value,
+        )
+    }
+
+    @Test
+    fun `a legacy compound quality normalizes on read and on write`() = runTest {
+        val store = newStore()
+        // The bitrate a compound value encoded lives on its own axis now;
+        // handing "1080p-high" to the player or the server would be refused.
+        store.setPreferredQuality("1080p-high")
+
+        assertEquals("1080p", store.preferredQualityFlow.first())
+        assertEquals(
+            "1080p",
+            fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.PreferredQuality }.value,
+        )
+    }
+
+    @Test
+    fun `a refresh resolving no bitrate clears a stale local cap`() = runTest {
+        val repo = SettingsRepository(
+            FakeSettingsApi(
+                effective = mapOf(
+                    stored(PlaybackSettingsKeys.PreferredQuality, JsonPrimitive("720p")),
+                    defaulted(PlaybackSettingsKeys.MaxBitrateKbps, JsonNull),
+                ),
+            ),
+        )
+        val store = newStore(repository = repo)
+        store.setQuality("1080p", 10000)
+
+        store.refreshFromServer()
+
+        assertEquals("720p", store.preferredQualityFlow.first())
+        assertEquals(
+            null,
+            store.maxBitrateKbpsFlow.first(),
+            "a null bitrate must clear the cap, not leave the previous one throttling playback",
+        )
+    }
+
+    @Test
+    fun `a granular subtitle field projects into the composite on flush`() = runTest {
+        val store = newStore()
+        store.setSubtitleAppearance(
+            SubtitleAppearance.DEFAULT.copy(fontSize = SubtitleFontSizePreset.XXLarge),
+        )
+        fakeFlusher.calls.clear()
+
+        // The contract has no key for the granular fields, so a per-field edit
+        // only reaches the server once projected into the composite.
+        store.flushProjectedSubtitleAppearance()
+        assertTrue(
+            fakeFlusher.calls.none { it.key == PlaybackSettingsKeys.SubtitleAppearance },
+            "an unchanged projection must not enqueue a redundant write",
+        )
+    }
+
+    @Test
     fun `flushPendingDeviceSettings delegates to flusher flushNow`() = runTest {
         val store = newStore()
         store.flushPendingDeviceSettings()

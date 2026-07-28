@@ -16,8 +16,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.model.settings.LanguageOptions
+import org.siloserver.silo.model.settings.QualityPresets
 
-private val qualityOptions = listOf("Auto", "Original", "4K", "1080p", "720p", "480p")
+// Quality is two settings behind one picker: playback.preferred_quality (a
+// resolution cap) and playback.max_bitrate_kbps (a bandwidth cap, null =
+// uncapped). The preset table is shared with the TV app and mirrors the web
+// client's, so the same choice reads back with the same label everywhere.
 
 // Audio language stores BCP 47 tags ("" = no preference) — display labels,
 // persist codes, as the server's settings contract requires. Shared with the TV
@@ -45,7 +49,8 @@ private fun nextUpPromptLabel(seconds: Int): String = when {
  */
 @Composable
 fun PlaybackSettings(
-    defaultQuality: String,
+    qualityResolution: String,
+    maxBitrateKbps: Int?,
     audioLanguage: String,
     autoSkipIntro: Boolean,
     autoSkipCredits: Boolean,
@@ -56,7 +61,8 @@ fun PlaybackSettings(
     nextUpPromptSeconds: Int,
     resumeRewindSeconds: Int,
     passOutThreshold: Int,
-    onQualityChanged: (String) -> Unit,
+    /** Receives a [QualityPresets] preset id. */
+    onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoSkipIntroChanged: (Boolean) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
@@ -73,11 +79,17 @@ fun PlaybackSettings(
     SettingsSectionCard(modifier = modifier) {
         SettingsSectionHeader("Playback")
 
+        // A pair no preset covers (set through the API, or left by a legacy
+        // compound value) still gets a truthful label rather than a picker
+        // silently showing the wrong entry.
         SettingsDropdownRow(
             label = "Default Quality",
-            value = defaultQuality,
-            options = qualityOptions,
-            onOptionSelected = onQualityChanged,
+            value = QualityPresets.describe(qualityResolution, maxBitrateKbps),
+            options = QualityPresets.ALL.map { it.label },
+            onOptionSelected = { label ->
+                QualityPresets.ALL.firstOrNull { it.label == label }
+                    ?.let { onQualityPresetSelected(it.id) }
+            },
         )
 
         SettingsDropdownRow(

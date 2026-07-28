@@ -170,6 +170,7 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override val resumeRewindSecondsFlow: Flow<Int> = flowOf(7)
     override val passOutThresholdFlow: Flow<Int> = flowOf(3)
     override val preferredQualityFlow: Flow<String> = flowOf("auto")
+    override val maxBitrateKbpsFlow: Flow<Int?> = flowOf(null)
     override val audioLanguageFlow: Flow<String> = flowOf("")
     override val videoGravityFlow: Flow<String> = flowOf("fit")
     override val orientationModeFlow: Flow<String> = flowOf("auto")
@@ -199,10 +200,12 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun setResumeRewindSeconds(value: Int) = Unit
     override suspend fun setPassOutThreshold(value: Int) = Unit
     override suspend fun setPreferredQuality(value: String) = Unit
+    override suspend fun setQuality(resolution: String, bitrateKbps: Int?) = Unit
     override suspend fun setAudioLanguage(value: String) = Unit
     override suspend fun setVideoGravity(value: String) = Unit
     override suspend fun setOrientationMode(value: String) = Unit
     override suspend fun setSubtitleAppearance(value: SubtitleAppearance) = Unit
+    override suspend fun flushProjectedSubtitleAppearance() = Unit
     override suspend fun refreshFromServer() {
         refreshCalls++
     }

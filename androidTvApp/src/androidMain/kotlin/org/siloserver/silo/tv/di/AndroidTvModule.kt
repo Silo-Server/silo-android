@@ -481,6 +481,7 @@ val androidTvModule = module {
             libraryPlaybackPrefsStore = get(),
             overlayPrefsStore = get(),
             legacyTvPrefsMigration = get(),
+            profileSettings = get(),
             tvLibraryScopeStore = getOrNull(),
         )
     }

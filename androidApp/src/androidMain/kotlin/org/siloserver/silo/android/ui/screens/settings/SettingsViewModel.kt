@@ -5,13 +5,14 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.admin.shouldShowClientAdminSurface
 import org.siloserver.silo.model.auth.AuthSession
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.auth.isActingAdmin
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
-import org.siloserver.silo.model.profile.UpdateProfileRequest
+import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
@@ -26,12 +27,18 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Subtitle display mode.
+ * Subtitle display mode. [wire] is the `playback.subtitle_mode` enum member
+ * the settings contract declares — the labels are display only.
  */
-enum class SubtitleMode(val label: String) {
-    OFF("Off"),
-    AUTO("Auto"),
-    ALWAYS("Always"),
+enum class SubtitleMode(val label: String, val wire: String) {
+    OFF("Off", "off"),
+    AUTO("Auto", "auto"),
+    ALWAYS("Always", "always");
+
+    companion object {
+        fun fromWire(value: String?): SubtitleMode =
+            entries.firstOrNull { it.wire == value?.lowercase() } ?: AUTO
+    }
 }
 
 data class SettingsUiState(
@@ -46,8 +53,21 @@ data class SettingsUiState(
     // Client admin is hidden for now even when the server would accept acting-admin.
     val isAdminVisible: Boolean = false,
 
+    // Whether this server serves the canonical settings API. When it reports
+    // SERVER_UPGRADE_REQUIRED the screen explains that instead of rendering
+    // rows whose edits would silently go nowhere; playback keeps working from
+    // the local defaults either way.
+    val settingsAvailability: ProfileSettingsController.Availability =
+        ProfileSettingsController.Availability.UNKNOWN,
+
     // Playback
-    val defaultQuality: String = "Auto",
+    // The quality picker composes playback.preferred_quality (a resolution
+    // cap) and playback.max_bitrate_kbps (a bandwidth cap; null = uncapped)
+    // into one list. The compound legacy spellings are dead and never written.
+    val qualityResolution: String = QualityPresets.RESOLUTION_AUTO,
+    val maxBitrateKbps: Int? = null,
+    /** True when policy capped the resolution below the profile's choice. */
+    val qualityConstrained: Boolean = false,
     // BCP 47 tag, "" = no preference. The picker converts to and from labels.
     val audioLanguage: String = "",
     val autoSkipIntro: Boolean = false,
@@ -99,6 +119,7 @@ class SettingsViewModel(
     private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
     private val overlayPrefsStore: OverlayPrefsStore,
     private val notificationsRepository: NotificationsRepository,
+    private val profileSettings: ProfileSettingsController,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -128,15 +149,14 @@ class SettingsViewModel(
 
             playerSettingsStore.refreshFromServer()
 
+            // The profile still supplies identity (name, role) for the admin
+            // gate; its preference columns no longer feed this screen — those
+            // are resolved canonically below.
             when (val profileResult = profileRepository.getActiveProfileResult()) {
                 is ApiResult.Success -> {
                     val profile = profileResult.data
                     _uiState.update {
                         it.copy(
-                            subtitleLanguage = profile.subtitleLanguage.orEmpty(),
-                            metadataLanguage = profile.preferredMetadataLanguage.orEmpty(),
-                            subtitleMode = subtitleModeFromServer(profile.subtitleMode),
-                            showForcedSubtitles = profile.showForcedSubtitles ?: true,
                             isAdminVisible = shouldShowClientAdminSurface(isActingAdmin(it.user, profile)),
                         )
                     }
@@ -149,11 +169,41 @@ class SettingsViewModel(
                     }
                 }
             }
+
+            loadProfileSettings()
+        }
+    }
+
+    /**
+     * Resolves the profile-scoped preferences through the canonical settings
+     * API, and records whether this server speaks it at all.
+     *
+     * On [Availability.SERVER_UPGRADE_REQUIRED] the values are left as they
+     * are and the screen explains the situation — rendering the rows anyway
+     * would offer edits that go nowhere. Playback is unaffected: it runs from
+     * the device-scoped store, which has its own defaults.
+     */
+    fun loadProfileSettings() {
+        viewModelScope.launch {
+            val result = profileSettings.load()
+            _uiState.update { state ->
+                val snapshot = result.snapshot ?: return@update state.copy(
+                    settingsAvailability = result.availability,
+                )
+                state.copy(
+                    settingsAvailability = result.availability,
+                    subtitleLanguage = snapshot.subtitleLanguage,
+                    subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
+                    showForcedSubtitles = snapshot.showForcedSubtitles,
+                    metadataLanguage = snapshot.metadataLanguage,
+                )
+            }
         }
     }
 
     private data class PlayerSettingsSnapshot(
         val quality: String,
+        val maxBitrateKbps: Int?,
         val audioLanguage: String,
         val autoSkipIntro: Boolean,
         val autoSkipCredits: Boolean,
@@ -162,6 +212,7 @@ class SettingsViewModel(
     private fun observePlayerSettings() {
         combine(
             playerSettingsStore.preferredQualityFlow,
+            playerSettingsStore.maxBitrateKbpsFlow,
             playerSettingsStore.audioLanguageFlow,
             playerSettingsStore.autoSkipIntroFlow,
             playerSettingsStore.autoSkipCreditsFlow,
@@ -169,7 +220,8 @@ class SettingsViewModel(
         ).onEach { snap ->
             _uiState.update {
                 it.copy(
-                    defaultQuality = qualityLabel(snap.quality),
+                    qualityResolution = snap.quality,
+                    maxBitrateKbps = snap.maxBitrateKbps,
                     audioLanguage = snap.audioLanguage,
                     autoSkipIntro = snap.autoSkipIntro,
                     autoSkipCredits = snap.autoSkipCredits,
@@ -369,9 +421,14 @@ class SettingsViewModel(
 
     // -- Playback --
 
-    fun setDefaultQuality(quality: String) {
+    /**
+     * Applies one quality preset — the two axes it decomposes into. The
+     * compound legacy spellings ("1080p-high") are never written.
+     */
+    fun setQualityPreset(presetId: String) {
+        val preset = QualityPresets.byId(presetId) ?: return
         viewModelScope.launch {
-            playerSettingsStore.setPreferredQuality(qualityWireValue(quality))
+            playerSettingsStore.setQuality(preset.resolution, preset.bitrateKbps)
         }
     }
 
@@ -411,7 +468,13 @@ class SettingsViewModel(
     }
 
     fun setSubtitleAppearance(value: org.siloserver.silo.model.settings.SubtitleAppearance) {
-        viewModelScope.launch { playerSettingsStore.setSubtitleAppearance(value) }
+        viewModelScope.launch {
+            playerSettingsStore.setSubtitleAppearance(value)
+            // The granular subtitle.* fields are client-local — the contract
+            // carries appearance as one object — so a per-field edit only
+            // reaches the server once projected into the composite.
+            playerSettingsStore.flushProjectedSubtitleAppearance()
+        }
     }
 
     fun resetPlaybackOverrides() {
@@ -425,79 +488,66 @@ class SettingsViewModel(
 
     // -- Subtitles --
 
+    // These four are profile-scoped canonical settings. They used to ride
+    // named columns on PUT /profiles/{id}; each now writes exactly the one key
+    // it changes at scope=profile, so a failed write cannot also revert the
+    // other three (which sending the whole triple every time did).
+    //
+    // Each applies optimistically and rolls back only if the state still shows
+    // the value it wrote — a newer edit landing during the request wins.
+
     fun setMetadataLanguage(code: String) {
+        val previous = _uiState.value.metadataLanguage
         _uiState.update { it.copy(metadataLanguage = code) }
         viewModelScope.launch {
-            profileRepository.updateActiveProfile(
-                UpdateProfileRequest(
-                    preferredMetadataLanguage = code.ifBlank { null },
-                )
-            )
+            if (profileSettings.setMetadataLanguage(code) !is ApiResult.Success) {
+                _uiState.update {
+                    if (it.metadataLanguage == code) it.copy(metadataLanguage = previous) else it
+                }
+            }
         }
     }
 
     /** [language] is a BCP 47 tag, or "" for off. */
     fun setSubtitleLanguage(language: String) {
+        val previous = _uiState.value.subtitleLanguage
         _uiState.update { it.copy(subtitleLanguage = language) }
-        persistProfileSubtitleSettings()
+        viewModelScope.launch {
+            if (profileSettings.setSubtitleLanguage(language) !is ApiResult.Success) {
+                _uiState.update {
+                    if (it.subtitleLanguage == language) it.copy(subtitleLanguage = previous) else it
+                }
+            }
+        }
     }
 
     fun setSubtitleMode(mode: SubtitleMode) {
+        val previous = _uiState.value.subtitleMode
         _uiState.update { it.copy(subtitleMode = mode) }
-        persistProfileSubtitleSettings()
+        viewModelScope.launch {
+            if (profileSettings.setSubtitleMode(mode.wire) !is ApiResult.Success) {
+                _uiState.update {
+                    if (it.subtitleMode == mode) it.copy(subtitleMode = previous) else it
+                }
+            }
+        }
     }
 
     fun setShowForcedSubtitles(enabled: Boolean) {
+        val previous = _uiState.value.showForcedSubtitles
         _uiState.update { it.copy(showForcedSubtitles = enabled) }
-        persistProfileSubtitleSettings()
-    }
-
-    private fun persistProfileSubtitleSettings() {
-        val state = _uiState.value
         viewModelScope.launch {
-            profileRepository.updateActiveProfile(
-                UpdateProfileRequest(
-                    subtitleLanguage = state.subtitleLanguage.ifBlank { null },
-                    subtitleMode = state.subtitleMode.toServerValue(),
-                    showForcedSubtitles = state.showForcedSubtitles,
-                )
-            )
+            if (profileSettings.setShowForcedSubtitles(enabled) !is ApiResult.Success) {
+                _uiState.update {
+                    if (it.showForcedSubtitles == enabled) it.copy(showForcedSubtitles = previous) else it
+                }
+            }
         }
     }
-
-    private fun qualityLabel(value: String): String =
-        when (value.lowercase()) {
-            "auto" -> "Auto"
-            "original" -> "Original"
-            "2160p", "4k" -> "4K"
-            else -> value.uppercase()
-        }
-
-    private fun qualityWireValue(value: String): String =
-        when (value) {
-            "Auto" -> "auto"
-            "Original" -> "original"
-            "4K" -> "2160p"
-            else -> value.lowercase()
-        }
 
     private fun downloadQualityLabel(value: String): String =
         DownloadQuality.fromWire(value).label
 
     private fun downloadQualityWireValue(value: String): String =
         DownloadQuality.entries.firstOrNull { it.label == value }?.wire ?: DownloadQuality.Original.wire
-
-    private fun subtitleModeFromServer(value: String?): SubtitleMode =
-        when (value?.lowercase()) {
-            "off" -> SubtitleMode.OFF
-            "always" -> SubtitleMode.ALWAYS
-            else -> SubtitleMode.AUTO
-        }
-
-    private fun SubtitleMode.toServerValue(): String =
-        when (this) {
-            SubtitleMode.OFF -> "off"
-            SubtitleMode.AUTO -> "auto"
-            SubtitleMode.ALWAYS -> "always"
-        }
 }

@@ -77,13 +77,14 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.settings.LanguageOptions
+import org.siloserver.silo.domain.settings.ProfileSettingsController
+import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.model.settings.pointSize
 import org.siloserver.silo.tv.BuildConfig
-import org.siloserver.silo.tv.data.preferences.PlaybackQuality
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.ui.screens.player.TvSubtitleAppearanceOptions
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewModel
@@ -196,7 +197,7 @@ fun TvSettingsScreen(
         onNavigateToDiagnostics = onNavigateToDiagnostics,
         onRequestSignOut = { showSignOutConfirm = true },
         onNavigateToAdmin = onNavigateToAdmin,
-        onQualityChanged = viewModel::onPlaybackQualityChanged,
+        onQualityPresetSelected = viewModel::onQualityPresetSelected,
         onAudioLanguageChanged = viewModel::onAudioLanguageChanged,
         onAutoPlayNextChanged = viewModel::onAutoPlayNextChanged,
         onAutoSkipIntroChanged = viewModel::onAutoSkipIntroChanged,
@@ -297,7 +298,8 @@ private fun SettingsSplitLayout(
     onNavigateToDiagnostics: () -> Unit,
     onRequestSignOut: () -> Unit,
     onNavigateToAdmin: () -> Unit,
-    onQualityChanged: (PlaybackQuality) -> Unit,
+    /** Receives a [QualityPresets] preset id. */
+    onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onAutoSkipIntroChanged: (Boolean) -> Unit,
@@ -365,7 +367,7 @@ private fun SettingsSplitLayout(
             onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
             onManageServers = onManageServers,
             onNavigateToDiagnostics = onNavigateToDiagnostics,
-            onQualityChanged = onQualityChanged,
+            onQualityPresetSelected = onQualityPresetSelected,
             onAudioLanguageChanged = onAudioLanguageChanged,
             onAutoPlayNextChanged = onAutoPlayNextChanged,
             onAutoSkipIntroChanged = onAutoSkipIntroChanged,
@@ -634,7 +636,8 @@ private fun SettingsDetailPane(
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
     onManageServers: () -> Unit,
     onNavigateToDiagnostics: () -> Unit,
-    onQualityChanged: (PlaybackQuality) -> Unit,
+    /** Receives a [QualityPresets] preset id. */
+    onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onAutoSkipIntroChanged: (Boolean) -> Unit,
@@ -695,7 +698,7 @@ private fun SettingsDetailPane(
             TvSettingsCategory.Playback -> TvPlaybackSettingsPane(
                 state = state,
                 firstFocusRequester = detailFocusRequester,
-                onQualityChanged = onQualityChanged,
+                onQualityPresetSelected = onQualityPresetSelected,
                 onAudioLanguageChanged = onAudioLanguageChanged,
                 onAutoPlayNextChanged = onAutoPlayNextChanged,
                 onAutoSkipIntroChanged = onAutoSkipIntroChanged,
@@ -780,7 +783,8 @@ private fun TvGeneralSettingsPane(
 private fun TvPlaybackSettingsPane(
     state: TvSettingsViewModel.UiState,
     firstFocusRequester: FocusRequester,
-    onQualityChanged: (PlaybackQuality) -> Unit,
+    /** Receives a [QualityPresets] preset id. */
+    onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onAutoSkipIntroChanged: (Boolean) -> Unit,
@@ -804,7 +808,7 @@ private fun TvPlaybackSettingsPane(
             SettingsGroup(title = "Streaming") {
                 SettingsValueRow(
                     label = "Quality",
-                    value = state.playbackQuality.label,
+                    value = QualityPresets.describe(state.qualityResolution, state.maxBitrateKbps),
                     onClick = { activePicker = PlaybackPicker.Quality },
                     focusRequester = firstFocusRequester,
                 )
@@ -885,12 +889,16 @@ private fun TvPlaybackSettingsPane(
     }
 
     when (activePicker) {
+        // The picker offers presets; a stored pair no preset covers (set
+        // through the API, or left by a legacy compound value) selects
+        // nothing rather than silently highlighting the wrong entry.
         PlaybackPicker.Quality -> TvSettingsPickerSheet(
             title = "Quality",
-            options = PlaybackQuality.values().map { PickerOption(it.name, it.label) },
-            selectedId = state.playbackQuality.name,
+            options = QualityPresets.ALL.map { PickerOption(it.id, it.label) },
+            selectedId = QualityPresets.presetFor(state.qualityResolution, state.maxBitrateKbps)?.id
+                ?: "",
             onSelect = { id ->
-                PlaybackQuality.values().firstOrNull { it.name == id }?.let(onQualityChanged)
+                onQualityPresetSelected(id)
                 activePicker = null
             },
             onDismiss = { activePicker = null },
@@ -967,6 +975,11 @@ private fun TvSubtitleSettingsPane(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
+        if (state.settingsAvailability ==
+            ProfileSettingsController.Availability.SERVER_UPGRADE_REQUIRED
+        ) {
+            item { TvSettingsUpgradeRequiredNotice() }
+        }
         item {
             SettingsGroup(title = "Profile") {
                 SettingsValueRow(
@@ -1980,6 +1993,25 @@ private fun SettingsInfoRow(label: String, value: String, singleLine: Boolean = 
 }
 
 /** Non-focusable explanatory footer below a settings group (tvOS `TVSettingsFooter`). */
+/**
+ * Shown when the connected server predates the canonical settings API.
+ *
+ * The failure mode this replaces was a settings pane that looked normal but
+ * saved nothing: the profile preferences resolve to nothing, so the rows show
+ * defaults and every edit goes nowhere with no explanation. Playback is
+ * unaffected — it runs from this device's own settings.
+ */
+@Composable
+private fun TvSettingsUpgradeRequiredNotice() {
+    SettingsGroup(title = "Server Update Needed") {
+        SettingsFooterText(
+            text = "This server is too old to store profile settings. Subtitle and metadata " +
+                "preferences below will not save until it is updated. Playback still works " +
+                "using this Android TV's own settings.",
+        )
+    }
+}
+
 @Composable
 private fun SettingsFooterText(text: String) {
     Text(

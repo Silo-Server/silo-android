@@ -255,6 +255,7 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override val resumeRewindSecondsFlow = MutableStateFlow(7)
     override val passOutThresholdFlow = MutableStateFlow(3)
     override val preferredQualityFlow = MutableStateFlow("auto")
+    override val maxBitrateKbpsFlow = MutableStateFlow<Int?>(null)
     override val audioLanguageFlow = MutableStateFlow("")
     override val videoGravityFlow = MutableStateFlow("fit")
     override val orientationModeFlow = MutableStateFlow("auto")
@@ -328,6 +329,11 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun setPreferredQuality(value: String) {
         setterCalls += "setPreferredQuality"; preferredQualityFlow.value = value
     }
+    override suspend fun setQuality(resolution: String, bitrateKbps: Int?) {
+        setterCalls += "setQuality"
+        preferredQualityFlow.value = resolution
+        maxBitrateKbpsFlow.value = bitrateKbps
+    }
     override suspend fun setAudioLanguage(value: String) {
         setterCalls += "setAudioLanguage"; audioLanguageFlow.value = value
     }
@@ -339,6 +345,9 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     }
     override suspend fun setSubtitleAppearance(value: SubtitleAppearance) {
         setterCalls += "setSubtitleAppearance"; subtitleAppearanceFlow.value = value
+    }
+    override suspend fun flushProjectedSubtitleAppearance() {
+        setterCalls += "flushProjectedSubtitleAppearance"
     }
 
     override suspend fun refreshFromServer() {}

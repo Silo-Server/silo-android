@@ -43,6 +43,13 @@ interface PlayerSettingsStore {
     /** Consecutive auto-advances before the "Still watching?" prompt (F2). Default 3; 0 = off. Local-only. */
     val passOutThresholdFlow: Flow<Int>
 
+    /**
+     * The bandwidth half of the quality choice, orthogonal to
+     * [preferredQualityFlow]. null is uncapped, which is the absence of a
+     * stored value rather than a sentinel.
+     */
+    val maxBitrateKbpsFlow: Flow<Int?>
+
     // Strings
     val preferredQualityFlow: Flow<String>
     val audioLanguageFlow: Flow<String>
@@ -101,11 +108,32 @@ interface PlayerSettingsStore {
     suspend fun setPassOutThreshold(value: Int)
 
     suspend fun setPreferredQuality(value: String)
+
+    /**
+     * Set both quality axes at once — the two values one picker preset
+     * decomposes into. Writing them together is what keeps the pair
+     * consistent: a resolution stored without its bitrate is a combination no
+     * preset covers, which the picker then has to render as "custom".
+     * [bitrateKbps] null is uncapped.
+     */
+    suspend fun setQuality(resolution: String, bitrateKbps: Int?)
     suspend fun setAudioLanguage(value: String)
     suspend fun setVideoGravity(value: String)
     suspend fun setOrientationMode(value: String)
 
     suspend fun setSubtitleAppearance(value: SubtitleAppearance)
+
+    /**
+     * Project the granular, client-local `subtitle.*` fields into the
+     * composite `playback.subtitle_appearance` and enqueue it.
+     *
+     * The contract carries subtitle appearance as one object and has no
+     * definitions for the individual fields, so a per-field edit is
+     * device-local until it is folded into the composite. Call this after
+     * editing fields individually (the player HUD, a per-field picker); a
+     * no-op when the projection already matches what is stored.
+     */
+    suspend fun flushProjectedSubtitleAppearance()
 
     /**
      * Pull every device-scoped setting from `/api/v1/settings/effective`

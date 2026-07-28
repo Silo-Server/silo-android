@@ -13,9 +13,11 @@ import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
+import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SubtitleAppearance
+import org.siloserver.silo.model.settings.SubtitleAppearanceProjection
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
@@ -224,9 +226,24 @@ class AndroidPlayerSettingsStore(
             p.intFor(s, PlaybackSettingsKeys.PassOutThreshold, DEFAULT_PASSOUT_THRESHOLD)
         }
 
+    // Uncapped is spelled 0 locally (Preferences cannot hold a null) and
+    // translated to JSON null on the wire — 0 is outside the contract's
+    // 100..200000 range, so it can never collide with a real cap.
+    override val maxBitrateKbpsFlow: Flow<Int?> =
+        profileScopedFlow(null) { p, s ->
+            p.intFor(s, PlaybackSettingsKeys.MaxBitrateKbps, 0).takeIf { it > 0 }
+        }
+
     // ---- Strings -------------------------------------------------------
+    // Legacy compound spellings ("1080p-high") are normalized on read: the
+    // bitrate they encoded lives on its own axis now, and handing a compound
+    // value to the player or back to the server would be refused.
     override val preferredQualityFlow: Flow<String> =
-        profileScopedFlow("auto") { p, s -> p.stringFor(s, PlaybackSettingsKeys.PreferredQuality, "auto") }
+        profileScopedFlow(QualityPresets.RESOLUTION_AUTO) { p, s ->
+            QualityPresets.normalizeResolution(
+                p.stringFor(s, PlaybackSettingsKeys.PreferredQuality, QualityPresets.RESOLUTION_AUTO),
+            )
+        }
 
     // Older builds stored the display name ("English") here rather than a BCP 47
     // tag. Those values are rejected by the server and never matched a track, so
@@ -245,17 +262,18 @@ class AndroidPlayerSettingsStore(
     override val orientationModeFlow: Flow<String> =
         profileScopedFlow("auto") { p, s -> p.stringFor(s, PlaybackSettingsKeys.OrientationMode, "auto") }
 
+    // The composite is the stored truth, but the granular subtitle.* slots are
+    // a live overlay: the player's per-field controls write them directly, and
+    // a value there that the composite has not caught up with is the newer
+    // edit. Projecting on read (and again on flush) is what keeps a per-field
+    // change from being invisible to the server.
     override val subtitleAppearanceFlow: Flow<SubtitleAppearance> =
-        profileScopedFlow(SubtitleAppearance.DEFAULT) { p, s ->
-            SubtitleAppearance.decode(p.stringFor(s, PlaybackSettingsKeys.SubtitleAppearance, ""))
-        }
+        profileScopedFlow(SubtitleAppearance.DEFAULT) { p, s -> p.projectedAppearance(s) }
 
     override val savedCustomSubtitleAppearanceFlow: Flow<SubtitleAppearance> =
         profileScopedFlow(SubtitleAppearance.DEFAULT) { p, s ->
-            SubtitleAppearance.decode(
-                p[stringPreferencesKey(s.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)]
-                    ?: p.stringFor(s, PlaybackSettingsKeys.SubtitleAppearance, ""),
-            )
+            val saved = p[stringPreferencesKey(s.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)]
+            if (saved != null) SubtitleAppearance.decode(saved) else p.projectedAppearance(s)
         }
 
     override val subtitleMatchesDeviceFlow: Flow<Boolean> =
@@ -364,7 +382,26 @@ class AndroidPlayerSettingsStore(
         writeInt(PlaybackSettingsKeys.SleepTimerDefaultMinutes, value.coerceIn(0, 240))
 
     override suspend fun setPreferredQuality(value: String) =
-        writeString(PlaybackSettingsKeys.PreferredQuality, value)
+        writeString(PlaybackSettingsKeys.PreferredQuality, QualityPresets.normalizeResolution(value))
+
+    override suspend fun setQuality(resolution: String, bitrateKbps: Int?) {
+        val normalized = QualityPresets.normalizeResolution(resolution)
+        // 0 is the local spelling of uncapped; the flusher turns it into the
+        // JSON null the contract means by "no cap".
+        val capped = bitrateKbps?.takeIf { it > 0 }?.coerceIn(MIN_BITRATE_KBPS, MAX_BITRATE_KBPS) ?: 0
+        withScope { scope, store ->
+            store.edit {
+                it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PreferredQuality)] = normalized
+                it[intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.MaxBitrateKbps)] = capped
+            }
+            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.PreferredQuality, normalized)
+            serverSettingsFlusher.enqueue(
+                scope.profileId,
+                PlaybackSettingsKeys.MaxBitrateKbps,
+                capped.toString(),
+            )
+        }
+    }
 
     override suspend fun setAudioLanguage(value: String) =
         writeString(PlaybackSettingsKeys.AudioLanguage, value)
@@ -378,16 +415,54 @@ class AndroidPlayerSettingsStore(
         writeString(PlaybackSettingsKeys.OrientationMode, value)
 
     override suspend fun setSubtitleAppearance(value: SubtitleAppearance) {
-        val json = value.sanitized().toJsonString()
+        val sanitized = value.sanitized()
+        val json = sanitized.toJsonString()
         withScope { scope, store ->
-            store.edit {
-                it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
-                it[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
+            store.edit { prefs ->
+                prefs[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
+                prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
+                // The granular slots are rewritten from the composite rather
+                // than left behind: they are read back as an overlay, so a
+                // stale field would resurrect the value the user just replaced.
+                writeGranularAppearance(prefs, scope, sanitized)
                 // Setting an explicit appearance implicitly enables the
                 // device override (matches iOS `setSubtitleAppearance`).
-                it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
+                prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
             }
             serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json)
+        }
+    }
+
+    /**
+     * Flushes the granular `subtitle.*` slots into the composite and enqueues
+     * it, so a per-field edit made anywhere (the player HUD, a TV picker)
+     * reaches the server as `playback.subtitle_appearance`.
+     *
+     * Callable on its own because the granular fields have no key of their own
+     * on the wire: without this projection a per-field write is device-local
+     * forever, which is the drift this exists to close.
+     */
+    override suspend fun flushProjectedSubtitleAppearance() {
+        withScope { scope, store ->
+            val snapshot = store.data.first()
+            val projected = snapshot.projectedAppearance(scope)
+            val json = projected.toJsonString()
+            if (snapshot.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "") == json) return@withScope
+            store.edit { prefs ->
+                prefs[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
+                prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
+            }
+            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json)
+        }
+    }
+
+    private fun writeGranularAppearance(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        scope: Scope,
+        appearance: SubtitleAppearance,
+    ) {
+        for ((key, raw) in SubtitleAppearanceProjection.flatten(appearance)) {
+            writeRawString(prefs, scope, key, raw)
         }
     }
 
@@ -415,11 +490,17 @@ class AndroidPlayerSettingsStore(
                     snapshot[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)]
                         ?: snapshot.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "")
                 )
-                val json = appearance.sanitized().toJsonString()
+                val sanitized = appearance.sanitized()
+                val json = sanitized.toJsonString()
                 store.edit {
                     it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
                     it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
                     it[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
+                    // The granular slots overlay the composite on read, so
+                    // restoring the saved appearance has to restore them too —
+                    // otherwise the fields left by whatever resolved while the
+                    // override was off win right back over it.
+                    writeGranularAppearance(it, scope, sanitized)
                 }
                 serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json)
                 serverSettingsFlusher.flushNow()
@@ -493,9 +574,20 @@ class AndroidPlayerSettingsStore(
             val hasDeviceOverride = subtitleEntry?.scope == SettingScope.PROFILE_DEVICE.wire
             prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] =
                 hasDeviceOverride
-            if (hasDeviceOverride && subtitleEntry != null) {
-                prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] =
-                    subtitleEntry.value.toString()
+            if (subtitleEntry != null) {
+                // The granular slots are an overlay on the composite, so a
+                // resolved appearance has to be flattened back into them. Left
+                // alone, the previous device's field values would win over the
+                // value the server just said applies.
+                writeGranularAppearance(
+                    prefs,
+                    scope,
+                    SubtitleAppearance.decode(subtitleEntry.value.toString()),
+                )
+                if (hasDeviceOverride) {
+                    prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] =
+                        subtitleEntry.value.toString()
+                }
             }
         }
     }
@@ -518,8 +610,14 @@ class AndroidPlayerSettingsStore(
             isBooleanKey(key) -> (value as? JsonPrimitive)?.booleanOrNull?.let {
                 prefs[booleanPreferencesKey(scopedName)] = it
             }
-            isIntKey(key) -> (value as? JsonPrimitive)?.intOrNull?.let {
-                prefs[intPreferencesKey(scopedName)] = it
+            isIntKey(key) -> {
+                // A nullable int (max_bitrate_kbps) resolving to null means
+                // "no cap", which the store spells as 0. Skipping the write
+                // instead would leave a previous cap in place and quietly keep
+                // throttling playback the server just said to stop throttling.
+                val resolved = (value as? JsonPrimitive)?.intOrNull
+                    ?: if (value is JsonNull && key in NULLABLE_INT_SETTINGS) 0 else null
+                resolved?.let { prefs[intPreferencesKey(scopedName)] = it }
             }
             isDoubleKey(key) -> (value as? JsonPrimitive)?.doubleOrNull?.let {
                 prefs[stringPreferencesKey(scopedName)] = it.toString()
@@ -627,6 +725,34 @@ class AndroidPlayerSettingsStore(
     private fun Preferences.stringFor(scope: Scope, baseKey: String, default: String): String =
         scopedRead(scope, baseKey, default, ::stringPreferencesKey)
 
+    /**
+     * The composite appearance with the granular, client-local `subtitle.*`
+     * slots merged over it.
+     *
+     * The contract has no definitions for the granular fields, so they never
+     * leave the device on their own — but a per-field edit still has to reach
+     * the server, and this is where the two representations are reconciled.
+     * Merging is sparse (an absent or unparseable field leaves the composite's
+     * value alone), matching the schema's own rule for a stored appearance.
+     */
+    private fun Preferences.projectedAppearance(scope: Scope): SubtitleAppearance {
+        val base = SubtitleAppearance.decode(
+            stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, ""),
+        )
+        val granular = SubtitleAppearanceProjection.GRANULAR_KEYS.associateWith { key ->
+            when {
+                isBooleanKey(key) ->
+                    this[booleanPreferencesKey(scope.keyPrefix + key)]?.toString()
+                        ?: this[booleanPreferencesKey(key)]?.toString()
+                isIntKey(key) ->
+                    this[intPreferencesKey(scope.keyPrefix + key)]?.toString()
+                        ?: this[intPreferencesKey(key)]?.toString()
+                else -> stringFor(scope, key, "").takeIf { it.isNotBlank() }
+            }
+        }
+        return SubtitleAppearanceProjection.project(granular, base)
+    }
+
     private companion object {
         const val SAVED_CUSTOM_SUBTITLE_APPEARANCE = "subtitle_appearance.saved_custom"
         const val MIGRATION_SENTINEL_LEGACY = "migration_v1"
@@ -635,6 +761,10 @@ class AndroidPlayerSettingsStore(
         // the previous hardcoded AutoPlayGuard threshold of 3).
         const val DEFAULT_RESUME_REWIND_SECONDS = 7
         const val DEFAULT_PASSOUT_THRESHOLD = 3
+        // The contract's playback.max_bitrate_kbps bounds; a value outside
+        // them is rejected as invalid_value and the flush would be dropped.
+        const val MIN_BITRATE_KBPS = 100
+        const val MAX_BITRATE_KBPS = 200_000
         val VALID_VIDEO_GRAVITY = setOf("fit", "fill", "stretch")
 
         // Type classification comes from the generated contract rather than a
@@ -665,6 +795,9 @@ class AndroidPlayerSettingsStore(
             setOf(PlaybackSettingsKeys.SubtitleBackgroundOpacity)
 
         val DOUBLE_KEYS: Set<String> = SettingKeys.DOUBLE_KEYS
+
+        /** Int keys whose contract null means "no cap", stored locally as 0. */
+        val NULLABLE_INT_SETTINGS: Set<String> = setOf(SettingKeys.PLAYBACK_MAX_BITRATE_KBPS)
 
         fun isBooleanKey(key: String): Boolean = key in BOOLEAN_KEYS
         fun isIntKey(key: String): Boolean = key in INT_KEYS

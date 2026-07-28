@@ -5,13 +5,19 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
+/**
+ * `wire` repeats what each `@SerialName` declares. It is spelled out as a
+ * property so the granular, client-local `subtitle.*` slots can be parsed and
+ * written without a JSON round-trip — see [SubtitleAppearanceProjection] — and
+ * so a rename cannot change the enum's wire form on one path only.
+ */
 @Serializable
-enum class SubtitleFontSizePreset {
-    @SerialName("small") Small,
-    @SerialName("medium") Medium,
-    @SerialName("large") Large,
-    @SerialName("xlarge") XLarge,
-    @SerialName("xxlarge") XXLarge,
+enum class SubtitleFontSizePreset(val wire: String) {
+    @SerialName("small") Small("small"),
+    @SerialName("medium") Medium("medium"),
+    @SerialName("large") Large("large"),
+    @SerialName("xlarge") XLarge("xlarge"),
+    @SerialName("xxlarge") XXLarge("xxlarge"),
 }
 
 val SubtitleFontSizePreset.pointSize: Double
@@ -24,18 +30,18 @@ val SubtitleFontSizePreset.pointSize: Double
     }
 
 @Serializable
-enum class SubtitleBackgroundStylePreset {
-    @SerialName("box") Box,
-    @SerialName("shadow") Shadow,
-    @SerialName("outline") Outline,
-    @SerialName("none") None,
+enum class SubtitleBackgroundStylePreset(val wire: String) {
+    @SerialName("box") Box("box"),
+    @SerialName("shadow") Shadow("shadow"),
+    @SerialName("outline") Outline("outline"),
+    @SerialName("none") None("none"),
 }
 
 @Serializable
-enum class SubtitlePositionPreset {
-    @SerialName("bottom") Bottom,
-    @SerialName("lower-third") LowerThird,
-    @SerialName("top") Top,
+enum class SubtitlePositionPreset(val wire: String) {
+    @SerialName("bottom") Bottom("bottom"),
+    @SerialName("lower-third") LowerThird("lower-third"),
+    @SerialName("top") Top("top"),
 }
 
 val SubtitlePositionPreset.legacyPosition: Int
