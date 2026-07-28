@@ -110,9 +110,13 @@ class OnboardingTourViewModel(
             // only once the server acknowledged, so an offline auto-complete
             // is retried next launch instead of silently diverging.
             _uiState.update { it.copy(isLoading = false, finished = true) }
+            // Snapshot before the POST: finished=true navigates to Home, where
+            // the active profile can change while this is still in flight.
+            val serverId = tokenManager.getCurrentServerId()
+            val profileId = tokenManager.getProfileId()
             withContext(NonCancellable) {
                 if (onboardingRepository.complete(flow.tourId, null) is ApiResult.Success) {
-                    localCache.markDone(tokenManager.getCurrentServerId(), tokenManager.getProfileId())
+                    localCache.markDone(serverId, profileId)
                 }
             }
             return
@@ -204,6 +208,13 @@ class OnboardingTourViewModel(
         }
         viewModelScope.launch {
             val lastStep = current.steps.getOrNull(current.currentIndex)?.id
+            // Snapshot the identity that is finishing the tour. finished=true
+            // navigates to Home, where the user can switch profile or server
+            // while this POST is still in flight — reading the token manager on
+            // acknowledgement would then mark whichever profile is active by
+            // then, letting it skip a tour it never saw.
+            val serverId = tokenManager.getCurrentServerId()
+            val profileId = tokenManager.getProfileId()
             // finished=true (below) navigates away with popUpTo, which clears
             // this ViewModel and cancels its scope — the POST must survive
             // that or the server never learns the tour ended and re-shows it.
@@ -218,7 +229,7 @@ class OnboardingTourViewModel(
                     onboardingRepository.complete(current.tourId, lastStep)
                 }
                 if (result is ApiResult.Success) {
-                    localCache.markDone(tokenManager.getCurrentServerId(), tokenManager.getProfileId())
+                    localCache.markDone(serverId, profileId)
                 }
             }
         }

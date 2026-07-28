@@ -60,7 +60,16 @@ class InviteClaimViewModel(
     private var lookupGeneration = 0
 
     fun load(serverUrl: String, token: String) {
-        if (this.token == token && _uiState.value.invitation != null) return
+        // An invite is identified by server *and* token: the same token can
+        // exist on another server, and matching on the token alone would keep
+        // the previous server, submitting the password to the wrong one.
+        if (
+            this.serverUrl == serverUrl &&
+            this.token == token &&
+            _uiState.value.invitation != null
+        ) {
+            return
+        }
         this.serverUrl = serverUrl
         this.token = token
         val generation = ++lookupGeneration
@@ -153,11 +162,20 @@ class InviteClaimViewModel(
 
     private suspend fun submitClaim() {
         val current = _uiState.value
+        // Pin the invite this submission is for. A second deep link can replace
+        // the route mid-POST; without this the first response would still drive
+        // the UI — navigating away from the invite now on screen, or reporting
+        // success for an account on a server the user is no longer claiming.
+        val generation = lookupGeneration
+        val claimServerUrl = serverUrl
+        val claimToken = token
         _uiState.update { it.copy(isSubmitting = true, error = null) }
         // acceptInvitation talks to the invite's server directly and only
         // adopts it as the active server after the claim succeeds, so a
         // failed claim leaves any existing session untouched.
-        when (val result = authRepository.acceptInvitation(serverUrl, token, current.password)) {
+        val result = authRepository.acceptInvitation(claimServerUrl, claimToken, current.password)
+        if (generation != lookupGeneration) return
+        when (result) {
             is ApiResult.Success -> {
                 _uiState.update { it.copy(isSubmitting = false, claimSuccess = true) }
             }
