@@ -6,7 +6,11 @@ object PlaybackSettingsKeys {
     const val AutoSkipIntro = "playback.auto_skip_intro"
     const val AutoSkipCredits = "playback.auto_skip_credits"
     const val AutoPlayNext = "playback.auto_play_next"
-    const val SubtitleAppearance = "subtitle_appearance"
+    // Renamed at the settings cutover: every other key carries a domain prefix
+    // and this one did not, so the contract registers it as
+    // playback.subtitle_appearance. Old servers are gone by the time this
+    // ships, so there is no dual-write.
+    const val SubtitleAppearance = "playback.subtitle_appearance"
     const val HdrEnabled = "player.hdr_enabled"
     const val PlaybackSpeed = "player.playback_speed"
     const val AudioSyncMs = "player.audio_sync_ms"
@@ -21,7 +25,10 @@ object PlaybackSettingsKeys {
     const val SubtitleSyncMsByItem = "player.subtitle_sync_ms_by_item"
     const val VideoGravity = "player.video_gravity"
     const val OrientationMode = "player.orientation_mode"
-    const val NextUpPromptSeconds = "player.next_up_prompt_seconds"
+    // Android shipped this under player.* while Apple and the server used
+    // playback.*, so the same preference was two settings and neither client
+    // could read the other's. The contract settles on playback.*.
+    const val NextUpPromptSeconds = "playback.next_up_prompt_seconds"
     const val DvProfile7HDR10Fallback = "player.dv_profile7_hdr10_fallback"
     const val DolbyVisionEnabled = "player.dolby_vision_enabled"
     const val MatchContentFrameRate = "player.match_frame_rate"

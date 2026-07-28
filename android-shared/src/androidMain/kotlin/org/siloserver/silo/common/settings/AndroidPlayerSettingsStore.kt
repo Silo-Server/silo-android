@@ -13,6 +13,7 @@ import org.siloserver.silo.model.settings.EffectiveSetting
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
+import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SettingsRepository
@@ -583,28 +584,23 @@ class AndroidPlayerSettingsStore(
         const val DEFAULT_PASSOUT_THRESHOLD = 3
         val VALID_VIDEO_GRAVITY = setOf("fit", "fill", "stretch")
 
-        val BOOLEAN_KEYS: Set<String> = setOf(
-            PlaybackSettingsKeys.AutoSkipIntro,
-            PlaybackSettingsKeys.AutoSkipCredits,
-            PlaybackSettingsKeys.AutoPlayNext,
-            PlaybackSettingsKeys.HdrEnabled,
-            PlaybackSettingsKeys.DvProfile7HDR10Fallback,
-            PlaybackSettingsKeys.DolbyVisionEnabled,
-            PlaybackSettingsKeys.MatchContentFrameRate,
-            PlaybackSettingsKeys.SubtitleTextOutline,
-        )
+        // Type classification comes from the generated contract rather than a
+        // hand-kept list. This used to be a second table that had to agree with
+        // PlaybackSettingsKeys.DeviceSettings by discipline alone; a key added
+        // to one and missed in the other would flush as the wrong type and be
+        // silently dropped on read.
+        //
+        // The extras below are the granular subtitle appearance fields Android
+        // flattens locally. The contract carries them as one composite object
+        // (playback.subtitle_appearance), so they have no generated entry and
+        // are listed here as the local-only values they are.
+        val BOOLEAN_KEYS: Set<String> = SettingKeys.BOOLEAN_KEYS +
+            setOf(PlaybackSettingsKeys.SubtitleTextOutline)
 
-        val INT_KEYS: Set<String> = setOf(
-            PlaybackSettingsKeys.AudioSyncMs,
-            PlaybackSettingsKeys.SubtitleSyncMs,
-            PlaybackSettingsKeys.NextUpPromptSeconds,
-            PlaybackSettingsKeys.SleepTimerDefaultMinutes,
-            PlaybackSettingsKeys.SubtitleBackgroundOpacity,
-        )
+        val INT_KEYS: Set<String> = SettingKeys.INT_KEYS +
+            setOf(PlaybackSettingsKeys.SubtitleBackgroundOpacity)
 
-        val DOUBLE_KEYS: Set<String> = setOf(
-            PlaybackSettingsKeys.PlaybackSpeed,
-        )
+        val DOUBLE_KEYS: Set<String> = SettingKeys.DOUBLE_KEYS
 
         fun isBooleanKey(key: String): Boolean = key in BOOLEAN_KEYS
         fun isIntKey(key: String): Boolean = key in INT_KEYS
