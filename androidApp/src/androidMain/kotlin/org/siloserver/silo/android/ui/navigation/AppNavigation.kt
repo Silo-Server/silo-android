@@ -146,8 +146,14 @@ fun AppNavigation(
                 Route.CreateProfile.route,
                 Route.EditProfile.ROUTE,
                 Route.PairDevice.ROUTE,
+                Route.InviteClaim.ROUTE,
+                Route.OnboardingTour.route,
             )
-            if (entry.destination.route in authRoutes) return@collect
+            // An invite claim is itself the signed-out flow — holding it
+            // until the authenticated graph shows would queue it forever on
+            // Login, which is exactly where an invitee starts.
+            val isPreAuthTarget = route.startsWith("invite_claim")
+            if (!isPreAuthTarget && entry.destination.route in authRoutes) return@collect
             navController.navigate(route) {
                 launchSingleTop = true
             }
@@ -340,7 +346,10 @@ fun AppNavigation(
                     // already exist (so the user stays signed in), else
                     // ProfileSelection or Login as appropriate.
                     val target = when (destination) {
-                        ServerSwitchDestination.Home -> Route.Home.route
+                        // Through the tour gate, not straight to Home — the
+                        // switched-to server's profile may not have seen the
+                        // tour; the gate short-circuits when it has.
+                        ServerSwitchDestination.Home -> Route.OnboardingTour.route
                         ServerSwitchDestination.ProfileSelection -> Route.ProfileSelection.route
                         ServerSwitchDestination.Login -> Route.Login.route
                     }

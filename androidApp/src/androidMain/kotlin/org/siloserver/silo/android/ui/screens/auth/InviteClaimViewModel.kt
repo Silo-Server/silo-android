@@ -9,12 +9,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.model.auth.InvitationLookupResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.AuthRepository
 
 data class InviteClaimUiState(
     val isLoadingInvitation: Boolean = true,
     val invitation: InvitationLookupResponse? = null,
+    /** The server answered and said no — the invite really is dead. */
     val invitationInvalid: Boolean = false,
+    /** The server never answered — the invite may be fine; offer retry. */
+    val lookupFailed: Boolean = false,
     val password: String = "",
     val confirmPassword: String = "",
     val isSubmitting: Boolean = false,
@@ -52,15 +56,22 @@ class InviteClaimViewModel(
                 is ApiResult.Error -> _uiState.update {
                     it.copy(isLoadingInvitation = false, invitationInvalid = true)
                 }
+                // A failure to reach the server says nothing about the
+                // invite; telling the user it expired sends them off to have
+                // a perfectly valid link revoked and reissued.
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(
-                        isLoadingInvitation = false,
-                        invitationInvalid = true,
-                        error = "Could not reach the server.",
-                    )
+                    it.copy(isLoadingInvitation = false, lookupFailed = true)
                 }
             }
         }
+    }
+
+    fun onRetryLookup() {
+        val url = serverUrl
+        val tok = token
+        // Clear the loaded marker so load() runs the lookup again.
+        this.token = ""
+        load(url, tok)
     }
 
     fun onPasswordChanged(value: String) {
@@ -85,9 +96,9 @@ class InviteClaimViewModel(
 
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmitting = true, error = null) }
-            // Activate the server first so the tokens accept persists land in
-            // that server's scope — the same order the manual setup flow uses.
-            authRepository.setServerUrl(serverUrl)
+            // acceptInvitation talks to the invite's server directly and only
+            // adopts it as the active server after the claim succeeds, so a
+            // failed claim leaves any existing session untouched.
             when (val result = authRepository.acceptInvitation(serverUrl, token, current.password)) {
                 is ApiResult.Success -> {
                     _uiState.update { it.copy(isSubmitting = false, claimSuccess = true) }
@@ -96,18 +107,15 @@ class InviteClaimViewModel(
                     val message = when (result.code) {
                         404 -> "This invitation is invalid or has expired."
                         409 -> "This invitation has already been used."
-                        else -> result.message.ifBlank { "Could not create your account" }
+                        else -> result.errorMessage("Could not create your account")
                     }
                     _uiState.update { it.copy(isSubmitting = false, error = message) }
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(isSubmitting = false, error = "Network error. Please check your connection.")
+                    it.copy(isSubmitting = false, error = result.errorMessage("Could not create your account"))
                 }
             }
         }
     }
 
-    fun onClaimSuccessConsumed() {
-        _uiState.update { it.copy(claimSuccess = false) }
-    }
 }

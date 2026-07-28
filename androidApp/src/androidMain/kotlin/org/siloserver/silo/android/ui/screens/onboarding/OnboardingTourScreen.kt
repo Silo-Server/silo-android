@@ -33,9 +33,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -167,27 +164,28 @@ fun OnboardingTourScreen(
 
                 if (step.kind == "setting_choice" && step.setting != null) {
                     Spacer(Modifier.height(22.dp))
-                    SettingChoiceCard(step = step, onChosen = viewModel::onSettingChosen)
+                    SettingChoiceCard(
+                        step = step,
+                        selected = state.pendingChoices[step.id] ?: "",
+                        onChosen = viewModel::onSettingChosen,
+                    )
                 }
             }
 
             Spacer(Modifier.height(20.dp))
 
+            val isTerminal = step.kind == "handoff" || isLast
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (state.currentIndex > 0) {
                     AuroraGhostButton(label = "Back", onClick = viewModel::onBack)
                 }
                 AuroraPrimaryButton(
                     label = when {
-                        step.kind == "handoff" || isLast -> "Done"
+                        isTerminal -> "Done"
                         state.currentIndex == 0 -> "Show me"
                         else -> "Next"
                     },
-                    onClick = if (step.kind == "handoff" || isLast) {
-                        viewModel::onFinish
-                    } else {
-                        viewModel::onAdvance
-                    },
+                    onClick = if (isTerminal) viewModel::onFinish else viewModel::onAdvance,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -195,14 +193,18 @@ fun OnboardingTourScreen(
     }
 }
 
-/** Renders the manifest's options as a tappable list, saving immediately. */
+/**
+ * Renders the manifest's options as a tappable list. Selection lives in the
+ * ViewModel (persisted when the user advances past the step), so the
+ * highlight can never disagree with what gets saved.
+ */
 @Composable
 private fun SettingChoiceCard(
     step: OnboardingStep,
+    selected: String,
     onChosen: (OnboardingStep, String) -> Unit,
 ) {
     val spec = step.setting ?: return
-    var selected by remember(step.id) { mutableStateOf(spec.default ?: "") }
 
     Column(
         modifier = Modifier
@@ -221,10 +223,7 @@ private fun SettingChoiceCard(
                         color = if (isSelected) Color.White.copy(alpha = 0.12f) else Color.Transparent,
                         shape = RoundedCornerShape(12.dp),
                     )
-                    .clickable {
-                        selected = option.value
-                        onChosen(step, option.value)
-                    }
+                    .clickable { onChosen(step, option.value) }
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

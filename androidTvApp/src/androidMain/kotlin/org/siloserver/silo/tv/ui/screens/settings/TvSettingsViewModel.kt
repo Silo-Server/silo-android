@@ -10,6 +10,7 @@ import org.siloserver.silo.model.admin.shouldShowClientAdminSurface
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.auth.isActingAdmin
 import org.siloserver.silo.model.profile.UpdateProfileRequest
+import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
@@ -185,8 +186,12 @@ class TvSettingsViewModel(
                     _uiState.update {
                         it.copy(
                             subtitleMode = SubtitleMode.fromWire(profile.subtitleMode),
-                            subtitleLanguage = profile.subtitleLanguage.orEmpty(),
-                            metadataLanguage = profile.preferredMetadataLanguage.orEmpty(),
+                            // Old phone builds stored display labels in the
+                            // shared profile; the server now rejects them, so
+                            // translate at load or every later profile PUT
+                            // (which the error path reverts) re-sends them.
+                            subtitleLanguage = LanguageOptions.migrateLegacyValue(profile.subtitleLanguage),
+                            metadataLanguage = LanguageOptions.migrateLegacyValue(profile.preferredMetadataLanguage),
                             showForcedSubtitles = profile.showForcedSubtitles ?: true,
                         )
                     }

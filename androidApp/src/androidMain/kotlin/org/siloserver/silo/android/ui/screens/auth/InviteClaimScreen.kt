@@ -62,11 +62,10 @@ fun InviteClaimScreen(
         viewModel.load(serverUrl, token)
     }
 
+    // One-way latch: the success navigation clears the whole back stack, so
+    // there is nothing to consume or reset.
     LaunchedEffect(state.claimSuccess) {
-        if (state.claimSuccess) {
-            viewModel.onClaimSuccessConsumed()
-            onClaimComplete()
-        }
+        if (state.claimSuccess) onClaimComplete()
     }
 
     AuroraScreen(variant = AuroraVariant.SignIn, scrim = AuroraScrim.Soft) {
@@ -82,6 +81,42 @@ fun InviteClaimScreen(
                     Spacer(Modifier.height(60.dp))
                     CircularProgressIndicator(color = Color(0xFFF3EFE9))
                 }
+            }
+
+            state.lookupFailed -> {
+                AuroraEyebrow(text = "Invitation", centered = true)
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Couldn't reach the server",
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFF3EFE9),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Your invite is probably still fine — we just couldn't check it. " +
+                        "Make sure you're online and try again.",
+                    fontSize = 15.sp,
+                    color = Color.White.copy(alpha = 0.65f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                )
+                Spacer(Modifier.height(24.dp))
+                AuroraPrimaryButton(
+                    label = "Try again",
+                    onClick = viewModel::onRetryLookup,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                AuroraGhostButton(
+                    label = "Back to sign in",
+                    onClick = onNavigateToLogin,
+                    fillMaxWidth = true,
+                )
             }
 
             state.invitationInvalid -> {

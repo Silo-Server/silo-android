@@ -6,10 +6,11 @@ import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.model.settings.LanguageOptions
 
-// Both of these store language codes, not the labels shown in the picker: the
+// Both language rows store codes, not the labels shown in the picker: the
 // profile's subtitle_language and the metadata language are BCP 47 on the wire.
-private val subtitleLanguageOptions = LanguageOptions.options(unsetLabel = "Off")
-private val metadataLanguageOptions = LanguageOptions.options(unsetLabel = "Off")
+// Hoisted so recomposition doesn't rebuild the label list per frame.
+private val languageOptionLabels =
+    LanguageOptions.options(unsetLabel = "Off").map { it.second }
 
 /**
  * Subtitle settings section with language, display mode, and forced subtitles toggle.
@@ -37,7 +38,7 @@ fun SubtitleSettings(
         SettingsDropdownRow(
             label = "Subtitle Language",
             value = LanguageOptions.label(subtitleLanguage, unsetLabel = "Off"),
-            options = subtitleLanguageOptions.map { it.second },
+            options = languageOptionLabels,
             onOptionSelected = { label ->
                 onLanguageChanged(LanguageOptions.wireValue(label))
             },
@@ -78,7 +79,7 @@ fun SubtitleSettings(
             SettingsDropdownRow(
                 label = "Metadata Language",
                 value = LanguageOptions.label(metadataLanguage, unsetLabel = "Off"),
-                options = metadataLanguageOptions.map { it.second },
+                options = languageOptionLabels,
                 onOptionSelected = { label ->
                     onMetadataLanguageChanged(LanguageOptions.wireValue(label))
                 },

@@ -22,12 +22,12 @@ class AuthRepository(
     private val healthApi: HealthApi? = null,
 ) {
     /**
-     * Logs in with username and password.
-     * On success, persists tokens via [TokenManager] and returns the [User].
+     * Persists a successful auth response's tokens into the active server's
+     * scope and unwraps the [User] — the shared tail of every path that ends
+     * a signed-out state (login, signup, setup, invitation claim).
      */
-    suspend fun login(username: String, password: String): ApiResult<User> {
-        val result = authApi.login(LoginRequest(username = username, password = password))
-        return when (result) {
+    private suspend fun persistSession(result: ApiResult<LoginResponse>): ApiResult<User> =
+        when (result) {
             is ApiResult.Success -> {
                 val data = result.data
                 tokenManager.saveTokens(
@@ -40,7 +40,13 @@ class AuthRepository(
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
-    }
+
+    /**
+     * Logs in with username and password.
+     * On success, persists tokens via [TokenManager] and returns the [User].
+     */
+    suspend fun login(username: String, password: String): ApiResult<User> =
+        persistSession(authApi.login(LoginRequest(username = username, password = password)))
 
     /**
      * Credential login without persistence. TV keeps QR and password sign-in
@@ -60,27 +66,16 @@ class AuthRepository(
         password: String,
         inviteCode: String,
     ): ApiResult<User> {
-        val result = authApi.signup(
-            SignupRequest(
-                username = username,
-                email = email,
-                password = password,
-                inviteCode = inviteCode,
+        return persistSession(
+            authApi.signup(
+                SignupRequest(
+                    username = username,
+                    email = email,
+                    password = password,
+                    inviteCode = inviteCode,
+                ),
             ),
         )
-        return when (result) {
-            is ApiResult.Success -> {
-                val data = result.data
-                tokenManager.saveTokens(
-                    accessToken = data.accessToken,
-                    refreshToken = data.refreshToken,
-                    expiresIn = data.expiresIn,
-                )
-                ApiResult.Success(data.user)
-            }
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-        }
     }
 
     /**
@@ -91,22 +86,7 @@ class AuthRepository(
         username: String,
         email: String,
         password: String,
-    ): ApiResult<User> {
-        val result = authApi.setup(username, email, password)
-        return when (result) {
-            is ApiResult.Success -> {
-                val data = result.data
-                tokenManager.saveTokens(
-                    accessToken = data.accessToken,
-                    refreshToken = data.refreshToken,
-                    expiresIn = data.expiresIn,
-                )
-                ApiResult.Success(data.user)
-            }
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-        }
-    }
+    ): ApiResult<User> = persistSession(authApi.setup(username, email, password))
 
     /** Checks whether the server requires initial setup. */
     suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> =
@@ -128,6 +108,12 @@ class AuthRepository(
      * Accepts an emailed invitation: the account is created with the
      * invitation's email as username, tokens are persisted, and the new
      * [User] is returned — same post-conditions as [signup].
+     *
+     * The claim request goes to [serverUrl] directly (it needs no auth), and
+     * the app only adopts that server as active once the claim has actually
+     * succeeded. Switching first would strand a user whose claim fails —
+     * expired token, already used, network error — on a server they have no
+     * account on, with their previous session no longer active.
      */
     suspend fun acceptInvitation(
         serverUrl: String,
@@ -135,19 +121,10 @@ class AuthRepository(
         password: String,
     ): ApiResult<User> {
         val result = authApi.acceptInvitation(serverUrl, token, password)
-        return when (result) {
-            is ApiResult.Success -> {
-                val data = result.data
-                tokenManager.saveTokens(
-                    accessToken = data.accessToken,
-                    refreshToken = data.refreshToken,
-                    expiresIn = data.expiresIn,
-                )
-                ApiResult.Success(data.user)
-            }
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
+        if (result is ApiResult.Success) {
+            setServerUrl(serverUrl)
         }
+        return persistSession(result)
     }
 
     /** Checks whether public signups are enabled. */

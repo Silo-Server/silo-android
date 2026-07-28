@@ -60,4 +60,24 @@ class LanguageOptionsTest {
         assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue(null))
         assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue("Klingon"))
     }
+
+    @Test
+    fun validTagsOutsideThePickerTableSurviveMigration() {
+        // The table lists only the languages the pickers offer. A tag synced
+        // from another surface (web offers 37 languages) is server-valid and
+        // must pass through, not be erased to "no preference".
+        assertEquals("nl", LanguageOptions.migrateLegacyValue("nl"))
+        assertEquals("hi", LanguageOptions.migrateLegacyValue("hi"))
+        assertEquals("pt-BR", LanguageOptions.migrateLegacyValue("pt-BR"))
+        assertEquals("zh-Hant", LanguageOptions.migrateLegacyValue("zh-Hant"))
+        assertEquals("eng", LanguageOptions.migrateLegacyValue("eng"))
+    }
+
+    @Test
+    fun legacyUnsetLabelsMigrateToUnset() {
+        // "Off"/"Default" were the old pickers' unset rows; "Off" is short
+        // enough to look tag-shaped and must still clear.
+        assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue("Off"))
+        assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue("Default"))
+    }
 }

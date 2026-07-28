@@ -1,5 +1,7 @@
 package org.siloserver.silo.model.settings
 
+import org.siloserver.silo.playback.canonicalSubtitleLanguage
+
 /**
  * The language choices the settings UI offers, and the wire values they map to.
  *
@@ -64,12 +66,32 @@ object LanguageOptions {
      * Those rows are already on devices in the field. They are not tags, so the
      * server rejects them and track matching never hit on them — but left alone
      * they would keep being read and re-sent. A value that is already a known
-     * tag, or already unset, is returned unchanged; anything else that matches a
-     * label becomes its tag, and an unrecognized value becomes [UNSET].
+     * tag, or already unset, is returned unchanged; a known label becomes its
+     * tag. Anything else that is tag-shaped ("pt-BR", "nl", an alias like
+     * "eng") passes through untouched — the table lists only the languages the
+     * pickers offer, and a valid tag synced from another surface must not be
+     * erased just because it is outside that list. Only values that are neither
+     * a plausible tag nor a known label (i.e. legacy display names we no longer
+     * recognize) become [UNSET].
      */
     fun migrateLegacyValue(stored: String?): String = when {
         stored.isNullOrBlank() -> UNSET
+        // The old pickers' unset labels; "Off" is 3 letters and would
+        // otherwise slip through the tag-shape check below.
+        stored.equals("Off", ignoreCase = true) ||
+            stored.equals("Default", ignoreCase = true) -> UNSET
         TAGS.any { it.first == stored } -> stored
-        else -> wireValue(stored)
+        TAGS.any { it.second == stored } -> wireValue(stored)
+        isTagShaped(stored) -> stored
+        else -> UNSET
     }
+
+    /**
+     * Loose BCP 47 shape check: 2-3 letter primary subtag, optional script /
+     * region subtags. Deliberately permissive — the server is the validator;
+     * this only has to separate tags from display names like "English".
+     */
+    private fun isTagShaped(value: String): Boolean =
+        Regex("^[a-zA-Z]{2,3}([-_][a-zA-Z0-9]{2,8})*$").matches(value) &&
+            canonicalSubtitleLanguage(value) != null
 }

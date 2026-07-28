@@ -12,6 +12,7 @@ import org.siloserver.silo.model.auth.isActingAdmin
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.profile.UpdateProfileRequest
+import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
@@ -133,8 +134,11 @@ class SettingsViewModel(
                     val profile = profileResult.data
                     _uiState.update {
                         it.copy(
-                            subtitleLanguage = profile.subtitleLanguage.orEmpty(),
-                            metadataLanguage = profile.preferredMetadataLanguage.orEmpty(),
+                            // Old phone builds stored display labels here; the
+                            // server now rejects them, so translate at load or
+                            // every later profile PUT re-sends the bad value.
+                            subtitleLanguage = LanguageOptions.migrateLegacyValue(profile.subtitleLanguage),
+                            metadataLanguage = LanguageOptions.migrateLegacyValue(profile.preferredMetadataLanguage),
                             subtitleMode = subtitleModeFromServer(profile.subtitleMode),
                             showForcedSubtitles = profile.showForcedSubtitles ?: true,
                             isAdminVisible = shouldShowClientAdminSurface(isActingAdmin(it.user, profile)),

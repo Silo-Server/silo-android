@@ -121,6 +121,7 @@ val androidModule = module {
     // when the redefining module is loaded after the original — sharedModules()
     // is registered first in SiloApplication, so this wins.
     single<TokenManager> { EncryptedTokenManagerImpl(get(), get(), get()) }
+    single { org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourLocalCache(androidContext()) }
 
     // Offline-first Room store (Track B). Bound after sharedModules() so the
     // commonMain PersonalDataRepository's `getOrNull<UserItemStatePort>()` picks
@@ -414,7 +415,7 @@ val androidModule = module {
     viewModel { SetupViewModel(get()) }
     viewModel { SignupViewModel(get()) }
     viewModel { InviteClaimViewModel(get()) }
-    viewModel { OnboardingTourViewModel(get(), get()) }
+    viewModel { OnboardingTourViewModel(get(), get(), get(), get(), get()) }
     viewModel { ProfileSelectionViewModel(get()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }

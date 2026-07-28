@@ -26,8 +26,6 @@ data class OnboardingStep(
     /** Client-side asset key; the server never sends image URLs. */
     val illustration: String? = null,
     val setting: OnboardingSettingSpec? = null,
-    val route: String? = null,
-    @SerialName("action_label") val actionLabel: String? = null,
 )
 
 @Serializable
