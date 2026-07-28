@@ -3,10 +3,12 @@ package org.siloserver.silo.common.settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
-import org.siloserver.silo.model.settings.EffectiveSetting
-import org.siloserver.silo.model.settings.EffectiveSettingsResponse
+import org.siloserver.silo.model.settings.EffectiveSettingValue
+import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
 import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
+import org.siloserver.silo.model.settings.SettingKeys
+import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.network.ApiResult
@@ -18,6 +20,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Before
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
@@ -236,15 +242,15 @@ class AndroidPlayerSettingsStoreTest {
     // ---- Server-sync surface ------------------------------------------
 
     @Test
-    fun `refreshFromServer populates flows from effective settings response`() = runTest {
+    fun `refreshFromServer populates flows from batched effective values`() = runTest {
         val repo = SettingsRepository(
             FakeSettingsApi(
                 effective = mapOf(
-                    PlaybackSettingsKeys.AutoSkipIntro to "true",
-                    PlaybackSettingsKeys.AutoPlayNext to "false",
-                    PlaybackSettingsKeys.PreferredQuality to "1080p",
-                    PlaybackSettingsKeys.AudioSyncMs to "120",
-                    PlaybackSettingsKeys.PlaybackSpeed to "1.5",
+                    stored(PlaybackSettingsKeys.AutoSkipIntro, JsonPrimitive(true)),
+                    stored(PlaybackSettingsKeys.AutoPlayNext, JsonPrimitive(false)),
+                    stored(PlaybackSettingsKeys.PreferredQuality, JsonPrimitive("1080p")),
+                    stored(PlaybackSettingsKeys.AudioSyncMs, JsonPrimitive(120)),
+                    stored(PlaybackSettingsKeys.PlaybackSpeed, JsonPrimitive(1.5)),
                 ),
             ),
         )
@@ -255,6 +261,70 @@ class AndroidPlayerSettingsStoreTest {
         assertEquals("1080p", store.preferredQualityFlow.first())
         assertEquals(120, store.audioSyncMsFlow.first())
         assertEquals(1.5, store.playbackSpeedFlow.first(), 0.0)
+    }
+
+    @Test
+    fun `refreshFromServer requests only server-stored keys`() = runTest {
+        val api = FakeSettingsApi()
+        val store = newStore(repository = SettingsRepository(api))
+        store.refreshFromServer()
+        val remote = SettingKeys.REMOTE.toSet()
+        assertTrue(api.requestedKeys.isNotEmpty())
+        assertTrue(
+            api.requestedKeys.all { it in remote },
+            "asked for non-contract keys: ${api.requestedKeys.filterNot { it in remote }}",
+        )
+    }
+
+    @Test
+    fun `refreshFromServer applies contract defaults over stale local overrides`() = runTest {
+        // The canonical endpoint answers every known key; one nothing is
+        // stored for comes back as the contract default with source
+        // "default". A stale local override (say the server-side value was
+        // reset from another device) must hydrate back to that default
+        // rather than surviving locally.
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                defaulted(PlaybackSettingsKeys.AutoSkipIntro, JsonPrimitive(false)),
+                defaulted(PlaybackSettingsKeys.NextUpPromptSeconds, JsonPrimitive(30)),
+            ),
+        )
+        val store = newStore(repository = SettingsRepository(api))
+        store.setAutoSkipIntro(true)
+        store.setNextUpPromptSeconds(90)
+
+        store.refreshFromServer()
+
+        assertEquals(false, store.autoSkipIntroFlow.first())
+        assertEquals(30, store.nextUpPromptSecondsFlow.first())
+    }
+
+    @Test
+    fun `refreshFromServer keeps local value for keys this server does not know`() = runTest {
+        // A key absent from the response entirely means the server's
+        // contract revision predates it — not that it was reset.
+        val api = FakeSettingsApi(effective = emptyMap())
+        val store = newStore(repository = SettingsRepository(api))
+        store.setAutoSkipIntro(true)
+
+        store.refreshFromServer()
+
+        assertEquals(true, store.autoSkipIntroFlow.first())
+    }
+
+    @Test
+    fun `refreshFromServer maps JSON null to the local no-preference spelling`() = runTest {
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                defaulted(PlaybackSettingsKeys.AudioLanguage, JsonNull),
+            ),
+        )
+        val store = newStore(repository = SettingsRepository(api))
+        store.setAudioLanguage("de")
+
+        store.refreshFromServer()
+
+        assertEquals("", store.audioLanguageFlow.first())
     }
 
     @Test
@@ -269,9 +339,12 @@ class AndroidPlayerSettingsStoreTest {
         val repo = SettingsRepository(
             FakeSettingsApi(
                 effective = mapOf(
-                    PlaybackSettingsKeys.SubtitleAppearance to SubtitleAppearance.DEFAULT.toJsonString(),
+                    stored(
+                        PlaybackSettingsKeys.SubtitleAppearance,
+                        Json.parseToJsonElement(SubtitleAppearance.DEFAULT.toJsonString()),
+                        scope = SettingScope.PROFILE_DEVICE.wire,
+                    ),
                 ),
-                hasDeviceOverride = setOf(PlaybackSettingsKeys.SubtitleAppearance),
             ),
         )
         val store = newStore(repository = repo)
@@ -281,35 +354,51 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
-    fun `refreshFromServer clears override flag when subtitle entry absent`() = runTest {
-        // First refresh: server reports a device override; flag goes true.
+    fun `refreshFromServer clears override flag when appearance no longer resolves from this device`() = runTest {
+        // First refresh: the appearance resolves from profile_device; flag
+        // goes true.
         val api = FakeSettingsApi(
             effective = mapOf(
-                PlaybackSettingsKeys.SubtitleAppearance to SubtitleAppearance.DEFAULT.toJsonString(),
+                stored(
+                    PlaybackSettingsKeys.SubtitleAppearance,
+                    Json.parseToJsonElement(SubtitleAppearance.DEFAULT.toJsonString()),
+                    scope = SettingScope.PROFILE_DEVICE.wire,
+                ),
             ),
-            hasDeviceOverride = setOf(PlaybackSettingsKeys.SubtitleAppearance),
         )
         val store = newStore(repository = SettingsRepository(api))
         store.refreshFromServer()
         assertTrue(store.subtitleUsesDeviceOverrideFlow.first())
 
-        // Server stops returning the entry — e.g. another device cleared
-        // the override out-of-band. Flag must go false on the next
-        // refresh; iOS parity in `applyEffectiveSettings`'s `else` branch.
-        api.effective = emptyMap()
-        api.hasDeviceOverride = emptySet()
+        // Another device cleared the override out-of-band; the value now
+        // resolves from the contract default. Flag must go false on the
+        // next refresh; iOS parity in `applyEffectiveSettings`'s `else`
+        // branch.
+        api.effective = mapOf(
+            defaulted(
+                PlaybackSettingsKeys.SubtitleAppearance,
+                Json.parseToJsonElement(SubtitleAppearance.DEFAULT.toJsonString()),
+            ),
+        )
         store.refreshFromServer()
         assertFalse(store.subtitleUsesDeviceOverrideFlow.first())
     }
 
     @Test
-    fun `resetAllDeviceSettings enqueues delete for every device key`() = runTest {
+    fun `resetAllDeviceSettings enqueues delete for every server-stored device key`() = runTest {
         val repo = SettingsRepository(FakeSettingsApi())
         val store = newStore(repository = repo)
         store.resetAllDeviceSettings()
         val deletedKeys = fakeFlusher.calls.filter { it.isDelete }.map { it.key }.toSet()
-        for (key in PlaybackSettingsKeys.DeviceSettings) {
+        val remote = SettingKeys.REMOTE.toSet()
+        for (key in PlaybackSettingsKeys.DeviceSettings.filter { it in remote }) {
             assertTrue(deletedKeys.contains(key), "expected delete for $key")
+        }
+        // The granular subtitle.* fields live inside the composite
+        // playback.subtitle_appearance object; deleting them individually
+        // would be refused as unknown_setting.
+        for (key in PlaybackSettingsKeys.DeviceSettings.filterNot { it in remote }) {
+            assertFalse(deletedKeys.contains(key), "must not delete non-contract key $key")
         }
     }
 
@@ -337,7 +426,13 @@ class AndroidPlayerSettingsStoreTest {
         val repo = SettingsRepository(
             FakeSettingsApi(
                 effective = mapOf(
-                    PlaybackSettingsKeys.SubtitleAppearance to fallback.toJsonString(),
+                    // Resolves from the profile scope once the device
+                    // override is deleted.
+                    stored(
+                        PlaybackSettingsKeys.SubtitleAppearance,
+                        Json.parseToJsonElement(fallback.toJsonString()),
+                        scope = SettingScope.PROFILE.wire,
+                    ),
                 ),
             ),
         )
@@ -392,28 +487,41 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
     }
 }
 
-/** Stub SettingsApi returning canned effective values; HttpClient never used. */
+/** One canned entry: a value stored at [scope] (default: profile_device). */
+private fun stored(
+    key: String,
+    value: JsonElement,
+    scope: String = SettingScope.PROFILE_DEVICE.wire,
+): Pair<String, EffectiveSettingValue> =
+    key to EffectiveSettingValue(key = key, value = value, source = scope, scope = scope)
+
+/** One canned entry resolving to the contract default (nothing stored). */
+private fun defaulted(key: String, value: JsonElement): Pair<String, EffectiveSettingValue> =
+    key to EffectiveSettingValue(
+        key = key,
+        value = value,
+        source = EffectiveSettingValue.SOURCE_DEFAULT,
+    )
+
+/** Stub SettingsApi returning canned canonical effective values; HttpClient never used. */
 private class FakeSettingsApi(
-    effective: Map<String, String> = emptyMap(),
-    hasDeviceOverride: Set<String> = emptySet(),
+    effective: Map<String, EffectiveSettingValue> = emptyMap(),
 ) : SettingsApi(HttpClient()) {
     // Mutable so a single test can simulate the server's response
     // changing between two `refreshFromServer` calls without standing
     // up a second DataStore over the same file.
-    var effective: Map<String, String> = effective
-    var hasDeviceOverride: Set<String> = hasDeviceOverride
+    var effective: Map<String, EffectiveSettingValue> = effective
+    var requestedKeys: List<String> = emptyList()
 
-    override suspend fun getEffectiveSettings(keys: List<String>): ApiResult<EffectiveSettingsResponse> {
-        val entries = keys.mapNotNull { key ->
-            val value = effective[key] ?: return@mapNotNull null
-            EffectiveSetting(
-                key = key,
-                effectiveValue = value,
-                source = "device",
-                hasDeviceOverride = key in hasDeviceOverride,
-            )
-        }
-        return ApiResult.Success(EffectiveSettingsResponse(entries))
+    override suspend fun getEffectiveValues(
+        keys: List<String>,
+        libraryIds: List<Int>,
+        seriesIds: List<String>,
+    ): ApiResult<EffectiveSettingValuesResponse> {
+        requestedKeys = keys
+        // Like the server: answer only the keys this contract knows.
+        val entries = keys.mapNotNull { effective[it] }
+        return ApiResult.Success(EffectiveSettingValuesResponse(settings = entries, revision = 1))
     }
 
     override suspend fun setDeviceSetting(key: String, value: String, profileId: String?) =

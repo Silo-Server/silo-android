@@ -1,6 +1,7 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.settings.EffectiveSetting
+import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.network.ApiResult
@@ -39,6 +40,20 @@ class SettingsRepository(
 
     suspend fun getEffectiveSettings(keys: List<String>): ApiResult<Map<String, EffectiveSetting>> =
         settingsApi.getEffectiveSettings(keys).map { response ->
+            response.settings.associateBy { it.key }
+        }
+
+    /**
+     * Batched canonical resolution (`GET /api/v1/settings/values/effective`):
+     * typed JSON values, each with the scope it resolved from. A key the
+     * server's contract does not know is simply absent from the map.
+     */
+    suspend fun getEffectiveValues(
+        keys: List<String> = emptyList(),
+        libraryIds: List<Int> = emptyList(),
+        seriesIds: List<String> = emptyList(),
+    ): ApiResult<Map<String, EffectiveSettingValue>> =
+        settingsApi.getEffectiveValues(keys, libraryIds, seriesIds).map { response ->
             response.settings.associateBy { it.key }
         }
 

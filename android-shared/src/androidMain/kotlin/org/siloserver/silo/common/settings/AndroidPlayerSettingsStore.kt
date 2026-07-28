@@ -9,11 +9,12 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
-import org.siloserver.silo.model.settings.EffectiveSetting
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SettingKeys
+import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SettingsRepository
@@ -28,6 +29,13 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AndroidPlayerSettingsStore(
@@ -388,7 +396,9 @@ class AndroidPlayerSettingsStore(
     override suspend fun refreshFromServer() {
         val repo = settingsRepository ?: return
         withScope { scope, store ->
-            val result = repo.getEffectiveSettings(PlaybackSettingsKeys.DeviceSettings)
+            // Batched canonical resolution: one request answers every
+            // device-relevant key, each with the scope it resolved from.
+            val result = repo.getEffectiveValues(RemoteDeviceSettings)
             if (result !is ApiResult.Success) return@withScope
             applyEffectiveLocally(scope, store, result.data)
         }
@@ -440,7 +450,9 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun resetAllDeviceSettings() {
         withScope { scope, store ->
-            for (key in PlaybackSettingsKeys.DeviceSettings) {
+            // Only the server-stored keys have rows to delete; the granular
+            // subtitle.* fields live inside playback.subtitle_appearance.
+            for (key in RemoteDeviceSettings) {
                 serverSettingsFlusher.enqueueDelete(scope.profileId, key)
             }
             store.edit {
@@ -458,23 +470,64 @@ class AndroidPlayerSettingsStore(
     private suspend fun applyEffectiveLocally(
         scope: Scope,
         store: DataStore<Preferences>,
-        effective: Map<String, EffectiveSetting>,
+        effective: Map<String, EffectiveSettingValue>,
     ) {
         store.edit { prefs ->
-            for (key in PlaybackSettingsKeys.DeviceSettings) {
+            for (key in RemoteDeviceSettings) {
+                // The canonical endpoint answers every known key, including
+                // ones with nothing stored anywhere — those come back with
+                // source "default" and the contract default as the value, so
+                // writing each entry hydrates defaults from the contract
+                // rather than from anything hardcoded here. A key absent
+                // from the response is one this server's contract does not
+                // know (older revision); the local value is kept rather than
+                // guessed at.
                 val entry = effective[key] ?: continue
-                writeRawString(prefs, scope, key, entry.effectiveValue)
+                writeJsonValue(prefs, scope, key, entry.value)
             }
-            // Clear the override flag when the server reports no
-            // device-scoped subtitle_appearance — otherwise a previous
-            // session's flag could survive a server-side reset.
+            // The override flag mirrors where the subtitle appearance
+            // actually resolved from. Clearing it when the value no longer
+            // comes from this device keeps a previous session's flag from
+            // surviving a server-side reset.
             val subtitleEntry = effective[PlaybackSettingsKeys.SubtitleAppearance]
+            val hasDeviceOverride = subtitleEntry?.scope == SettingScope.PROFILE_DEVICE.wire
             prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] =
-                subtitleEntry?.hasDeviceOverride ?: false
-            if (subtitleEntry?.hasDeviceOverride == true) {
+                hasDeviceOverride
+            if (hasDeviceOverride && subtitleEntry != null) {
                 prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] =
-                    subtitleEntry.effectiveValue
+                    subtitleEntry.value.toString()
             }
+        }
+    }
+
+    /**
+     * Writes one typed JSON value from the canonical effective response into
+     * the local slot each flow reads: booleans and ints natively, doubles as
+     * their string spelling, objects as their JSON document, JSON null as the
+     * empty string (the local spelling of "no preference"), and everything
+     * else as the primitive's content.
+     */
+    private fun writeJsonValue(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        scope: Scope,
+        key: String,
+        value: JsonElement,
+    ) {
+        val scopedName = scope.keyPrefix + key
+        when {
+            isBooleanKey(key) -> (value as? JsonPrimitive)?.booleanOrNull?.let {
+                prefs[booleanPreferencesKey(scopedName)] = it
+            }
+            isIntKey(key) -> (value as? JsonPrimitive)?.intOrNull?.let {
+                prefs[intPreferencesKey(scopedName)] = it
+            }
+            isDoubleKey(key) -> (value as? JsonPrimitive)?.doubleOrNull?.let {
+                prefs[stringPreferencesKey(scopedName)] = it.toString()
+            }
+            value is JsonNull -> prefs[stringPreferencesKey(scopedName)] = ""
+            value is JsonObject -> prefs[stringPreferencesKey(scopedName)] = value.toString()
+            value is JsonPrimitive -> prefs[stringPreferencesKey(scopedName)] = value.content
+            else -> prefs[stringPreferencesKey(scopedName)] = value.toString()
         }
     }
 
@@ -594,6 +647,17 @@ class AndroidPlayerSettingsStore(
         // flattens locally. The contract carries them as one composite object
         // (playback.subtitle_appearance), so they have no generated entry and
         // are listed here as the local-only values they are.
+        /**
+         * The device-relevant keys the canonical batched endpoint can
+         * answer: the store's device set minus the granular subtitle.*
+         * fields Android flattens locally (the contract carries those as
+         * the one composite playback.subtitle_appearance object, so the
+         * resolver has no definitions for them).
+         */
+        val RemoteDeviceSettings: List<String> = SettingKeys.REMOTE.toSet().let { remote ->
+            PlaybackSettingsKeys.DeviceSettings.filter { it in remote }
+        }
+
         val BOOLEAN_KEYS: Set<String> = SettingKeys.BOOLEAN_KEYS +
             setOf(PlaybackSettingsKeys.SubtitleTextOutline)
 
