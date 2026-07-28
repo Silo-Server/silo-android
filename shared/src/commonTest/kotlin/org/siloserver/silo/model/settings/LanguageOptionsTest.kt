@@ -37,13 +37,21 @@ class LanguageOptionsTest {
     }
 
     @Test
-    fun anUnsetOrUnknownValueReadsAsTheUnsetLabel() {
+    fun anUnsetOrLegacyLabelValueReadsAsTheUnsetLabel() {
         assertEquals("Default", LanguageOptions.label("", unsetLabel = "Default"))
         assertEquals("Default", LanguageOptions.label(null, unsetLabel = "Default"))
-        assertEquals("Off", LanguageOptions.label("kl", unsetLabel = "Off"))
         // A value stored by a build that persisted labels must not be echoed
         // back as if it were a choice the server holds.
         assertEquals("Off", LanguageOptions.label("English", unsetLabel = "Off"))
+    }
+
+    @Test
+    fun aPreservedTagOutsideTheTableReadsAsItselfNotAsUnset() {
+        // migrateLegacyValue passes these through, so playback still applies
+        // them; showing "Off"/"Default" would claim an active preference is
+        // disabled.
+        assertEquals("nl", LanguageOptions.label("nl", unsetLabel = "Off"))
+        assertEquals("pt-BR", LanguageOptions.label("pt-BR", unsetLabel = "Default"))
     }
 
     @Test

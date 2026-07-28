@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,6 +67,34 @@ fun InviteClaimScreen(
     // there is nothing to consume or reset.
     LaunchedEffect(state.claimSuccess) {
         if (state.claimSuccess) onClaimComplete()
+    }
+
+    state.pendingCleartextOrigin?.let { origin ->
+        AlertDialog(
+            onDismissRequest = viewModel::onCancelCleartext,
+            title = { Text("Use unencrypted HTTP?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(origin, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "This connection is not encrypted. Anyone on the network may see or change " +
+                            "traffic, including your new password. Continue only on a network you trust.",
+                    )
+                }
+            },
+            confirmButton = {
+                AuroraPrimaryButton(
+                    label = "Use HTTP",
+                    onClick = viewModel::onConfirmCleartext,
+                )
+            },
+            dismissButton = {
+                AuroraGhostButton(
+                    label = "Cancel",
+                    onClick = viewModel::onCancelCleartext,
+                )
+            },
+        )
     }
 
     AuroraScreen(variant = AuroraVariant.SignIn, scrim = AuroraScrim.Soft) {

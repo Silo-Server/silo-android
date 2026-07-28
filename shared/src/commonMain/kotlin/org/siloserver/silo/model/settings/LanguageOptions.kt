@@ -46,12 +46,17 @@ object LanguageOptions {
     /**
      * The label for a stored wire value.
      *
-     * Anything unrecognized reads as unset rather than being echoed back: a
-     * value stored by an older build is a display label the picker has no entry
-     * for, and showing it would suggest a choice the server does not hold.
+     * A tag outside the picker table ("nl", "pt-BR" synced from another
+     * surface) is echoed back as itself: it is a real, active preference, and
+     * labeling it as unset would tell the user a preference playback still
+     * applies is off. Only values that aren't tags at all — legacy display
+     * labels — read as unset, since the server does not hold them.
      */
-    fun label(wire: String?, unsetLabel: String): String =
-        TAGS.firstOrNull { it.first == wire }?.second ?: unsetLabel
+    fun label(wire: String?, unsetLabel: String): String {
+        if (wire.isNullOrBlank()) return unsetLabel
+        TAGS.firstOrNull { it.first == wire }?.let { return it.second }
+        return if (isPreservableTag(wire)) wire else unsetLabel
+    }
 
     /**
      * The wire value for a label the user picked. Falls back to [UNSET], which
@@ -76,13 +81,9 @@ object LanguageOptions {
      */
     fun migrateLegacyValue(stored: String?): String = when {
         stored.isNullOrBlank() -> UNSET
-        // The old pickers' unset labels; "Off" is 3 letters and would
-        // otherwise slip through the tag-shape check below.
-        stored.equals("Off", ignoreCase = true) ||
-            stored.equals("Default", ignoreCase = true) -> UNSET
         TAGS.any { it.first == stored } -> stored
         TAGS.any { it.second == stored } -> wireValue(stored)
-        isTagShaped(stored) -> stored
+        isPreservableTag(stored) -> stored
         else -> UNSET
     }
 
@@ -90,8 +91,12 @@ object LanguageOptions {
      * Loose BCP 47 shape check: 2-3 letter primary subtag, optional script /
      * region subtags. Deliberately permissive — the server is the validator;
      * this only has to separate tags from display names like "English".
+     * The old pickers' unset labels are excluded by name: "Off" is 3 letters
+     * and would otherwise pass as a tag.
      */
-    private fun isTagShaped(value: String): Boolean =
-        Regex("^[a-zA-Z]{2,3}([-_][a-zA-Z0-9]{2,8})*$").matches(value) &&
+    private fun isPreservableTag(value: String): Boolean =
+        !value.equals("Off", ignoreCase = true) &&
+            !value.equals("Default", ignoreCase = true) &&
+            Regex("^[a-zA-Z]{2,3}([-_][a-zA-Z0-9]{2,8})*$").matches(value) &&
             canonicalSubtitleLanguage(value) != null
 }

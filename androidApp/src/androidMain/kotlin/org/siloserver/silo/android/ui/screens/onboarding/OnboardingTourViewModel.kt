@@ -74,16 +74,20 @@ class OnboardingTourViewModel(
             // two round trips in front of first render.
             val stateDeferred = async { onboardingRepository.getState() }
             val flowDeferred = async { onboardingRepository.getFlow(surface = "phone") }
+            val resumeStep: String?
             when (val state = stateDeferred.await()) {
                 is ApiResult.Success -> {
                     if (state.data.done) {
+                        // Server-confirmed done — safe to cache locally.
                         markDoneLocally()
                         flowDeferred.cancel()
                         _uiState.update { it.copy(isLoading = false, finished = true) }
                         return@launch
                     }
+                    resumeStep = state.data.lastStep
                 }
-                // On any error, skip the tour rather than block first run.
+                // On any error, skip the tour rather than block first run —
+                // but don't cache done: the server was never consulted.
                 is ApiResult.Error, is ApiResult.NetworkError -> {
                     flowDeferred.cancel()
                     _uiState.update { it.copy(isLoading = false, finished = true) }
@@ -91,7 +95,7 @@ class OnboardingTourViewModel(
                 }
             }
             when (val flow = flowDeferred.await()) {
-                is ApiResult.Success -> applyFlow(flow.data)
+                is ApiResult.Success -> applyFlow(flow.data, resumeStep)
                 is ApiResult.Error, is ApiResult.NetworkError -> {
                     _uiState.update { it.copy(isLoading = false, finished = true) }
                 }
@@ -99,14 +103,17 @@ class OnboardingTourViewModel(
         }
     }
 
-    private suspend fun applyFlow(flow: OnboardingFlow) {
+    private suspend fun applyFlow(flow: OnboardingFlow, resumeStep: String?) {
         val steps = flow.steps.filter { it.kind in KNOWN_KINDS }
         if (steps.isEmpty()) {
-            // Nothing renderable: mark complete so we never loop.
-            markDoneLocally()
+            // Nothing renderable: mark complete so we never loop — locally
+            // only once the server acknowledged, so an offline auto-complete
+            // is retried next launch instead of silently diverging.
             _uiState.update { it.copy(isLoading = false, finished = true) }
             withContext(NonCancellable) {
-                onboardingRepository.complete(flow.tourId, null)
+                if (onboardingRepository.complete(flow.tourId, null) is ApiResult.Success) {
+                    localCache.markDone(tokenManager.getCurrentServerId(), tokenManager.getProfileId())
+                }
             }
             return
         }
@@ -117,12 +124,18 @@ class OnboardingTourViewModel(
             .filter { it.kind == "setting_choice" }
             .mapNotNull { step -> step.setting?.default?.let { step.id to it } }
             .toMap()
+        // Progress recorded from another device or before a process death:
+        // resume at the server's last-seen step instead of step one.
+        val startIndex = resumeStep
+            ?.let { last -> steps.indexOfFirst { it.id == last } }
+            ?.takeIf { it >= 0 }
+            ?: 0
         _uiState.update {
             it.copy(
                 isLoading = false,
                 steps = steps,
                 tourId = flow.tourId,
-                currentIndex = 0,
+                currentIndex = startIndex,
                 pendingChoices = defaults,
             )
         }
@@ -155,17 +168,30 @@ class OnboardingTourViewModel(
         if (persistCurrentChoice) {
             persistChoiceIfAny(current.steps.getOrNull(current.currentIndex))
         }
-        markDoneLocally()
+        // Skip tapped while the manifest is still loading: there is no tour
+        // id to post against. Let the user through; server state stays
+        // not-done, so the tour is simply offered again another time.
+        if (current.tourId.isBlank()) {
+            _uiState.update { it.copy(finished = true) }
+            return
+        }
         viewModelScope.launch {
             val lastStep = current.steps.getOrNull(current.currentIndex)?.id
             // finished=true (below) navigates away with popUpTo, which clears
             // this ViewModel and cancels its scope — the POST must survive
             // that or the server never learns the tour ended and re-shows it.
+            // The local done-cache is written only on the server's ack: if
+            // the POST is lost, the next launch re-consults the server and
+            // retries the tour rather than silently diverging from every
+            // other client.
             withContext(NonCancellable) {
-                if (skipped) {
+                val result = if (skipped) {
                     onboardingRepository.skip(current.tourId, lastStep)
                 } else {
                     onboardingRepository.complete(current.tourId, lastStep)
+                }
+                if (result is ApiResult.Success) {
+                    localCache.markDone(tokenManager.getCurrentServerId(), tokenManager.getProfileId())
                 }
             }
         }
@@ -205,13 +231,19 @@ class OnboardingTourViewModel(
         }
         viewModelScope.launch {
             withContext(NonCancellable) {
-                // Android playback and the Settings screen read quality from
-                // the local player settings store, not the profile field —
-                // write both or the choice the tour just showed has no
-                // visible effect anywhere in this app.
-                if (spec.key == "quality_preference") {
-                    playerSettingsStore.setPreferredQuality(value)
+                // Android playback and the Settings screen read quality and
+                // auto-skip from the local player settings store, not the
+                // profile fields — mirror those there too or the choice the
+                // tour just showed has no visible effect in this app.
+                when (spec.key) {
+                    "quality_preference" -> playerSettingsStore.setPreferredQuality(value)
+                    "auto_skip_intro" -> playerSettingsStore.setAutoSkipIntro(value.toBoolean())
+                    "auto_skip_credits" -> playerSettingsStore.setAutoSkipCredits(value.toBoolean())
                 }
+                // Best-effort against the profile: the local store above is
+                // what this device plays back with, and Settings re-syncs
+                // from the server later. A rejected PUT here shouldn't trap
+                // the user in a tour they can't leave.
                 profileRepository.updateActiveProfile(request)
             }
         }

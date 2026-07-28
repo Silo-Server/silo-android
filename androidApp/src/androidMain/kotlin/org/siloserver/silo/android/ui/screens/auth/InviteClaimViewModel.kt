@@ -7,18 +7,26 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.model.auth.InvitationLookupResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.requiresApproval
 import org.siloserver.silo.repository.AuthRepository
 
 data class InviteClaimUiState(
     val isLoadingInvitation: Boolean = true,
     val invitation: InvitationLookupResponse? = null,
-    /** The server answered and said no — the invite really is dead. */
+    /** The server said the token itself is dead — the invite really is gone. */
     val invitationInvalid: Boolean = false,
-    /** The server never answered — the invite may be fine; offer retry. */
+    /** The lookup failed for reasons unrelated to the token; offer retry. */
     val lookupFailed: Boolean = false,
+    /**
+     * The invite points at a cleartext HTTP server the user hasn't approved.
+     * The claim POST carries credentials, so it needs the same explicit
+     * consent the manual server-setup flow collects.
+     */
+    val pendingCleartextOrigin: String? = null,
     val password: String = "",
     val confirmPassword: String = "",
     val isSubmitting: Boolean = false,
@@ -35,6 +43,7 @@ data class InviteClaimUiState(
  */
 class InviteClaimViewModel(
     private val authRepository: AuthRepository,
+    private val cleartextConsentStore: CleartextConsentStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InviteClaimUiState())
@@ -43,22 +52,43 @@ class InviteClaimViewModel(
     private var serverUrl: String = ""
     private var token: String = ""
 
+    /**
+     * Bumped whenever the target invite changes; in-flight lookups compare
+     * against it before touching state, so a slow response for a superseded
+     * link can't paint another invite's email over the current one.
+     */
+    private var lookupGeneration = 0
+
     fun load(serverUrl: String, token: String) {
         if (this.token == token && _uiState.value.invitation != null) return
         this.serverUrl = serverUrl
         this.token = token
+        val generation = ++lookupGeneration
         _uiState.update { InviteClaimUiState() }
         viewModelScope.launch {
-            when (val result = authRepository.lookupInvitation(serverUrl, token)) {
+            val result = authRepository.lookupInvitation(serverUrl, token)
+            if (generation != lookupGeneration) return@launch
+            when (result) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(isLoadingInvitation = false, invitation = result.data)
                 }
-                is ApiResult.Error -> _uiState.update {
-                    it.copy(isLoadingInvitation = false, invitationInvalid = true)
+                is ApiResult.Error -> {
+                    // Only statuses that speak about the token itself are
+                    // terminal. A 429/5xx says nothing about the invite, and
+                    // showing "expired" for it sends the user off to have a
+                    // valid link revoked and reissued.
+                    if (result.code in TERMINAL_LOOKUP_CODES) {
+                        _uiState.update {
+                            it.copy(isLoadingInvitation = false, invitationInvalid = true)
+                        }
+                    } else {
+                        _uiState.update {
+                            it.copy(isLoadingInvitation = false, lookupFailed = true)
+                        }
+                    }
                 }
-                // A failure to reach the server says nothing about the
-                // invite; telling the user it expired sends them off to have
-                // a perfectly valid link revoked and reissued.
+                // A failure to reach the server says nothing about the invite
+                // either.
                 is ApiResult.NetworkError -> _uiState.update {
                     it.copy(isLoadingInvitation = false, lookupFailed = true)
                 }
@@ -95,27 +125,58 @@ class InviteClaimViewModel(
         }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isSubmitting = true, error = null) }
-            // acceptInvitation talks to the invite's server directly and only
-            // adopts it as the active server after the claim succeeds, so a
-            // failed claim leaves any existing session untouched.
-            when (val result = authRepository.acceptInvitation(serverUrl, token, current.password)) {
-                is ApiResult.Success -> {
-                    _uiState.update { it.copy(isSubmitting = false, claimSuccess = true) }
+            // The read-only lookup may have slipped past the cleartext gate,
+            // but the claim POST carries a password and will be rejected by
+            // the interceptor for an unapproved http:// origin — surfacing as
+            // an opaque network error. Ask for the same consent server setup
+            // does, then proceed.
+            if (cleartextConsentStore.requiresApproval(serverUrl)) {
+                _uiState.update { it.copy(pendingCleartextOrigin = serverUrl) }
+                return@launch
+            }
+            submitClaim()
+        }
+    }
+
+    fun onConfirmCleartext() {
+        val origin = _uiState.value.pendingCleartextOrigin ?: return
+        viewModelScope.launch {
+            cleartextConsentStore.approve(origin)
+            _uiState.update { it.copy(pendingCleartextOrigin = null) }
+            submitClaim()
+        }
+    }
+
+    fun onCancelCleartext() {
+        _uiState.update { it.copy(pendingCleartextOrigin = null) }
+    }
+
+    private suspend fun submitClaim() {
+        val current = _uiState.value
+        _uiState.update { it.copy(isSubmitting = true, error = null) }
+        // acceptInvitation talks to the invite's server directly and only
+        // adopts it as the active server after the claim succeeds, so a
+        // failed claim leaves any existing session untouched.
+        when (val result = authRepository.acceptInvitation(serverUrl, token, current.password)) {
+            is ApiResult.Success -> {
+                _uiState.update { it.copy(isSubmitting = false, claimSuccess = true) }
+            }
+            is ApiResult.Error -> {
+                val message = when (result.code) {
+                    404 -> "This invitation is invalid or has expired."
+                    409 -> "This invitation has already been used."
+                    else -> result.errorMessage("Could not create your account")
                 }
-                is ApiResult.Error -> {
-                    val message = when (result.code) {
-                        404 -> "This invitation is invalid or has expired."
-                        409 -> "This invitation has already been used."
-                        else -> result.errorMessage("Could not create your account")
-                    }
-                    _uiState.update { it.copy(isSubmitting = false, error = message) }
-                }
-                is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(isSubmitting = false, error = result.errorMessage("Could not create your account"))
-                }
+                _uiState.update { it.copy(isSubmitting = false, error = message) }
+            }
+            is ApiResult.NetworkError -> _uiState.update {
+                it.copy(isSubmitting = false, error = result.errorMessage("Could not create your account"))
             }
         }
     }
 
+    private companion object {
+        /** Statuses that mean the token itself is gone, used, or malformed. */
+        private val TERMINAL_LOOKUP_CODES = setOf(400, 404, 409, 410)
+    }
 }

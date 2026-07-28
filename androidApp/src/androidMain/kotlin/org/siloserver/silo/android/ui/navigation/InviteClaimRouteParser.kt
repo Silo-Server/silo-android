@@ -22,6 +22,8 @@ internal fun inviteClaimRouteOrNull(rawUri: String?): String? {
     if (!uri.scheme.equals("silo", ignoreCase = true)) return null
     if (!uri.host.equals("invite", ignoreCase = true)) return null
 
+    // Any other app can hand the exported activity a malformed URI via
+    // onNewIntent; bad percent-encoding must parse to null, not throw.
     val params = uri.rawQuery
         .orEmpty()
         .split("&")
@@ -29,9 +31,11 @@ internal fun inviteClaimRouteOrNull(rawUri: String?): String? {
         .mapNotNull { pair ->
             val idx = pair.indexOf("=")
             if (idx < 0) return@mapNotNull null
-            val key = URLDecoder.decode(pair.substring(0, idx), Charsets.UTF_8.name())
-            val value = URLDecoder.decode(pair.substring(idx + 1), Charsets.UTF_8.name())
-            key to value
+            runCatching {
+                val key = URLDecoder.decode(pair.substring(0, idx), Charsets.UTF_8.name())
+                val value = URLDecoder.decode(pair.substring(idx + 1), Charsets.UTF_8.name())
+                key to value
+            }.getOrNull()
         }
         .toMap()
 

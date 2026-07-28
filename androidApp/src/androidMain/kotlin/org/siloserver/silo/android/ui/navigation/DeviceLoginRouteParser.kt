@@ -45,9 +45,11 @@ private fun URI.queryParameters(): Map<String, String> =
         .mapNotNull { pair ->
             val idx = pair.indexOf("=")
             if (idx < 0) return@mapNotNull null
-            val key = pair.substring(0, idx).urlDecode()
-            val value = pair.substring(idx + 1).urlDecode()
-            key to value
+            // Reachable from onNewIntent with URIs other apps craft; bad
+            // percent-encoding must parse to null, not throw.
+            runCatching {
+                pair.substring(0, idx).urlDecode() to pair.substring(idx + 1).urlDecode()
+            }.getOrNull()
         }
         .toMap()
 

@@ -123,6 +123,14 @@ class AuthRepository(
         val result = authApi.acceptInvitation(serverUrl, token, password)
         if (result is ApiResult.Success) {
             setServerUrl(serverUrl)
+            // The server may already be registered with a previous account's
+            // profile scope, which setServerUrl just restored. The claimed
+            // account is a different identity — drop the stale profile id +
+            // token so its first requests don't carry another user's profile
+            // headers, and so the app lands on profile selection.
+            tokenManager.setProfileId(null)
+            tokenManager.setProfileToken(null)
+            tokenManager.getCurrentServerId()?.let { serverRegistry?.setProfileId(it, null) }
         }
         return persistSession(result)
     }

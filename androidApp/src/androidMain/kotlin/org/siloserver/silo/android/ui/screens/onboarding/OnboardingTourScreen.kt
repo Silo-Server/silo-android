@@ -79,8 +79,20 @@ fun OnboardingTourScreen(
 
     AuroraScreen(variant = AuroraVariant.SignIn, scrim = AuroraScrim.Soft) {
         if (state.isLoading || state.steps.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFFF3EFE9))
+            // Skip stays reachable while the manifest loads: this gate sits
+            // between profile selection and Home with the back stack already
+            // cleared, so a slow server must never hold the app hostage for
+            // the full request timeout.
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    AuroraGhostButton(label = "Skip", onClick = viewModel::onSkip)
+                }
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Color(0xFFF3EFE9))
+                }
             }
             return@AuroraScreen
         }
