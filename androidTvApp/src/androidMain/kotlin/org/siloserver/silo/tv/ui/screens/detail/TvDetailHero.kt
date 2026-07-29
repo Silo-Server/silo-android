@@ -38,27 +38,21 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import coil3.compose.AsyncImage
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.tv.ui.theme.DarkSurface
 import org.siloserver.silo.tv.ui.theme.Spacing
-import org.siloserver.silo.tv.ui.theme.SuccessGreen
 
 /**
  * Tokens for the hero facts row, mirroring tvOS `TVHeroFactToken`.
  *
- * - [TextToken] plain text (year / runtime / ★rating); consecutive text
- *   tokens get a "·" divider between them.
- * - [Rating] a maturity/check token: green check icon + label.
- * - [Chip] an outlined squared pill (4K / HDR / DOLBY VISION / ATMOS / CC).
+ * The facts row contains editorial [TextToken] values (year/date, runtime or
+ * season count, and IMDb rating) separated by a "·" divider.
  */
 internal sealed class TvHeroFactToken {
     data class TextToken(val value: String) : TvHeroFactToken()
-    data class Rating(val value: String) : TvHeroFactToken()
-    data class Chip(val value: String) : TvHeroFactToken()
 }
 
 /**
@@ -415,25 +409,6 @@ private fun FactsRow(tokens: List<TvHeroFactToken>) {
                     color = Color.White.copy(alpha = 0.88f),
                     maxLines = 1,
                 )
-                is TvHeroFactToken.Rating -> Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.CheckCircle,
-                        contentDescription = null,
-                        tint = SuccessGreen.copy(alpha = 0.9f),
-                        modifier = Modifier.height(12.dp),
-                    )
-                    Text(
-                        text = token.value,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 14.sp,
-                        color = Color.White.copy(alpha = 0.88f),
-                        maxLines = 1,
-                    )
-                }
-                is TvHeroFactToken.Chip -> QualityChip(text = token.value)
             }
         }
     }
@@ -451,29 +426,6 @@ private fun RatingChip(text: String) {
             .padding(horizontal = 8.dp, vertical = 3.dp),
     ) {
         // 14sp floor for 10-ft legibility (tvOS 20pt heavy, tracking 1.0) — audit 2026-07-20.
-        Text(
-            text = text,
-            fontWeight = FontWeight.Black,
-            fontSize = 14.sp,
-            letterSpacing = 0.5.sp,
-            color = Color.White,
-            maxLines = 1,
-        )
-    }
-}
-
-@Composable
-private fun QualityChip(text: String) {
-    Box(
-        modifier = Modifier
-            .border(
-                width = 0.6.dp,
-                color = Color.White.copy(alpha = 0.65f),
-                shape = RoundedCornerShape(2.dp),
-            )
-            .padding(horizontal = 7.dp, vertical = 3.dp),
-    ) {
-        // 14sp floor for 10-ft legibility (tvOS 16pt heavy, tracking 1.0) — audit 2026-07-20.
         Text(
             text = text,
             fontWeight = FontWeight.Black,
