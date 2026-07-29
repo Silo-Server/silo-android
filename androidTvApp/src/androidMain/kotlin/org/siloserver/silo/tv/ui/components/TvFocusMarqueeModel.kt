@@ -9,10 +9,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.section.orderedTokens
+import org.siloserver.silo.model.section.toBrowseHeroMetadata
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Locale
-import kotlin.math.roundToInt
 
 /**
  * Display payload for the focus marquee — built from section-item models only
@@ -80,25 +81,18 @@ data class TvMarqueeContent(
             rowIdentity: String = rowTitle,
         ): TvMarqueeContent {
             val isEpisode = item.type.equals("episode", ignoreCase = true)
-
-            val meta = mutableListOf<String>()
-            if (isEpisode) {
-                episodeToken(item.seasonNumber, item.episodeNumber)?.let(meta::add)
-                if (item.title.isNotBlank()) meta.add(item.title)
-                lengthText(item.runtime, item.durationSeconds)?.let(meta::add)
-                ratingToken(item.ratingImdb)?.let(meta::add)
+            val editorial = item.toBrowseHeroMetadata(maxGenres = 2)
+            val meta = if (isEpisode) {
+                buildList {
+                    editorial.leadingToken?.let(::add)
+                    item.title.takeIf(String::isNotBlank)?.let(::add)
+                    editorial.runtimeToken?.let(::add)
+                    editorial.imdbRatingToken?.let(::add)
+                }
             } else {
-                if (item.year > 0) meta.add(item.year.toString())
-                lengthText(item.runtime, item.durationSeconds)?.let(meta::add)
-                ratingToken(item.ratingImdb)?.let(meta::add)
-                item.genres.firstOrNull { it.isNotBlank() }?.let(meta::add)
+                editorial.orderedTokens()
             }
-
-            val badges = item.contentRating
-                ?.takeIf { it.isNotBlank() }
-                ?.uppercase(Locale.US)
-                ?.let(::listOf)
-                .orEmpty()
+            val badges = editorial.contentRating?.let(::listOf).orEmpty()
 
             val sectionBackdropUrl = item.backdropUrl?.takeIf { it.isNotBlank() }
             val sectionPosterUrl = item.posterUrl?.takeIf { it.isNotBlank() }
@@ -126,50 +120,6 @@ data class TvMarqueeContent(
             )
         }
 
-        private fun episodeToken(season: Int?, episode: Int?): String? = when {
-            season != null && episode != null -> "S$season E$episode"
-            season != null -> "Season $season"
-            episode != null -> "Episode $episode"
-            else -> null
-        }
-
-        private fun timeLeftText(position: Double?, duration: Double?): String? {
-            if (position == null || duration == null || duration <= 0) return null
-            if (position <= 60 || position / duration >= 0.95) return null
-            val remaining = (((duration - position) / 60.0)).let { kotlin.math.ceil(it).toInt() }.coerceAtLeast(1)
-            return "${remaining}m left"
-        }
-
-        /** Episode/movie length: the metadata runtime when present, else
-         *  derived from the file duration the payload already carries. */
-        private fun lengthText(runtimeMinutes: Int?, durationSeconds: Double?): String? {
-            runtimeText(runtimeMinutes)?.let { return it }
-            val duration = durationSeconds?.takeIf { it.isFinite() && it > 0.0 }
-                ?: return null
-            return runtimeText((duration / 60.0).roundToInt())
-        }
-
-        private fun runtimeText(minutes: Int?): String? {
-            if (minutes == null || minutes <= 0) return null
-            return if (minutes >= 60) {
-                val hours = minutes / 60
-                val rest = minutes % 60
-                if (rest == 0) "${hours}h" else "${hours}h ${rest}m"
-            } else {
-                "$minutes min"
-            }
-        }
-
-        private fun ratingToken(rating: Double?): String? =
-            validImdbRating(rating)?.let(::formatRating)
-
-        private fun validImdbRating(rating: Double?): Double? =
-            rating?.takeIf { it.isFinite() && it > 0.0 && it <= 10.0 }
-
-        private fun formatRating(rating: Double): String {
-            val rounded = (rating * 10).roundToInt() / 10.0
-            return rounded.toString()
-        }
     }
 }
 

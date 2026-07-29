@@ -14,9 +14,9 @@ class TvFocusMarqueeModelTest {
                 type = "movie",
                 title = "Arrival",
                 year = 2016,
-                genres = listOf("Science Fiction"),
+                genres = listOf(" Science Fiction ", "Drama", "Drama"),
                 ratingImdb = 7.9,
-                contentRating = "PG-13",
+                contentRating = " pg-13 ",
                 durationSeconds = 6_960.0,
                 overlaySummary = OverlaySummary(
                     resolution = "2160p",
@@ -29,9 +29,58 @@ class TvFocusMarqueeModelTest {
 
         assertEquals(listOf("PG-13"), content.badges)
         assertEquals(
-            listOf("2016", "1h 56m", "7.9", "Science Fiction"),
+            listOf("2016", "1h 56m", "7.9", "Science Fiction", "Drama"),
             content.metaParts,
         )
+    }
+
+    @Test
+    fun seriesHeroUsesYearRuntimeRatingAndTwoGenres() {
+        val content = TvMarqueeContent.from(
+            item = SectionItem(
+                contentId = "series-1",
+                type = "series",
+                title = "Severance",
+                year = 2022,
+                runtime = 50,
+                ratingImdb = 8.7,
+                genres = listOf("Drama", "Mystery", "Thriller"),
+                contentRating = "TV-MA",
+            ),
+            rowTitle = "Popular",
+        )
+
+        assertEquals(
+            listOf("2022", "50 min", "8.7", "Drama", "Mystery"),
+            content.metaParts,
+        )
+        assertEquals(listOf("TV-MA"), content.badges)
+    }
+
+    @Test
+    fun episodeKeepsTitlePlacementAndNeverAddsGenres() {
+        val content = TvMarqueeContent.from(
+            item = SectionItem(
+                contentId = "episode-genres",
+                type = "episode",
+                title = "Long, Long Time",
+                seriesTitle = "The Last of Us",
+                seasonNumber = 1,
+                episodeNumber = 3,
+                runtime = 76,
+                ratingImdb = 8.6,
+                genres = listOf("Drama", "Horror"),
+                contentRating = " tv-ma ",
+            ),
+            rowTitle = "Continue Watching",
+        )
+
+        assertEquals("The Last of Us", content.title)
+        assertEquals(
+            listOf("S1 E3", "Long, Long Time", "1h 16m", "8.6"),
+            content.metaParts,
+        )
+        assertEquals(listOf("TV-MA"), content.badges)
     }
 
     @Test
