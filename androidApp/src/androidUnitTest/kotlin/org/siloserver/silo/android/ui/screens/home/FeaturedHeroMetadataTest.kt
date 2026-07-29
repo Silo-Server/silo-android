@@ -14,7 +14,7 @@ class FeaturedHeroMetadataTest {
                 type = "movie",
                 title = "Arrival",
                 year = 2016,
-                genres = listOf("Science Fiction"),
+                genres = listOf("Science Fiction", "Drama"),
                 ratingImdb = 7.9,
                 contentRating = "PG-13",
                 durationSeconds = 6_960.0,
@@ -24,6 +24,7 @@ class FeaturedHeroMetadataTest {
                     audio = "Atmos",
                 ),
             ),
+            maxGenres = 1,
         )
 
         assertEquals(
@@ -56,6 +57,7 @@ class FeaturedHeroMetadataTest {
                 contentRating = "TV-MA",
                 durationSeconds = 4_560.0,
             ),
+            maxGenres = 1,
         )
 
         assertEquals(
@@ -82,6 +84,7 @@ class FeaturedHeroMetadataTest {
                     ratingImdb = invalid,
                     durationSeconds = invalid,
                 ),
+                maxGenres = 1,
             )
 
             assertEquals(emptyList(), chips)
@@ -98,6 +101,7 @@ class FeaturedHeroMetadataTest {
                 ratingImdb = Double.NaN,
                 durationSeconds = 7_200.0,
             ),
+            maxGenres = 1,
         )
 
         assertEquals(listOf("2h"), chips.map { it.label })
@@ -113,6 +117,7 @@ class FeaturedHeroMetadataTest {
                 ratingImdb = 8.4,
                 durationSeconds = Double.NaN,
             ),
+            maxGenres = 1,
         )
 
         assertEquals(listOf("8.4"), chips.map { it.label })
@@ -128,6 +133,7 @@ class FeaturedHeroMetadataTest {
                 runtime = 125,
                 durationSeconds = 60.0,
             ),
+            maxGenres = 1,
         )
 
         assertEquals(listOf("2h 5m"), chips.map { it.label })
@@ -143,8 +149,64 @@ class FeaturedHeroMetadataTest {
                 runtime = 0,
                 durationSeconds = 6_960.0,
             ),
+            maxGenres = 1,
         )
 
         assertEquals(listOf("1h 56m"), chips.map { it.label })
+    }
+
+    @Test
+    fun phoneGenreAllowanceChangesExactlyAtSixHundredDp() {
+        assertEquals(1, featuredHeroMaxGenres(screenWidthDp = 0))
+        assertEquals(1, featuredHeroMaxGenres(screenWidthDp = 599))
+        assertEquals(2, featuredHeroMaxGenres(screenWidthDp = 600))
+        assertEquals(2, featuredHeroMaxGenres(screenWidthDp = 840))
+    }
+
+    @Test
+    fun compactAndWidePhoneMapTheSharedGenreLimitWithoutMovingClassification() {
+        val item = SectionItem(
+            contentId = "movie-width",
+            type = "movie",
+            title = "Arrival",
+            year = 2016,
+            runtime = 116,
+            ratingImdb = 7.9,
+            genres = listOf(" Science Fiction ", "Drama", "Drama"),
+            contentRating = " pg-13 ",
+        )
+
+        assertEquals(
+            listOf("2016", "1h 56m", "7.9", "Science Fiction", "PG-13"),
+            featuredHeroMetadata(item, maxGenres = featuredHeroMaxGenres(599)).map { it.label },
+        )
+        assertEquals(
+            listOf("2016", "1h 56m", "7.9", "Science Fiction", "Drama", "PG-13"),
+            featuredHeroMetadata(item, maxGenres = featuredHeroMaxGenres(600)).map { it.label },
+        )
+        assertEquals(
+            FeaturedHeroMetadataKind.Classification,
+            featuredHeroMetadata(item, maxGenres = 2).last().kind,
+        )
+    }
+
+    @Test
+    fun phoneEpisodeKeepsGenresOutEvenAtWideAllowance() {
+        val chips = featuredHeroMetadata(
+            item = SectionItem(
+                contentId = "episode-wide",
+                type = "episode",
+                title = "Long, Long Time",
+                seasonNumber = 1,
+                episodeNumber = 3,
+                runtime = 76,
+                ratingImdb = 8.6,
+                genres = listOf("Drama", "Horror"),
+                contentRating = "TV-MA",
+            ),
+            maxGenres = 2,
+        )
+
+        assertEquals(listOf("S1 E3", "1h 16m", "8.6", "TV-MA"), chips.map { it.label })
     }
 }
