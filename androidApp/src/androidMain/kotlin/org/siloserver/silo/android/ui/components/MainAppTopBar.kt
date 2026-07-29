@@ -54,6 +54,7 @@ fun MainAppTopBar(
     isProfileLoading: Boolean,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)? = null,
+    onWatchTogetherClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -147,8 +148,17 @@ fun MainAppTopBar(
                                     onRequestsClick()
                                 },
                             )
-                            HorizontalDivider()
                         }
+                        if (onWatchTogetherClick != null) {
+                            DropdownMenuItem(
+                                text = { Text("Watch Together") },
+                                onClick = {
+                                    menuExpanded = false
+                                    onWatchTogetherClick()
+                                },
+                            )
+                        }
+                        HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("Settings") },
                             onClick = {

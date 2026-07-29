@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -124,8 +125,9 @@ import java.util.Locale
 fun TvCalendarScreen(
     onOpenItemDetail: (contentId: String) -> Unit,
     onInitialContentFocus: () -> Unit = {},
+    onMoveUpToMenu: () -> Unit = {},
     focusRequest: Int = 0,
-    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
+    onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     viewModel: CalendarViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -250,6 +252,7 @@ fun TvCalendarScreen(
             // naturally pushes both controls upward instead of pinning them.
             CalendarList(
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
+                onMoveUpToMenu = onMoveUpToMenu,
                 state = state,
                 listState = listState,
                 controls = controls,
@@ -674,12 +677,36 @@ internal fun shouldReturnCalendarFocusToControls(
     focusedShelfIndex == firstFocusableShelfIndex &&
     !isReturningToControls
 
+internal enum class CalendarUpFallbackAction {
+    EnterMenu,
+    ReturnToControls,
+    StayInContent,
+    MoveWithinContent,
+}
+
+internal fun calendarUpFallbackAction(
+    focusedShelfIndex: Int?,
+    firstFocusableShelfIndex: Int,
+    isReturningToControls: Boolean,
+    isRepeat: Boolean = false,
+): CalendarUpFallbackAction = when {
+    shouldReturnCalendarFocusToControls(
+        focusedShelfIndex = focusedShelfIndex,
+        firstFocusableShelfIndex = firstFocusableShelfIndex,
+        isReturningToControls = isReturningToControls,
+    ) -> if (isRepeat) CalendarUpFallbackAction.StayInContent else CalendarUpFallbackAction.ReturnToControls
+    focusedShelfIndex == null && isRepeat -> CalendarUpFallbackAction.StayInContent
+    focusedShelfIndex == null -> CalendarUpFallbackAction.EnterMenu
+    else -> CalendarUpFallbackAction.MoveWithinContent
+}
+
 // MARK: - Day list
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, ExperimentalTvMaterial3Api::class)
 @Composable
 private fun CalendarList(
-    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
+    onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
+    onMoveUpToMenu: () -> Unit = {},
     state: org.siloserver.silo.viewmodel.CalendarUiState,
     listState: LazyListState,
     controls: @Composable () -> Unit,
@@ -731,24 +758,37 @@ private fun CalendarList(
     // when focus is already in the controls item, mirror the shell's default
     // (moveFocus within content; false -> shell hands off to the menu bar).
     var focusedShelfIndex by remember { mutableStateOf<Int?>(null) }
-    val calendarUpFallback = remember(firstFocusableDayIndex) {
-        {
-            if (shouldReturnCalendarFocusToControls(
+    val currentCalendarUpFallback = rememberUpdatedState<(Boolean) -> Boolean> { isRepeat ->
+            when (calendarUpFallbackAction(
                     focusedShelfIndex = focusedShelfIndex,
                     firstFocusableShelfIndex = firstFocusableDayIndex,
                     isReturningToControls = isReturningToControls,
+                    isRepeat = isRepeat,
                 )
             ) {
-                onMoveUpToControls()
-                true
-            } else {
-                focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Up)
+                CalendarUpFallbackAction.EnterMenu -> {
+                    onMoveUpToMenu()
+                    true
+                }
+                CalendarUpFallbackAction.ReturnToControls -> {
+                    onMoveUpToControls()
+                    true
+                }
+                CalendarUpFallbackAction.StayInContent -> true
+                CalendarUpFallbackAction.MoveWithinContent -> {
+                    focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Up)
+                }
             }
-        }
     }
-    DisposableEffect(onContentUpFallbackChanged) {
-        onContentUpFallbackChanged?.invoke(calendarUpFallback)
-        onDispose { onContentUpFallbackChanged?.invoke(calendarUpFallback) }
+    // Keep the registered identity stable while its implementation reads the
+    // current loaded-day state. A new lambda keyed by firstFocusableDayIndex
+    // would otherwise leave the shell holding the pre-load callback until this
+    // screen disposes.
+    val calendarUpFallbackRegistration: (Boolean) -> Boolean =
+        remember { { isRepeat -> currentCalendarUpFallback.value(isRepeat) } }
+    DisposableEffect(onContentUpFallbackChanged, calendarUpFallbackRegistration) {
+        onContentUpFallbackChanged?.invoke(calendarUpFallbackRegistration)
+        onDispose { onContentUpFallbackChanged?.invoke(calendarUpFallbackRegistration) }
     }
 
     // The day-snap is the ONLY vertical scroller: with the default spec the

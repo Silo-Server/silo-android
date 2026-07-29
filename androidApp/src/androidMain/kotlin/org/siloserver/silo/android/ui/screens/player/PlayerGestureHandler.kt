@@ -2,8 +2,6 @@ package org.siloserver.silo.android.ui.screens.player
 
 import android.content.Context
 import android.media.AudioManager
-import android.view.Window
-import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -56,7 +54,7 @@ import kotlin.math.hypot
  * - Hold: temporary 2x playback while held
  * - Two-finger pinch: step video gravity — pinch-out steps Fit -> Fill ->
  *   Stretch, pinch-in steps back, clamped at both ends (iOS parity)
- * - Vertical swipe in the left edge zone: brightness adjustment
+ * - Vertical swipe in the left edge zone: reserved; system brightness remains authoritative
  * - Vertical swipe in the right edge zone: volume adjustment
  * - Vertical swipe down in the center: dismiss the player (iOS
  *   MobilePlayerGestureLayer parity — evaluated on release, mostly-vertical
@@ -81,8 +79,8 @@ fun PlayerGestureHandler(
     onPinchVideoGravity: (Boolean) -> Unit = {},
     onDismiss: () -> Unit = {},
     // Swipe-down-to-dismiss is suppressed until playback is actually established.
-    // During the initial open the media is still loading, and a downward volume/
-    // brightness swipe that drifts inward would otherwise be read as "close the
+    // During the initial open the media is still loading, and a downward edge
+    // swipe that drifts inward would otherwise be read as "close the
     // player" — which then strands the user (Jim, Fold).
     dismissEnabled: Boolean = true,
     modifier: Modifier = Modifier,
@@ -204,20 +202,21 @@ fun PlayerGestureHandler(
                 )
             }
             .pointerInput(Unit) {
-                // iOS edgeAndDismissDrag: the start x picks the mode once —
-                // left 88dp edge = brightness, right 88dp edge = volume, and a
-                // center drag becomes a dismiss candidate judged on release.
+                // The start x picks the mode once: the left 88dp edge is
+                // reserved so Android brightness stays authoritative, the
+                // right edge controls volume, and the center is a dismiss
+                // candidate judged on release.
                 var mode = VerticalDragMode.None
                 var totalDrag = Offset.Zero
                 val edgeZonePx = EdgeZoneWidthDp.dp.toPx()
                 detectVerticalDragGestures(
                     onDragStart = { start ->
                         totalDrag = Offset.Zero
-                        mode = when {
-                            start.x < edgeZonePx -> VerticalDragMode.Brightness
-                            start.x > size.width - edgeZonePx -> VerticalDragMode.Volume
-                            else -> VerticalDragMode.DismissCandidate
-                        }
+                        mode = verticalDragMode(
+                            startX = start.x,
+                            width = size.width.toFloat(),
+                            edgeZonePx = edgeZonePx,
+                        )
                     },
                     onDragEnd = {
                         if (currentDismissEnabled && mode == VerticalDragMode.DismissCandidate) {
@@ -236,8 +235,6 @@ fun PlayerGestureHandler(
                         totalDrag += change.position - change.previousPosition
                         val sensitivity = 0.01f
                         when (mode) {
-                            VerticalDragMode.Brightness ->
-                                adjustBrightness(context, -dragAmount * sensitivity)
                             VerticalDragMode.Volume ->
                                 adjustVolume(audioManager, -dragAmount * sensitivity)
                             else -> Unit
@@ -305,30 +302,26 @@ private const val SkipFlashHoldMs = 700L
 
 private data class SkipFlash(val forward: Boolean, val nonce: Long)
 
-private enum class VerticalDragMode { None, Brightness, Volume, DismissCandidate }
+internal enum class VerticalDragMode { None, Volume, DismissCandidate }
 
-/** iOS edge-zone width (88pt) for brightness/volume vertical drags. */
+/** Edge-zone width for the reserved left edge and right-edge volume drag. */
 private const val EdgeZoneWidthDp = 88
+
+internal fun verticalDragMode(
+    startX: Float,
+    width: Float,
+    edgeZonePx: Float,
+): VerticalDragMode = when {
+    startX < edgeZonePx -> VerticalDragMode.None
+    startX > width - edgeZonePx -> VerticalDragMode.Volume
+    else -> VerticalDragMode.DismissCandidate
+}
 
 /** iOS dismiss threshold: a mostly-vertical downward drag over 140pt. */
 private const val DismissDragThresholdDp = 140
 
 private fun pointerDistance(first: Offset, second: Offset): Float =
     hypot(first.x - second.x, first.y - second.y)
-
-/**
- * Adjusts the screen brightness. Values are clamped to [0.01, 1.0].
- * Uses the window's layout params for per-activity brightness control.
- */
-private fun adjustBrightness(context: Context, delta: Float) {
-    val activity = context as? android.app.Activity ?: return
-    val window: Window = activity.window
-    val layoutParams = window.attributes
-    val currentBrightness = if (layoutParams.screenBrightness < 0) 0.5f else layoutParams.screenBrightness
-    val newBrightness = (currentBrightness + delta).coerceIn(0.01f, 1.0f)
-    layoutParams.screenBrightness = newBrightness
-    window.attributes = layoutParams
-}
 
 /**
  * Adjusts the media volume. Delta is normalized, so we scale to the max volume.

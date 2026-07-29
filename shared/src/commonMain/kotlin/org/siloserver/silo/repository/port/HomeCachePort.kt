@@ -8,6 +8,8 @@ data class HomeCacheSnapshot(
     val cachedAtMs: Long,
 )
 
+data class HomeCacheWriteLease(val identityGeneration: Long)
+
 /**
  * Offline read cache for the home screen (Track B). [HomeViewModel] serves the
  * cached layout instantly (stale-while-revalidate) so the app opens to content
@@ -23,6 +25,9 @@ data class HomeCacheSnapshot(
  */
 interface HomeCachePort {
     suspend fun cacheHome(sections: List<ResolvedSection>) {}
+    suspend fun cacheHome(sections: List<ResolvedSection>, lease: HomeCacheWriteLease) {
+        cacheHome(sections)
+    }
     suspend fun getCachedHome(): HomeCacheSnapshot? = null
 }
 

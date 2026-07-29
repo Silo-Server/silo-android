@@ -106,6 +106,7 @@ fun DetailHero(
     factsLine: List<String>,
     modifier: Modifier = Modifier,
     dominantColor: Color = SiloBackground,
+    directorText: String? = null,
     // Optional viewer-facing description-translation affordance, rendered
     // directly under the overview (Apple parity: DescriptionTranslationView).
     translation: (@Composable () -> Unit)? = null,
@@ -143,6 +144,18 @@ fun DetailHero(
                 OverviewBlock(text = overview)
             }
             translation?.invoke()
+            directorText?.takeIf { it.isNotBlank() }?.let { line ->
+                Text(
+                    text = line,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White.copy(alpha = 0.62f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             if (factsLine.isNotEmpty()) {
                 FactsRow(tokens = factsLine)
             }

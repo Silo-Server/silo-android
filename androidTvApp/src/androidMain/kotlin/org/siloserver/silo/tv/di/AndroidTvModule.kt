@@ -19,6 +19,7 @@ import org.siloserver.silo.network.createSecureSharedPrefs
 import org.siloserver.silo.tv.ui.screens.servers.TvServerListViewModel
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.AudioTrackManager
+import org.siloserver.silo.common.player.AndroidSubtitlePresentation
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.tv.ui.screens.settings.TvSettingsViewModel
@@ -112,6 +113,7 @@ val androidTvModule = module {
         org.siloserver.silo.common.data.repository.RoomHomeCacheRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            identityTransitions = get(),
         )
     }
     single<org.siloserver.silo.repository.port.CatalogCachePort> {
@@ -119,6 +121,7 @@ val androidTvModule = module {
         org.siloserver.silo.common.data.repository.RoomCatalogCacheRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            identityTransitions = get(),
         )
     }
     single<org.siloserver.silo.repository.port.DownloadDeletionPort> {
@@ -139,7 +142,12 @@ val androidTvModule = module {
         AndroidDeviceMetadataProvider(androidContext(), platform = "android-tv")
     }
     // Player infrastructure (duplicate-for-now; extract to :android-player later).
-    single { SubtitleManager(get()) }
+    single {
+        SubtitleManager(
+            libassBridge = get(),
+            presentation = AndroidSubtitlePresentation.Television,
+        )
+    }
     single { AudioTrackManager() }
     single {
         VideoPlaybackBackendFactory(
@@ -205,6 +213,7 @@ val androidTvModule = module {
         org.siloserver.silo.common.player.AudiobookPlayerViewModel(
             catalogRepository = get(),
             playbackSessionManager = get(),
+            playbackSessionLifecycle = get(),
             capabilityDetector = get(),
             bookmarksStore = get(),
             userItemStatePort = get(),
@@ -358,7 +367,7 @@ val androidTvModule = module {
     }
 
     // Content ViewModels
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.home.TvUpcomingViewModel(get()) }
     viewModel { RecommendationsViewModel(get()) }
     viewModel { RequestsViewModel(get()) }

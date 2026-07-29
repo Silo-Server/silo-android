@@ -27,6 +27,7 @@ import org.siloserver.silo.model.settings.QualityPresets
 // persist codes, as the server's settings contract requires. Shared with the TV
 // UI and with subtitles so the four surfaces cannot drift apart again.
 private val audioLanguageOptions = LanguageOptions.options(unsetLabel = "Default")
+private val audioLanguageLabels = audioLanguageOptions.map { it.second }
 
 // Discrete choices for the two behavior settings (0 = off). Dropdown idiom
 // matches the rest of this section; the label↔value maps below convert.
@@ -95,7 +96,7 @@ fun PlaybackSettings(
         SettingsDropdownRow(
             label = "Audio Language",
             value = LanguageOptions.label(audioLanguage, unsetLabel = "Default"),
-            options = audioLanguageOptions.map { it.second },
+            options = audioLanguageLabels,
             onOptionSelected = { label ->
                 onAudioLanguageChanged(LanguageOptions.wireValue(label))
             },

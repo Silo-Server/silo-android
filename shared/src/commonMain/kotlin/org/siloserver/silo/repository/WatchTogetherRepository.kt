@@ -18,7 +18,9 @@ import org.siloserver.silo.network.RoomRealtimeEvent
 import org.siloserver.silo.network.WatchTogetherRealtimeClient
 import org.siloserver.silo.network.api.WatchTogetherApi
 import org.siloserver.silo.util.parseRfc3339ToEpochMillis
+import org.siloserver.silo.watchtogether.RoomDeliveryEcho
 import org.siloserver.silo.watchtogether.RoomDeliveryLatch
+import org.siloserver.silo.watchtogether.WatchTogetherEntryGateway
 import org.siloserver.silo.watchtogether.RoomSessionRepository
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
@@ -97,7 +99,7 @@ class WatchTogetherRepository(
     private val realtimeFactory: () -> WatchTogetherRealtimeClient? = { null },
     private val monotonicNowMs: () -> Long = { MONOTONIC_ORIGIN.elapsedNow().inWholeMilliseconds },
     private val authScopeProvider: suspend () -> AuthScopeSnapshot? = { null },
-) : RoomSessionRepository {
+) : RoomSessionRepository, WatchTogetherEntryGateway {
     /** Successful delivery state follows the process connection, not a UI controller. */
     val roomDeliveryLatch = RoomDeliveryLatch()
 
@@ -119,9 +121,11 @@ class WatchTogetherRepository(
     private var activeConnectionOwner: Long? = null
     private val _roomSnapshot = MutableStateFlow<RoomSnapshot?>(null)
     private val _suggestions = MutableStateFlow<List<Suggestion>>(emptyList())
+    private val _roomDeliveryEcho = MutableStateFlow<RoomDeliveryEcho?>(null)
 
     override val roomSnapshot: StateFlow<RoomSnapshot?> = _roomSnapshot.asStateFlow()
     val suggestions: StateFlow<List<Suggestion>> = _suggestions.asStateFlow()
+    val roomDeliveryEcho: StateFlow<RoomDeliveryEcho?> = _roomDeliveryEcho.asStateFlow()
     private val _connectionState = MutableStateFlow(WatchTogetherConnectionState())
     val connectionState: StateFlow<WatchTogetherConnectionState> = _connectionState.asStateFlow()
     @kotlin.concurrent.Volatile
@@ -192,7 +196,7 @@ class WatchTogetherRepository(
 
     // ---- REST: create / join (store the room token) ---------------------------
 
-    suspend fun createRoom(request: CreateRoomRequest): ApiResult<RoomResponse> {
+    override suspend fun createRoom(request: CreateRoomRequest): ApiResult<RoomResponse> {
         val scope = authScopeProvider() ?: return missingAuthScope()
         val requestGeneration = beginRoomRequest()
         val r = api.createRoom(request, scope)
@@ -200,7 +204,7 @@ class WatchTogetherRepository(
         return if (r is ApiResult.Success) installRoomResponse(r.data, scope, requestGeneration) else r
     }
 
-    suspend fun joinRoom(request: JoinRoomRequest): ApiResult<RoomResponse> {
+    override suspend fun joinRoom(request: JoinRoomRequest): ApiResult<RoomResponse> {
         val scope = authScopeProvider() ?: return missingAuthScope()
         val requestGeneration = beginRoomRequest()
         val r = api.joinRoom(request, scope)
@@ -256,6 +260,7 @@ class WatchTogetherRepository(
             _suggestions.value = emptyList()
             _roomClosedReason.value = null
             _roomSnapshot.value = data.room
+            _roomDeliveryEcho.value = null
             _connectionState.value = WatchTogetherConnectionState(generation = installed.generation)
             realtimeConnectionId = null
             refreshTransportAuthorizationLocked()
@@ -265,7 +270,7 @@ class WatchTogetherRepository(
 
     // ---- REST: host management ------------------------------------------------
 
-    suspend fun setSelection(request: SetSelectionRequest): ApiResult<RoomResponse> {
+    override suspend fun setSelection(request: SetSelectionRequest): ApiResult<RoomResponse> {
         val lease = activeBinding() ?: return missingRoom()
         val r = api.setSelection(lease.roomId, lease.roomToken, request, lease.authScope)
         return publishRoomResponse(lease, r)
@@ -310,7 +315,7 @@ class WatchTogetherRepository(
         val published = stateMutex.withLock {
             if (!isCurrentLocked(lease)) return@withLock false
             votedIds.add(suggestionId)
-            applySuggestions(r.data.suggestions, fromBroadcast = false)
+            applySuggestions(r.data.suggestions, fromBroadcast = true)
             true
         }
         return if (published) r else obsoleteRoomRequest()
@@ -323,7 +328,7 @@ class WatchTogetherRepository(
         val published = stateMutex.withLock {
             if (!isCurrentLocked(lease)) return@withLock false
             votedIds.remove(suggestionId)
-            applySuggestions(r.data.suggestions, fromBroadcast = false)
+            applySuggestions(r.data.suggestions, fromBroadcast = true)
             true
         }
         return if (published) r else obsoleteRoomRequest()
@@ -374,6 +379,7 @@ class WatchTogetherRepository(
         val published = stateMutex.withLock {
             if (!isCurrentLocked(lease)) return@withLock false
             _roomSnapshot.value = result.data.room
+            _roomDeliveryEcho.value = null
             refreshTransportAuthorizationLocked()
             true
         }
@@ -384,12 +390,14 @@ class WatchTogetherRepository(
         lease: RoomBinding,
         result: ApiResult<SuggestionsResponse>,
         expectedRoomRequest: Long? = null,
+        expectedConnectionOwner: Long? = null,
     ): ApiResult<SuggestionsResponse> {
         if (result !is ApiResult.Success) return result
         val published = stateMutex.withLock {
             if (
                 !isCurrentLocked(lease) ||
-                (expectedRoomRequest != null && latestRoomRequest != expectedRoomRequest)
+                (expectedRoomRequest != null && latestRoomRequest != expectedRoomRequest) ||
+                (expectedConnectionOwner != null && activeConnectionOwner != expectedConnectionOwner)
             ) {
                 return@withLock false
             }
@@ -413,12 +421,14 @@ class WatchTogetherRepository(
 
     /**
      * Publish suggestions, re-merging `voted_by_me` from the local [votedIds]
-     * set. For REST results we also seed [votedIds] from authoritative
-     * voted_by_me; broadcasts force false, so we only OR the local set in.
+     * set. Authoritative REST lists replace [votedIds]; broadcasts and
+     * optimistic vote mutation responses preserve the local set because their
+     * per-recipient vote flags are not authoritative.
      */
     private fun applySuggestions(list: List<Suggestion>, fromBroadcast: Boolean) {
         if (!fromBroadcast) {
-            list.forEach { if (it.votedByMe) votedIds.add(it.id) }
+            votedIds.clear()
+            votedIds.addAll(list.filter { it.votedByMe }.map { it.id })
         }
         _suggestions.value = list.map { s ->
             if (s.id in votedIds) s.copy(votedByMe = true) else s
@@ -558,6 +568,7 @@ class WatchTogetherRepository(
                                 terminalGeneration = lease.generation
                                 _roomClosedReason.value = event.reason ?: "room_closed"
                                 _roomSnapshot.value = null
+                                _roomDeliveryEcho.value = null
                                 refreshTransportAuthorizationLocked()
                             }
                         }
@@ -568,6 +579,15 @@ class WatchTogetherRepository(
                     } else if (event is RoomRealtimeEvent.Opened) {
                         openedAtMs = monotonicNowMs()
                         markOpened(lease, owner, client.currentConnectionId())
+                        publishSuggestionsResponse(
+                            lease = lease,
+                            result = api.listSuggestions(
+                                lease.roomId,
+                                lease.roomToken,
+                                lease.authScope,
+                            ),
+                            expectedConnectionOwner = owner,
+                        )
                     } else if (
                         event is RoomRealtimeEvent.SnapshotEvent &&
                         event.room.roomId == lease.roomId
@@ -607,6 +627,7 @@ class WatchTogetherRepository(
                         terminalGeneration = lease.generation
                         _roomClosedReason.value = "connection_lost"
                         _roomSnapshot.value = null
+                        _roomDeliveryEcho.value = null
                         refreshTransportAuthorizationLocked()
                     }
                 }
@@ -694,6 +715,16 @@ class WatchTogetherRepository(
                 is RoomRealtimeEvent.SnapshotEvent ->
                     if (event.room.roomId == lease.roomId) {
                         _roomSnapshot.value = event.room
+                        _roomDeliveryEcho.value = event.room.attachedSessionId
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { sessionId ->
+                                val connection = _connectionState.value
+                                RoomDeliveryEcho(
+                                    connectionGeneration = connection.generation,
+                                    connectionEpoch = connection.epoch,
+                                    playbackSessionId = sessionId,
+                                )
+                            }
                         refreshTransportAuthorizationLocked()
                     }
                 is RoomRealtimeEvent.SuggestionsEvent -> applySuggestions(event.suggestions, fromBroadcast = true)
@@ -729,6 +760,7 @@ class WatchTogetherRepository(
             binding = null
             terminalGeneration = null
             _roomSnapshot.value = null
+            _roomDeliveryEcho.value = null
             _suggestions.value = emptyList()
             _roomClosedReason.value = null
             votedIds.clear()

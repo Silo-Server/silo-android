@@ -36,8 +36,10 @@ import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.android.ui.navigation.contentDeepLinkRouteOrNull
 import org.siloserver.silo.android.ui.navigation.deviceLoginPairRouteOrNull
 import org.siloserver.silo.android.ui.navigation.hasLocalDownloadsForScope
+import org.siloserver.silo.android.ui.navigation.inviteClaimRouteOrNull
 import org.siloserver.silo.android.ui.navigation.notificationNavigationRouteOrNull
 import org.siloserver.silo.android.ui.navigation.shouldStartOnDownloads
+import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourLocalCache
 import org.siloserver.silo.android.ui.theme.SiloTheme
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
@@ -164,6 +166,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val route = deviceLoginPairRouteOrNull(intent.dataString)
+            ?: inviteClaimRouteOrNull(intent.dataString)
             ?: notificationRouteOrNull(intent)
             ?: contentDeepLinkRouteOrNull(intent.dataString)
         route?.let { incomingExternalRoutes.tryEmit(it) }
@@ -285,6 +288,16 @@ class MainActivity : ComponentActivity() {
             return Route.Downloads.route
         }
 
+        // A warm start would otherwise bypass the tour gate entirely (e.g.
+        // process death mid-tour). Once completion is confirmed the local
+        // cache short-circuits inside the gate, so this costs nothing on
+        // launches after the first; the gate itself fails open to Home on
+        // any error, so it can't strand an offline start.
+        val tourCache = get<OnboardingTourLocalCache>(OnboardingTourLocalCache::class.java)
+        if (!tourCache.isDone(activeEntry.id, profileId)) {
+            return Route.OnboardingTour.route
+        }
+
         return Route.Home.route
     }
 
@@ -311,6 +324,9 @@ class MainActivity : ComponentActivity() {
                 personalDataRepository = get(PersonalDataRepository::class.java),
                 sectionRepository = get(SectionRepository::class.java),
                 homeCache = get(HomeCachePort::class.java),
+                identityTransitions = get<org.siloserver.silo.network.IdentityTransitionBarrier>(
+                    org.siloserver.silo.network.IdentityTransitionBarrier::class.java,
+                ),
                 serverUrl = get<ServerRegistry>(ServerRegistry::class.java).activeEntry.value?.url,
                 artworkPlan = StartupArtworkPlan.phone(),
             )

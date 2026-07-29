@@ -4,8 +4,11 @@ import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.entity.HomeCacheEntity
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
+import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.repository.port.HomeCachePort
 import org.siloserver.silo.repository.port.HomeCacheSnapshot
+import org.siloserver.silo.repository.port.HomeCacheWriteLease
 import kotlinx.serialization.json.Json
 
 /**
@@ -19,6 +22,7 @@ import kotlinx.serialization.json.Json
 class RoomHomeCacheRepository(
     db: SiloDatabase,
     private val snapshotProvider: suspend () -> AuthScopeSnapshot?,
+    private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     private val now: () -> Long = { System.currentTimeMillis() },
 ) : HomeCachePort {
 
@@ -26,8 +30,20 @@ class RoomHomeCacheRepository(
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun cacheHome(sections: List<ResolvedSection>) {
+        cacheHome(
+            sections = sections,
+            lease = HomeCacheWriteLease(identityTransitions.generation.value),
+        )
+    }
+
+    override suspend fun cacheHome(
+        sections: List<ResolvedSection>,
+        lease: HomeCacheWriteLease,
+    ) {
+        if (lease.identityGeneration != identityTransitions.generation.value) return
         val snapshot = snapshotProvider() ?: return
         val profileId = snapshot.profileId ?: return
+        if (lease.identityGeneration != identityTransitions.generation.value) return
         val sectionsJson = json.encodeToString(sections)
         // A Room row must fit SQLite's ~2MB CursorWindow or the *read* throws
         // SQLiteBlobTooBigException. Large reorganized home layouts can exceed

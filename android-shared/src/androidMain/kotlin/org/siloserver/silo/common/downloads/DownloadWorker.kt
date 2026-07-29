@@ -20,6 +20,7 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import org.siloserver.silo.model.download.DownloadStatus
+import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.repository.DownloadsRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeoutConfig
@@ -40,6 +41,16 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.URLDecoder
 import java.util.concurrent.TimeUnit
+
+internal fun DownloadRecord.withWorkerStatus(
+    status: String,
+    bytesSent: Long? = null,
+    fileSize: Long? = null,
+): DownloadRecord = copy(
+    status = status,
+    bytesSent = bytesSent ?: this.bytesSent,
+    fileSize = fileSize ?: this.fileSize,
+)
 
 /**
  * Streams `GET /api/v1/downloads/{id}/file` to the local
@@ -338,7 +349,13 @@ class DownloadWorker(
         // Best-effort: publish failed state into the repo + sidecar.
         val record = if (uiPushAllowed(serverId, profileId)) repository.recordForFile(fileId) else null
         if (record != null) {
-            repository.upsertLocal(record.copy(status = DownloadStatus.Failed.wire))
+            repository.upsertLocal(
+                record.withWorkerStatus(
+                    status = DownloadStatus.Failed.wire,
+                    bytesSent = 0,
+                    fileSize = 0,
+                ),
+            )
         }
         updateSidecarStatus(
             serverId, profileId, fileId,
@@ -361,8 +378,8 @@ class DownloadWorker(
         profileId: String,
         fileId: Int,
         status: String,
-        bytesSent: Long,
-        fileSize: Long,
+        bytesSent: Long? = null,
+        fileSize: Long? = null,
         localUri: String? = null,
         fileName: String? = null,
         // null = keep existing; "" = clear (download finished/failed); else set.
@@ -373,10 +390,10 @@ class DownloadWorker(
             metadataStore.writeSidecar(
                 serverId, profileId,
                 existing.copy(
-                    record = existing.record.copy(
+                    record = existing.record.withWorkerStatus(
                         status = status,
-                        bytesSent = if (bytesSent > 0) bytesSent else existing.record.bytesSent,
-                        fileSize = if (fileSize > 0) fileSize else existing.record.fileSize,
+                        bytesSent = bytesSent,
+                        fileSize = fileSize,
                     ),
                     localUri = localUri ?: existing.localUri,
                     fileName = fileName?.takeIf { it.isNotBlank() } ?: existing.fileName,
@@ -406,8 +423,6 @@ class DownloadWorker(
         updateSidecarStatus(
             serverId, profileId, fileId,
             status = DownloadStatus.Downloading.wire,
-            bytesSent = 0,
-            fileSize = 0,
             localUri = localUri,
             resumeValidator = validator?.takeIf { it.isNotBlank() } ?: "",
         )

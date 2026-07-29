@@ -37,7 +37,7 @@ class TvWatchTogetherSurfaceSourceTest {
     fun aResolvedRoomReachesTheNavigationCallback() {
         assertTrue(itemDetailScreen.contains("onWatchTogether(room)"))
         assertTrue(itemDetailScreen.contains("watchTogetherViewModel.consumeResult()"))
-        assertTrue(appNavigation.contains("TvRoute.WatchTogetherLobby(roomId = snapshot.roomId).route"))
+        assertTrue(appNavigation.contains("tvWatchTogetherDestination(snapshot)"))
     }
 
     @Test

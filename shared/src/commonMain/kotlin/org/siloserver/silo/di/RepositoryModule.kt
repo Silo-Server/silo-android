@@ -6,6 +6,7 @@ import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.repository.AdminRepository
 import org.siloserver.silo.repository.AuthRepository
+import org.siloserver.silo.repository.OnboardingRepository
 import org.siloserver.silo.repository.CalendarRepository
 import org.siloserver.silo.repository.DeviceLoginRepository
 import org.siloserver.silo.repository.CatalogRepository
@@ -26,6 +27,7 @@ import org.siloserver.silo.repository.SettingsRepository
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.watchtogether.RoomSession
+import org.siloserver.silo.watchtogether.WatchTogetherEntryGateway
 import org.koin.dsl.module
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,8 +49,16 @@ val repositoryModule = module {
     // (commonMain tests, hypothetical iOS reuse). Both repos no-op the
     // multi-server side effects when the registry is null.
     single { AuthRepository(get(), get(), getOrNull(), getOrNull()) }
+    single { OnboardingRepository(get()) }
     single { DeviceLoginRepository(get()) }
-    single { CatalogRepository(get(), getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>() ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort) }
+    single {
+        CatalogRepository(
+            catalogApi = get(),
+            catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
+                ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
+            identityTransitions = get(),
+        )
+    }
     single { CalendarRepository(get()) }
     single { PlaybackRepository(get()) }
     // `getOrNull()` picks up the Room-backed ports when the Android platform
@@ -56,14 +66,24 @@ val repositoryModule = module {
     // back to the network-only no-op ports in commonMain tests / when unbound.
     single {
         PersonalDataRepository(
-            get(),
-            getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>() ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
-            getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>() ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
+            personalDataApi = get(),
+            userItemStatePort = getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>()
+                ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
+            catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
+                ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
+            identityTransitions = get(),
         )
     }
     single { ProfileRepository(get(), get(), getOrNull(), get(), get(), get()) }
     single { CollectionRepository(get()) }
-    single { SectionRepository(get(), getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>() ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort) }
+    single {
+        SectionRepository(
+            sectionApi = get(),
+            catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
+                ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
+            identityTransitions = get(),
+        )
+    }
     single { RecommendationRepository(get()) }
     single { RequestsRepository(get()) }
     single { RequestsFeatureStore(get()) }
@@ -114,6 +134,7 @@ val repositoryModule = module {
             },
         )
     }
+    single<WatchTogetherEntryGateway> { get<WatchTogetherRepository>() }
     // Eager so the identity-transition privacy gate is installed before any
     // profile/server/token mutation can occur. This process-lifetime scope,
     // rather than a screen scope, owns connection replacement and teardown.

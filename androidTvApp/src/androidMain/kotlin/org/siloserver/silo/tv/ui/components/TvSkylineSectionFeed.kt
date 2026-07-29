@@ -90,7 +90,7 @@ fun TvSkylineSectionFeed(
         if (it.isTvProgressRow()) TvRowStyle.Backdrop else TvRowStyle.Poster
     },
     cardActions: (ResolvedSection, SectionItem) -> TvMediaCardActions = { _, _ -> TvMediaCardActions() },
-    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
+    onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
 ) {
     val rows = remember(sections) { sections.filter { it.items.isNotEmpty() } }
     val tintState = rememberAmbientBackdropTintState()
@@ -99,109 +99,29 @@ fun TvSkylineSectionFeed(
     val catalogRepository: CatalogRepository = koinInject()
     val fetchDetail: suspend (String) -> ItemDetail? = remember(catalogRepository) {
         { contentId ->
-            (catalogRepository.getItemDetail(contentId) as? ApiResult.Success)?.data
+            (catalogRepository.getItemDetailForPrefetch(contentId) as? ApiResult.Success)?.data
         }
     }
     val marquee = rememberTvFocusMarqueeState(fetchDetail = fetchDetail)
     val initialMarqueeSeed = remember(rows) {
         rows.firstOrNull()?.let { section ->
             section.items.firstOrNull()?.let { item ->
-                TvSkylineMarqueeSeed(item = item, rowTitle = section.title)
+                TvSkylineMarqueeSeed(
+                    item = item,
+                    rowTitle = section.title,
+                    rowIdentity = section.id,
+                )
             }
         }
     }
 
-    LaunchedEffect(initialMarqueeSeed?.item?.contentId, initialMarqueeSeed?.rowTitle) {
+    LaunchedEffect(
+        initialMarqueeSeed?.item?.contentId,
+        initialMarqueeSeed?.rowTitle,
+        initialMarqueeSeed?.rowIdentity,
+    ) {
         val seed = initialMarqueeSeed ?: return@LaunchedEffect
-        if (marquee.content == null) {
-            marquee.seedInitialPreview(seed.item, seed.rowTitle)
-        }
-    }
-
-    // Warm the hero-sized backdrop/logo variants for the cards the user can
-    // reach first. This is intentionally opportunistic: focus transitions
-    // never wait on the network, but the shared Crossfade usually receives a
-    // memory-cached image instead of a late ThumbHash replacement.
-    LaunchedEffect(rows) {
-        val requests = rows
-            .take(HeroPreloadRowCount)
-            .flatMap { it.items.take(HeroPreloadItemsPerRow) }
-            .flatMap { item ->
-                buildList {
-                    item.backdropUrl?.takeIf { it.isNotBlank() }?.let { url ->
-                        add(
-                            ImageRequest.Builder(context)
-                                .data(url)
-                                .size(HeroBackdropPreloadWidthPx, HeroBackdropPreloadHeightPx)
-                                .build(),
-                        )
-                    }
-                    item.logoUrl?.takeIf { it.isNotBlank() }?.let { url ->
-                        add(
-                            ImageRequest.Builder(context)
-                                .data(url)
-                                .size(HeroLogoPreloadWidthPx, HeroLogoPreloadHeightPx)
-                                .build(),
-                        )
-                    }
-                }
-            }
-            .distinctBy { it.data.toString() }
-
-        val loader = SingletonImageLoader.get(context)
-        coroutineScope {
-            requests.map { request ->
-                async { runCatching { loader.execute(request) } }
-            }.awaitAll()
-        }
-    }
-
-    // Section payloads intentionally stay lightweight and omit the aired/cast
-    // line. Warm detail for the same near-viewport cards whose hero artwork is
-    // preloaded so normal D-pad navigation presents a complete marquee on its
-    // first rested frame. The shared request guard prevents this from racing or
-    // duplicating the focus-driven fetch for the currently displayed card.
-    LaunchedEffect(rows, fetchDetail) {
-        val loader = SingletonImageLoader.get(context)
-        rows
-            .take(HeroPreloadRowCount)
-            .forEach { row ->
-                coroutineScope {
-                    row.items
-                        .take(HeroPreloadItemsPerRow)
-                        .map { item ->
-                            async {
-                                val contentId = item.contentId
-                                if (!marquee.beginEnrichmentRequest(contentId)) return@async
-                                try {
-                                    val detail = runCatching { fetchDetail(contentId) }.getOrNull()
-                                        ?: return@async
-                                    val enrichment = TvMarqueeEnrichment.from(detail)
-                                    marquee.applyEnrichment(contentId, enrichment)
-
-                                    // Warm a possible episode-series art upgrade
-                                    // at the exact hero decode size as well.
-                                    enrichment.backdropUrl?.takeIf { it.isNotBlank() }?.let { url ->
-                                        runCatching {
-                                            loader.execute(
-                                                ImageRequest.Builder(context)
-                                                    .data(url)
-                                                    .size(
-                                                        HeroBackdropPreloadWidthPx,
-                                                        HeroBackdropPreloadHeightPx,
-                                                    )
-                                                    .build(),
-                                            )
-                                        }
-                                    }
-                                } finally {
-                                    marquee.finishEnrichmentRequest(contentId)
-                                }
-                            }
-                        }
-                        .awaitAll()
-                }
-            }
+        marquee.seedInitialPreview(seed.item, seed.rowTitle, seed.rowIdentity)
     }
 
     val rowBandState = rememberLazyListState()
@@ -251,8 +171,9 @@ fun TvSkylineSectionFeed(
     val rowBandScope = rememberCoroutineScope()
     // Skyline matches tvOS' view-aligned row stack: vertical motion is owned by
     // this feed, while each row's LazyRow still handles horizontal card scroll.
-    val onItemFocused: (SectionItem, String, Int, Int) -> Unit = { item, rowTitle, rowIndex, itemIndex ->
-        marquee.preview(item, rowTitle)
+    val onItemFocused: (SectionItem, String, String, Int, Int) -> Unit =
+        { item, rowTitle, rowIdentity, rowIndex, itemIndex ->
+        marquee.preview(item, rowTitle, rowIdentity)
         focusedRowIndex = rowIndex
         focusedItemIndex = itemIndex
         focusedContentId = item.contentId
@@ -269,17 +190,26 @@ fun TvSkylineSectionFeed(
         detailReturnPending = true
     }
 
-    // Keep the two cards immediately before and after focus hot. Because this
-    // window is established while the current card is focused, the next two
-    // D-pad moves in either direction already have logo/backdrop bytes and
-    // aired/cast enrichment in cache before their focus events arrive.
-    LaunchedEffect(rows, focusedRowIndex, focusedItemIndex, fetchDetail) {
-        val row = rows.getOrNull(focusedRowIndex) ?: return@LaunchedEffect
-        if (focusedItemIndex !in row.items.indices) return@LaunchedEffect
-        val window = ((focusedItemIndex - HeroFocusPrefetchRadius)..
-            (focusedItemIndex + HeroFocusPrefetchRadius))
-            .filter { it in row.items.indices && it != focusedItemIndex }
-            .map(row.items::get)
+    // Keep a small window around RESTED focus hot. A raw D-pad move cancels the
+    // previous job immediately, but the new identity starts no speculative
+    // work until the marquee's focus-rest transaction commits it.
+    val settledFocus = settledFocusIdentity(
+        rawRowIndex = focusedRowIndex,
+        rawFocusedContentId = focusedContentId,
+        rawFocusedMarqueeId = rows.getOrNull(focusedRowIndex)
+            ?.let { row -> focusedContentId?.let { contentId -> "${row.id}#$contentId" } },
+        settledMarqueeId = marquee.content?.id,
+    )
+    LaunchedEffect(rows, settledFocus, fetchDetail) {
+        val focus = settledFocus ?: return@LaunchedEffect
+        val row = rows.getOrNull(focus.rowIndex) ?: return@LaunchedEffect
+        val window = settledPrefetchItems(
+            items = row.items,
+            rawFocusedContentId = focus.contentId,
+            settledContentId = focus.contentId,
+            radius = HeroFocusPrefetchRadius,
+        )
+        if (window.isEmpty()) return@LaunchedEffect
         val loader = SingletonImageLoader.get(context)
 
         coroutineScope {
@@ -346,26 +276,35 @@ fun TvSkylineSectionFeed(
         }
     }
 
-    val currentContentUpFallback = rememberUpdatedState<() -> Boolean> {
+    var rowRelocationInFlight by remember { mutableStateOf(false) }
+    val currentContentUpFallback = rememberUpdatedState<(Boolean) -> Boolean> { isRepeat ->
         val currentRow = focusedRowIndex
-        when {
-            currentRow <= 0 || currentRow !in rows.indices ->
-                // Top row (or unfocused): report not-handled so the shell hands
-                // focus to the menu bar.
-                false
-            // Previous row is already laid out: move immediately so the returned
-            // value is HONEST — the old code launched the move asynchronously and
-            // returned `true` before it ran, so a failed move stranded focus
-            // (neither moved up nor escalated to the menu).
-            focusManager.moveFocus(FocusDirection.Up) -> true
-            else -> {
+        when (
+            tvSkylineUpAction(
+                currentRow = currentRow,
+                rowCount = rows.size,
+                isRepeat = isRepeat,
+                relocationInFlight = rowRelocationInFlight,
+            )
+        ) {
+            TvSkylineUpAction.EnterMenu -> false
+            TvSkylineUpAction.StayInContent -> true
+            TvSkylineUpAction.TryPreviousRow -> {
+                if (focusManager.moveFocus(FocusDirection.Up)) {
+                    return@rememberUpdatedState true
+                }
                 // Previous row is scrolled off; bring it on-screen first, then
-                // move once the scroll settles (animateScrollToItem suspends until
-                // it does, so the row is laid out before moveFocus).
+                // move once the scroll settles. While this job owns relocation,
+                // key repeats are consumed instead of launching competing jobs.
+                rowRelocationInFlight = true
                 rowBandScope.launch {
-                    rowBandState.animateScrollToItem(currentRow - 1)
-                    withFrameNanos { }
-                    focusManager.moveFocus(FocusDirection.Up)
+                    try {
+                        rowBandState.animateScrollToItem(currentRow - 1)
+                        withFrameNanos { }
+                        focusManager.moveFocus(FocusDirection.Up)
+                    } finally {
+                        rowRelocationInFlight = false
+                    }
                 }
                 true
             }
@@ -374,8 +313,8 @@ fun TvSkylineSectionFeed(
 
     // Stable per-screen registration so the shell can identify THIS feed's
     // ownership of the shared up-fallback slot across sibling (tab) swaps.
-    val contentUpFallbackRegistration: () -> Boolean =
-        remember { { currentContentUpFallback.value() } }
+    val contentUpFallbackRegistration: (Boolean) -> Boolean =
+        remember { { isRepeat -> currentContentUpFallback.value(isRepeat) } }
 
     DisposableEffect(onContentUpFallbackChanged, contentUpFallbackRegistration) {
         onContentUpFallbackChanged?.invoke(contentUpFallbackRegistration)
@@ -695,7 +634,7 @@ fun TvSkylineSectionFeed(
                             restoreFocusRequester = detailReturnItemFocusRequester
                                 .takeIf { isReturnRow },
                             onItemFocusedAtIndex = { item, itemIndex ->
-                                onItemFocused(item, section.title, rowIndex, itemIndex)
+                                onItemFocused(item, section.title, section.id, rowIndex, itemIndex)
                             },
                             cardActions = { item -> cardActions(section, item) },
                         )
@@ -718,6 +657,7 @@ fun ResolvedSection.isTvProgressRow(): Boolean {
 private data class TvSkylineMarqueeSeed(
     val item: SectionItem,
     val rowTitle: String,
+    val rowIdentity: String,
 )
 
 // 0.64 × 1920 by 0.70 × 1080, and the 440×100dp logo cap at 2× density.
@@ -725,8 +665,6 @@ private const val HeroBackdropPreloadWidthPx = 1229
 private const val HeroBackdropPreloadHeightPx = 756
 private const val HeroLogoPreloadWidthPx = 880
 private const val HeroLogoPreloadHeightPx = 200
-private const val HeroPreloadRowCount = 2
-private const val HeroPreloadItemsPerRow = 8
 private const val HeroFocusPrefetchRadius = 2
 
 /** tvOS MediaRow cardSpacing 40pt maps to 20dp. */

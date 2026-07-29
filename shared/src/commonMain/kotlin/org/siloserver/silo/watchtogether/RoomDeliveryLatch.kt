@@ -16,6 +16,12 @@ data class RoomDeliveryKey(
     val playbackSessionId: String,
 )
 
+data class RoomDeliveryEcho(
+    val connectionGeneration: Long,
+    val connectionEpoch: Long,
+    val playbackSessionId: String,
+)
+
 /**
  * Successful-delivery latches for one player controller.
  *
@@ -44,6 +50,18 @@ class RoomDeliveryLatch {
     fun needsAttach(key: RoomDeliveryKey): Boolean = attached != key
 
     fun isAttached(key: RoomDeliveryKey?): Boolean = key != null && attached == key
+
+    /**
+     * Session-scoped traffic is safe only after the attach frame was delivered
+     * and the server echoed that exact session in a room snapshot.
+     */
+    fun isServerAttached(key: RoomDeliveryKey?, echo: RoomDeliveryEcho?): Boolean =
+        key != null &&
+            isAttached(key) &&
+            echo != null &&
+            echo.connectionGeneration == key.connectionGeneration &&
+            echo.connectionEpoch == key.connectionEpoch &&
+            echo.playbackSessionId == key.playbackSessionId
 
     fun recordAttach(key: RoomDeliveryKey, delivered: Boolean) {
         if (delivered) attached = key

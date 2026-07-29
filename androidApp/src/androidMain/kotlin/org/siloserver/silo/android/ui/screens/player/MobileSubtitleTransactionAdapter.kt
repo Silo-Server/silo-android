@@ -202,6 +202,7 @@ internal class MobileSubtitleTransactionAdapter(
     private var pendingLocalRestore: PendingLocalRestore? = null
     private var localMountGeneration = 0L
     private var localMountTimeout: Job? = null
+    private var lastSettledLocalMountMissSnapshotKey: String? = null
     private val queuedMutations = mutableListOf<SubtitleTransitionEvent>()
     private var commitInFlight = false
     private var resetDuringCommit = false
@@ -477,7 +478,7 @@ internal class MobileSubtitleTransactionAdapter(
                     publish()
                     persist(transition.committed, pendingSelection.context)
                 }
-            } else if (settled && !snapshotKey.isNullOrBlank()) {
+            } else if (isStableLocalMountMiss(snapshotKey, settled)) {
                 failLocalMount(pendingSelection.generation)
             }
             return
@@ -490,9 +491,16 @@ internal class MobileSubtitleTransactionAdapter(
             failureMessage = null
             publish()
             persistence?.let { persist(it.committed, it.context) }
-        } else if (settled && !snapshotKey.isNullOrBlank()) {
+        } else if (isStableLocalMountMiss(snapshotKey, settled)) {
             failLocalMount(pendingRestore.generation)
         }
+    }
+
+    private fun isStableLocalMountMiss(snapshotKey: String?, settled: Boolean): Boolean {
+        if (!settled || snapshotKey.isNullOrBlank()) return false
+        val stable = snapshotKey == lastSettledLocalMountMissSnapshotKey
+        lastSettledLocalMountMissSnapshotKey = snapshotKey
+        return stable
     }
 
     private fun mutate(event: SubtitleTransitionEvent, explicit: Boolean) {
@@ -995,6 +1003,7 @@ internal class MobileSubtitleTransactionAdapter(
         localMountGeneration += 1
         pendingLocalSelection = null
         pendingLocalRestore = null
+        lastSettledLocalMountMissSnapshotKey = null
         localMountTimeout?.cancel()
         localMountTimeout = null
     }

@@ -11,8 +11,11 @@ import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.catalog.SeasonsResponse
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
+import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.repository.port.CatalogCachePort
+import org.siloserver.silo.repository.port.CatalogCacheWriteLease
 import org.siloserver.silo.repository.port.NoOpCatalogCachePort
 import org.siloserver.silo.repository.port.canServeCache
 
@@ -20,6 +23,7 @@ class CatalogRepository(
     private val catalogApi: CatalogApi,
     /** Offline read cache for a library's default first page (Track B). No-op by default. */
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
+    private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
 ) {
     /** Browse the catalog with optional filters, sorting, and pagination. */
     suspend fun browse(
@@ -40,6 +44,7 @@ class CatalogRepository(
         queryGroups: List<CatalogQueryGroup> = emptyList(),
         match: String? = null,
     ): ApiResult<CatalogResponse> {
+        val requestIdentityGeneration = identityTransitions.generation.value
         val result = catalogApi.getCatalog(
             source = source,
             query = query,
@@ -71,7 +76,9 @@ class CatalogRepository(
         } ?: return result
 
         if (result is ApiResult.Success) {
-            catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data)
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheDefaultLibraryPage(cacheableLibraryId, result.data, cacheWriteLease)
+            }
             return result
         }
         if (result.canServeCache()) {
@@ -109,9 +116,12 @@ class CatalogRepository(
 
     /** Fetches full metadata for a single catalog item (offline: last cached detail). */
     suspend fun getItemDetail(contentId: String): ApiResult<ItemDetail> {
+        val requestIdentityGeneration = identityTransitions.generation.value
         val result = catalogApi.getItemDetail(contentId)
         if (result is ApiResult.Success) {
-            catalogCache.cacheItemDetail(contentId, result.data)
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheItemDetail(contentId, result.data, cacheWriteLease)
+            }
             return result
         }
         if (result.canServeCache()) {
@@ -124,15 +134,27 @@ class CatalogRepository(
     suspend fun getCachedItemDetail(contentId: String): ItemDetail? =
         catalogCache.getCachedItemDetail(contentId)
 
+    /**
+     * Cache-first detail for speculative UI enrichment. Unlike a detail screen,
+     * prefetch must not re-download metadata that is already durable locally.
+     */
+    suspend fun getItemDetailForPrefetch(contentId: String): ApiResult<ItemDetail> {
+        catalogCache.getCachedItemDetail(contentId)?.let { return ApiResult.Success(it) }
+        return getItemDetail(contentId)
+    }
+
     /** Fetches playback-oriented detail (versions, user progress, intro/credits markers). */
     suspend fun getWatchDetail(contentId: String): ApiResult<WatchDetail> =
         catalogApi.getWatchDetail(contentId)
 
     /** Lists seasons for a series (offline: last cached seasons). */
     suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> {
+        val requestIdentityGeneration = identityTransitions.generation.value
         val result = catalogApi.getSeasons(seriesId)
         if (result is ApiResult.Success) {
-            catalogCache.cacheSeasons(seriesId, result.data)
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheSeasons(seriesId, result.data, cacheWriteLease)
+            }
             return result
         }
         if (result.canServeCache()) {
@@ -143,9 +165,12 @@ class CatalogRepository(
 
     /** Lists episodes for a specific season of a series (offline: last cached episodes). */
     suspend fun getEpisodes(seriesId: String, seasonNumber: Int): ApiResult<EpisodesResponse> {
+        val requestIdentityGeneration = identityTransitions.generation.value
         val result = catalogApi.getEpisodes(seriesId, seasonNumber)
         if (result is ApiResult.Success) {
-            catalogCache.cacheEpisodes(seriesId, seasonNumber, result.data)
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheEpisodes(seriesId, seasonNumber, result.data, cacheWriteLease)
+            }
             return result
         }
         if (result.canServeCache()) {
@@ -189,4 +214,13 @@ class CatalogRepository(
             limit = limit,
             snapshotAt = snapshotAt,
         )
+
+    private suspend fun writeIfIdentityUnchanged(
+        requestGeneration: Long,
+        write: suspend (CatalogCacheWriteLease) -> Unit,
+    ) {
+        if (requestGeneration == identityTransitions.generation.value) {
+            write(CatalogCacheWriteLease(requestGeneration))
+        }
+    }
 }

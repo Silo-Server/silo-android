@@ -54,7 +54,7 @@ fun TvHomeScreen(
     firstRowFocusRequester: FocusRequester? = null,
     firstRowContainerFocusRequester: FocusRequester? = null,
     shouldRefreshOnResume: () -> Boolean = { true },
-    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
+    onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     viewModel: HomeViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -169,7 +169,7 @@ private fun TvHomeContent(
     detailReturnCardFocusRequester: FocusRequester?,
     firstRowFocusRequester: FocusRequester?,
     firstRowContainerFocusRequester: FocusRequester?,
-    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)?,
+    onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)?,
     onSetWatched: (String, Boolean) -> Unit = { _, _ -> },
     onToggleFavorite: (String, Boolean) -> Unit = { _, _ -> },
     onToggleWatchlist: (String, Boolean) -> Unit = { _, _ -> },

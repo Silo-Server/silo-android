@@ -20,6 +20,7 @@ import org.siloserver.silo.common.pairing.RepositoryCompanionDeviceLoginApprover
 import org.siloserver.silo.common.pairing.TlsPskPairingClientTransport
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.AudioTrackManager
+import org.siloserver.silo.common.player.AndroidSubtitlePresentation
 import org.siloserver.silo.common.player.SiloPlayerFactory
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionManager
@@ -61,7 +62,9 @@ import org.siloserver.silo.android.ui.screens.people.PersonDetailViewModel
 import org.siloserver.silo.android.ui.screens.auth.LoginViewModel
 import org.siloserver.silo.android.ui.screens.auth.ServerSetupViewModel
 import org.siloserver.silo.android.ui.screens.auth.SetupViewModel
+import org.siloserver.silo.android.ui.screens.auth.InviteClaimViewModel
 import org.siloserver.silo.android.ui.screens.auth.SignupViewModel
+import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourViewModel
 import org.siloserver.silo.android.ui.screens.MainHeaderViewModel
 import org.siloserver.silo.viewmodel.DevicePairingViewModel
 import org.siloserver.silo.android.ui.screens.profiles.CreateProfileViewModel
@@ -119,6 +122,7 @@ val androidModule = module {
     // when the redefining module is loaded after the original — sharedModules()
     // is registered first in SiloApplication, so this wins.
     single<TokenManager> { EncryptedTokenManagerImpl(get(), get(), get()) }
+    single { org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourLocalCache(androidContext()) }
 
     // Offline-first Room store (Track B). Bound after sharedModules() so the
     // commonMain PersonalDataRepository's `getOrNull<UserItemStatePort>()` picks
@@ -144,6 +148,7 @@ val androidModule = module {
         org.siloserver.silo.common.data.repository.RoomHomeCacheRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            identityTransitions = get(),
         )
     }
     single<org.siloserver.silo.repository.port.CatalogCachePort> {
@@ -151,6 +156,7 @@ val androidModule = module {
         org.siloserver.silo.common.data.repository.RoomCatalogCacheRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            identityTransitions = get(),
         )
     }
     single<org.siloserver.silo.repository.port.DownloadDeletionPort> {
@@ -215,7 +221,12 @@ val androidModule = module {
     single { PushMessageHandler(presenter = get()) }
 
     // Player infrastructure
-    single { SubtitleManager(get()) }
+    single {
+        SubtitleManager(
+            libassBridge = get(),
+            presentation = AndroidSubtitlePresentation.Phone,
+        )
+    }
     single { AudioTrackManager() }
     single {
         VideoPlaybackBackendFactory(
@@ -336,7 +347,7 @@ val androidModule = module {
             castPlaybackPreparer = get(),
         )
     }
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get()) }
     viewModel { MainHeaderViewModel(get()) }
     viewModel {
         LibrariesViewModel(
@@ -411,6 +422,8 @@ val androidModule = module {
     viewModel { LoginViewModel(get()) }
     viewModel { SetupViewModel(get()) }
     viewModel { SignupViewModel(get()) }
+    viewModel { InviteClaimViewModel(get(), get()) }
+    viewModel { OnboardingTourViewModel(get(), get(), get(), get(), get()) }
     viewModel { ProfileSelectionViewModel(get()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
@@ -443,6 +456,7 @@ val androidModule = module {
         org.siloserver.silo.common.player.AudiobookPlayerViewModel(
             catalogRepository = get(),
             playbackSessionManager = get(),
+            playbackSessionLifecycle = get(),
             capabilityDetector = get(),
             bookmarksStore = get(),
             userItemStatePort = get(),

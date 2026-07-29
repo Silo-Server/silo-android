@@ -78,6 +78,73 @@ class RoomDeliveryLatchTest {
     }
 
     @Test
+    fun `session traffic waits for both attach delivery and the server echo`() {
+        val latch = RoomDeliveryLatch()
+        val key = assertNotNull(latch.keyOrNull(open1, "session-a"))
+
+        assertFalse(latch.isServerAttached(key, echo = null))
+        latch.recordAttach(key, delivered = true)
+        assertFalse(latch.isServerAttached(key, echo = null))
+        assertFalse(
+            latch.isServerAttached(
+                key,
+                RoomDeliveryEcho(7, 1, "session-b"),
+            ),
+        )
+        assertTrue(
+            latch.isServerAttached(
+                key,
+                RoomDeliveryEcho(7, 1, "session-a"),
+            ),
+        )
+
+        val replacementEpoch = assertNotNull(latch.keyOrNull(open2, "session-a"))
+        assertFalse(
+            latch.isServerAttached(
+                replacementEpoch,
+                RoomDeliveryEcho(7, 1, "session-a"),
+            ),
+        )
+    }
+
+    @Test
+    fun `server attach rejects nullable keys and stale echoes`() {
+        val latch = RoomDeliveryLatch()
+        val key = assertNotNull(latch.keyOrNull(open1, "session-a"))
+        val matchingEcho = RoomDeliveryEcho(7, 1, "session-a")
+        latch.recordAttach(key, delivered = true)
+
+        assertFalse(latch.isServerAttached(key = null, echo = matchingEcho))
+        assertFalse(latch.isServerAttached(key = key, echo = null))
+        assertFalse(
+            latch.isServerAttached(
+                key = key,
+                echo = RoomDeliveryEcho(7, 2, "session-a"),
+            ),
+        )
+    }
+
+    @Test
+    fun `stale prior epoch echo cannot authorize a newly delivered reconnect attach`() {
+        val latch = RoomDeliveryLatch()
+        val firstEpoch = assertNotNull(latch.keyOrNull(open1, "session-a"))
+        latch.recordAttach(firstEpoch, delivered = true)
+        val firstEcho = RoomDeliveryEcho(7, 1, "session-a")
+        assertTrue(latch.isServerAttached(firstEpoch, firstEcho))
+
+        val replacementEpoch = assertNotNull(latch.keyOrNull(open2, "session-a"))
+        latch.recordAttach(replacementEpoch, delivered = true)
+
+        assertFalse(latch.isServerAttached(replacementEpoch, firstEcho))
+        assertTrue(
+            latch.isServerAttached(
+                replacementEpoch,
+                RoomDeliveryEcho(7, 2, "session-a"),
+            ),
+        )
+    }
+
+    @Test
     fun `delayed command for session A cannot mutate replacement session B`() {
         val command = TransportCommand(
             commandId = "cmd-1",

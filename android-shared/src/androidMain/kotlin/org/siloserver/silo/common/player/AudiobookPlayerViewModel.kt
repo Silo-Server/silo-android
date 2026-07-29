@@ -34,7 +34,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.random.Random
@@ -81,6 +80,7 @@ data class AudiobookPlayerUiState(
 class AudiobookPlayerViewModel(
     private val catalogRepository: CatalogRepository,
     private val playbackSessionManager: PlaybackSessionManager,
+    private val playbackSessionLifecycle: PlaybackSessionLifecycle,
     private val capabilityDetector: PlaybackCapabilityDetector,
     private val bookmarksStore: AudiobookBookmarksStore,
     // Track B: durable position via the unified outbox (replaces AudiobookPositionStore
@@ -1274,17 +1274,16 @@ class AudiobookPlayerViewModel(
         sleepTimerJob?.cancel()
         positionSaveJob?.cancel()
         val state = _uiState.value
-        state.sessionId?.let { sessionId ->
-            runCatching {
-                runBlocking(Dispatchers.IO) {
-                    // SINK 1: report the retiring session in part-local space.
-                    reportAndStopSession(
-                        sessionId = sessionId,
-                        positionSeconds = sessionLocalPosition(state),
-                        isPaused = true,
-                    )
-                }
-            }
+        val sessionId = state.sessionId
+        if (sessionId != null) {
+            val positionSeconds = sessionLocalPosition(state)
+            val isPaused = true
+            // SINK 1: report the retiring session in part-local space.
+            playbackSessionLifecycle.reportAndStopExternalSessionAsync(
+                sessionId = sessionId,
+                positionSeconds = positionSeconds,
+                isPaused = isPaused,
+            )
         }
         super.onCleared()
     }

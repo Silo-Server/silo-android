@@ -91,6 +91,7 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.audiobook.AudioPlaybackTrack
 import org.siloserver.silo.audiobook.AudiobookTimeline
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
+import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.model.audiobook.AudiobookNarration
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
@@ -101,7 +102,6 @@ import org.siloserver.silo.model.ebook.MediaRelatedItem
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
-import org.siloserver.silo.model.watchtogether.RoomSelectionMode
 import org.siloserver.silo.tv.ui.components.TvDialogOption
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvHeroActionPill
@@ -445,7 +445,7 @@ private fun TvDetailContent(
                                 preferredQuality = state.preferredQuality,
                                 selectedFileId = heroSelectedFileId,
                             ),
-                            starringText = TvDetailMetadata.starringText(detail),
+                            directorText = movieDirectorCredit(detail),
                             translation = translationSlot,
                             actions = {
                                 HeroActionRow(
@@ -1086,13 +1086,7 @@ private fun HeroActionRow(
                 isBusy = watchTogetherState.isBusy,
                 error = watchTogetherState.error,
                 onHost = { watchTogetherViewModel.createRoom(playContentId, playFileId) },
-                onHostVote = {
-                    watchTogetherViewModel.createRoom(
-                        playContentId,
-                        playFileId,
-                        RoomSelectionMode.Vote,
-                    )
-                },
+                onHostVote = watchTogetherViewModel::createEmptyVoteRoom,
                 onJoin = {
                     watchTogetherViewModel.clearError()
                     joinCodeOpen = true

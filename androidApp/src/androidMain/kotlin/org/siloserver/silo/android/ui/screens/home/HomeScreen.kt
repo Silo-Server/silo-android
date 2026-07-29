@@ -93,6 +93,7 @@ fun HomeScreen(
     onRemoteDisconnectClick: () -> Unit,
     isRemoteControlActive: Boolean,
     onRequestsClick: (() -> Unit)?,
+    onWatchTogetherClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -241,6 +242,7 @@ fun HomeScreen(
             onRemoteDisconnectClick = onRemoteDisconnectClick,
             isRemoteControlActive = isRemoteControlActive,
             onRequestsClick = onRequestsClick,
+            onWatchTogetherClick = onWatchTogetherClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,
@@ -298,6 +300,7 @@ private fun HomeFloatingChrome(
     onRemoteDisconnectClick: () -> Unit,
     isRemoteControlActive: Boolean,
     onRequestsClick: (() -> Unit)?,
+    onWatchTogetherClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -399,6 +402,7 @@ private fun HomeFloatingChrome(
                 HomeProfileMenu(
                     activeProfile = activeProfile,
                     onRequestsClick = onRequestsClick,
+                    onWatchTogetherClick = onWatchTogetherClick,
                     onSettingsClick = onSettingsClick,
                     onSwitchProfileClick = onSwitchProfileClick,
                     onSwitchServerClick = onSwitchServerClick,
@@ -445,6 +449,7 @@ private fun HomeChromeButton(
 private fun HomeProfileMenu(
     activeProfile: Profile?,
     onRequestsClick: (() -> Unit)?,
+    onWatchTogetherClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -488,8 +493,17 @@ private fun HomeProfileMenu(
                         onRequestsClick()
                     },
                 )
-                HorizontalDivider()
             }
+            if (onWatchTogetherClick != null) {
+                DropdownMenuItem(
+                    text = { Text("Watch Together") },
+                    onClick = {
+                        menuExpanded = false
+                        onWatchTogetherClick()
+                    },
+                )
+            }
+            HorizontalDivider()
             DropdownMenuItem(
                 text = { Text("Settings") },
                 onClick = {

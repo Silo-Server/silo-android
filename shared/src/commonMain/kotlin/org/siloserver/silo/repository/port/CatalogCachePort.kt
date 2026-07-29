@@ -9,6 +9,12 @@ import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ApiResult
 
 /**
+ * Ownership captured before a cacheable network request starts. Identity-scoped
+ * cache implementations must reject the write when this generation is stale.
+ */
+data class CatalogCacheWriteLease(val identityGeneration: Long)
+
+/**
  * Offline read cache for catalog browse (Track B). Backs repository-level
  * cache-with-fallback in [org.siloserver.silo.repository.PersonalDataRepository]
  * (library list) and [org.siloserver.silo.repository.CatalogRepository] (a
@@ -22,24 +28,63 @@ import org.siloserver.silo.network.ApiResult
  */
 interface CatalogCachePort {
     suspend fun cacheLibraries(libraries: List<UserLibrary>) {}
+    suspend fun cacheLibraries(libraries: List<UserLibrary>, lease: CatalogCacheWriteLease) {
+        cacheLibraries(libraries)
+    }
     suspend fun getCachedLibraries(): List<UserLibrary>? = null
 
     /** Cache the default (unfiltered, first-page) browse for a library. */
     suspend fun cacheDefaultLibraryPage(libraryId: Int, response: CatalogResponse) {}
+    suspend fun cacheDefaultLibraryPage(
+        libraryId: Int,
+        response: CatalogResponse,
+        lease: CatalogCacheWriteLease,
+    ) {
+        cacheDefaultLibraryPage(libraryId, response)
+    }
     suspend fun getCachedDefaultLibraryPage(libraryId: Int): CatalogResponse? = null
 
     /** Cache a library's resolved "Recommended" sections (for the offline landing tab). */
     suspend fun cacheLibrarySections(libraryId: Int, sections: List<ResolvedSection>) {}
+    suspend fun cacheLibrarySections(
+        libraryId: Int,
+        sections: List<ResolvedSection>,
+        lease: CatalogCacheWriteLease,
+    ) {
+        cacheLibrarySections(libraryId, sections)
+    }
     suspend fun getCachedLibrarySections(libraryId: Int): List<ResolvedSection>? = null
 
     /** Cache an item's detail page (tap-a-title-offline). */
     suspend fun cacheItemDetail(contentId: String, detail: ItemDetail) {}
+    suspend fun cacheItemDetail(
+        contentId: String,
+        detail: ItemDetail,
+        lease: CatalogCacheWriteLease,
+    ) {
+        cacheItemDetail(contentId, detail)
+    }
     suspend fun getCachedItemDetail(contentId: String): ItemDetail? = null
 
     /** Cache a series' season list + a season's episode list (offline series detail). */
     suspend fun cacheSeasons(seriesId: String, response: SeasonsResponse) {}
+    suspend fun cacheSeasons(
+        seriesId: String,
+        response: SeasonsResponse,
+        lease: CatalogCacheWriteLease,
+    ) {
+        cacheSeasons(seriesId, response)
+    }
     suspend fun getCachedSeasons(seriesId: String): SeasonsResponse? = null
     suspend fun cacheEpisodes(seriesId: String, seasonNumber: Int, response: EpisodesResponse) {}
+    suspend fun cacheEpisodes(
+        seriesId: String,
+        seasonNumber: Int,
+        response: EpisodesResponse,
+        lease: CatalogCacheWriteLease,
+    ) {
+        cacheEpisodes(seriesId, seasonNumber, response)
+    }
     suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int): EpisodesResponse? = null
 }
 

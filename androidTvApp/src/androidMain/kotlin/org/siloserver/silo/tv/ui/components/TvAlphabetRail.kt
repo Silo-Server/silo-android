@@ -77,7 +77,7 @@ fun TvAlphabetRail(
      * the top menu is to register this fallback: on a letter it moves focus
      * up the rail; on "All" it swallows the move.
      */
-    onUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
+    onUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val letters = remember {
@@ -107,7 +107,7 @@ fun TvAlphabetRail(
     // old fresh-lambda + null pattern left a stale always-true fallback
     // registered forever, killing Up-to-menu-bar for the whole library.
     val railUpFallback = remember {
-        {
+        { _: Boolean ->
             if (!allEntryFocused) {
                 focusManager.moveFocus(FocusDirection.Up)
             }

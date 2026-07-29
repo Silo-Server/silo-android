@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.MediaCard
@@ -65,6 +66,7 @@ fun CatalogGrid(
     selectedNamePrefix: String? = null,
     onNamePrefixSelected: ((String?) -> Unit)? = null,
     viewDensity: CatalogViewDensity = CatalogViewDensity.Normal,
+    bottomContentInset: Dp = 0.dp,
 ) {
     val gridState = rememberLazyGridState()
     val cardWidth = viewDensity.minCardWidth
@@ -94,7 +96,7 @@ fun CatalogGrid(
                 start = 16.dp,
                 top = 8.dp,
                 end = if (onNamePrefixSelected != null) 56.dp else 16.dp,
-                bottom = 8.dp,
+                bottom = 8.dp + bottomContentInset,
             ),
             horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
             verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
@@ -142,7 +144,8 @@ fun CatalogGrid(
                 onNamePrefixSelected = onSelected,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(end = 6.dp),
+                    .padding(end = 6.dp)
+                    .padding(bottom = bottomContentInset),
             )
         }
     }

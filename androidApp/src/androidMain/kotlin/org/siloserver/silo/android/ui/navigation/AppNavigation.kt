@@ -40,7 +40,9 @@ import org.siloserver.silo.android.ui.screens.auth.LoginScreen
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingScreen
 import org.siloserver.silo.android.ui.screens.auth.ServerSetupScreen
 import org.siloserver.silo.android.ui.screens.auth.SetupScreen
+import org.siloserver.silo.android.ui.screens.auth.InviteClaimScreen
 import org.siloserver.silo.android.ui.screens.auth.SignupScreen
+import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseScreen
 import org.siloserver.silo.android.ui.screens.browse.BrowseViewModel
 import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
@@ -144,8 +146,14 @@ fun AppNavigation(
                 Route.CreateProfile.route,
                 Route.EditProfile.ROUTE,
                 Route.PairDevice.ROUTE,
+                Route.InviteClaim.ROUTE,
+                Route.OnboardingTour.route,
             )
-            if (entry.destination.route in authRoutes) return@collect
+            // An invite claim is itself the signed-out flow — holding it
+            // until the authenticated graph shows would queue it forever on
+            // Login, which is exactly where an invitee starts.
+            val isPreAuthTarget = route.startsWith("invite_claim")
+            if (!isPreAuthTarget && entry.destination.route in authRoutes) return@collect
             navController.navigate(route) {
                 launchSingleTop = true
             }
@@ -252,6 +260,44 @@ fun AppNavigation(
             )
         }
         composable(
+            route = Route.InviteClaim.ROUTE,
+            arguments = listOf(
+                navArgument("server") { type = NavType.StringType },
+                navArgument("token") { type = NavType.StringType },
+            ),
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "silo://invite?server={server}&token={token}" },
+            ),
+        ) { backStackEntry ->
+            val server = backStackEntry.arguments?.getString("server").orEmpty()
+            val claimToken = backStackEntry.arguments?.getString("token").orEmpty()
+            InviteClaimScreen(
+                serverUrl = server,
+                token = claimToken,
+                onNavigateToLogin = {
+                    navController.navigate(Route.Login.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onClaimComplete = {
+                    navController.navigate(Route.ProfileSelection.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        composable(Route.OnboardingTour.route) {
+            OnboardingTourScreen(
+                onDone = {
+                    navController.navigate(Route.Home.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        composable(
             route = Route.PairDevice.ROUTE,
             arguments = listOf(
                 navArgument("token") {
@@ -300,7 +346,10 @@ fun AppNavigation(
                     // already exist (so the user stays signed in), else
                     // ProfileSelection or Login as appropriate.
                     val target = when (destination) {
-                        ServerSwitchDestination.Home -> Route.Home.route
+                        // Through the tour gate, not straight to Home — the
+                        // switched-to server's profile may not have seen the
+                        // tour; the gate short-circuits when it has.
+                        ServerSwitchDestination.Home -> Route.OnboardingTour.route
                         ServerSwitchDestination.ProfileSelection -> Route.ProfileSelection.route
                         ServerSwitchDestination.Login -> Route.Login.route
                     }
@@ -317,7 +366,10 @@ fun AppNavigation(
         composable(Route.ProfileSelection.route) {
             ProfileSelectionScreen(
                 onNavigateToHome = {
-                    navController.navigate(Route.Home.route) {
+                    // Route through the tour gate: OnboardingTourScreen checks
+                    // server-side state and immediately hands off to Home when
+                    // the profile has already completed or skipped the tour.
+                    navController.navigate(Route.OnboardingTour.route) {
                         popUpTo(0) { inclusive = true }
                     }
                 },

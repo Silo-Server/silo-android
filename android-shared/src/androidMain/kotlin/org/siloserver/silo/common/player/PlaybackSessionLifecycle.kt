@@ -96,6 +96,8 @@ class PlaybackSessionLifecycle(
 
     /** Session [pendingStopJob] is stopping; guarded by `pendingStopLock`. */
     private var pendingStopSessionId: String? = null
+    private val externalFinalizationLock = Any()
+    private val pendingExternalFinalizations = mutableMapOf<String, Job>()
 
     private data class ActiveSessionSnapshot(
         val state: SessionState,
@@ -677,6 +679,47 @@ class PlaybackSessionLifecycle(
                 if (pendingStopJob === job) {
                     pendingStopJob = null
                     pendingStopSessionId = null
+                }
+            }
+        }
+        job.start()
+    }
+
+    /**
+     * Reports and stops a session that remains externally owned.
+     *
+     * This does not adopt the session or mutate lifecycle-owned playback state.
+     * The application scope outlives the external owner, while [NonCancellable]
+     * and IO dispatch keep its final network writes off teardown callers.
+     */
+    fun reportAndStopExternalSessionAsync(
+        sessionId: String,
+        positionSeconds: Double,
+        isPaused: Boolean,
+    ) {
+        val job = synchronized(externalFinalizationLock) {
+            pendingExternalFinalizations[sessionId]
+                ?.takeUnless { it.isCompleted }
+                ?: scope.launch(
+                    context = NonCancellable + Dispatchers.IO,
+                    start = CoroutineStart.LAZY,
+                ) {
+                    runCatching {
+                        sessionManager.reportProgress(
+                            sessionId = sessionId,
+                            position = positionSeconds,
+                            isPaused = isPaused,
+                        )
+                    }
+                    runCatching { sessionManager.stopSession(sessionId) }
+                }.also {
+                    pendingExternalFinalizations[sessionId] = it
+                }
+        }
+        job.invokeOnCompletion {
+            synchronized(externalFinalizationLock) {
+                if (pendingExternalFinalizations[sessionId] === job) {
+                    pendingExternalFinalizations.remove(sessionId)
                 }
             }
         }

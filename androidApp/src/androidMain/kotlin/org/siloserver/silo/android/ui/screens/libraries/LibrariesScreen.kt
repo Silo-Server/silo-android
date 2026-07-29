@@ -66,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -73,7 +74,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -194,6 +194,10 @@ class LibrariesViewModel(
     private var recommendedLoadedLibraryId: Int? = null
     private var browseLoadedLibraryId: Int? = null
     private var collectionsLoadedLibraryId: Int? = null
+    private var recommendedRequestGeneration = 0L
+    private var catalogRequestGeneration = 0L
+    private var catalogQueryGeneration = 0L
+    private var collectionsRequestGeneration = 0L
     private val pageSize = 42
 
     init {
@@ -400,41 +404,62 @@ class LibrariesViewModel(
     private fun loadRecommended(libraryId: Int, force: Boolean) {
         if (!force && recommendedLoadedLibraryId == libraryId) return
         recommendedLoadedLibraryId = libraryId
+        val requestGeneration = ++recommendedRequestGeneration
         viewModelScope.launch {
+            if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
             _uiState.update {
-                it.copy(
-                    isLoadingSections = true,
-                    sectionsError = null,
-                    sections = emptyList(),
-                )
+                if (isRecommendedRequestCurrent(requestGeneration, libraryId, it)) {
+                    it.copy(
+                        isLoadingSections = true,
+                        sectionsError = null,
+                        sections = emptyList(),
+                    )
+                } else {
+                    it
+                }
             }
 
             when (val result = sectionRepository.getLibrarySections(libraryId)) {
                 is ApiResult.Success -> {
+                    if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
                     _uiState.update {
-                        it.copy(
-                            isLoadingSections = false,
-                            sections = result.data.sections.filter { section -> section.items.isNotEmpty() },
-                            sectionsError = null,
-                        )
+                        if (isRecommendedRequestCurrent(requestGeneration, libraryId, it)) {
+                            it.copy(
+                                isLoadingSections = false,
+                                sections = result.data.sections.filter { section -> section.items.isNotEmpty() },
+                                sectionsError = null,
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
                 is ApiResult.Error -> {
+                    if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
                     _uiState.update {
-                        it.copy(
-                            isLoadingSections = false,
-                            sections = emptyList(),
-                            sectionsError = result.message.ifBlank { "Failed to load recommendations" },
-                        )
+                        if (isRecommendedRequestCurrent(requestGeneration, libraryId, it)) {
+                            it.copy(
+                                isLoadingSections = false,
+                                sections = emptyList(),
+                                sectionsError = result.message.ifBlank { "Failed to load recommendations" },
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
                 is ApiResult.NetworkError -> {
+                    if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
                     _uiState.update {
-                        it.copy(
-                            isLoadingSections = false,
-                            sections = emptyList(),
-                            sectionsError = "Network error: ${result.exception.message ?: "unknown"}",
-                        )
+                        if (isRecommendedRequestCurrent(requestGeneration, libraryId, it)) {
+                            it.copy(
+                                isLoadingSections = false,
+                                sections = emptyList(),
+                                sectionsError = "Network error: ${result.exception.message ?: "unknown"}",
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
             }
@@ -446,18 +471,37 @@ class LibrariesViewModel(
             return
         }
         browseLoadedLibraryId = libraryId
+        val requestState = _uiState.value
+        val requestIdentity = CatalogRequestIdentity(
+            libraryId = libraryId,
+            browseSort = requestState.browseSort,
+            selectedNamePrefix = requestState.selectedNamePrefix,
+            filterState = requestState.filterState,
+        )
+        val requestGeneration = ++catalogRequestGeneration
+        val queryGeneration =
+            if (reset) ++catalogQueryGeneration else catalogQueryGeneration
+        val offset = if (reset) 0 else requestState.catalogItems.size
         viewModelScope.launch {
-            val state = _uiState.value
-            val offset = if (reset) 0 else state.catalogItems.size
+            if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
 
-            if (reset && state.availableFilters == null) {
+            if (reset && requestState.availableFilters == null) {
                 launch {
                     // includeTechnical: resolution + audio/subtitle-language facets
                     // are only fetched on request (iOS parity). Keep the FULL
                     // response so the filter sheet has every facet, not just genres.
                     when (val filters = catalogRepository.getFilters(libraryId, includeTechnical = true)) {
                         is ApiResult.Success -> {
-                            _uiState.update { it.copy(availableFilters = filters.data) }
+                            if (!isCatalogQueryCurrent(queryGeneration, requestIdentity)) {
+                                return@launch
+                            }
+                            _uiState.update {
+                                if (isCatalogQueryCurrent(queryGeneration, requestIdentity, it)) {
+                                    it.copy(availableFilters = filters.data)
+                                } else {
+                                    it
+                                }
+                            }
                         }
                         else -> Unit
                     }
@@ -465,38 +509,34 @@ class LibrariesViewModel(
             }
 
             _uiState.update {
-                if (reset) {
-                    it.copy(
-                        isLoadingCatalog = true,
-                        isLoadingMoreCatalog = false,
-                        catalogError = null,
-                    )
+                if (!isCatalogRequestCurrent(requestGeneration, requestIdentity, it)) {
+                    it
+                } else if (reset) {
+                    it.copy(isLoadingCatalog = true, isLoadingMoreCatalog = false, catalogError = null)
                 } else {
-                    it.copy(
-                        isLoadingMoreCatalog = true,
-                        catalogError = null,
-                    )
+                    it.copy(isLoadingMoreCatalog = true, catalogError = null)
                 }
             }
 
             when (
                 val result = catalogRepository.browse(
                     libraryId = libraryId,
-                    sort = state.browseSort.sortField,
-                    order = state.browseSort.sortOrder,
+                    sort = requestState.browseSort.sortField,
+                    order = requestState.browseSort.sortOrder,
                     offset = offset,
                     limit = pageSize,
-                    namePrefix = state.selectedNamePrefix,
+                    namePrefix = requestState.selectedNamePrefix,
                     // Full facet filtering (genre/decade/rating/studio/language/...)
                     // via the shared query builder — replaces the single-genre param.
-                    queryGroups = CatalogFilterQueryBuilder.buildGroups(state.filterState),
-                    match = CatalogFilterQueryBuilder.matchParam(state.filterState)
-                        .takeIf { state.filterState.hasActiveFilters },
+                    queryGroups = CatalogFilterQueryBuilder.buildGroups(requestState.filterState),
+                    match = CatalogFilterQueryBuilder.matchParam(requestState.filterState)
+                        .takeIf { requestState.filterState.hasActiveFilters },
                 )
             ) {
                 is ApiResult.Success -> {
                     // Overlay local optimistic watched/favorite (mirrors Home/Browse).
                     val overlaid = overlayLocalState(result.data.items)
+                    if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
                     // Audiobook libraries expose book-native facets
                     // (author/narrator/series) — detected from the first item.
                     val detectedMediaType = overlaid.firstOrNull()?.let { first ->
@@ -507,33 +547,47 @@ class LibrariesViewModel(
                         }
                     }
                     _uiState.update {
-                        it.copy(
-                            isLoadingCatalog = false,
-                            isLoadingMoreCatalog = false,
-                            catalogItems = if (reset) overlaid else it.catalogItems + overlaid,
-                            catalogTotal = result.data.total,
-                            catalogHasMore = result.data.hasMore,
-                            browseMediaType = detectedMediaType ?: it.browseMediaType,
-                            catalogError = null,
-                        )
+                        if (isCatalogRequestCurrent(requestGeneration, requestIdentity, it)) {
+                            it.copy(
+                                isLoadingCatalog = false,
+                                isLoadingMoreCatalog = false,
+                                catalogItems = if (reset) overlaid else it.catalogItems + overlaid,
+                                catalogTotal = result.data.total,
+                                catalogHasMore = result.data.hasMore,
+                                browseMediaType = detectedMediaType ?: it.browseMediaType,
+                                catalogError = null,
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
                 is ApiResult.Error -> {
+                    if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
                     _uiState.update {
-                        it.copy(
-                            isLoadingCatalog = false,
-                            isLoadingMoreCatalog = false,
-                            catalogError = result.message.ifBlank { "Failed to load catalog" },
-                        )
+                        if (isCatalogRequestCurrent(requestGeneration, requestIdentity, it)) {
+                            it.copy(
+                                isLoadingCatalog = false,
+                                isLoadingMoreCatalog = false,
+                                catalogError = result.message.ifBlank { "Failed to load catalog" },
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
                 is ApiResult.NetworkError -> {
+                    if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
                     _uiState.update {
-                        it.copy(
-                            isLoadingCatalog = false,
-                            isLoadingMoreCatalog = false,
-                            catalogError = "Network error: ${result.exception.message ?: "unknown"}",
-                        )
+                        if (isCatalogRequestCurrent(requestGeneration, requestIdentity, it)) {
+                            it.copy(
+                                isLoadingCatalog = false,
+                                isLoadingMoreCatalog = false,
+                                catalogError = "Network error: ${result.exception.message ?: "unknown"}",
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
             }
@@ -565,49 +619,108 @@ class LibrariesViewModel(
             return
         }
         collectionsLoadedLibraryId = libraryId
+        val requestGeneration = ++collectionsRequestGeneration
         viewModelScope.launch {
+            if (!isCollectionsRequestCurrent(requestGeneration, libraryId)) return@launch
             _uiState.update {
-                it.copy(
-                    isLoadingCollections = true,
-                    collectionsError = null,
-                    collections = emptyList(),
-                )
+                if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
+                    it.copy(
+                        isLoadingCollections = true,
+                        collectionsError = null,
+                        collections = emptyList(),
+                    )
+                } else {
+                    it
+                }
             }
             when (val result = sectionRepository.getLibraryCollections(libraryId)) {
                 is ApiResult.Success -> {
+                    if (!isCollectionsRequestCurrent(requestGeneration, libraryId)) return@launch
                     _uiState.update {
-                        it.copy(
-                            isLoadingCollections = false,
-                            collections = result.data,
-                            collectionsError = null,
-                        )
+                        if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
+                            it.copy(
+                                isLoadingCollections = false,
+                                collections = result.data,
+                                collectionsError = null,
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
                 is ApiResult.Error -> {
+                    if (!isCollectionsRequestCurrent(requestGeneration, libraryId)) return@launch
                     _uiState.update {
-                        it.copy(
-                            isLoadingCollections = false,
-                            collectionsError = result.message.ifBlank { "Failed to load collections" },
-                        )
+                        if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
+                            it.copy(
+                                isLoadingCollections = false,
+                                collectionsError = result.message.ifBlank { "Failed to load collections" },
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
                 is ApiResult.NetworkError -> {
+                    if (!isCollectionsRequestCurrent(requestGeneration, libraryId)) return@launch
                     _uiState.update {
-                        it.copy(
-                            isLoadingCollections = false,
-                            collectionsError = "Network error: ${result.exception.message ?: "unknown"}",
-                        )
+                        if (isCollectionsRequestCurrent(requestGeneration, libraryId, it)) {
+                            it.copy(
+                                isLoadingCollections = false,
+                                collectionsError = "Network error: ${result.exception.message ?: "unknown"}",
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
             }
         }
     }
-}
 
-// Chrome metrics: status bar + this constant ≈ visible chrome height (header
-// row + tab selector). Used to push tab content below the floating chrome and
-// to drive the carousel's [extraTopInset] on the Recommended tab.
-private val LibrariesChromeContentHeight: Dp = 110.dp
+    private fun isRecommendedRequestCurrent(
+        generation: Long,
+        libraryId: Int,
+        state: LibrariesUiState = _uiState.value,
+    ): Boolean =
+        generation == recommendedRequestGeneration && state.selectedLibraryId == libraryId
+
+    private fun isCatalogRequestCurrent(
+        generation: Long,
+        identity: CatalogRequestIdentity,
+        state: LibrariesUiState = _uiState.value,
+    ): Boolean =
+        generation == catalogRequestGeneration &&
+            identity.matches(state)
+
+    private fun isCatalogQueryCurrent(
+        generation: Long,
+        identity: CatalogRequestIdentity,
+        state: LibrariesUiState = _uiState.value,
+    ): Boolean =
+        generation == catalogQueryGeneration &&
+            identity.matches(state)
+
+    private fun CatalogRequestIdentity.matches(state: LibrariesUiState): Boolean =
+        state.selectedLibraryId == libraryId &&
+            state.browseSort == browseSort &&
+            state.selectedNamePrefix == selectedNamePrefix &&
+            state.filterState == filterState
+
+    private fun isCollectionsRequestCurrent(
+        generation: Long,
+        libraryId: Int,
+        state: LibrariesUiState = _uiState.value,
+    ): Boolean =
+        generation == collectionsRequestGeneration && state.selectedLibraryId == libraryId
+
+    private data class CatalogRequestIdentity(
+        val libraryId: Int,
+        val browseSort: LibraryBrowseSort,
+        val selectedNamePrefix: String?,
+        val filterState: CatalogFilterState,
+    )
+}
 
 // Distance the Recommended tab must scroll for the chrome scrim to fully
 // fade in. Mirrors `chromeScrimFadeDistance` on iOS.
@@ -623,6 +736,7 @@ fun LibrariesScreen(
     onLibrarySelectorClick: () -> Unit,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)?,
+    onWatchTogetherClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -687,83 +801,103 @@ fun LibrariesScreen(
             )
         }
 
-        when {
-            state.isLoadingLibraries && state.libraries.isEmpty() -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator()
-                }
-            }
-            state.librariesError != null && state.libraries.isEmpty() -> {
-                ErrorView(
-                    message = state.librariesError ?: "Failed to load libraries",
-                    onRetry = viewModel::refresh,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            selectedLibrary == null -> {
-                EmptyStateView(
-                    title = "No libraries available",
-                    subtitle = "Libraries visible to this profile will show up here",
-                    icon = Icons.Default.VideoLibrary,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            else -> {
-                when (state.selectedTab) {
-                    LibrariesSubtab.Recommended -> RecommendedTabContent(
-                        state = state,
-                        listState = recommendedListState,
-                        onItemClick = onItemClick,
-                        onPlayClick = onPlayClick,
-                        onRetry = viewModel::retryCurrentTab,
-                        onActiveBackdropChange = { url, thumbhash ->
-                            heroBackdropUrl = url
-                            heroBackdropThumbhash = thumbhash
-                        },
-                    )
-                    LibrariesSubtab.Browse -> BrowseTabContent(
-                        state = state,
-                        onItemClick = onItemClick,
-                        onRetry = viewModel::retryCurrentTab,
-                        onLoadMore = viewModel::loadMoreCatalog,
-                        onSortChanged = viewModel::selectBrowseSort,
-                        onNamePrefixChanged = viewModel::selectNamePrefix,
-                        onDensityChanged = viewModel::selectViewDensity,
-                        onApplyFilter = viewModel::applyFilterState,
-                        onSetPreserve = viewModel::setPreserveFilters,
-                    )
-                    LibrariesSubtab.Collections -> CollectionsTabContent(
-                        state = state,
-                        onCollectionClick = { collectionId ->
-                            state.selectedLibraryId?.let { libraryId ->
-                                onCollectionClick(collectionId, libraryId)
-                            }
-                        },
-                        onRetry = viewModel::retryCurrentTab,
-                    )
+        Column(modifier = Modifier.fillMaxSize()) {
+            LibrariesFloatingChrome(
+                scrimProgress = chromeScrimProgress,
+                selectedLibrary = selectedLibrary,
+                canSwitch = state.libraries.size > 1,
+                activeProfile = activeProfile,
+                selectedTab = state.selectedTab,
+                onLibrarySelectorClick = onLibrarySelectorClick,
+                onTabSelected = viewModel::selectTab,
+                onSearchClick = onSearchClick,
+                onRequestsClick = onRequestsClick,
+                onWatchTogetherClick = onWatchTogetherClick,
+                onSettingsClick = onSettingsClick,
+                onSwitchProfileClick = onSwitchProfileClick,
+                onSwitchServerClick = onSwitchServerClick,
+                onSignOutClick = onSignOutClick,
+            )
+
+            LibraryContentViewport(
+                modifier = Modifier.weight(1f).clipToBounds(),
+            ) {
+                when {
+                    state.isLoadingLibraries && state.libraries.isEmpty() -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    state.librariesError != null && state.libraries.isEmpty() -> {
+                        ErrorView(
+                            message = state.librariesError ?: "Failed to load libraries",
+                            onRetry = viewModel::refresh,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    selectedLibrary == null -> {
+                        EmptyStateView(
+                            title = "No libraries available",
+                            subtitle = "Libraries visible to this profile will show up here",
+                            icon = Icons.Default.VideoLibrary,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    state.selectedTab == LibrariesSubtab.Recommended -> {
+                        RecommendedTabContent(
+                            state = state,
+                            listState = recommendedListState,
+                            onItemClick = onItemClick,
+                            onPlayClick = onPlayClick,
+                            onRetry = viewModel::retryCurrentTab,
+                            onActiveBackdropChange = { url, thumbhash ->
+                                heroBackdropUrl = url
+                                heroBackdropThumbhash = thumbhash
+                            },
+                        )
+                    }
+                    state.selectedTab == LibrariesSubtab.Browse -> {
+                        BrowseTabContent(
+                            state = state,
+                            onItemClick = onItemClick,
+                            onRetry = viewModel::retryCurrentTab,
+                            onLoadMore = viewModel::loadMoreCatalog,
+                            onSortChanged = viewModel::selectBrowseSort,
+                            onNamePrefixChanged = viewModel::selectNamePrefix,
+                            onDensityChanged = viewModel::selectViewDensity,
+                            onApplyFilter = viewModel::applyFilterState,
+                            onSetPreserve = viewModel::setPreserveFilters,
+                        )
+                    }
+                    else -> {
+                        CollectionsTabContent(
+                            state = state,
+                            onCollectionClick = { collectionId ->
+                                state.selectedLibraryId?.let { libraryId ->
+                                    onCollectionClick(collectionId, libraryId)
+                                }
+                            },
+                            onRetry = viewModel::retryCurrentTab,
+                        )
+                    }
                 }
             }
         }
-
-        LibrariesFloatingChrome(
-            scrimProgress = chromeScrimProgress,
-            selectedLibrary = selectedLibrary,
-            canSwitch = state.libraries.size > 1,
-            activeProfile = activeProfile,
-            selectedTab = state.selectedTab,
-            onLibrarySelectorClick = onLibrarySelectorClick,
-            onTabSelected = viewModel::selectTab,
-            onSearchClick = onSearchClick,
-            onRequestsClick = onRequestsClick,
-            onSettingsClick = onSettingsClick,
-            onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
-            onSignOutClick = onSignOutClick,
-        )
     }
+}
+
+@Composable
+private fun LibraryContentViewport(
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        content = content,
+    )
 }
 
 @Composable
@@ -778,20 +912,14 @@ private fun RecommendedTabContent(
     when {
         state.isLoadingSections && state.sections.isEmpty() -> {
             MediaRowsSkeleton(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = LibrariesChromeContentHeight)
-                    .windowInsetsPadding(WindowInsets.statusBars),
+                modifier = Modifier.fillMaxSize(),
             )
         }
         state.sectionsError != null && state.sections.isEmpty() -> {
             ErrorView(
                 message = state.sectionsError ?: "Failed to load recommendations",
                 onRetry = onRetry,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = LibrariesChromeContentHeight)
-                    .windowInsetsPadding(WindowInsets.statusBars),
+                modifier = Modifier.fillMaxSize(),
             )
         }
         state.sections.isEmpty() -> {
@@ -799,10 +927,7 @@ private fun RecommendedTabContent(
                 title = "No recommendations yet",
                 subtitle = "Try switching libraries or browsing the full catalog",
                 icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = LibrariesChromeContentHeight)
-                    .windowInsetsPadding(WindowInsets.statusBars),
+                modifier = Modifier.fillMaxSize(),
             )
         }
         else -> {
@@ -824,21 +949,11 @@ private fun RecommendedTabContent(
                             onPlayClick = onPlayClick,
                             onInfoClick = onItemClick,
                             onActiveBackdropChange = onActiveBackdropChange,
-                            // Push the deck below the taller Libraries chrome
-                            // (header + tab selector). Carousel already adds
-                            // `statusBar + 64dp`; this covers the tab row.
-                            extraTopInset = 50.dp,
                         )
                     }
                 } else {
-                    // No featured → reserve runway under the chrome so the
-                    // first row doesn't slide under the floating header.
                     item(key = "no-featured") {
-                        Spacer(
-                            modifier = Modifier
-                                .windowInsetsPadding(WindowInsets.statusBars)
-                                .height(LibrariesChromeContentHeight + 8.dp),
-                        )
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                 }
 
@@ -876,10 +991,7 @@ private fun BrowseTabContent(
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(top = LibrariesChromeContentHeight),
+        modifier = Modifier.fillMaxSize(),
     ) {
         // Sort chips + a Filter button that opens the shared FilterSheet. Genre
         // is now a Categories facet inside the sheet (no inline genre rail, L3),
@@ -988,6 +1100,7 @@ private fun BrowseTabContent(
                     selectedNamePrefix = state.selectedNamePrefix,
                     onNamePrefixSelected = onNamePrefixChanged,
                     viewDensity = state.catalogDensity,
+                    bottomContentInset = LocalBottomChromeInset.current,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1049,24 +1162,18 @@ private fun CollectionsTabContent(
     onCollectionClick: (String) -> Unit,
     onRetry: () -> Unit,
 ) {
-    val contentTopPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
-        LibrariesChromeContentHeight
     when {
         state.isLoadingCollections && state.collections.isEmpty() -> {
             PosterGridSkeleton(
                 progress = rememberShimmerProgress(),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = contentTopPadding),
+                modifier = Modifier.fillMaxSize(),
             )
         }
         state.collectionsError != null && state.collections.isEmpty() -> {
             ErrorView(
                 message = state.collectionsError ?: "Failed to load collections",
                 onRetry = onRetry,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = contentTopPadding),
+                modifier = Modifier.fillMaxSize(),
             )
         }
         state.collections.isEmpty() -> {
@@ -1074,9 +1181,7 @@ private fun CollectionsTabContent(
                 title = "No collections found",
                 subtitle = "This library does not have any collections yet",
                 icon = Icons.Default.VideoLibrary,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = contentTopPadding),
+                modifier = Modifier.fillMaxSize(),
             )
         }
         else -> {
@@ -1090,7 +1195,7 @@ private fun CollectionsTabContent(
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
-                    top = contentTopPadding,
+                    top = 16.dp,
                     bottom = 24.dp + LocalBottomChromeInset.current,
                 ),
             ) {
@@ -1176,6 +1281,7 @@ private fun LibrariesFloatingChrome(
     onTabSelected: (LibrariesSubtab) -> Unit,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)?,
+    onWatchTogetherClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -1232,6 +1338,7 @@ private fun LibrariesFloatingChrome(
                 ChromeProfileMenu(
                     activeProfile = activeProfile,
                     onRequestsClick = onRequestsClick,
+                    onWatchTogetherClick = onWatchTogetherClick,
                     onSettingsClick = onSettingsClick,
                     onSwitchProfileClick = onSwitchProfileClick,
                     onSwitchServerClick = onSwitchServerClick,
@@ -1329,6 +1436,7 @@ private fun ChromeIconButton(
 private fun ChromeProfileMenu(
     activeProfile: Profile?,
     onRequestsClick: (() -> Unit)?,
+    onWatchTogetherClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -1371,8 +1479,17 @@ private fun ChromeProfileMenu(
                         onRequestsClick()
                     },
                 )
-                HorizontalDivider()
             }
+            if (onWatchTogetherClick != null) {
+                DropdownMenuItem(
+                    text = { Text("Watch Together") },
+                    onClick = {
+                        menuExpanded = false
+                        onWatchTogetherClick()
+                    },
+                )
+            }
+            HorizontalDivider()
             DropdownMenuItem(
                 text = { Text("Settings") },
                 onClick = {

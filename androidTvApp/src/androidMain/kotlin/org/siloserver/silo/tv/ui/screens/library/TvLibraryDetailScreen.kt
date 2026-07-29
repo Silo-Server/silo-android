@@ -98,7 +98,7 @@ fun TvLibraryDetailScreen(
     // section-apply effect on it (not just initialSection) makes re-committing
     // the SAME pill re-apply the section instead of being a silent no-op.
     sectionRequestNonce: Int = 0,
-    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
+    onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     viewModel: TvLibraryDetailViewModel = koinViewModel(
         key = "library-$libraryId",
         parameters = { parametersOf(libraryId, libraryTitle, libraryType) },
@@ -164,6 +164,7 @@ fun TvLibraryDetailScreen(
                 onRetry = viewModel::retryBrowse,
                 onInitialContentFocus = onInitialContentFocus,
                 showAlphabetRail = true,
+                onContentUpFallbackChanged = onContentUpFallbackChanged,
             )
             TvLibraryTab.RecentlyAdded -> LibraryTab(
                 state = state,
@@ -241,7 +242,7 @@ private fun RecommendedTab(
     onRetry: () -> Unit,
     onInitialContentFocus: () -> Unit,
     focusRequest: Int,
-    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)?,
+    onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)?,
 ) {
     val rows = remember(state.sections) {
         state.sections.filter { !it.featured && it.items.isNotEmpty() }
@@ -309,7 +310,7 @@ private fun LibraryTab(
     onSortKeySelected: (TvLibrarySortOption) -> Unit = {},
     onFacetSelectionApplied: (TvCatalogFacetSelection) -> Unit = {},
     /** Shell hook for overriding D-pad Up while the A–Z rail holds focus. */
-    onContentUpFallbackChanged: (((() -> Boolean)?) -> Unit)? = null,
+    onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     onClearAudiobookGroup: (() -> Unit)? = null,
 ) {
     val restoredGridItemFocusRequester = remember { FocusRequester() }

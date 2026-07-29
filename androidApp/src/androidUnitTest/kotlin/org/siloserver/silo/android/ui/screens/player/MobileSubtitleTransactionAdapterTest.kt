@@ -604,6 +604,16 @@ class MobileSubtitleTransactionAdapterTest {
         )
         runCurrent()
         assertEquals(local, harness.adapter.snapshot.committedIdentity)
+        assertEquals(local, harness.adapter.snapshot.localMountIdentity)
+        assertNull(harness.adapter.snapshot.failureMessage)
+
+        harness.adapter.reportMountedSelection(
+            identity = local,
+            selected = false,
+            snapshotKey = "ready-local-restore-miss",
+            settled = true,
+        )
+        runCurrent()
         assertNull(harness.adapter.snapshot.localMountIdentity)
         assertTrue(harness.adapter.snapshot.failureMessage?.contains("mount", ignoreCase = true) == true)
     }
@@ -782,7 +792,7 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
-    fun `settled local mount miss rolls back immediately without persistence`() = runTest {
+    fun `first settled local mount snapshot remains provisional`() = runTest {
         val harness = harness(backgroundScope)
         val local = SubtitleIdentity.LocalMedia3(
             media(label = "English", language = "en", codec = "webvtt"),
@@ -798,8 +808,61 @@ class MobileSubtitleTransactionAdapterTest {
         runCurrent()
 
         assertEquals(sidecar(3), harness.adapter.snapshot.committedIdentity)
+        assertEquals(local, harness.adapter.snapshot.pendingIdentity)
+        assertEquals(local, harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+        assertNull(harness.adapter.snapshot.failureMessage)
+
+        harness.adapter.reportMountedSelection(
+            identity = local,
+            selected = false,
+            snapshotKey = "ready-track-catalog",
+            settled = true,
+        )
+        runCurrent()
+
+        assertEquals(sidecar(3), harness.adapter.snapshot.committedIdentity)
         assertNull(harness.adapter.snapshot.pendingIdentity)
         assertTrue(harness.persistence.persisted.isEmpty())
+        assertTrue(harness.adapter.snapshot.failureMessage?.contains("mount", ignoreCase = true) == true)
+    }
+
+    @Test
+    fun `changed local mount snapshot must stabilize again before failure`() = runTest {
+        val harness = harness(backgroundScope)
+        val local = SubtitleIdentity.LocalMedia3(
+            media(label = "English", language = "en", codec = "webvtt"),
+        )
+
+        harness.adapter.select(local)
+        harness.adapter.reportMountedSelection(
+            identity = local,
+            selected = false,
+            snapshotKey = "initial-track-catalog",
+            settled = true,
+        )
+        harness.adapter.reportMountedSelection(
+            identity = local,
+            selected = false,
+            snapshotKey = "changed-track-catalog",
+            settled = true,
+        )
+        runCurrent()
+
+        assertEquals(local, harness.adapter.snapshot.pendingIdentity)
+        assertEquals(local, harness.adapter.snapshot.localMountIdentity)
+        assertNull(harness.adapter.snapshot.failureMessage)
+
+        harness.adapter.reportMountedSelection(
+            identity = local,
+            selected = false,
+            snapshotKey = "changed-track-catalog",
+            settled = true,
+        )
+        runCurrent()
+
+        assertEquals(sidecar(3), harness.adapter.snapshot.committedIdentity)
+        assertNull(harness.adapter.snapshot.pendingIdentity)
         assertTrue(harness.adapter.snapshot.failureMessage?.contains("mount", ignoreCase = true) == true)
     }
 

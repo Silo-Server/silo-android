@@ -205,8 +205,16 @@ class TvRoomSyncController(
             while (isActive) {
                 val state = viewModel.uiState.value
                 val sessionId = state.sessionId
+                val deliveryKey = deliveryLatch.keyOrNull(
+                    repository.connectionState.value,
+                    sessionId,
+                )
                 val now = monotonicMs()
-                if (sessionId != null &&
+                if (deliveryKey != null &&
+                    deliveryLatch.isServerAttached(
+                        deliveryKey,
+                        repository.roomDeliveryEcho.value,
+                    ) &&
                     tvShouldEmitStateReport(
                         now,
                         lastReportMs,
@@ -217,7 +225,7 @@ class TvRoomSyncController(
                 ) {
                     lastReportMs = now
                     repository.stateReport(
-                        sessionId = sessionId,
+                        sessionId = deliveryKey.playbackSessionId,
                         positionSeconds = state.position,
                         isPaused = state.isPaused,
                     )
@@ -243,7 +251,14 @@ class TvRoomSyncController(
                     if (playbackState != RoomPlaybackState.Waiting || key == null) {
                         return@collectLatest
                     }
-                    while (!deliveryLatch.isAttached(key)) delay(10)
+                    while (
+                        !deliveryLatch.isServerAttached(
+                            key,
+                            repository.roomDeliveryEcho.value,
+                        )
+                    ) {
+                        delay(10)
+                    }
                     while (isActive && deliveryLatch.needsReadiness(key, buffering)) {
                         val currentState = viewModel.uiState.value
                         val delivered = if (buffering) {

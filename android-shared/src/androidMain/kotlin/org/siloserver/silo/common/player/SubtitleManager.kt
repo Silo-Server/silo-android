@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -40,11 +41,21 @@ import kotlin.math.roundToInt
  * This manager builds subtitle configurations and applies track selection.
  */
 @UnstableApi
+enum class AndroidSubtitlePresentation {
+    Phone,
+    Television,
+}
+
+@UnstableApi
 class SubtitleManager(
     private val libassBridge: LibassBridge? = null,
+    private val presentation: AndroidSubtitlePresentation =
+        AndroidSubtitlePresentation.Television,
 ) {
 
     private val videoRectSyncs = WeakHashMap<PlayerView, SubtitleVideoRectSync>()
+    /** Test-only execution observer; null in production. */
+    internal var postLayoutReconciliationObserver: (() -> Unit)? = null
 
     var letterbox: LetterboxInsets = LetterboxInsets.NONE
         set(value) {
@@ -271,7 +282,11 @@ class SubtitleManager(
         playerView.subtitleView?.let { libassBridge?.attachTo(it) }
         val existing = videoRectSyncs[playerView]
         val sync = if (existing?.isDisposed == true || existing == null) {
-            SubtitleVideoRectSync(playerView).also {
+            SubtitleVideoRectSync(
+                playerView = playerView,
+                presentation = presentation,
+                onPostLayoutReconciled = { postLayoutReconciliationObserver?.invoke() },
+            ).also {
                 it.letterbox = letterbox
                 it.titleSafeFraction = titleSafeFraction
                 videoRectSyncs[playerView] = it
@@ -279,7 +294,7 @@ class SubtitleManager(
         } else {
             existing
         }
-        sync.update()
+        sync.updateAndReconcileAfterLayout()
     }
 
     private fun buildCaptionStyle(appearance: SubtitleAppearance): CaptionStyleCompat {
@@ -326,13 +341,23 @@ class SubtitleManager(
     }
 
     private fun fractionalSizeFor(preset: SubtitleFontSizePreset): Float {
-        return when (preset) {
-            SubtitleFontSizePreset.Small -> 20f / 720f
-            SubtitleFontSizePreset.Medium -> 26f / 720f
-            SubtitleFontSizePreset.Large -> 32f / 720f
-            SubtitleFontSizePreset.XLarge -> 40f / 720f
-            SubtitleFontSizePreset.XXLarge -> 48f / 720f
+        val numerator = when (presentation) {
+            AndroidSubtitlePresentation.Phone -> when (preset) {
+                SubtitleFontSizePreset.Small -> 22.5f
+                SubtitleFontSizePreset.Medium -> 29.25f
+                SubtitleFontSizePreset.Large -> 36f
+                SubtitleFontSizePreset.XLarge -> 45f
+                SubtitleFontSizePreset.XXLarge -> 54f
+            }
+            AndroidSubtitlePresentation.Television -> when (preset) {
+                SubtitleFontSizePreset.Small -> 20f
+                SubtitleFontSizePreset.Medium -> 26f
+                SubtitleFontSizePreset.Large -> 32f
+                SubtitleFontSizePreset.XLarge -> 40f
+                SubtitleFontSizePreset.XXLarge -> 48f
+            }
         }
+        return numerator / 720f
     }
 
     private fun bottomPaddingFor(position: SubtitlePositionPreset): Float {
@@ -341,7 +366,13 @@ class SubtitleManager(
             SubtitlePositionPreset.LowerThird -> 0.18f
             SubtitlePositionPreset.Top -> 0.74f
         }
-        return (base - titleSafeFraction).coerceAtLeast(0.02f)
+        // The title-safe inset moves the subtitle surface in by f on both
+        // edges, leaving a height of (1 - 2f). Preserve the original physical
+        // preset by solving f + p(1 - 2f) = base for the new padding p.
+        val safeFraction = titleSafeFraction
+        val remainingScale = 1f - 2f * safeFraction
+        if (remainingScale <= 0f) return base
+        return ((base - safeFraction) / remainingScale).coerceAtLeast(0.02f)
     }
 
     private fun parseHexColor(hex: String, alpha: Int = 255): Int {
@@ -487,6 +518,20 @@ internal fun displayedSubtitleVideoRect(
     )
 }
 
+internal fun selectSubtitleCanvasRect(
+    resizeMode: Int,
+    contentFrameRect: SubtitleVideoRect?,
+    displayedVideoRect: SubtitleVideoRect,
+): SubtitleVideoRect = when (resizeMode) {
+    AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
+    AspectRatioFrameLayout.RESIZE_MODE_FILL,
+    -> contentFrameRect?.takeIf {
+        it.width == displayedVideoRect.width &&
+            it.height == displayedVideoRect.height
+    } ?: displayedVideoRect
+    else -> contentFrameRect ?: displayedVideoRect
+}
+
 internal fun displayedSubtitleContentFrameRect(
     viewWidth: Int,
     viewHeight: Int,
@@ -554,10 +599,24 @@ internal fun neutralizeFullWidthCueSizes(cueGroup: CueGroup): CueGroup {
 }
 
 @UnstableApi
-private class SubtitleVideoRectSync(playerView: PlayerView) :
+private class SubtitleVideoRectSync(
+    playerView: PlayerView,
+    private val presentation: AndroidSubtitlePresentation,
+    private val onPostLayoutReconciled: () -> Unit,
+) :
     View.OnLayoutChangeListener,
     View.OnAttachStateChangeListener,
     Player.Listener {
+
+    private data class LayoutSnapshot(
+        val resizeMode: Int,
+        val playerWidth: Int,
+        val playerHeight: Int,
+        val frameLeft: Int,
+        val frameTop: Int,
+        val frameWidth: Int,
+        val frameHeight: Int,
+    )
 
     private val playerViewRef = WeakReference(playerView)
     private val contentFrameRef = WeakReference(
@@ -566,6 +625,9 @@ private class SubtitleVideoRectSync(playerView: PlayerView) :
         )
     )
     private var observedPlayer: Player? = null
+    private var reconciliationGeneration = 0L
+    private var pendingVerification: Runnable? = null
+    private var appliedPasses = 0
 
     var letterbox: LetterboxInsets = LetterboxInsets.NONE
         set(value) {
@@ -583,6 +645,28 @@ private class SubtitleVideoRectSync(playerView: PlayerView) :
 
     var isDisposed: Boolean = false
         private set
+
+    private var pendingPreDrawObserver: ViewTreeObserver? = null
+    private var pendingPreDrawGeneration = 0L
+    private val postLayoutUpdate = ViewTreeObserver.OnPreDrawListener {
+        val generation = pendingPreDrawGeneration
+        clearPendingPostLayoutUpdate()
+        if (!isDisposed && generation == reconciliationGeneration) {
+            update()
+            val currentPlayerView = playerViewRef.get()
+            val appliedSnapshot = currentPlayerView?.let(::currentSnapshot)
+            appliedPasses++
+            onPostLayoutReconciled()
+            if (currentPlayerView != null && appliedSnapshot != null && appliedPasses < 2) {
+                postSnapshotVerification(
+                    playerView = currentPlayerView,
+                    generation = generation,
+                    appliedSnapshot = appliedSnapshot,
+                )
+            }
+        }
+        true
+    }
 
     init {
         playerView.addOnLayoutChangeListener(this)
@@ -609,6 +693,71 @@ private class SubtitleVideoRectSync(playerView: PlayerView) :
             currentPlayer?.let { forwardNeutralizedCues(playerView, it.currentCues) }
         }
         applyRect(playerView)
+    }
+
+    fun updateAndReconcileAfterLayout() {
+        update()
+        val playerView = playerViewRef.get() ?: return
+        if (isDisposed) return
+        reconciliationGeneration++
+        appliedPasses = 0
+        clearPendingVerification(playerView)
+        schedulePreDrawFor(reconciliationGeneration)
+    }
+
+    private fun schedulePreDrawFor(generation: Long) {
+        val playerView = playerViewRef.get() ?: return dispose(null)
+        if (isDisposed || generation != reconciliationGeneration) return
+        pendingPreDrawObserver?.let { observer ->
+            if (observer.isAlive) {
+                pendingPreDrawGeneration = generation
+                return
+            }
+            pendingPreDrawObserver = null
+        }
+        val observer = playerView.viewTreeObserver
+        if (!observer.isAlive) return
+        pendingPreDrawGeneration = generation
+        pendingPreDrawObserver = observer
+        observer.addOnPreDrawListener(postLayoutUpdate)
+    }
+
+    private fun postSnapshotVerification(
+        playerView: PlayerView,
+        generation: Long,
+        appliedSnapshot: LayoutSnapshot,
+    ) {
+        lateinit var verification: Runnable
+        verification = Runnable {
+            if (pendingVerification === verification) {
+                pendingVerification = null
+            }
+            val currentPlayerView = playerViewRef.get()
+            if (
+                !isDisposed &&
+                generation == reconciliationGeneration &&
+                appliedPasses < 2 &&
+                currentPlayerView != null &&
+                currentSnapshot(currentPlayerView) != appliedSnapshot
+            ) {
+                schedulePreDrawFor(generation)
+            }
+        }
+        pendingVerification = verification
+        playerView.post(verification)
+    }
+
+    private fun currentSnapshot(playerView: PlayerView): LayoutSnapshot {
+        val contentFrame = contentFrameRef.get()
+        return LayoutSnapshot(
+            resizeMode = playerView.resizeMode,
+            playerWidth = playerView.width,
+            playerHeight = playerView.height,
+            frameLeft = contentFrame?.left ?: 0,
+            frameTop = contentFrame?.top ?: 0,
+            frameWidth = contentFrame?.width ?: 0,
+            frameHeight = contentFrame?.height ?: 0,
+        )
     }
 
     override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -655,19 +804,44 @@ private class SubtitleVideoRectSync(playerView: PlayerView) :
 
     private fun applyRect(playerView: PlayerView) {
         val subtitleView = playerView.subtitleView ?: return
+        val resizeMode = playerView.resizeMode
+        val gravity = Gravity.TOP or Gravity.START
+        if (
+            presentation == AndroidSubtitlePresentation.Phone &&
+            (
+                resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT ||
+                    resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL
+            ) &&
+            !letterbox.isDetected &&
+            titleSafeFraction <= 0f
+        ) {
+            applyLayoutParams(
+                subtitleView = subtitleView,
+                width = FrameLayout.LayoutParams.MATCH_PARENT,
+                height = FrameLayout.LayoutParams.MATCH_PARENT,
+                leftMargin = 0,
+                topMargin = 0,
+                gravity = gravity,
+            )
+            return
+        }
+
         val videoSize = playerView.player?.videoSize ?: VideoSize.UNKNOWN
-        val rect = (playerView.contentFrameSubtitleRect()
-            ?: displayedSubtitleVideoRect(
-                viewWidth = playerView.width,
-                viewHeight = playerView.height,
-                videoWidth = videoSize.width,
-                videoHeight = videoSize.height,
-                videoPixelWidthHeightRatio = videoSize.pixelWidthHeightRatio,
-                resizeMode = playerView.resizeMode,
-            )).insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
+        val displayedVideoRect = displayedSubtitleVideoRect(
+            viewWidth = playerView.width,
+            viewHeight = playerView.height,
+            videoWidth = videoSize.width,
+            videoHeight = videoSize.height,
+            videoPixelWidthHeightRatio = videoSize.pixelWidthHeightRatio,
+            resizeMode = resizeMode,
+        )
+        val rect = selectSubtitleCanvasRect(
+            resizeMode = resizeMode,
+            contentFrameRect = playerView.contentFrameSubtitleRect(),
+            displayedVideoRect = displayedVideoRect,
+        ).insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
         val current = subtitleView.layoutParams as? FrameLayout.LayoutParams
         val params = current ?: FrameLayout.LayoutParams(rect.width, rect.height)
-        val gravity = Gravity.TOP or Gravity.START
         if (
             current == null ||
             params.width != rect.width ||
@@ -686,15 +860,62 @@ private class SubtitleVideoRectSync(playerView: PlayerView) :
         }
     }
 
+    private fun applyLayoutParams(
+        subtitleView: View,
+        width: Int,
+        height: Int,
+        leftMargin: Int,
+        topMargin: Int,
+        gravity: Int,
+    ) {
+        val current = subtitleView.layoutParams as? FrameLayout.LayoutParams
+        val params = current ?: FrameLayout.LayoutParams(width, height)
+        if (
+            current == null ||
+            params.width != width ||
+            params.height != height ||
+            params.leftMargin != leftMargin ||
+            params.topMargin != topMargin ||
+            params.gravity != gravity
+        ) {
+            params.width = width
+            params.height = height
+            params.leftMargin = leftMargin
+            params.topMargin = topMargin
+            params.gravity = gravity
+            subtitleView.layoutParams = params
+            subtitleView.requestLayout()
+        }
+    }
+
     private fun dispose(view: View?) {
         if (isDisposed) return
+        val playerView = (view as? PlayerView) ?: playerViewRef.get()
+        isDisposed = true
+        reconciliationGeneration++
+        clearPendingPostLayoutUpdate()
+        clearPendingVerification(playerView)
         observedPlayer?.removeListener(this)
         observedPlayer = null
-        val playerView = (view as? PlayerView) ?: playerViewRef.get()
         playerView?.removeOnLayoutChangeListener(this)
         playerView?.removeOnAttachStateChangeListener(this)
         contentFrameRef.get()?.removeOnLayoutChangeListener(this)
-        isDisposed = true
+    }
+
+    private fun clearPendingPostLayoutUpdate() {
+        pendingPreDrawObserver?.let { observer ->
+            if (observer.isAlive) {
+                observer.removeOnPreDrawListener(postLayoutUpdate)
+            }
+        }
+        pendingPreDrawObserver = null
+    }
+
+    private fun clearPendingVerification(playerView: PlayerView?) {
+        pendingVerification?.let { verification ->
+            playerView?.removeCallbacks(verification)
+        }
+        pendingVerification = null
     }
 }
 

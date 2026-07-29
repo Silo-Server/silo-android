@@ -46,8 +46,8 @@ import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsPromp
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsReportScreen
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSettingsScreen
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewModel
-import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherLobbyScreen
+import org.siloserver.silo.tv.ui.screens.watchtogether.tvWatchTogetherDestination
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
@@ -501,6 +501,11 @@ fun TvAppNavigation(
                         launchSingleTop = true
                     }
                 },
+                onOpenWatchTogether = { room ->
+                    navController.navigate(tvWatchTogetherDestination(room)) {
+                        launchSingleTop = true
+                    }
+                },
                 onOpenLibraryCollectionDetail = { libraryId, collectionId, title ->
                     navController.navigate(
                         TvRoute.LibraryCollectionDetail(libraryId, collectionId, title).route,
@@ -682,24 +687,8 @@ fun TvAppNavigation(
                         launchSingleTop = true
                     }
                 },
-                // Watch Together: the entry dialog resolves a room snapshot; route
-                // host-with-selection straight to the synced player (carrying
-                // roomId), otherwise into the lobby to wait/vote/pick.
                 onWatchTogether = { snapshot ->
-                    val hostAlone =
-                        snapshot.selfRole == MemberRole.Host && snapshot.memberCount <= 1
-                    val target = if (!snapshot.selectedContentId.isNullOrBlank() && !hostAlone) {
-                        TvRoute.Player(
-                            contentId = snapshot.selectedContentId!!,
-                            fileId = snapshot.selectedFileId,
-                            roomId = snapshot.roomId,
-                            resumePositionSeconds = snapshot.anchorPositionSeconds
-                                .takeIf { it.isFinite() && it > 0.0 },
-                        ).route
-                    } else {
-                        TvRoute.WatchTogetherLobby(roomId = snapshot.roomId).route
-                    }
-                    navController.navigate(target)
+                    navController.navigate(tvWatchTogetherDestination(snapshot))
                 },
                 onOpenPerson = { personId ->
                     navController.navigate(TvRoute.PersonDetail(personId).route)

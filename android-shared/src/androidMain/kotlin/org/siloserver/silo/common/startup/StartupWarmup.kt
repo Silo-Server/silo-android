@@ -7,11 +7,14 @@ import org.siloserver.silo.common.ui.components.resolveAvatarUrl
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
+import org.siloserver.silo.repository.port.HomeCacheWriteLease
+import org.siloserver.silo.viewmodel.hydrateHomeSections
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -82,6 +85,7 @@ suspend fun warmAuthenticatedStartup(
     personalDataRepository: PersonalDataRepository,
     sectionRepository: SectionRepository,
     homeCache: HomeCachePort,
+    identityTransitions: IdentityTransitionBarrier,
     serverUrl: String?,
     artworkPlan: StartupArtworkPlan,
 ) {
@@ -105,7 +109,15 @@ suspend fun warmAuthenticatedStartup(
                 Unit
             },
             async {
-                runCatching { warmHome(context, sectionRepository, homeCache, artworkPlan) }
+                runCatching {
+                    warmHome(
+                        context,
+                        sectionRepository,
+                        homeCache,
+                        identityTransitions,
+                        artworkPlan,
+                    )
+                }
                 Unit
             },
         ).awaitAll()
@@ -134,27 +146,23 @@ private suspend fun CoroutineScope.warmHome(
     context: Context,
     sectionRepository: SectionRepository,
     homeCache: HomeCachePort,
+    identityTransitions: IdentityTransitionBarrier,
     artworkPlan: StartupArtworkPlan,
 ) {
+    val requestIdentityGeneration = identityTransitions.generation.value
+    val cacheWriteLease = HomeCacheWriteLease(requestIdentityGeneration)
     when (val result = sectionRepository.getHomeSections()) {
         is ApiResult.Success -> {
-            val resolvedPairs: List<Pair<ResolvedSection, Boolean>> =
-                result.data.sections.map { section ->
-                    async {
-                        when (val itemsResult = sectionRepository.getHomeSectionItems(section.id)) {
-                            is ApiResult.Success -> (itemsResult.data.section ?: section) to true
-                            is ApiResult.Error,
-                            is ApiResult.NetworkError -> section to false
-                        }
-                    }
-                }.awaitAll()
-
-            if (resolvedPairs.all { it.second }) {
-                val resolved = resolvedPairs.map { it.first }.filter { it.items.isNotEmpty() }
-                if (resolved.isNotEmpty()) {
-                    homeCache.cacheHome(resolved)
-                    warmHomeArtwork(context, resolved, artworkPlan)
-                }
+            val hydration = hydrateHomeSections(result.data.sections) { sectionId ->
+                sectionRepository.getHomeSectionItems(sectionId)
+            }
+            if (
+                hydration.fullyResolved &&
+                hydration.sections.isNotEmpty() &&
+                requestIdentityGeneration == identityTransitions.generation.value
+            ) {
+                homeCache.cacheHome(hydration.sections, cacheWriteLease)
+                warmHomeArtwork(context, hydration.sections, artworkPlan)
             }
         }
         is ApiResult.Error,

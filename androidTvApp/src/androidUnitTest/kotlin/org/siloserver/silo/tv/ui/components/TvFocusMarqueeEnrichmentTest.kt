@@ -4,7 +4,9 @@ import org.siloserver.silo.model.catalog.CastMember
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.SectionItem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -136,34 +138,98 @@ class TvFocusMarqueeEnrichmentTest {
     }
 
     @Test
-    fun `initial seed joins the coordinated candidate and does not replace it`() {
+    fun `page entry reseeds a stale candidate when its row identity changes`() {
+        val state = TvFocusMarqueeState()
+        val item = SectionItem(contentId = "item-1", type = "movie", title = "Item")
+
+        state.seedInitialPreview(item, "Row", rowIdentity = "row-old")
+        state.commit(state.candidate)
+        state.seedInitialPreview(item, "Row", rowIdentity = "row-new")
+
+        assertEquals("row-new#item-1", state.candidate?.id)
+    }
+
+    @Test
+    fun `page entry seed never replaces settled real focus`() {
+        val state = TvFocusMarqueeState()
+        val focusedItem = SectionItem(
+            contentId = "focused-item",
+            type = "movie",
+            title = "Focused",
+        )
+        val seedItem = SectionItem(
+            contentId = "seed-item",
+            type = "movie",
+            title = "Replacement",
+        )
+
+        state.preview(focusedItem, "Focused", rowIdentity = "focused-row")
+        state.commit(state.candidate)
+        state.seedInitialPreview(seedItem, "Replacement", rowIdentity = "replacement-row")
+
+        assertEquals("focused-row#focused-item", state.content?.id)
+        assertEquals("focused-row#focused-item", state.candidate?.id)
+    }
+
+    @Test
+    fun `page entry seed never replaces pending real focus`() {
+        val state = TvFocusMarqueeState()
+        val initialItem = SectionItem(
+            contentId = "initial-item",
+            type = "movie",
+            title = "Initial",
+        )
+        val focusedItem = SectionItem(
+            contentId = "focused-item",
+            type = "movie",
+            title = "Focused",
+        )
+        val seedItem = SectionItem(
+            contentId = "seed-item",
+            type = "movie",
+            title = "Replacement",
+        )
+
+        state.seedInitialPreview(initialItem, "Initial", rowIdentity = "initial-row")
+        state.commit(state.candidate)
+        state.preview(focusedItem, "Focused", rowIdentity = "focused-row")
+        state.seedInitialPreview(seedItem, "Replacement", rowIdentity = "replacement-row")
+
+        assertEquals("initial-row#initial-item", state.content?.id)
+        assertEquals("focused-row#focused-item", state.candidate?.id)
+    }
+
+    @Test
+    fun `initial seed does not enable network enrichment until real focus`() {
         val state = TvFocusMarqueeState()
         val first = SectionItem(
             contentId = "first",
             type = "movie",
             title = "First Movie",
-            backdropUrl = "https://art/first.jpg",
-        )
-        val second = SectionItem(
-            contentId = "second",
-            type = "movie",
-            title = "Second Movie",
-            backdropUrl = "https://art/second.jpg",
         )
 
         state.seedInitialPreview(first, "Continue Watching")
+        state.commit(state.candidate)
+        assertFalse(state.hasSettledRealFocus)
 
-        assertNull(state.content)
-        assertEquals("First Movie", state.candidate?.title)
+        state.preview(first, "Continue Watching")
+        assertTrue(state.hasSettledRealFocus)
+    }
 
-        state.seedInitialPreview(second, "Next Row")
+    @Test
+    fun `new raw focus does not enrich the old seed before settlement`() {
+        val state = TvFocusMarqueeState()
+        val first = SectionItem(contentId = "first", type = "movie", title = "First")
+        val second = SectionItem(contentId = "second", type = "movie", title = "Second")
 
-        assertEquals("First Movie", state.candidate?.title)
+        state.seedInitialPreview(first, "First row", rowIdentity = "row-1")
+        state.commit(state.candidate)
+        state.preview(second, "Second row", rowIdentity = "row-2")
+
+        assertFalse(state.hasSettledRealFocus)
 
         state.commit(state.candidate)
-
-        assertEquals("First Movie", state.content?.title)
-        assertEquals("https://art/first.jpg", state.content?.heroBackdropUrl)
+        assertTrue(state.hasSettledRealFocus)
     }
 
     @Test

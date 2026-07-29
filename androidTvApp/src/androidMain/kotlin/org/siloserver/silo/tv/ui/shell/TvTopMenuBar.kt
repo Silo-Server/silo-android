@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -229,15 +230,39 @@ fun TvTopMenuBar(
     // suppression lift (e.g. closing the profile dropdown, which flips
     // isFocusSuppressed false) does NOT also re-grab the selected tab and fight
     // the dedicated profile-avatar focus path below.
-    var lastHandledFocusRequest by remember { mutableStateOf(0) }
-    LaunchedEffect(focusRequest, isFocusSuppressed) {
-        if (isFocusSuppressed) return@LaunchedEffect
-        if (focusRequest == lastHandledFocusRequest) return@LaunchedEffect
-        lastHandledFocusRequest = focusRequest
-        val explicitFocus = focusRequestTarget?.let(::focusForPanel)
-        dwellSuppressedButton = explicitFocus
-        val requester = explicitFocus?.let(::requesterForFocus) ?: selectedEntryRequester()
-        runCatching { requester.requestFocus() }
+    val currentFocusRequestTarget by rememberUpdatedState(focusRequestTarget)
+    val currentDestinations by rememberUpdatedState(destinations)
+    var lastHandledFocusRequest by remember { mutableStateOf<Pair<Int, TvTopMenuPanel?>>(0 to null) }
+    val focusRequestIdentity = focusRequest to focusRequestTarget
+    val focusRequestTargetAvailable =
+        isTopMenuFocusTargetAvailable(focusRequestTarget, destinations)
+    LaunchedEffect(
+        focusRequest,
+        focusRequestTarget,
+        isFocusSuppressed,
+        focusRequestTargetAvailable,
+    ) {
+        lastHandledFocusRequest = handleTopMenuFocusRequestIfAvailable(
+            requestIdentity = focusRequestIdentity,
+            lastHandledRequest = lastHandledFocusRequest,
+            isFocusSuppressed = isFocusSuppressed,
+            isTargetAvailable = focusRequestTargetAvailable,
+            requestFocus = {
+                val explicitFocus = focusRequestTarget?.let(::focusForPanel)
+                dwellSuppressedButton = explicitFocus
+                val requester = explicitFocus?.let(::requesterForFocus) ?: selectedEntryRequester()
+                requestTopMenuFocusUntilApplied(
+                    awaitFrame = { androidx.compose.runtime.withFrameNanos { } },
+                    isTargetCurrent = {
+                        currentFocusRequestTarget == focusRequestTarget &&
+                            isTopMenuFocusTargetAvailable(focusRequestTarget, currentDestinations)
+                    },
+                    requestFocus = {
+                        runCatching { requester.requestFocus() }.getOrDefault(false)
+                    },
+                )
+            },
+        )
     }
 
     LaunchedEffect(focusedButton) {

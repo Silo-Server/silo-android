@@ -99,6 +99,43 @@ class TvShellFocusStateTest {
     }
 
     @Test
+    fun backFromRootContentRetainsTheActiveRootAsItsMenuTarget() {
+        val state = TvShellFocusState()
+
+        assertEquals(
+            TvShellBackAction.MoveFocusToMenu,
+            state.onBack(
+                onTabRoot = true,
+                menuFocusTarget = moviesPanel,
+            ),
+        )
+
+        assertEquals(moviesPanel, state.menuFocusTarget)
+    }
+
+    @Test
+    fun contentUpOnSecondaryRoutesDoesNotFallbackToHomeFocus() {
+        val state = TvShellFocusState()
+        val before = state.menuFocusRequest
+
+        state.requestMenuFocusIfAvailable(target = null)
+
+        assertEquals(before, state.menuFocusRequest)
+        assertNull(state.menuFocusTarget)
+    }
+
+    @Test
+    fun contentUpOnSearchMayUseTheSearchOwnedNullTarget() {
+        val state = TvShellFocusState()
+        val before = state.menuFocusRequest
+
+        state.requestMenuFocusIfAvailable(target = null, allowNullTarget = true)
+
+        assertEquals(before + 1, state.menuFocusRequest)
+        assertNull(state.menuFocusTarget)
+    }
+
+    @Test
     fun backOnSecondaryScreensStillDelegatesToNav() {
         assertEquals(
             TvShellBackAction.DelegateToNav,
@@ -188,6 +225,20 @@ class TvShellFocusStateTest {
         s.closeProfileMenuForContent()
         assertFalse(s.profileMenuOpen)
         assertEquals(before, s.profileFocusRequest)
+    }
+
+    @Test
+    fun closingMenuForPopupThenDismissingPopupRefocusesAvatar() {
+        val state = TvShellFocusState()
+        state.previewProfileMenu()
+        state.enterProfileMenu()
+        val before = state.profileFocusRequest
+
+        state.closeProfileMenuForContent()
+        assertEquals(before, state.profileFocusRequest)
+
+        state.dismissProfileMenu()
+        assertEquals(before + 1, state.profileFocusRequest)
     }
 
     @Test

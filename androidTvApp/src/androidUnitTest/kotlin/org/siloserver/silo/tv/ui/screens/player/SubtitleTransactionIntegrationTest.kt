@@ -11,19 +11,26 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
@@ -80,6 +87,30 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
+
+private suspend fun awaitHarnessCondition(
+    transactionScheduler: TestCoroutineScheduler,
+    cleanupScheduler: TestCoroutineScheduler,
+    timeoutMillis: Long,
+    condition: suspend () -> Boolean,
+) {
+    val started = TimeSource.Monotonic.markNow()
+    while (!condition()) {
+        // runTest already owns and drives its transaction scheduler. Driving it
+        // again from another thread can execute nominally single-threaded test
+        // tasks concurrently. Only a genuinely separate manager-cleanup
+        // scheduler needs manual progress here.
+        if (cleanupScheduler !== transactionScheduler) {
+            cleanupScheduler.runCurrent()
+        }
+        if (started.elapsedNow() >= timeoutMillis.milliseconds) {
+            throw AssertionError("Timed out waiting for subtitle transaction cleanup")
+        }
+        yield()
+    }
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
@@ -132,6 +163,70 @@ class SubtitleTransactionIntegrationTest {
     }
 
     @Test
+    fun `cleanup wait advances the manager-owned test scheduler`() = runTest {
+        val cleanupDispatcher = StandardTestDispatcher()
+        val cleanupJob = SupervisorJob()
+        val cleanupScope = CoroutineScope(cleanupJob + cleanupDispatcher)
+        try {
+            val harness = harness(
+                replanResponse = { _, _ -> response(sidecarPlan("s2", FILE_ID, B_INDEX)) },
+                committedSessionCleanupScope = cleanupScope,
+                committedSessionCleanupScheduler = cleanupDispatcher.scheduler,
+            )
+            harness.start(sidecarA)
+
+            harness.adapter.select(sidecarB)
+            runCurrent()
+            harness.awaitReplans(1)
+            harness.awaitAdopted("s2")
+            harness.mountPending(
+                expectedSessionId = "s2",
+                tracks = listOf(
+                    harness.sidecarMountedTrack(
+                        expectedSessionId = "s2",
+                        serverIndex = B_INDEX,
+                        playerIndex = 9,
+                    ),
+                ),
+            )
+            runCurrent()
+
+            harness.awaitStopped("s1")
+
+            assertEquals(mapOf("s1" to 1), harness.stopCounts())
+            harness.assertNoOrphans()
+        } finally {
+            cleanupJob.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun `cleanup wait never drives the shared transaction scheduler concurrently`() = runTest {
+        val firstTaskRunning = AtomicBoolean(false)
+        val overlapObserved = AtomicBoolean(false)
+        val completed = AtomicBoolean(false)
+
+        backgroundScope.launch {
+            firstTaskRunning.set(true)
+            Thread.sleep(100)
+            firstTaskRunning.set(false)
+        }
+        backgroundScope.launch {
+            overlapObserved.set(firstTaskRunning.get())
+            completed.set(true)
+        }
+
+        awaitHarnessCondition(
+            transactionScheduler = testScheduler,
+            cleanupScheduler = testScheduler,
+            timeoutMillis = EVENT_TIMEOUT_MS,
+            condition = completed::get,
+        )
+
+        assertFalse(overlapObserved.get())
+    }
+
+    @Test
     fun `off supersedes an in-flight sidecar and replans from the committed session`() = runTest {
         val firstEntered = CompletableDeferred<Unit>()
         val releaseFirst = CompletableDeferred<Unit>()
@@ -156,6 +251,10 @@ class SubtitleTransactionIntegrationTest {
         harness.awaitReplans(2)
         harness.awaitStopped("s2")
         harness.awaitAdopted("s3")
+        assertTrue(
+            testScheduler.currentTime < EVENT_TIMEOUT_MS,
+            "Adoption reached the pending Media3 mount deadline before the test could mount it.",
+        )
         runCurrent()
 
         assertEquals(listOf("s1", "s1"), harness.replanBaseSessions)
@@ -345,13 +444,21 @@ class SubtitleTransactionIntegrationTest {
 
     private fun TestScope.harness(
         replanResponse: suspend (Int, JsonObject) -> PlaybackDecisionResponseV3,
+        committedSessionCleanupScope: CoroutineScope = backgroundScope,
+        committedSessionCleanupScheduler: TestCoroutineScheduler = testScheduler,
     ): Harness = Harness(
         scope = backgroundScope,
+        transactionScheduler = testScheduler,
+        committedSessionCleanupScope = committedSessionCleanupScope,
+        committedSessionCleanupScheduler = committedSessionCleanupScheduler,
         replanResponse = replanResponse,
     )
 
     private class Harness(
         private val scope: CoroutineScope,
+        private val transactionScheduler: TestCoroutineScheduler,
+        committedSessionCleanupScope: CoroutineScope,
+        private val committedSessionCleanupScheduler: TestCoroutineScheduler,
         private val replanResponse: suspend (Int, JsonObject) -> PlaybackDecisionResponseV3,
     ) {
         val stoppedSessions: MutableList<String> =
@@ -368,9 +475,7 @@ class SubtitleTransactionIntegrationTest {
             Collections.synchronizedMap(mutableMapOf())
         val media3Selections = mutableListOf<MountedSelection>()
 
-        private val stoppedEvents = Channel<String>(Channel.UNLIMITED)
         private val replanEvents = Channel<Unit>(Channel.UNLIMITED)
-        private val adoptedEvents = Channel<String>(Channel.UNLIMITED)
         private val persistenceEvents = Channel<Unit>(Channel.UNLIMITED)
         private val startIndex = AtomicInteger()
         private val replanIndex = AtomicInteger()
@@ -412,7 +517,6 @@ class SubtitleTransactionIntegrationTest {
                         path.startsWith("/api/v1/playback/") -> {
                         val sessionId = path.substringAfterLast('/')
                         stoppedSessions += sessionId
-                        stoppedEvents.send(sessionId)
                         null
                     }
                     else -> null
@@ -429,7 +533,7 @@ class SubtitleTransactionIntegrationTest {
         val manager = PlaybackSessionManager(
             playbackRepository = PlaybackRepository(PlaybackApi(client)),
             tokenManager = IntegrationTokenManager,
-            committedSessionCleanupScope = scope,
+            committedSessionCleanupScope = committedSessionCleanupScope,
         )
         val lifecycle = PlaybackSessionLifecycle(
             sessionManager = manager,
@@ -515,7 +619,6 @@ class SubtitleTransactionIntegrationTest {
                     if (adopted && adoption.isCurrent()) {
                         adoptedPlaybackRows[candidate.session.sessionId] =
                             adoption.playback.subtitleTracks
-                        adoptedEvents.send(candidate.session.sessionId)
                         TvSubtitleAdoptionResult.Adopted
                     } else {
                         TvSubtitleAdoptionResult.Superseded
@@ -672,13 +775,12 @@ class SubtitleTransactionIntegrationTest {
 
         suspend fun awaitStopped(sessionId: String) {
             if (sessionId in stoppedSessions) return
-            withContext(Dispatchers.Default) {
-                withTimeout(EVENT_TIMEOUT_MS) {
-                    while (stoppedEvents.receive() != sessionId) {
-                        // Drain unrelated cleanup completions.
-                    }
-                }
-            }
+            awaitHarnessCondition(
+                transactionScheduler = transactionScheduler,
+                cleanupScheduler = committedSessionCleanupScheduler,
+                timeoutMillis = EVENT_TIMEOUT_MS,
+                condition = { sessionId in stoppedSessions },
+            )
         }
 
         suspend fun awaitReplans(count: Int) {
@@ -690,14 +792,15 @@ class SubtitleTransactionIntegrationTest {
         }
 
         suspend fun awaitAdopted(sessionId: String) {
-            if (lifecycle.activeSessionId() == sessionId) return
-            withContext(Dispatchers.Default) {
-                withTimeout(5_000) {
-                    while (adoptedEvents.receive() != sessionId) {
-                        // Drain unrelated adoption completions.
-                    }
-                }
-            }
+            awaitHarnessCondition(
+                transactionScheduler = transactionScheduler,
+                cleanupScheduler = transactionScheduler,
+                timeoutMillis = EVENT_TIMEOUT_MS,
+                condition = {
+                    manager.activeSessionIdForTest() == sessionId &&
+                        lifecycle.activeSessionId() == sessionId
+                },
+            )
         }
 
         suspend fun awaitPersistence(count: Int) {
@@ -717,13 +820,12 @@ class SubtitleTransactionIntegrationTest {
         }
 
         suspend fun assertNoOrphans() {
-            withContext(Dispatchers.Default) {
-                withTimeout(EVENT_TIMEOUT_MS) {
-                    while (manager.orphanedSessionIdsForTest().isNotEmpty()) {
-                        kotlinx.coroutines.yield()
-                    }
-                }
-            }
+            awaitHarnessCondition(
+                transactionScheduler = transactionScheduler,
+                cleanupScheduler = committedSessionCleanupScheduler,
+                timeoutMillis = EVENT_TIMEOUT_MS,
+                condition = { manager.orphanedSessionIdsForTest().isEmpty() },
+            )
             assertEquals(emptySet(), manager.orphanedSessionIdsForTest())
         }
 

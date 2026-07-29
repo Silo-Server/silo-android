@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
@@ -139,6 +140,7 @@ fun MovieDetailContent(
                 sourceTokens = sourceTokens,
                 factsLine = factsLine,
                 dominantColor = dominantColor,
+                directorText = movieDirectorCredit(detail),
                 translation = translation,
             ) {
                 HeroActionStack(

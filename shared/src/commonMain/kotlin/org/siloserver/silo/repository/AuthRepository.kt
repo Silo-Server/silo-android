@@ -11,6 +11,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.AuthApi
+import org.siloserver.silo.model.auth.InvitationLookupResponse
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.map
 
@@ -21,12 +22,12 @@ class AuthRepository(
     private val healthApi: HealthApi? = null,
 ) {
     /**
-     * Logs in with username and password.
-     * On success, persists tokens via [TokenManager] and returns the [User].
+     * Persists a successful auth response's tokens into the active server's
+     * scope and unwraps the [User] — the shared tail of every path that ends
+     * a signed-out state (login, signup, setup, invitation claim).
      */
-    suspend fun login(username: String, password: String): ApiResult<User> {
-        val result = authApi.login(LoginRequest(username = username, password = password))
-        return when (result) {
+    private suspend fun persistSession(result: ApiResult<LoginResponse>): ApiResult<User> =
+        when (result) {
             is ApiResult.Success -> {
                 val data = result.data
                 tokenManager.saveTokens(
@@ -39,7 +40,13 @@ class AuthRepository(
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
-    }
+
+    /**
+     * Logs in with username and password.
+     * On success, persists tokens via [TokenManager] and returns the [User].
+     */
+    suspend fun login(username: String, password: String): ApiResult<User> =
+        persistSession(authApi.login(LoginRequest(username = username, password = password)))
 
     /**
      * Credential login without persistence. TV keeps QR and password sign-in
@@ -59,27 +66,16 @@ class AuthRepository(
         password: String,
         inviteCode: String,
     ): ApiResult<User> {
-        val result = authApi.signup(
-            SignupRequest(
-                username = username,
-                email = email,
-                password = password,
-                inviteCode = inviteCode,
+        return persistSession(
+            authApi.signup(
+                SignupRequest(
+                    username = username,
+                    email = email,
+                    password = password,
+                    inviteCode = inviteCode,
+                ),
             ),
         )
-        return when (result) {
-            is ApiResult.Success -> {
-                val data = result.data
-                tokenManager.saveTokens(
-                    accessToken = data.accessToken,
-                    refreshToken = data.refreshToken,
-                    expiresIn = data.expiresIn,
-                )
-                ApiResult.Success(data.user)
-            }
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-        }
     }
 
     /**
@@ -90,22 +86,7 @@ class AuthRepository(
         username: String,
         email: String,
         password: String,
-    ): ApiResult<User> {
-        val result = authApi.setup(username, email, password)
-        return when (result) {
-            is ApiResult.Success -> {
-                val data = result.data
-                tokenManager.saveTokens(
-                    accessToken = data.accessToken,
-                    refreshToken = data.refreshToken,
-                    expiresIn = data.expiresIn,
-                )
-                ApiResult.Success(data.user)
-            }
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-        }
-    }
+    ): ApiResult<User> = persistSession(authApi.setup(username, email, password))
 
     /** Checks whether the server requires initial setup. */
     suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> =
@@ -113,6 +94,46 @@ class AuthRepository(
 
     suspend fun getSetupStatus(serverUrl: String): ApiResult<SetupStatusResponse> =
         authApi.getSetupStatus(serverUrl)
+
+    /**
+     * Resolves an emailed-invitation claim token against a server the app is
+     * not signed into yet.
+     */
+    suspend fun lookupInvitation(
+        serverUrl: String,
+        token: String,
+    ): ApiResult<InvitationLookupResponse> = authApi.lookupInvitation(serverUrl, token)
+
+    /**
+     * Accepts an emailed invitation: the account is created with the
+     * invitation's email as username, tokens are persisted, and the new
+     * [User] is returned — same post-conditions as [signup].
+     *
+     * The claim request goes to [serverUrl] directly (it needs no auth), and
+     * the app only adopts that server as active once the claim has actually
+     * succeeded. Switching first would strand a user whose claim fails —
+     * expired token, already used, network error — on a server they have no
+     * account on, with their previous session no longer active.
+     */
+    suspend fun acceptInvitation(
+        serverUrl: String,
+        token: String,
+        password: String,
+    ): ApiResult<User> {
+        val result = authApi.acceptInvitation(serverUrl, token, password)
+        if (result is ApiResult.Success) {
+            setServerUrl(serverUrl)
+            // The server may already be registered with a previous account's
+            // profile scope, which setServerUrl just restored. The claimed
+            // account is a different identity — drop the stale profile id +
+            // token so its first requests don't carry another user's profile
+            // headers, and so the app lands on profile selection.
+            tokenManager.setProfileId(null)
+            tokenManager.setProfileToken(null)
+            tokenManager.getCurrentServerId()?.let { serverRegistry?.setProfileId(it, null) }
+        }
+        return persistSession(result)
+    }
 
     /** Checks whether public signups are enabled. */
     suspend fun getSignupStatus(): ApiResult<SignupStatusResponse> =

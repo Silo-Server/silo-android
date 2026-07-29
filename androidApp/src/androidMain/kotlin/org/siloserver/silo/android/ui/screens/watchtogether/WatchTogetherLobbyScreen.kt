@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.watchtogether
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,7 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.HowToVote
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
@@ -77,6 +78,14 @@ fun WatchTogetherLobbyScreen(
         if (closedReason != null) onBack()
     }
 
+    LaunchedEffect(viewModel) {
+        viewModel.errors.collect { message ->
+            if (message.isNotBlank()) {
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     // Role drives only the cosmetic header label; mutating controls gate on the
     // server's per-recipient management capability so a demoted/grace-period host
     // (selfRole still "host" but management revoked) doesn't see dead buttons.
@@ -88,11 +97,22 @@ fun WatchTogetherLobbyScreen(
             TopAppBar(
                 title = { Text("Watch Together") },
                 navigationIcon = {
-                    IconButton(onClick = { viewModel.leave(); onBack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Leave room")
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back to browse",
+                        )
                     }
                 },
                 actions = {
+                    TextButton(
+                        onClick = {
+                            viewModel.leave()
+                            onBack()
+                        },
+                    ) {
+                        Text("Leave room")
+                    }
                     if (canManage) {
                         TextButton(onClick = { viewModel.closeRoom() }) { Text("Close") }
                     }

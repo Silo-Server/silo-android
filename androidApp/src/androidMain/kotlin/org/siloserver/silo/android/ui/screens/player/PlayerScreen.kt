@@ -997,7 +997,11 @@ fun PlayerScreen(
                     identity = pendingIdentity,
                     selected = selected,
                     snapshotKey = media3TextTrackSnapshotKey(backend.player.currentTracks),
-                    settled = backend.player.playbackState == Player.STATE_READY,
+                    // This composition-side attempt can race Media3's first
+                    // text-track publication. Only onTracksChanged callbacks
+                    // provide settlement evidence; the adapter then requires
+                    // the same non-empty snapshot twice before failing.
+                    settled = false,
                 )
             }
         } else {

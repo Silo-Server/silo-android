@@ -163,6 +163,37 @@ class RoomSessionTest {
     }
 
     @Test
+    fun `room remains adopted until explicit leave or identity transition`() = runTest {
+        val repository = FakeRoomSessionRepository()
+        val barrier = DefaultIdentityTransitionBarrier()
+        val session = RoomSession(repository, backgroundScope, barrier)
+
+        session.adopt("room-a").join()
+        runCurrent()
+        assertTrue(session.isActive())
+        assertEquals(0, repository.resetCount)
+
+        barrier.changing(IdentityTransitionKind.PROFILE_SWITCH) {
+            assertTrue(!session.isActive())
+            assertEquals(1, repository.resetCount)
+        }
+    }
+
+    @Test
+    fun `sign out clears the adopted room before identity mutation`() = runTest {
+        val repository = FakeRoomSessionRepository()
+        val barrier = DefaultIdentityTransitionBarrier()
+        val session = RoomSession(repository, backgroundScope, barrier)
+        session.adopt("room-a").join()
+        runCurrent()
+
+        barrier.changing(IdentityTransitionKind.SIGN_OUT) {
+            assertTrue(!session.isActive())
+            assertEquals(1, repository.resetCount)
+        }
+    }
+
+    @Test
     fun `every identity transition kind resets the room before mutation`() = runTest {
         IdentityTransitionKind.entries.forEach { kind ->
             val repository = FakeRoomSessionRepository()

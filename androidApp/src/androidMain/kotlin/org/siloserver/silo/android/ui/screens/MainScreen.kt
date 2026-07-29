@@ -53,7 +53,9 @@ import org.siloserver.silo.android.ui.screens.libraries.LibrariesScreen
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesSelectorSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesViewModel
 import org.siloserver.silo.android.ui.screens.recommendations.RecommendationsScreen
+import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherMenuEntrySheet
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
+import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.MediaModeCapabilities
 import org.siloserver.silo.model.navigation.mobileMediaModeCapabilities
@@ -85,6 +87,7 @@ fun MainScreen(
     val siloCastController: SiloCastController = koinInject()
     val siloCastState by siloCastController.state.collectAsState()
     var showSiloCastTargetPicker by rememberSaveable { mutableStateOf(false) }
+    var showWatchTogetherEntry by rememberSaveable { mutableStateOf(false) }
 
     fun playVideo(contentId: String, fileId: Int? = null, resumePositionSeconds: Double? = null) {
         val launchedRemotely = siloCastController.launchOnConnectedTarget(
@@ -221,6 +224,12 @@ fun MainScreen(
     } else {
         null
     }
+    val watchTogetherMenuAction: (() -> Unit)? =
+        if (CLIENT_WATCH_TOGETHER_SURFACE_ENABLED) {
+            { showWatchTogetherEntry = true }
+        } else {
+            null
+        }
 
     Scaffold(
         bottomBar = {
@@ -292,6 +301,7 @@ fun MainScreen(
                             onRemoteDisconnectClick = { siloCastController.disconnect() },
                             isRemoteControlActive = siloCastState.hasActiveSession,
                             onRequestsClick = requestsMenuAction,
+                            onWatchTogetherClick = watchTogetherMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
                             onSwitchProfileClick = {
                                 navController.navigate(Route.ProfileSelection.route)
@@ -318,6 +328,7 @@ fun MainScreen(
                             onLibrarySelectorClick = { showLibrarySelector = true },
                             onSearchClick = { navController.navigate(Route.Search().route) },
                             onRequestsClick = requestsMenuAction,
+                            onWatchTogetherClick = watchTogetherMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
                             onSwitchProfileClick = {
                                 navController.navigate(Route.ProfileSelection.route)
@@ -393,6 +404,7 @@ fun MainScreen(
                     isProfileLoading = headerState.isLoading,
                     onSearchClick = { navController.navigate(Route.Search().route) },
                     onRequestsClick = requestsMenuAction,
+                    onWatchTogetherClick = watchTogetherMenuAction,
                     onSettingsClick = { navController.navigate(Route.Settings.route) },
                     onSwitchProfileClick = {
                         navController.navigate(Route.ProfileSelection.route)
@@ -445,6 +457,17 @@ fun MainScreen(
                 SiloCastTargetPickerSheet(
                     onDismiss = { showSiloCastTargetPicker = false },
                     controller = siloCastController,
+                )
+            }
+
+            if (showWatchTogetherEntry) {
+                WatchTogetherMenuEntrySheet(
+                    onNavigate = { route ->
+                        navController.navigate(route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onDismiss = { showWatchTogetherEntry = false },
                 )
             }
         }

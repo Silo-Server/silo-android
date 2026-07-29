@@ -7,13 +7,14 @@ import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
+import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
+import org.siloserver.silo.repository.port.HomeCacheWriteLease
 import org.siloserver.silo.repository.port.NoOpHomeCachePort
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +46,7 @@ class HomeViewModel(
     // Live-home accelerator (Apple realtime-updates spec). Null keeps
     // commonMain/tests network-only; the apps inject the shared coordinator.
     private val homeRealtime: org.siloserver.silo.repository.HomeRealtimeCoordinator? = null,
+    private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -117,6 +119,8 @@ class HomeViewModel(
     }
 
     private suspend fun fetchSections() {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        val cacheWriteLease = HomeCacheWriteLease(requestIdentityGeneration)
         // Whether we already have something to show (cached or prior fetch) — if a
         // refresh fails we keep it rather than replacing it with a blocking error.
         val hadSections = _uiState.value.sections.isNotEmpty()
@@ -130,48 +134,20 @@ class HomeViewModel(
                 // re-downloading data already in hand. Defensive fallback resolves
                 // only sections the server left un-inlined (older deployments / a
                 // section type that reports a non-zero total but ships no items).
-                val needsFetch = sections.filter { it.items.isEmpty() && it.totalCount > 0 }
-                val resolvedPairs: List<Pair<ResolvedSection, Boolean>> = if (needsFetch.isEmpty()) {
-                    sections.map { it to true }
-                } else {
-                    val byId = needsFetch.map { section ->
-                        viewModelScope.async {
-                            section.id to when (val itemsResult = sectionRepository.getHomeSectionItems(section.id)) {
-                                is ApiResult.Success -> {
-                                    // The response carries items either nested under
-                                    // `section` or as a sibling top-level `items` list.
-                                    // Honor both — using only `.section` silently drops
-                                    // a successful refetch that returned items at the top
-                                    // level, leaving the section empty and filtered out.
-                                    val data = itemsResult.data
-                                    val responseSection = data.section
-                                    val hydrated = when {
-                                        responseSection != null && responseSection.items.isNotEmpty() ->
-                                            responseSection
-                                        responseSection != null && responseSection.totalCount == 0 ->
-                                            responseSection
-                                        responseSection != null && data.items.isNotEmpty() ->
-                                            responseSection.copy(items = data.items)
-                                        data.items.isNotEmpty() ->
-                                            section.copy(items = data.items)
-                                        else -> null
-                                    }
-                                    if (hydrated != null) hydrated to true else section to false
-                                }
-                                else -> section to false
-                            }
-                        }
-                    }.awaitAll().toMap()
-                    sections.map { section -> byId[section.id] ?: (section to true) }
+                val hydration = hydrateHomeSections(sections) { sectionId ->
+                    sectionRepository.getHomeSectionItems(sectionId)
                 }
-                val resolved = resolvedPairs.map { it.first }.filter { it.items.isNotEmpty() }
+                val resolved = hydration.sections
                 // Don't persist a partially-resolved home over a good cached one.
-                val fullyResolved = resolvedPairs.all { it.second }
+                val fullyResolved = hydration.fullyResolved
 
                 // Cache the RAW server sections (snapshot), but display with the
                 // local optimistic overlay applied.
-                if (fullyResolved) {
-                    homeCache.cacheHome(resolved)
+                if (
+                    fullyResolved &&
+                    requestIdentityGeneration == identityTransitions.generation.value
+                ) {
+                    homeCache.cacheHome(resolved, cacheWriteLease)
                 }
                 val overlaid = overlayLocalState(resolved)
                 _uiState.update {

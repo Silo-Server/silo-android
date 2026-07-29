@@ -77,12 +77,6 @@ internal object TvDetailMetadata {
         return tokens
     }
 
-    fun starringText(detail: ItemDetail): String? {
-        val names = detail.cast.take(3).map { it.name.trim() }.filter { it.isNotEmpty() }
-        if (names.isEmpty()) return null
-        return "Starring ${names.joinToString(", ")}"
-    }
-
     private fun typeLabel(detail: ItemDetail): String = when {
         isAudiobookItemType(detail.type) -> "Audiobook"
         else -> when (detail.type.lowercase()) {

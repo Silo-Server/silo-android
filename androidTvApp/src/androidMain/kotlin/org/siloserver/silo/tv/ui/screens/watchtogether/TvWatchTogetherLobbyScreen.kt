@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.watchtogether
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -32,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -106,11 +108,12 @@ fun TvWatchTogetherLobbyScreen(
     val room by viewModel.room.collectAsState()
     val suggestions by viewModel.suggestions.collectAsState()
     val closedReason by viewModel.roomClosedReason.collectAsState()
+    val context = LocalContext.current
 
-    // Role drives only the cosmetic header label; mutating controls (and the
-    // host's room-closing Back behaviour) gate on the server's per-recipient
-    // management capability so a demoted/grace-period host (selfRole still
-    // "host" but management revoked) doesn't see dead buttons.
+    // Role drives only the cosmetic header label; mutating controls gate on
+    // the server's per-recipient management capability so a demoted/
+    // grace-period host (selfRole still "host" but management revoked) doesn't
+    // see dead buttons.
     val snapshot = room
     val isHostLabel = snapshot?.selfRole == MemberRole.Host
     val canManage = snapshot?.selfCanManageRoom == true
@@ -145,14 +148,17 @@ fun TvWatchTogetherLobbyScreen(
         }
     }
 
-    // User-initiated leave just drops our own connection and exits — matching
-    // mobile, where leaving the lobby never closes the room. A host closes the
-    // room for everyone via the explicit "Close room" action (below), which
-    // stays on screen until the server's room_closed broadcast reactively backs
-    // us out. (Auto-closing here raced the closeRoom call against viewModelScope
-    // cancellation on dispose, so the room often never actually closed.)
+    LaunchedEffect(viewModel) {
+        viewModel.errors.collect { message ->
+            if (message.isNotBlank()) {
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Browsing away retains the process-scoped room connection. Leaving is an
+    // explicit action below; hosts close the room for everyone via "Close room".
     BackHandler(enabled = true) {
-        viewModel.leave()
         onBack()
     }
 
@@ -262,6 +268,17 @@ fun TvWatchTogetherLobbyScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             if (snapshot != null) {
+                TvDialogActionRow(
+                    title = "Browse titles",
+                    onClick = onBack,
+                )
+                TvDialogActionRow(
+                    title = "Leave room",
+                    onClick = {
+                        viewModel.leave()
+                        onBack()
+                    },
+                )
                 if (canManage) {
                     // Selection mode is fixed at room creation — shown read-only.
                     TvDialogCyclerRow(

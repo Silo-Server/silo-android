@@ -13,6 +13,7 @@ val networkModule = module {
     single<TokenManager> { TokenManagerImpl(get()) }
     single { createSiloClient(get(), getOrNull(), getOrNull(), getOrNull()) }
     single { AuthApi(get()) }
+    single { OnboardingApi(get()) }
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get()) }
     single { CatalogApi(get()) }
     single { PlaybackApi(get()) }

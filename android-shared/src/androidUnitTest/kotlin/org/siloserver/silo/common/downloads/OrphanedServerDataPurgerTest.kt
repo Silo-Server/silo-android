@@ -7,12 +7,14 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -374,6 +376,8 @@ class OrphanedServerDataPurgerTest {
         val finishInitialPurge = CompletableDeferred<Unit>()
         val initialRowsPurged = CompletableDeferred<Unit>()
         val rowsPurged = CompletableDeferred<Unit>()
+        val secondPurgeStarted = CompletableDeferred<Unit>()
+        val allowSecondPurge = CompletableDeferred<Unit>()
         val purger = OrphanedServerDataPurger(
             registry = registry,
             purgeDao = db.serverPurgeDao(),
@@ -386,6 +390,10 @@ class OrphanedServerDataPurgerTest {
                 if (orphanId == "preexisting-orphan") {
                     initialPurgeStarted.complete(Unit)
                     finishInitialPurge.await()
+                }
+                if (orphanId == serverId) {
+                    secondPurgeStarted.complete(Unit)
+                    allowSecondPurge.await()
                 }
                 db.serverPurgeDao().deleteAllRowsForServer(orphanId)
                 if (orphanId == "preexisting-orphan") {
@@ -400,21 +408,31 @@ class OrphanedServerDataPurgerTest {
         val observer = purger.start()
         var observerFailure: Throwable? = null
         observer.invokeOnCompletion { observerFailure = it }
-        initialPurgeStarted.await()
-        registry.remove(serverId)
-        assertTrue(registry.entries.value.none { it.id == serverId })
-        finishInitialPurge.complete(Unit)
-        initialRowsPurged.await()
-        assertTrue(observer.isActive, "purge observer stopped: $observerFailure")
-        assertNull(db.downloadDao().get("preexisting-orphan", "p1", 11))
-        assertTrue(
-            db.downloadDao().get(serverId, "p1", 10) != null,
-            "removed server was unexpectedly part of the startup orphan snapshot",
-        )
+        try {
+            initialPurgeStarted.await()
+            registry.remove(serverId)
+            assertTrue(registry.entries.value.none { it.id == serverId })
+            finishInitialPurge.complete(Unit)
+            initialRowsPurged.await()
+            secondPurgeStarted.await()
+            assertTrue(observer.isActive, "purge observer stopped: $observerFailure")
+            assertNull(db.downloadDao().get("preexisting-orphan", "p1", 11))
+            assertTrue(
+                db.downloadDao().get(serverId, "p1", 10) != null,
+                "second-pass deletion must remain gated until the snapshot assertion completes",
+            )
 
-        rowsPurged.await()
-        assertNull(db.downloadDao().get(serverId, "p1", 10))
-        observer.cancel()
+            allowSecondPurge.complete(Unit)
+            rowsPurged.await()
+            assertNull(db.downloadDao().get(serverId, "p1", 10))
+        } finally {
+            withContext(NonCancellable) {
+                finishInitialPurge.complete(Unit)
+                allowSecondPurge.complete(Unit)
+                observer.cancel()
+                observer.join()
+            }
+        }
     }
 }
 

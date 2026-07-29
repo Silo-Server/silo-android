@@ -8,6 +8,8 @@ import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.Suggestion
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.watchtogether.RoomSession
 import kotlinx.coroutines.flow.SharingStarted
@@ -62,17 +64,36 @@ class WatchTogetherLobbyViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, repository.suggestions.value)
     val roomClosedReason: StateFlow<String?> = repository.roomClosedReason
         .stateIn(viewModelScope, SharingStarted.Eagerly, repository.roomClosedReason.value)
+    val errors = repository.errors
 
-    fun vote(suggestionId: String) = viewModelScope.launch { repository.vote(suggestionId) }
-    fun unvote(suggestionId: String) = viewModelScope.launch { repository.unvote(suggestionId) }
+    fun vote(suggestionId: String) =
+        launchOperation("Could not vote") { repository.vote(suggestionId) }
+
+    fun unvote(suggestionId: String) =
+        launchOperation("Could not remove vote") { repository.unvote(suggestionId) }
+
     fun removeSuggestion(suggestionId: String) =
-        viewModelScope.launch { repository.deleteSuggestion(suggestionId) }
+        launchOperation("Could not remove suggestion") {
+            repository.deleteSuggestion(suggestionId)
+        }
 
     /** Host: promote a suggestion to the room selection (moves everyone to the player). */
     fun promote(suggestionId: String) =
-        viewModelScope.launch { repository.promoteSuggestion(PromoteSuggestionRequest(suggestionId = suggestionId)) }
+        launchOperation("Could not start suggestion") {
+            repository.promoteSuggestion(PromoteSuggestionRequest(suggestionId = suggestionId))
+        }
 
-    fun closeRoom() = viewModelScope.launch { repository.closeRoom() }
+    fun closeRoom() = launchOperation("Could not close room") { repository.closeRoom() }
+
+    private fun <T> launchOperation(
+        fallback: String,
+        operation: suspend () -> ApiResult<T>,
+    ) = viewModelScope.launch {
+        val result = operation()
+        if (result !is ApiResult.Success) {
+            repository.reportDeliveryFailure(result.errorMessage(fallback))
+        }
+    }
 
     /** Guest/host leave: tear down the WS + clear room state. */
     fun leave() {
