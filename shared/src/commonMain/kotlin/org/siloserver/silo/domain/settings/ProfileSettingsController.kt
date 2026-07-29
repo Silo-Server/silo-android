@@ -65,6 +65,21 @@ class ProfileSettingsController(
     )
 
     /**
+     * The outcome of one setter: whether the write landed, and what the server
+     * resolves for these keys now.
+     *
+     * [snapshot] is what the screen should render — it may differ from what the
+     * user just chose when policy narrowed the value or a device-scoped row
+     * shadows the profile one. Null means the write landed but the re-resolve
+     * did not; the caller keeps its optimistic value rather than rolling back a
+     * change that did take effect.
+     */
+    data class WriteResult(
+        val succeeded: Boolean,
+        val snapshot: Snapshot?,
+    )
+
+    /**
      * Probes the contract and, when the server speaks it, resolves the profile
      * keys. A failed *probe* leaves the snapshot null so the caller keeps
      * whatever it had; a successful probe with a failed resolve is reported as
@@ -87,20 +102,49 @@ class ProfileSettingsController(
         }
     }
 
+    /**
+     * Re-resolves every profile key after a successful write.
+     *
+     * A stored value is not necessarily the effective one. Policy can narrow
+     * or lock a setting (`playback.preferred_quality` carries a `ceiling`
+     * today, and the response type has carried `constrained`/`stored_value`
+     * since the contract landed), and a `profile_device` row for the same key
+     * outranks the `profile` row these setters write — the resolver answers
+     * with the device id attached. In both cases the PUT succeeds and changes
+     * nothing the user can see, so keeping the optimistic value would leave
+     * the screen asserting a preference playback is not using.
+     *
+     * Returns null when the re-resolve itself fails, which is not an error the
+     * caller should surface: the write landed, and the optimistic value is
+     * still the best guess until the next load.
+     */
+    private suspend fun reresolve(): Snapshot? =
+        when (val result = repository.getEffectiveValues(PROFILE_KEYS)) {
+            is ApiResult.Success -> snapshotOf(result.data)
+            is ApiResult.Error, is ApiResult.NetworkError -> null
+        }
+
     /** [language] is a BCP 47 tag, or "" for no preference. */
-    suspend fun setSubtitleLanguage(language: String): ApiResult<Unit> =
-        writeLanguage(SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE, language)
+    suspend fun setSubtitleLanguage(language: String): WriteResult =
+        resolved(writeLanguage(SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE, language))
 
     /** [mode] is a `playback.subtitle_mode` member: "auto", "always" or "off". */
-    suspend fun setSubtitleMode(mode: String): ApiResult<Unit> =
-        write(SettingKeys.PLAYBACK_SUBTITLE_MODE, JsonPrimitive(normalizeSubtitleMode(mode)))
+    suspend fun setSubtitleMode(mode: String): WriteResult =
+        resolved(write(SettingKeys.PLAYBACK_SUBTITLE_MODE, JsonPrimitive(normalizeSubtitleMode(mode))))
 
-    suspend fun setShowForcedSubtitles(enabled: Boolean): ApiResult<Unit> =
-        write(SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES, JsonPrimitive(enabled))
+    suspend fun setShowForcedSubtitles(enabled: Boolean): WriteResult =
+        resolved(write(SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES, JsonPrimitive(enabled)))
 
     /** [language] is a BCP 47 tag, or "" to inherit the library's language. */
-    suspend fun setMetadataLanguage(language: String): ApiResult<Unit> =
-        writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language)
+    suspend fun setMetadataLanguage(language: String): WriteResult =
+        resolved(writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language))
+
+    private suspend fun resolved(write: ApiResult<Unit>): WriteResult =
+        if (write is ApiResult.Success) {
+            WriteResult(succeeded = true, snapshot = reresolve())
+        } else {
+            WriteResult(succeeded = false, snapshot = null)
+        }
 
     private suspend fun writeLanguage(key: String, language: String): ApiResult<Unit> {
         val tag = language.trim()

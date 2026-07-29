@@ -996,7 +996,7 @@ private fun TvSubtitleSettingsPane(
                 if (metadataLanguageEnabled) {
                     SettingsValueRow(
                         label = "Metadata Language",
-                        value = subtitleLanguageLabel(state.metadataLanguage),
+                        value = metadataLanguageLabel(state.metadataLanguage),
                         onClick = { activePicker = SubtitlePicker.MetadataLanguage },
                     )
                 }
@@ -1121,7 +1121,7 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.MetadataLanguage -> TvSettingsPickerSheet(
             title = "Metadata Language",
-            options = subtitleLanguages.map { PickerOption(it.first, it.second) },
+            options = metadataLanguages.map { PickerOption(it.first, it.second) },
             selectedId = state.metadataLanguage,
             onSelect = { onMetadataLanguageChanged(it); activePicker = null },
             onDismiss = { activePicker = null },
@@ -2067,11 +2067,20 @@ private val audioLanguages = LanguageOptions.options(unsetLabel = "Default")
 
 private val subtitleLanguages = LanguageOptions.options(unsetLabel = "Off")
 
+// "Off" is right for subtitles — no language means no subtitles — but wrong for
+// metadata, where unset inherits the library's language rather than disabling
+// anything (catalog.metadata_language: "Language Silo prefers for titles,
+// descriptions, and artwork").
+private val metadataLanguages = LanguageOptions.options(unsetLabel = "Default")
+
 private fun audioLanguageLabel(wire: String): String =
     LanguageOptions.label(wire, unsetLabel = "Default")
 
 private fun subtitleLanguageLabel(wire: String): String =
     LanguageOptions.label(wire, unsetLabel = "Off")
+
+private fun metadataLanguageLabel(wire: String): String =
+    LanguageOptions.label(wire, unsetLabel = "Default")
 
 private fun resumeRewindLabel(seconds: Int): String =
     if (seconds <= 0) "Off" else "${seconds}s"

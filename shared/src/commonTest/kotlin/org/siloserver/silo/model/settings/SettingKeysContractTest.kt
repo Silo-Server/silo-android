@@ -60,6 +60,17 @@ class SettingKeysContractTest {
         assertEquals(SettingKeys.PLAYBACK_AUTO_SKIP_INTRO, PlaybackSettingsKeys.AutoSkipIntro)
         assertEquals(SettingKeys.PLAYBACK_AUTO_SKIP_CREDITS, PlaybackSettingsKeys.AutoSkipCredits)
         assertEquals(SettingKeys.PLAYBACK_AUTO_PLAY_NEXT, PlaybackSettingsKeys.AutoPlayNext)
+        // The two the cutover actually renamed. The membership checks above
+        // still pass if either constant points at some *other* contract key,
+        // so name both pairs explicitly.
+        assertEquals(
+            SettingKeys.PLAYBACK_SUBTITLE_APPEARANCE,
+            PlaybackSettingsKeys.SubtitleAppearance,
+        )
+        assertEquals(
+            SettingKeys.PLAYBACK_NEXT_UP_PROMPT_SECONDS,
+            PlaybackSettingsKeys.NextUpPromptSeconds,
+        )
         assertEquals(SettingKeys.PLAYER_PLAYBACK_SPEED, PlaybackSettingsKeys.PlaybackSpeed)
         assertEquals(SettingKeys.PLAYER_AUDIO_SYNC_MS, PlaybackSettingsKeys.AudioSyncMs)
         assertEquals(SettingKeys.PLAYER_SUBTITLE_SYNC_MS, PlaybackSettingsKeys.SubtitleSyncMs)
@@ -90,6 +101,29 @@ class SettingKeysContractTest {
         assertTrue((SettingKeys.BOOLEAN_KEYS intersect SettingKeys.INT_KEYS).isEmpty())
         assertTrue((SettingKeys.BOOLEAN_KEYS intersect SettingKeys.DOUBLE_KEYS).isEmpty())
         assertTrue((SettingKeys.INT_KEYS intersect SettingKeys.DOUBLE_KEYS).isEmpty())
+    }
+
+    @Test
+    fun theRenameTableTargetsTheKeysThatWereRenamed() {
+        // The local migration copies each old slot into the value on the right,
+        // so a target that drifts off the contract would move the user's value
+        // into a slot nothing reads — the same silent revert the table exists
+        // to prevent, just one rename later.
+        assertEquals(
+            mapOf(
+                "subtitle_appearance" to SettingKeys.PLAYBACK_SUBTITLE_APPEARANCE,
+                "player.next_up_prompt_seconds" to SettingKeys.PLAYBACK_NEXT_UP_PROMPT_SECONDS,
+            ),
+            PlaybackSettingsKeys.RenamedLocalKeys,
+        )
+        // And every old spelling must be genuinely retired: a key that is still
+        // live would have its value copied out from under it.
+        for (oldKey in PlaybackSettingsKeys.RenamedLocalKeys.keys) {
+            assertTrue(
+                oldKey !in SettingKeys.REMOTE,
+                "$oldKey is still a contract key; renaming it locally would strand it",
+            )
+        }
     }
 
     @Test

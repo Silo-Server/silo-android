@@ -3,6 +3,9 @@ package org.siloserver.silo.common.settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
 import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
@@ -72,6 +75,34 @@ class AndroidPlayerSettingsStoreTest {
                 val file = File(tempFolder.root, "ds_$id.preferences_pb")
                 PreferenceDataStoreFactory.create(produceFile = { file })
             },
+        )
+    }
+
+    /**
+     * A store whose backing DataStore already holds [seed].
+     *
+     * The seeding goes through the SAME DataStore instance the store will use —
+     * DataStore refuses two live instances over one file, so writing the
+     * fixture through a second handle throws rather than setting up the state
+     * under test.
+     */
+    private suspend fun newStoreSeededWith(
+        seed: suspend (androidx.datastore.preferences.core.MutablePreferences) -> Unit,
+    ): AndroidPlayerSettingsStore {
+        val shared = PreferenceDataStoreFactory.create(
+            produceFile = { File(tempFolder.root, "ds_seeded.preferences_pb") },
+        )
+        shared.edit { prefs -> seed(prefs) }
+        return AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            scope = TestScope(),
+            profileChangeSignal = flowOf(Unit),
+            getDeviceId = { null },
+            dataStoreFactory = { shared },
         )
     }
 
@@ -517,6 +548,48 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `a value stored under a pre-cutover key name survives the rename`() = runTest {
+        // The upgrade case. Both keys were renamed by the settings cutover, and
+        // both read local-first — subtitle appearance drives downloaded
+        // playback with no server in the loop — so an orphaned slot is a
+        // silently reverted preference, not just a stale cache.
+        val appearance = SubtitleAppearance.DEFAULT
+            .copy(fontSize = SubtitleFontSizePreset.XXLarge)
+            .toJsonString()
+        val store = newStoreSeededWith { prefs ->
+            prefs[stringPreferencesKey("subtitle_appearance")] = appearance
+            prefs[intPreferencesKey("player.next_up_prompt_seconds")] = 12
+        }
+
+        assertEquals(SubtitleFontSizePreset.XXLarge, store.subtitleAppearanceFlow.first().fontSize)
+        assertEquals(12, store.nextUpPromptSecondsFlow.first())
+    }
+
+    @Test
+    fun `the rename migration never overwrites a value already under the new key`() = runTest {
+        // A canonical refresh or a fresh edit outranks whatever the pre-rename
+        // build left on disk; copying over it would revert the newer value.
+        val store = newStoreSeededWith { prefs ->
+            prefs[intPreferencesKey("player.next_up_prompt_seconds")] = 12
+            prefs[intPreferencesKey(PlaybackSettingsKeys.NextUpPromptSeconds)] = 45
+        }
+
+        assertEquals(45, store.nextUpPromptSecondsFlow.first())
+    }
+
+    @Test
+    fun `writes are stamped with the server they were authored against`() = runTest {
+        // The flusher is application-scoped and its requests are relative, so a
+        // queued op that outlives a server switch can only be told apart by the
+        // origin the store stamps on it here.
+        val store = newStore()
+        store.setAutoSkipIntro(true)
+
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.AutoSkipIntro }
+        assertEquals(serverUrl, call.serverUrl)
+    }
+
+    @Test
     fun `a granular subtitle field projects into the composite on flush`() = runTest {
         // A granular slot written WITHOUT a composite write — the state an
         // upgrading user lands in, because ensureMigrated imports each legacy
@@ -588,15 +661,21 @@ class AndroidPlayerSettingsStoreTest {
 }
 
 private class FakeServerSettingsFlusher : ServerSettingsFlusher {
-    data class Call(val profileId: String, val key: String, val value: String?, val isDelete: Boolean)
+    data class Call(
+        val profileId: String,
+        val key: String,
+        val value: String?,
+        val isDelete: Boolean,
+        val serverUrl: String,
+    )
     val calls = mutableListOf<Call>()
     var flushNowCount: Int = 0
-    override fun enqueue(profileId: String, key: String, value: String) {
-        calls.add(Call(profileId, key, value, isDelete = false))
+    override fun enqueue(profileId: String, key: String, value: String, serverUrl: String) {
+        calls.add(Call(profileId, key, value, isDelete = false, serverUrl = serverUrl))
     }
 
-    override fun enqueueDelete(profileId: String, key: String) {
-        calls.add(Call(profileId, key, value = null, isDelete = true))
+    override fun enqueueDelete(profileId: String, key: String, serverUrl: String) {
+        calls.add(Call(profileId, key, value = null, isDelete = true, serverUrl = serverUrl))
     }
 
     override suspend fun flushNow() {

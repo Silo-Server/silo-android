@@ -34,16 +34,21 @@ class ServerSettingsFlusherTest {
     private val languageKey = SettingKeys.PLAYBACK_AUDIO_LANGUAGE
     private val objectKey = SettingKeys.PLAYBACK_SUBTITLE_APPEARANCE
 
+    // The server ops are authored against. The flusher's requests are relative
+    // and it outlives a server switch, so every op carries its origin.
+    private val serverUrl = "https://one.example"
+    private val otherServerUrl = "https://two.example"
+
     @Test
     fun `enqueue debounces multiple writes for same key`() = runTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", stringKey, "480p")
+        flusher.enqueue("p1", stringKey, "480p", serverUrl)
         advanceTimeBy(50)
-        flusher.enqueue("p1", stringKey, "720p")
+        flusher.enqueue("p1", stringKey, "720p", serverUrl)
         advanceTimeBy(50)
-        flusher.enqueue("p1", stringKey, "1080p")
+        flusher.enqueue("p1", stringKey, "1080p", serverUrl)
 
         // Not yet — total elapsed 100, debounce 200.
         assertEquals(0, api.calls.size)
@@ -60,9 +65,9 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", boolKey, "true")
-        flusher.enqueue("p1", intKey, "120")
-        flusher.enqueue("p1", stringKey, "720p")
+        flusher.enqueue("p1", boolKey, "true", serverUrl)
+        flusher.enqueue("p1", intKey, "120", serverUrl)
+        flusher.enqueue("p1", stringKey, "720p", serverUrl)
 
         advanceUntilIdle()
 
@@ -78,11 +83,11 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", boolKey, "false")
-        flusher.enqueue("p1", intKey, "-250")
-        flusher.enqueue("p1", doubleKey, "1.5")
-        flusher.enqueue("p1", languageKey, "en-US")
-        flusher.enqueue("p1", objectKey, SubtitleAppearance.DEFAULT.toJsonString())
+        flusher.enqueue("p1", boolKey, "false", serverUrl)
+        flusher.enqueue("p1", intKey, "-250", serverUrl)
+        flusher.enqueue("p1", doubleKey, "1.5", serverUrl)
+        flusher.enqueue("p1", languageKey, "en-US", serverUrl)
+        flusher.enqueue("p1", objectKey, SubtitleAppearance.DEFAULT.toJsonString(), serverUrl)
 
         advanceUntilIdle()
 
@@ -101,7 +106,7 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", languageKey, "")
+        flusher.enqueue("p1", languageKey, "", serverUrl)
         advanceUntilIdle()
 
         assertEquals(1, api.calls.size)
@@ -113,8 +118,8 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", boolKey, "true")
-        flusher.enqueueDelete("p2", intKey)
+        flusher.enqueue("p1", boolKey, "true", serverUrl)
+        flusher.enqueueDelete("p2", intKey, serverUrl)
         advanceUntilIdle()
 
         assertEquals(2, api.calls.size)
@@ -128,8 +133,8 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", stringKey, "720p")
-        flusher.enqueue("p2", stringKey, "1080p")
+        flusher.enqueue("p1", stringKey, "720p", serverUrl)
+        flusher.enqueue("p2", stringKey, "1080p", serverUrl)
 
         advanceUntilIdle()
 
@@ -144,8 +149,8 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueueDelete("p1", stringKey)
-        flusher.enqueue("p1", stringKey, "480p")
+        flusher.enqueueDelete("p1", stringKey, serverUrl)
+        flusher.enqueue("p1", stringKey, "480p", serverUrl)
 
         advanceUntilIdle()
 
@@ -159,8 +164,8 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", stringKey, "480p")
-        flusher.enqueueDelete("p1", stringKey)
+        flusher.enqueue("p1", stringKey, "480p", serverUrl)
+        flusher.enqueueDelete("p1", stringKey, serverUrl)
 
         advanceUntilIdle()
 
@@ -174,8 +179,8 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 5_000)
 
-        flusher.enqueue("p1", boolKey, "true")
-        flusher.enqueueDelete("p1", intKey)
+        flusher.enqueue("p1", boolKey, "true", serverUrl)
+        flusher.enqueueDelete("p1", intKey, serverUrl)
 
         // Don't advance — flushNow should drain immediately.
         flusher.flushNow()
@@ -203,7 +208,7 @@ class ServerSettingsFlusherTest {
         api.failNextPuts(1, ApiResult.Error(503, "unavailable", "restarting"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", boolKey, "true")
+        flusher.enqueue("p1", boolKey, "true", serverUrl)
         advanceUntilIdle()
 
         assertEquals(2, api.calls.size, "failed write must be retried, not dropped")
@@ -218,7 +223,7 @@ class ServerSettingsFlusherTest {
         api.failNextPuts(2, ApiResult.NetworkError(RuntimeException("offline")))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", intKey, "500")
+        flusher.enqueue("p1", intKey, "500", serverUrl)
         advanceUntilIdle()
 
         assertEquals(3, api.calls.size)
@@ -231,7 +236,7 @@ class ServerSettingsFlusherTest {
         api.failNextPuts(Int.MAX_VALUE, ApiResult.Error(500, "internal", "boom"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", boolKey, "true")
+        flusher.enqueue("p1", boolKey, "true", serverUrl)
         advanceUntilIdle()
 
         // Initial attempt + capped automatic retries, then parked — the old
@@ -254,7 +259,7 @@ class ServerSettingsFlusherTest {
         api.failNextPuts(Int.MAX_VALUE, ApiResult.Error(400, "invalid_value", "expected a boolean"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", boolKey, "true")
+        flusher.enqueue("p1", boolKey, "true", serverUrl)
         advanceUntilIdle()
 
         assertEquals(1, api.calls.size, "a 4xx contract rejection retries identically forever; drop it")
@@ -270,7 +275,7 @@ class ServerSettingsFlusherTest {
         api.failNextPuts(Int.MAX_VALUE, ApiResult.Error(409, "mutation_id_conflict", "id reused"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", boolKey, "true")
+        flusher.enqueue("p1", boolKey, "true", serverUrl)
         advanceUntilIdle()
 
         assertEquals(1, api.calls.size)
@@ -282,7 +287,7 @@ class ServerSettingsFlusherTest {
         api.failNextDeletes(Int.MAX_VALUE, ApiResult.Error(404, "not_found", "No value is set at this scope"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueueDelete("p1", stringKey)
+        flusher.enqueueDelete("p1", stringKey, serverUrl)
         advanceUntilIdle()
 
         assertEquals(1, api.calls.size, "nothing stored means the reset is already true; no retry")
@@ -294,7 +299,7 @@ class ServerSettingsFlusherTest {
         api.failNextDeletes(1, ApiResult.Error(502, "bad_gateway", "proxy hiccup"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueueDelete("p1", stringKey)
+        flusher.enqueueDelete("p1", stringKey, serverUrl)
         advanceUntilIdle()
 
         assertEquals(2, api.calls.size)
@@ -306,9 +311,9 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", stringKey, "720p")
+        flusher.enqueue("p1", stringKey, "720p", serverUrl)
         advanceUntilIdle()
-        flusher.enqueue("p1", stringKey, "1080p")
+        flusher.enqueue("p1", stringKey, "1080p", serverUrl)
         advanceUntilIdle()
 
         assertEquals(2, api.calls.size)
@@ -317,15 +322,77 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
+    fun `a retained retry is dropped once its origin server is no longer active`() = runTest {
+        // The failure mode: a write fails transiently against server one, stays
+        // queued, and the user switches to server two. Requests are relative and
+        // this flusher is application-scoped, so replaying the op now would
+        // write server one's device setting to server two — which a restored or
+        // cloned server recognizing the same profile id would accept.
+        val api = RecordingSettingsApi()
+        // Fail every attempt, so the op exhausts its automatic retries and is
+        // still sitting in the queue when the switch happens.
+        api.failNextPuts(Int.MAX_VALUE, ApiResult.Error(500, "internal", "boom"))
+        var activeServer = serverUrl
+        val flusher = DefaultServerSettingsFlusher(
+            api, this, debounceMs = 200, getServerUrl = { activeServer },
+        )
+
+        flusher.enqueue("p1", stringKey, "720p", serverUrl)
+        advanceUntilIdle()
+        val attemptsBeforeSwitch = api.calls.size
+        assertTrue(attemptsBeforeSwitch >= 1, "the write must have been attempted at least once")
+
+        activeServer = otherServerUrl
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        assertEquals(
+            attemptsBeforeSwitch,
+            api.calls.size,
+            "a queued write must never be replayed against a server it was not authored for",
+        )
+
+        // And it is gone, not merely deferred: a later flush against the
+        // original server must not resurrect it either.
+        activeServer = serverUrl
+        flusher.flushNow()
+        advanceUntilIdle()
+        assertEquals(
+            attemptsBeforeSwitch,
+            api.calls.size,
+            "the dropped op must not be revived by a later flush",
+        )
+    }
+
+    @Test
+    fun `a queued write still lands when the active server is unchanged`() = runTest {
+        // The other side of the guard: same setup, no switch. The retry has to
+        // go through, or the drop rule would quietly break normal persistence.
+        val api = RecordingSettingsApi()
+        api.failNextPuts(1, ApiResult.Error(500, "internal", "boom"))
+        val flusher = DefaultServerSettingsFlusher(
+            api, this, debounceMs = 200, getServerUrl = { serverUrl },
+        )
+
+        flusher.enqueue("p1", stringKey, "720p", serverUrl)
+        advanceUntilIdle()
+
+        assertTrue(
+            api.calls.count { it.key == stringKey } >= 2,
+            "a transient failure on the still-active server must retry",
+        )
+    }
+
+    @Test
     fun `failure does not abort other queued writes or future flushes`() = runTest {
         val api = RecordingSettingsApi()
         api.failNextPuts(1, ApiResult.Error(500, "internal", "boom"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", boolKey, "true")
+        flusher.enqueue("p1", boolKey, "true", serverUrl)
         advanceUntilIdle()
 
-        flusher.enqueue("p1", stringKey, "720p")
+        flusher.enqueue("p1", stringKey, "720p", serverUrl)
         advanceUntilIdle()
 
         assertTrue(api.calls.any { it.key == stringKey && it.value == JsonPrimitive("720p") })
@@ -345,10 +412,10 @@ class ServerSettingsFlusherTest {
         api.failNextPuts(1, ApiResult.Error(502, "bad_gateway", "proxy hiccup"))
         api.onPut = { call ->
             // The user edits the same setting while the first PUT is in flight.
-            if (call.value == JsonPrimitive("480p")) flusher.enqueue("p1", stringKey, "1080p")
+            if (call.value == JsonPrimitive("480p")) flusher.enqueue("p1", stringKey, "1080p", serverUrl)
         }
 
-        flusher.enqueue("p1", stringKey, "480p")
+        flusher.enqueue("p1", stringKey, "480p", serverUrl)
         flusher.flushNow()
         advanceUntilIdle()
 
@@ -366,9 +433,9 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
         api.failNextDeletes(1, ApiResult.Error(503, "unavailable", "restarting"))
-        api.onDelete = { flusher.enqueue("p1", stringKey, "1080p") }
+        api.onDelete = { flusher.enqueue("p1", stringKey, "1080p", serverUrl) }
 
-        flusher.enqueueDelete("p1", stringKey)
+        flusher.enqueueDelete("p1", stringKey, serverUrl)
         flusher.flushNow()
         advanceUntilIdle()
 
@@ -389,10 +456,10 @@ class ServerSettingsFlusherTest {
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
         api.failNextPuts(2, ApiResult.Error(500, "internal", "boom"))
         api.onPut = { call ->
-            if (call.value == JsonPrimitive("480p")) flusher.enqueue("p1", stringKey, "1080p")
+            if (call.value == JsonPrimitive("480p")) flusher.enqueue("p1", stringKey, "1080p", serverUrl)
         }
 
-        flusher.enqueue("p1", stringKey, "480p")
+        flusher.enqueue("p1", stringKey, "480p", serverUrl)
         flusher.flushNow()
         advanceUntilIdle()
 
@@ -409,8 +476,8 @@ class ServerSettingsFlusherTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
-        flusher.enqueue("p1", PlaybackSettingsKeys.SubtitleFontSize, "large")
-        flusher.enqueue("p1", "made.up_key", "x")
+        flusher.enqueue("p1", PlaybackSettingsKeys.SubtitleFontSize, "large", serverUrl)
+        flusher.enqueue("p1", "made.up_key", "x", serverUrl)
         advanceUntilIdle()
         flusher.flushNow()
 

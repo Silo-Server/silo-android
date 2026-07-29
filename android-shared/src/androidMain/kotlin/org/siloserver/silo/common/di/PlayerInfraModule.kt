@@ -71,6 +71,10 @@ val playerInfraModule = module {
         DefaultServerSettingsFlusher(
             settingsApi = get(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            // Same source the settings store stamps its ops with, so a
+            // retained retry can tell whether the server it was authored
+            // against is still the one requests would reach.
+            getServerUrl = { get<TokenManager>().getServerUrl() },
         )
     }
 

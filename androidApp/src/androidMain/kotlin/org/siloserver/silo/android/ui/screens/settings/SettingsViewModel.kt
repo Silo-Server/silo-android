@@ -500,10 +500,13 @@ class SettingsViewModel(
         val previous = _uiState.value.metadataLanguage
         _uiState.update { it.copy(metadataLanguage = code) }
         viewModelScope.launch {
-            if (profileSettings.setMetadataLanguage(code) !is ApiResult.Success) {
+            val result = profileSettings.setMetadataLanguage(code)
+            if (!result.succeeded) {
                 _uiState.update {
                     if (it.metadataLanguage == code) it.copy(metadataLanguage = previous) else it
                 }
+            } else {
+                applyResolved(result.snapshot, edited = code) { it.metadataLanguage }
             }
         }
     }
@@ -513,10 +516,13 @@ class SettingsViewModel(
         val previous = _uiState.value.subtitleLanguage
         _uiState.update { it.copy(subtitleLanguage = language) }
         viewModelScope.launch {
-            if (profileSettings.setSubtitleLanguage(language) !is ApiResult.Success) {
+            val result = profileSettings.setSubtitleLanguage(language)
+            if (!result.succeeded) {
                 _uiState.update {
                     if (it.subtitleLanguage == language) it.copy(subtitleLanguage = previous) else it
                 }
+            } else {
+                applyResolved(result.snapshot, edited = language) { it.subtitleLanguage }
             }
         }
     }
@@ -525,10 +531,13 @@ class SettingsViewModel(
         val previous = _uiState.value.subtitleMode
         _uiState.update { it.copy(subtitleMode = mode) }
         viewModelScope.launch {
-            if (profileSettings.setSubtitleMode(mode.wire) !is ApiResult.Success) {
+            val result = profileSettings.setSubtitleMode(mode.wire)
+            if (!result.succeeded) {
                 _uiState.update {
                     if (it.subtitleMode == mode) it.copy(subtitleMode = previous) else it
                 }
+            } else {
+                applyResolved(result.snapshot, edited = mode.wire) { it.subtitleMode }
             }
         }
     }
@@ -537,11 +546,49 @@ class SettingsViewModel(
         val previous = _uiState.value.showForcedSubtitles
         _uiState.update { it.copy(showForcedSubtitles = enabled) }
         viewModelScope.launch {
-            if (profileSettings.setShowForcedSubtitles(enabled) !is ApiResult.Success) {
+            val result = profileSettings.setShowForcedSubtitles(enabled)
+            if (!result.succeeded) {
                 _uiState.update {
                     if (it.showForcedSubtitles == enabled) it.copy(showForcedSubtitles = previous) else it
                 }
+            } else {
+                applyResolved(result.snapshot, edited = enabled.toString()) {
+                    it.showForcedSubtitles.toString()
+                }
             }
+        }
+    }
+
+    /**
+     * Replaces the optimistic values with what the server actually resolves.
+     *
+     * A successful PUT stores the authored value; it does not make it
+     * effective. Policy can narrow it, and a device-scoped row for the same key
+     * outranks the profile row these setters write — so the screen would
+     * otherwise show a preference playback is not using. Skipped when a newer
+     * edit for the *same* field landed while the round trip was in flight
+     * ([edited] no longer matches [fieldOf]), which the optimistic rollback
+     * above guards the same way.
+     */
+    private fun applyResolved(
+        snapshot: ProfileSettingsController.Snapshot?,
+        edited: String,
+        fieldOf: (ProfileSettingsController.Snapshot) -> String,
+    ) {
+        if (snapshot == null) return
+        if (fieldOf(snapshot) == edited) {
+            // The server agrees with the user's choice — nothing to correct,
+            // and rewriting state would clobber a concurrent edit to a
+            // different field in the same pane.
+            return
+        }
+        _uiState.update { state ->
+            state.copy(
+                subtitleLanguage = snapshot.subtitleLanguage,
+                subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
+                showForcedSubtitles = snapshot.showForcedSubtitles,
+                metadataLanguage = snapshot.metadataLanguage,
+            )
         }
     }
 

@@ -81,6 +81,14 @@ class AndroidPlayerSettingsStore(
             }
         val migrationSentinel: String =
             if (keyPrefix.isEmpty()) MIGRATION_SENTINEL_LEGACY else "migration_v2_$keyPrefix"
+
+        /**
+         * Separate from [migrationSentinel] deliberately: that one is already
+         * marked on every install that has run a scoped build, so a rename
+         * pass gated on it would never run for the devices holding the
+         * orphaned pre-rename values.
+         */
+        val renameSentinel: String = "migration_rename_v1_$keyPrefix"
     }
 
     // Re-derive scope on every (profile or server) change.
@@ -107,6 +115,11 @@ class AndroidPlayerSettingsStore(
         }
 
     private suspend fun ensureMigrated(scope: Scope, store: DataStore<Preferences>) {
+        migrateLegacyCache(scope, store)
+        migrateRenamedKeys(scope, store)
+    }
+
+    private suspend fun migrateLegacyCache(scope: Scope, store: DataStore<Preferences>) {
         val token = scope.profileId + "/" + scope.migrationSentinel
         if (synchronized(migrationDone) { token in migrationDone }) return
         val sentinelKey = booleanPreferencesKey(scope.migrationSentinel)
@@ -124,6 +137,75 @@ class AndroidPlayerSettingsStore(
             prefs[sentinelKey] = true
         }
         synchronized(migrationDone) { migrationDone.add(token) }
+    }
+
+    /**
+     * Copies the two slots the settings cutover renamed
+     * ([PlaybackSettingsKeys.RenamedLocalKeys]) into their current names.
+     *
+     * Carries its own sentinel rather than riding [migrateLegacyCache]'s: that
+     * one is already marked on every device that has run this app since the
+     * scoped-store change, so a pass gated on it would never execute for the
+     * installs that actually hold the orphaned values. Both reads are
+     * local-first — subtitle appearance drives downloaded playback with no
+     * server in the loop — so skipping the copy silently reverts a preference
+     * the user set until a canonical refresh happens to land.
+     */
+    private suspend fun migrateRenamedKeys(scope: Scope, store: DataStore<Preferences>) {
+        val token = scope.profileId + "/" + scope.renameSentinel
+        if (synchronized(migrationDone) { token in migrationDone }) return
+        val sentinelKey = booleanPreferencesKey(scope.renameSentinel)
+        val current = store.data.first()
+        if (current[sentinelKey] != true) {
+            store.edit { prefs ->
+                for ((oldKey, newKey) in PlaybackSettingsKeys.RenamedLocalKeys) {
+                    copyRenamedSlot(prefs, scope, oldKey = oldKey, newKey = newKey)
+                }
+                prefs[sentinelKey] = true
+            }
+        }
+        synchronized(migrationDone) { migrationDone.add(token) }
+    }
+
+    /**
+     * Copies one renamed slot, typed by the *new* key's contract type.
+     *
+     * The old slot may sit under this scope's prefix (written after the scoped
+     * store landed) or unprefixed (written before it), so both are checked —
+     * the same order [scopedRead] uses. A value already present under the new
+     * name always wins: it is either a fresh edit or a canonical refresh, and
+     * either outranks whatever the pre-rename build left behind.
+     */
+    private fun copyRenamedSlot(
+        prefs: androidx.datastore.preferences.core.MutablePreferences,
+        scope: Scope,
+        oldKey: String,
+        newKey: String,
+    ) {
+        val target = scope.keyPrefix + newKey
+        when {
+            isIntKey(newKey) -> {
+                if (prefs[intPreferencesKey(target)] != null) return
+                val legacy = prefs[intPreferencesKey(scope.keyPrefix + oldKey)]
+                    ?: prefs[intPreferencesKey(oldKey)]
+                    ?: return
+                prefs[intPreferencesKey(target)] = legacy
+            }
+            isBooleanKey(newKey) -> {
+                if (prefs[booleanPreferencesKey(target)] != null) return
+                val legacy = prefs[booleanPreferencesKey(scope.keyPrefix + oldKey)]
+                    ?: prefs[booleanPreferencesKey(oldKey)]
+                    ?: return
+                prefs[booleanPreferencesKey(target)] = legacy
+            }
+            else -> {
+                if (prefs[stringPreferencesKey(target)] != null) return
+                val legacy = prefs[stringPreferencesKey(scope.keyPrefix + oldKey)]
+                    ?: prefs[stringPreferencesKey(oldKey)]
+                    ?: return
+                prefs[stringPreferencesKey(target)] = legacy
+            }
+        }
     }
 
     private fun <T> profileScopedFlow(default: T, read: (Preferences, Scope) -> T): Flow<T> =
@@ -337,7 +419,12 @@ class AndroidPlayerSettingsStore(
         val clamped = value.coerceIn(0.25, 4.0)
         withScope { scope, store ->
             store.edit { it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PlaybackSpeed)] = clamped.toString() }
-            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.PlaybackSpeed, clamped.toString())
+            serverSettingsFlusher.enqueue(
+                scope.profileId,
+                PlaybackSettingsKeys.PlaybackSpeed,
+                clamped.toString(),
+                scope.serverUrl,
+            )
         }
     }
 
@@ -394,11 +481,17 @@ class AndroidPlayerSettingsStore(
                 it[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PreferredQuality)] = normalized
                 it[intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.MaxBitrateKbps)] = capped
             }
-            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.PreferredQuality, normalized)
+            serverSettingsFlusher.enqueue(
+                scope.profileId,
+                PlaybackSettingsKeys.PreferredQuality,
+                normalized,
+                scope.serverUrl,
+            )
             serverSettingsFlusher.enqueue(
                 scope.profileId,
                 PlaybackSettingsKeys.MaxBitrateKbps,
                 capped.toString(),
+                scope.serverUrl,
             )
         }
     }
@@ -429,7 +522,7 @@ class AndroidPlayerSettingsStore(
                 // device override (matches iOS `setSubtitleAppearance`).
                 prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
             }
-            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json)
+            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl)
         }
     }
 
@@ -452,7 +545,7 @@ class AndroidPlayerSettingsStore(
                 prefs[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
                 prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
             }
-            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json)
+            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl)
         }
     }
 
@@ -502,7 +595,7 @@ class AndroidPlayerSettingsStore(
                     // override was off win right back over it.
                     writeGranularAppearance(it, scope, sanitized)
                 }
-                serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json)
+                serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl)
                 serverSettingsFlusher.flushNow()
             } else {
                 store.edit {
@@ -514,7 +607,7 @@ class AndroidPlayerSettingsStore(
                     }
                     it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
                 }
-                serverSettingsFlusher.enqueueDelete(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance)
+                serverSettingsFlusher.enqueueDelete(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, scope.serverUrl)
                 serverSettingsFlusher.flushNow()
                 refreshFromServer()
             }
@@ -523,7 +616,7 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun resetDeviceSetting(key: String) {
         withScope { scope, _ ->
-            serverSettingsFlusher.enqueueDelete(scope.profileId, key)
+            serverSettingsFlusher.enqueueDelete(scope.profileId, key, scope.serverUrl)
             serverSettingsFlusher.flushNow()
             refreshFromServer()
         }
@@ -534,7 +627,7 @@ class AndroidPlayerSettingsStore(
             // Only the server-stored keys have rows to delete; the granular
             // subtitle.* fields live inside playback.subtitle_appearance.
             for (key in RemoteDeviceSettings) {
-                serverSettingsFlusher.enqueueDelete(scope.profileId, key)
+                serverSettingsFlusher.enqueueDelete(scope.profileId, key, scope.serverUrl)
             }
             store.edit {
                 it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
@@ -648,14 +741,14 @@ class AndroidPlayerSettingsStore(
     private suspend fun writeBool(key: String, value: Boolean) {
         withScope { scope, store ->
             store.edit { it[booleanPreferencesKey(scope.keyPrefix + key)] = value }
-            serverSettingsFlusher.enqueue(scope.profileId, key, value.toString())
+            serverSettingsFlusher.enqueue(scope.profileId, key, value.toString(), scope.serverUrl)
         }
     }
 
     private suspend fun writeInt(key: String, value: Int) {
         withScope { scope, store ->
             store.edit { it[intPreferencesKey(scope.keyPrefix + key)] = value }
-            serverSettingsFlusher.enqueue(scope.profileId, key, value.toString())
+            serverSettingsFlusher.enqueue(scope.profileId, key, value.toString(), scope.serverUrl)
         }
     }
 
@@ -686,7 +779,7 @@ class AndroidPlayerSettingsStore(
     private suspend fun writeString(key: String, value: String) {
         withScope { scope, store ->
             store.edit { it[stringPreferencesKey(scope.keyPrefix + key)] = value }
-            serverSettingsFlusher.enqueue(scope.profileId, key, value)
+            serverSettingsFlusher.enqueue(scope.profileId, key, value, scope.serverUrl)
         }
     }
 

@@ -115,6 +115,13 @@ class LegacyTvPrefsMigration(
         val effective = getEffectiveSettings(
             listOf(
                 PlaybackSettingsKeys.PreferredQuality,
+                // Quality is two rows now, and `setQuality` writes both. Asking
+                // only about the resolution would let a device that has a
+                // server-side bitrate cap but no resolution override pass the
+                // guard, and the legacy preset's bitrate — or JSON null, when
+                // the legacy value is Auto — would overwrite that cap. Both
+                // axes are queried so both can be guarded.
+                PlaybackSettingsKeys.MaxBitrateKbps,
                 PlaybackSettingsKeys.AutoPlayNext,
                 PlaybackSettingsKeys.AutoSkipIntro,
                 PlaybackSettingsKeys.AutoSkipCredits,
@@ -122,7 +129,10 @@ class LegacyTvPrefsMigration(
             ),
         )
 
-        if (effective[PlaybackSettingsKeys.PreferredQuality]?.hasDeviceOverride != true) {
+        val qualityOverridden =
+            effective[PlaybackSettingsKeys.PreferredQuality]?.hasDeviceOverride == true ||
+                effective[PlaybackSettingsKeys.MaxBitrateKbps]?.hasDeviceOverride == true
+        if (!qualityOverridden) {
             // Both axes, never just the resolution. Quality is a
             // (resolution, bitrate) pair now, and the legacy enum's bare
             // "720p" carries an implied cap — the same one the server's own

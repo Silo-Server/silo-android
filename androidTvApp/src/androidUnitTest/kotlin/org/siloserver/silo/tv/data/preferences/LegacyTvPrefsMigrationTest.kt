@@ -150,6 +150,60 @@ class LegacyTvPrefsMigrationTest {
         assertEquals(true, fakePlayerStore.autoSkipIntroFlow.value)
     }
 
+    @Test
+    fun `an existing bitrate override alone still blocks the quality import`() = runTest {
+        // Quality is two rows and setQuality writes both, so guarding on the
+        // resolution alone lets a device that has only a server-side bitrate
+        // cap pass — and the legacy preset's bitrate (or JSON null, for a
+        // legacy Auto) overwrites the cap the migration promised to preserve.
+        val legacy = legacyStore()
+        legacy.edit { prefs ->
+            prefs[legacyQualityKey] = "720p"
+            prefs[legacyAutoSkipIntroKey] = true
+        }
+        val effective = mapOf(
+            PlaybackSettingsKeys.MaxBitrateKbps to EffectiveSetting(
+                key = PlaybackSettingsKeys.MaxBitrateKbps,
+                effectiveValue = "3000",
+                source = "device",
+                hasDeviceOverride = true,
+            ),
+        )
+        newMigration(legacy, effective).migrateIfNeeded()
+
+        assertFalse(
+            fakePlayerStore.setterCalls.contains("setQuality"),
+            "a server-side bitrate override must not be overwritten by the legacy preset",
+        )
+        // Keys without an override still import.
+        assertEquals(true, fakePlayerStore.autoSkipIntroFlow.value)
+    }
+
+    @Test
+    fun `the quality guard asks the server about both axes`() = runTest {
+        // The guard can only preserve what it queries: a bitrate key missing
+        // from the request comes back absent, which reads as "no override".
+        val legacy = legacyStore()
+        legacy.edit { prefs -> prefs[legacyQualityKey] = "720p" }
+        val requested = mutableListOf<String>()
+        LegacyTvPrefsMigration(
+            context = mockContextStub(),
+            settingsCache = fakeCache,
+            playerSettingsStore = fakePlayerStore,
+            librarySelectionStore = selectionStore,
+            getServerUrl = { tokenManager.getServerUrl() },
+            getProfileId = { tokenManager.getProfileId() },
+            getEffectiveSettings = { keys -> requested.addAll(keys); emptyMap() },
+            legacyStoreProvider = { legacy },
+        ).migrateIfNeeded()
+
+        assertTrue(PlaybackSettingsKeys.PreferredQuality in requested)
+        assertTrue(
+            PlaybackSettingsKeys.MaxBitrateKbps in requested,
+            "an unqueried axis cannot be guarded",
+        )
+    }
+
     /**
      * Every legacy quality value must land on a pair the picker can show as
      * selected. Quality is two axes now; a resolution imported without its

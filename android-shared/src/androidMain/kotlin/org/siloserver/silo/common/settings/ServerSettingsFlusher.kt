@@ -30,11 +30,18 @@ interface ServerSettingsFlusher {
      * response cannot double-apply. Enqueueing a *different* value for the
      * same key replaces the pending op and mints a fresh id, because
      * reusing an id for different content is a 409 conflict by design.
+     *
+     * [serverUrl] is the server the value was authored against. This flusher
+     * is application-scoped and its requests are relative — they go to
+     * whichever server is active when they are sent — so an op that outlives
+     * a server switch has to be identified by its origin, not just by
+     * (profileId, key). See [ServerSettingsFlusher] implementations for what
+     * happens to an op whose origin is no longer active.
      */
-    fun enqueue(profileId: String, key: String, value: String)
+    fun enqueue(profileId: String, key: String, value: String, serverUrl: String)
 
     /** Queue clearing the device-scoped value, so the setting inherits again. */
-    fun enqueueDelete(profileId: String, key: String)
+    fun enqueueDelete(profileId: String, key: String, serverUrl: String)
 
     /**
      * Cancel any in-flight debounce, drain every pending op, and suspend
@@ -47,8 +54,16 @@ interface ServerSettingsFlusher {
 }
 
 private sealed class PendingOp {
-    data class Set(val value: String, val mutationId: String) : PendingOp()
-    object Delete : PendingOp()
+    /** The server this op was authored against; it may not still be active. */
+    abstract val serverUrl: String
+
+    data class Set(
+        val value: String,
+        val mutationId: String,
+        override val serverUrl: String,
+    ) : PendingOp()
+
+    data class Delete(override val serverUrl: String) : PendingOp()
 }
 
 /**
@@ -64,11 +79,28 @@ private sealed class PendingOp {
  * contract rejected the value or key, or the mutation id was reused for
  * different content) drops the op, and every failure is logged at warning
  * level with the key and status.
+ *
+ * That retention is bounded by the server the op was authored against.
+ * [SettingsApi] requests are relative and this flusher is application-scoped,
+ * so they address whichever server is active when they are sent — while a
+ * server switch is one `onSelect` away and clears nothing. A retained op
+ * whose origin is no longer active is therefore dropped rather than sent:
+ * replaying it would write one server's device setting to another (a
+ * restored or cloned server can hold the same profile id), and leaving it
+ * queued would let a later enqueue revive it against a third. Persistence is
+ * worth a lot, but not worth writing a value to a server the user never
+ * authored it against.
  */
 class DefaultServerSettingsFlusher(
     private val settingsApi: SettingsApi,
     private val scope: CoroutineScope,
     private val debounceMs: Long = 750,
+    /**
+     * The server requests currently address. Null (no active server, e.g.
+     * mid-logout) parks the queue rather than dropping it: there is nothing
+     * to compare against yet, and a switch has not been observed.
+     */
+    private val getServerUrl: suspend () -> String? = { null },
 ) : ServerSettingsFlusher {
 
     private val lock = Any()
@@ -78,21 +110,26 @@ class DefaultServerSettingsFlusher(
     private var retryAttempts: Int = 0
     private val flushMutex = Mutex()
 
-    override fun enqueue(profileId: String, key: String, value: String) {
+    override fun enqueue(profileId: String, key: String, value: String, serverUrl: String) {
         scheduleDebounced(profileId, key) { existing ->
             // Re-enqueueing the identical value keeps the pending op (and
             // its mutation id): it is the same logical write, and the
-            // server treats a replayed id + content as already done.
-            if (existing is PendingOp.Set && existing.value == value) {
+            // server treats a replayed id + content as already done. A match
+            // has to agree on the origin too — the same key and value bound
+            // for a different server is a different write.
+            if (existing is PendingOp.Set &&
+                existing.value == value &&
+                existing.serverUrl == serverUrl
+            ) {
                 existing
             } else {
-                PendingOp.Set(value, newSettingMutationId())
+                PendingOp.Set(value, newSettingMutationId(), serverUrl)
             }
         }
     }
 
-    override fun enqueueDelete(profileId: String, key: String) {
-        scheduleDebounced(profileId, key) { PendingOp.Delete }
+    override fun enqueueDelete(profileId: String, key: String, serverUrl: String) {
+        scheduleDebounced(profileId, key) { PendingOp.Delete(serverUrl) }
     }
 
     private fun scheduleDebounced(
@@ -196,6 +233,20 @@ class DefaultServerSettingsFlusher(
      * rather than a second write.
      */
     private suspend fun flushOne(profileId: String, key: String, op: PendingOp): Boolean {
+        val active = runCatching { getServerUrl() }.getOrNull()
+        if (active != null && active != op.serverUrl) {
+            // The user switched servers while this op was queued. Requests are
+            // relative, so sending it now would address the NEW server with a
+            // value authored for the old one — and a restored or cloned server
+            // can recognize the same profile id, so it would land rather than
+            // fail. Dropping it also keeps a stale op from being revived by a
+            // later enqueue once the original server is active again.
+            SiloLog.w(
+                CATEGORY, TAG,
+                "dropping $key: queued for ${op.serverUrl}, active server is now $active",
+            )
+            return false
+        }
         if (key !in REMOTE_KEYS) {
             // Local-only keys (granular subtitle.* fields, pre-contract
             // strays) have no server row; the canonical API would refuse

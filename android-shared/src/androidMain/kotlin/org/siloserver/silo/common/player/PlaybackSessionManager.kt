@@ -93,6 +93,13 @@ open class PlaybackSessionManager(
         val context: ClientPlaybackContext,
         val playbackAttemptId: String,
         val qualityPreference: String,
+        /**
+         * The bandwidth cap this attempt started under. Carried on the attempt
+         * so every replan re-sends it: the cap is a delivery ceiling the server
+         * applies per request, so omitting it on recovery would silently lift
+         * the limit for the rest of the session.
+         */
+        val bandwidthCapKbps: Int?,
         val networkEvidence: PlaybackNetworkSnapshot,
         val sessionId: String,
         val plan: PlaybackPlanV3,
@@ -203,6 +210,17 @@ open class PlaybackSessionManager(
         subtitleTrackIndex: Int?,
         qualityPreference: String?,
         startPosition: Double?,
+        /**
+         * The bandwidth half of the user's quality choice
+         * (`playback.max_bitrate_kbps`); null is uncapped.
+         *
+         * Quality is two axes, and the server applies the cap only from what
+         * the client sends — nothing on the playback path reads the stored
+         * setting. Sending the resolution alone means a capped preset like
+         * "1080p Low" delivers 1080p at whatever bitrate the ladder picks,
+         * which is the bandwidth the user explicitly declined.
+         */
+        maxBitrateKbps: Int? = null,
         subtitleFidelityPreference: SubtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
         deferPublication: Boolean = false,
     ): ApiResult<VideoSessionStartV3> = contentStartMutex.withLock {
@@ -236,6 +254,7 @@ open class PlaybackSessionManager(
                 outputRouteGeneration = clientPlaybackContext.output.outputRouteGeneration,
                 metered = network.metered,
                 bandwidthEstimateKbps = network.bandwidthEstimateKbps,
+                bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
             )
@@ -383,6 +402,7 @@ open class PlaybackSessionManager(
             context = request.clientPlaybackContext,
             playbackAttemptId = request.playbackAttemptId,
             qualityPreference = request.qualityPreference,
+            bandwidthCapKbps = request.bandwidthCapKbps,
             networkEvidence = network,
             sessionId = sessionId,
             plan = plan,
@@ -669,6 +689,10 @@ open class PlaybackSessionManager(
             outputRouteGeneration = currentContext.output.outputRouteGeneration,
             metered = network.metered,
             bandwidthEstimateKbps = network.bandwidthEstimateKbps,
+            // The cap is a per-request delivery ceiling: omitting it on a
+            // replan would silently lift the user's bandwidth limit for the
+            // rest of the session.
+            bandwidthCapKbps = active.bandwidthCapKbps,
             selectedTracks = SelectedPlaybackTracksV3(
                 audio = selectedTrackIdentity(active, "audio", audioTrackIndex, active.plan.selectedTracks.audio),
                 subtitle = subtitleTrackIndex?.takeIf { it >= 0 }
@@ -1346,6 +1370,7 @@ open class PlaybackSessionManager(
             outputRouteGeneration = active.context.output.outputRouteGeneration,
             metered = active.networkEvidence.metered,
             bandwidthEstimateKbps = active.networkEvidence.bandwidthEstimateKbps,
+            bandwidthCapKbps = active.bandwidthCapKbps,
             selectedTracks = active.plan.selectedTracks,
             failure = PlaybackFailureV3(
                 classification = SEEK_REANCHOR_V3_OPERATION,
@@ -1607,6 +1632,7 @@ open class PlaybackSessionManager(
             // evidence would misinform that decision.
             metered = network.metered,
             bandwidthEstimateKbps = network.bandwidthEstimateKbps,
+            bandwidthCapKbps = active.bandwidthCapKbps,
             selectedTracks = active.plan.selectedTracks,
             failure = PlaybackFailureV3(
                 classification = classification,

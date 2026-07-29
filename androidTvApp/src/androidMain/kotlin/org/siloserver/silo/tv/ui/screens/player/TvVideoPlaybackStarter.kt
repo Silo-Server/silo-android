@@ -19,6 +19,7 @@ import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.playback.orNullIfBlank
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ProfileRepository
@@ -133,6 +134,11 @@ class TvVideoPlaybackStarter(
                     subtitleTrackIndex = request.subtitleTrackIndex,
                     qualityPreference = playbackQualityIntent,
                     startPosition = startRequestPosition,
+                    // The bandwidth half of the quality choice. The server
+                    // applies the cap only from what the request carries, so
+                    // sending the resolution alone lets a capped preset stream
+                    // at the bandwidth the user explicitly declined.
+                    maxBitrateKbps = playerSettingsStore.maxBitrateKbpsFlow.first(),
                     deferPublication = true,
                 )
             ) {
@@ -236,10 +242,14 @@ class TvVideoPlaybackStarter(
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
                 ),
                 preferredAudioLanguage = preferredAudioLanguage ?: activeProfile?.language,
-                preferredTextLanguage = watchDetail.effectiveSubtitleLanguage
-                    ?: activeProfile?.subtitleLanguage,
-                preferredSubtitleMode = watchDetail.effectiveSubtitleMode
-                    ?: activeProfile?.subtitleMode,
+                // Blank normalizes to null on every rung: a canonical row
+                // holding JSON null ("no preference") arrives here as a
+                // present-but-empty string, and TV auto-selection reads a
+                // non-null blank language as an explicit "subtitles off".
+                preferredTextLanguage = watchDetail.effectiveSubtitleLanguage.orNullIfBlank()
+                    ?: activeProfile?.subtitleLanguage.orNullIfBlank(),
+                preferredSubtitleMode = watchDetail.effectiveSubtitleMode.orNullIfBlank()
+                    ?: activeProfile?.subtitleMode.orNullIfBlank(),
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,

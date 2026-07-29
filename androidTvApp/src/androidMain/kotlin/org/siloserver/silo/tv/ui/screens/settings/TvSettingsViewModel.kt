@@ -225,6 +225,33 @@ class TvSettingsViewModel(
     }
 
     /**
+     * Replaces the optimistic values with what the server actually resolves.
+     *
+     * A successful PUT stores the authored value; it does not make it
+     * effective. Policy can narrow it, and a device-scoped row for the same key
+     * outranks the profile row these setters write — so the screen would
+     * otherwise show a preference playback is not using. Skipped when a newer
+     * edit for the *same* field landed while the round trip was in flight,
+     * which the optimistic rollbacks guard the same way.
+     */
+    private fun applyResolved(
+        snapshot: ProfileSettingsController.Snapshot?,
+        edited: String,
+        fieldOf: (ProfileSettingsController.Snapshot) -> String,
+    ) {
+        if (snapshot == null) return
+        if (fieldOf(snapshot) == edited) return
+        _uiState.update { state ->
+            state.copy(
+                subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
+                subtitleLanguage = snapshot.subtitleLanguage,
+                metadataLanguage = snapshot.metadataLanguage,
+                showForcedSubtitles = snapshot.showForcedSubtitles,
+            )
+        }
+    }
+
+    /**
      * Mirror device-scoped flows into UI state. The store is the single
      * source of truth — this just projects to the TV-specific UI types
      * (the two quality axes, SubtitleSize).
@@ -359,10 +386,13 @@ class TvSettingsViewModel(
         val previous = _uiState.value.subtitleMode
         _uiState.update { it.copy(subtitleMode = value) }
         viewModelScope.launch {
-            if (profileSettings.setSubtitleMode(value.wireValue) !is ApiResult.Success) {
+            val result = profileSettings.setSubtitleMode(value.wireValue)
+            if (!result.succeeded) {
                 _uiState.update {
                     if (it.subtitleMode == value) it.copy(subtitleMode = previous) else it
                 }
+            } else {
+                applyResolved(result.snapshot, edited = value.wireValue) { it.subtitleMode }
             }
         }
     }
@@ -371,10 +401,13 @@ class TvSettingsViewModel(
         val previous = _uiState.value.metadataLanguage
         _uiState.update { it.copy(metadataLanguage = value) }
         viewModelScope.launch {
-            if (profileSettings.setMetadataLanguage(value) !is ApiResult.Success) {
+            val result = profileSettings.setMetadataLanguage(value)
+            if (!result.succeeded) {
                 _uiState.update { current ->
                     if (current.metadataLanguage == value) current.copy(metadataLanguage = previous) else current
                 }
+            } else {
+                applyResolved(result.snapshot, edited = value) { it.metadataLanguage }
             }
         }
     }
@@ -383,10 +416,13 @@ class TvSettingsViewModel(
         val previous = _uiState.value.subtitleLanguage
         _uiState.update { it.copy(subtitleLanguage = value) }
         viewModelScope.launch {
-            if (profileSettings.setSubtitleLanguage(value) !is ApiResult.Success) {
+            val result = profileSettings.setSubtitleLanguage(value)
+            if (!result.succeeded) {
                 _uiState.update {
                     if (it.subtitleLanguage == value) it.copy(subtitleLanguage = previous) else it
                 }
+            } else {
+                applyResolved(result.snapshot, edited = value) { it.subtitleLanguage }
             }
         }
     }
@@ -404,9 +440,14 @@ class TvSettingsViewModel(
         val previous = _uiState.value.showForcedSubtitles
         _uiState.update { it.copy(showForcedSubtitles = enabled) }
         viewModelScope.launch {
-            if (profileSettings.setShowForcedSubtitles(enabled) !is ApiResult.Success) {
+            val result = profileSettings.setShowForcedSubtitles(enabled)
+            if (!result.succeeded) {
                 _uiState.update {
                     if (it.showForcedSubtitles == enabled) it.copy(showForcedSubtitles = previous) else it
+                }
+            } else {
+                applyResolved(result.snapshot, edited = enabled.toString()) {
+                    it.showForcedSubtitles.toString()
                 }
             }
         }

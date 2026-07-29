@@ -18,6 +18,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -136,7 +137,7 @@ class ProfileSettingsControllerTest {
         val api = FakeSettingsApi(
             deleteResult = ApiResult.Error(404, "not_found", "No value is set at this scope"),
         )
-        assertIs<ApiResult.Success<Unit>>(controllerFor(api).setSubtitleLanguage(""))
+        assertTrue(controllerFor(api).setSubtitleLanguage("").succeeded)
     }
 
     @Test
@@ -144,7 +145,52 @@ class ProfileSettingsControllerTest {
         val api = FakeSettingsApi(
             putResult = { ApiResult.Error(400, "invalid_value", "nope") },
         )
-        assertIs<ApiResult.Error>(controllerFor(api).setShowForcedSubtitles(false))
+        assertFalse(controllerFor(api).setShowForcedSubtitles(false).succeeded)
+    }
+
+    @Test
+    fun `a successful write returns what the server actually resolves`() = runTest {
+        // A stored value is not necessarily the effective one: policy can
+        // narrow it, and a profile_device row outranks the profile row these
+        // setters write. Without the re-resolve the screen would keep showing
+        // the authored value while playback used the winning one.
+        val api = FakeSettingsApi(
+            effective = ApiResult.Success(
+                EffectiveSettingValuesResponse(
+                    settings = listOf(
+                        EffectiveSettingValue(
+                            key = SettingKeys.PLAYBACK_SUBTITLE_MODE,
+                            value = JsonPrimitive("always"),
+                            source = "profile_device",
+                            scope = "profile_device",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val result = controllerFor(api).setSubtitleMode("off")
+
+        assertTrue(result.succeeded, "the write itself landed")
+        assertEquals(
+            "always",
+            result.snapshot?.subtitleMode,
+            "the caller must be handed the winning value, not the one it authored",
+        )
+    }
+
+    @Test
+    fun `a write whose re-resolve fails still reports success`() = runTest {
+        // The write landed; only the follow-up read did not. Reporting failure
+        // would roll the UI back from a change that did take effect.
+        val api = FakeSettingsApi(
+            effective = ApiResult.Error(500, "internal_error", "boom"),
+        )
+
+        val result = controllerFor(api).setSubtitleMode("off")
+
+        assertTrue(result.succeeded)
+        assertEquals(null, result.snapshot, "no snapshot means: keep the optimistic value")
     }
 
     @Test
