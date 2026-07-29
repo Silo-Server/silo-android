@@ -7,7 +7,8 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
-import kotlin.math.round
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Pure functions that build the hero metadata for the cinematic detail
@@ -139,9 +140,7 @@ internal object TvDetailMetadata {
             ?: runCatching { LocalDate.parse(raw).atStartOfDay(ZoneOffset.UTC).toInstant() }.getOrNull()
 
     private fun formatOneDecimal(value: Double): String {
-        val rounded = round(value * 10.0) / 10.0
-        val whole = rounded.toInt()
-        val tenths = (round((rounded - whole) * 10.0)).toInt().coerceIn(0, 9)
-        return "$whole.$tenths"
+        val tenths = (value * 10.0).roundToInt()
+        return "${tenths / 10}.${abs(tenths % 10)}"
     }
 }

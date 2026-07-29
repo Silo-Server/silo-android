@@ -146,6 +146,21 @@ class TvDetailMetadataTest {
     }
 
     @Test
+    fun detailRatingRoundsHalfUpAtOneDecimal() {
+        val detail = ItemDetail(
+            contentId = "rounding-boundary",
+            type = "movie",
+            title = "Rounding Boundary",
+            ratingImdb = 8.05,
+        )
+
+        assertEquals(
+            listOf(TvHeroFactToken.TextToken("★ 8.1")),
+            TvDetailMetadata.factsLine(detail),
+        )
+    }
+
+    @Test
     fun invalidDetailRatingsAndBlankClassificationsAreOmitted() {
         listOf(
             Double.NaN,
