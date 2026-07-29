@@ -166,6 +166,16 @@ open class SettingsApi(private val client: HttpClient) {
      * What the connected server's settings contract supports, or
      * [SettingsCapabilitiesResult.ServerUpgradeRequired] when the server
      * predates the canonical settings API entirely.
+     *
+     * Not every 404 on this path means an old server. The route sits behind
+     * the viewer-access middleware, which answers a JSON
+     * `{"error":"not_found"}` when the `X-Profile-Id` this client sends names
+     * a profile the household deleted elsewhere. Telling the user their
+     * server is too old — and to go ask its admin — when the real fix is
+     * re-selecting a profile is worse than saying nothing, so the two are
+     * separated on the wire: a server with no `/settings/contract` routes
+     * falls through to the router's plain-text `404 page not found`, which
+     * leaves the parsed error code empty.
      */
     open suspend fun getContractCapabilities(): SettingsCapabilitiesResult =
         when (val result = safeApiCall<SettingsContractCapabilities> {
@@ -173,7 +183,7 @@ open class SettingsApi(private val client: HttpClient) {
         }) {
             is ApiResult.Success -> SettingsCapabilitiesResult.Available(result.data)
             is ApiResult.Error ->
-                if (result.code == HttpStatusCode.NotFound.value) {
+                if (result.code == HttpStatusCode.NotFound.value && result.error.isEmpty()) {
                     SettingsCapabilitiesResult.ServerUpgradeRequired
                 } else {
                     SettingsCapabilitiesResult.Error(result.code, result.error, result.message)

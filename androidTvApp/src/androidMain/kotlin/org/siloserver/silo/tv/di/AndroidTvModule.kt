@@ -410,6 +410,7 @@ val androidTvModule = module {
             personalDataRepository = get(),
             playerSettingsStore = get(),
             profileRepository = get(),
+            profileSettings = get(),
             metadataAiRepository = get(),
             contentId = params.get(),
             userItemState = getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>()

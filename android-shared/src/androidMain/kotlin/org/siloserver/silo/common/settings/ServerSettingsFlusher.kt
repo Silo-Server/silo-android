@@ -131,6 +131,15 @@ class DefaultServerSettingsFlusher(
             // Ops that failed transiently in this drain. Kept out of
             // `pending` until the loop below finishes, or the loop would
             // retry them immediately and spin.
+            //
+            // Only the LATEST outcome per key may live here. A later pass of
+            // the drain loop that settles a newer op for the same key —
+            // whether it landed or the contract refused it — must evict the
+            // older failed entry, or the re-queue below would resurrect a
+            // superseded value and `scheduleRetry` would replay it over the
+            // newer one. The post-loop `composite !in pending` guard cannot
+            // catch that case: the very pass that sent the newer op already
+            // cleared `pending`.
             val retryable = LinkedHashMap<Pair<String, String>, PendingOp>()
             while (true) {
                 val snapshot: Map<Pair<String, String>, PendingOp> = synchronized(lock) {
@@ -141,7 +150,11 @@ class DefaultServerSettingsFlusher(
                 if (snapshot.isEmpty()) break
                 snapshot.forEach { (composite, op) ->
                     val (profileId, key) = composite
-                    if (flushOne(profileId, key, op)) retryable[composite] = op
+                    if (flushOne(profileId, key, op)) {
+                        retryable[composite] = op
+                    } else {
+                        retryable.remove(composite)
+                    }
                 }
             }
             if (retryable.isEmpty()) {

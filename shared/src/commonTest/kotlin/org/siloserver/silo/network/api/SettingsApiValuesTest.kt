@@ -105,13 +105,21 @@ class SettingsApiValuesTest {
     }
 
     @Test
-    fun `getContractCapabilities maps a JSON 404 to ServerUpgradeRequired`() = runTest {
+    fun `getContractCapabilities keeps a profile-not-found 404 off the upgrade path`() = runTest {
+        // The route sits behind the viewer-access middleware, which answers
+        // this exact body when the X-Profile-Id we send names a profile the
+        // household deleted from another device. The server is current; the
+        // fix is picking a profile, so the upgrade notice must not appear.
         val (api, _) = api(
             status = HttpStatusCode.NotFound,
-            responseBody = """{"error":"not_found","message":"Setting not found"}""",
+            responseBody = """{"error":"not_found","message":"Profile not found"}""",
         )
 
-        assertIs<SettingsCapabilitiesResult.ServerUpgradeRequired>(api.getContractCapabilities())
+        val result = api.getContractCapabilities()
+
+        assertIs<SettingsCapabilitiesResult.Error>(result)
+        assertEquals(404, result.code)
+        assertEquals("not_found", result.error)
     }
 
     @Test

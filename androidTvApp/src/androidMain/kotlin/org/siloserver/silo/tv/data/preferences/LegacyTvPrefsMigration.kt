@@ -12,6 +12,7 @@ import org.siloserver.silo.common.settings.AndroidServerSettingsCache
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.model.settings.EffectiveSetting
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
+import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import kotlinx.coroutines.flow.first
@@ -122,7 +123,25 @@ class LegacyTvPrefsMigration(
         )
 
         if (effective[PlaybackSettingsKeys.PreferredQuality]?.hasDeviceOverride != true) {
-            playerSettingsStore.setPreferredQuality(legacyQuality)
+            // Both axes, never just the resolution. Quality is a
+            // (resolution, bitrate) pair now, and the legacy enum's bare
+            // "720p" carries an implied cap — the same one the server's own
+            // migration assigns it (internal/settingsmigrate/plan.go
+            // decomposes 720p to {720p, 2000}). Writing the resolution alone
+            // would leave a pair no preset covers, so the picker would render
+            // nothing as selected with the cursor parked on Auto, and the
+            // sentinel is marked on this pass so it could never be re-migrated.
+            //
+            // The legacy enum's wire values are exactly the base preset ids,
+            // so the id lookup lands on the same bitrate the server assigns
+            // (1080p -> 6000, 720p -> 2000, 480p -> 1500) rather than on
+            // whichever tier of that resolution happens to sort first.
+            val resolution = QualityPresets.normalizeResolution(legacyQuality)
+            val preset = QualityPresets.byId(resolution)
+            playerSettingsStore.setQuality(
+                preset?.resolution ?: resolution,
+                preset?.bitrateKbps,
+            )
         }
         if (effective[PlaybackSettingsKeys.AutoPlayNext]?.hasDeviceOverride != true) {
             playerSettingsStore.setAutoPlayNext(legacyAutoPlayNext)

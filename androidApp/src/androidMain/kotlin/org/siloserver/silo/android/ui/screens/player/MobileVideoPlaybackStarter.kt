@@ -293,7 +293,21 @@ internal class MobileVideoPlaybackStarter(
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
                 ),
                 preferredAudioLanguage = preferredAudioLanguage ?: activeProfile?.language,
-                preferredTextLanguage = activeProfile?.subtitleLanguage,
+                // Server-resolved first, exactly as TvVideoPlaybackStarter does.
+                // The settings screens write these three canonically now
+                // (`PUT /settings/values/{key}?scope=profile`) and nothing
+                // mirrors a canonical write back into `user_profiles`, so the
+                // profile columns go stale the moment the user changes a
+                // subtitle preference. `effective_*` is what the server would
+                // resolve for this item; the columns stay only as the fallback
+                // for a server too old to send them.
+                preferredTextLanguage = watchDetail.effectiveSubtitleLanguage
+                    ?: activeProfile?.subtitleLanguage,
+                preferredSubtitleMode = watchDetail.effectiveSubtitleMode
+                    ?: activeProfile?.subtitleMode,
+                showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
+                    ?: activeProfile?.showForcedSubtitles
+                    ?: true,
                 intro = watchDetail.intro,
                 credits = watchDetail.credits,
                 chapters = effectiveVersion?.chapters.orEmpty(),

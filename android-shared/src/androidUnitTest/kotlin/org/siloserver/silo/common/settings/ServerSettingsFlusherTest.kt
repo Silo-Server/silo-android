@@ -334,6 +334,77 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
+    fun `a newer value flushed in the same drain is not reverted by the failed older one`() = runTest {
+        // The shape that loses a user edit: flushNow() drains on the caller's
+        // coroutine (nothing cancels it), so a value the user changes while
+        // the first PUT is in flight is drained and sent by a LATER pass of
+        // the same drain. If the failed older op stayed queued, the retry
+        // would replay it over the newer value the server already accepted.
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        api.failNextPuts(1, ApiResult.Error(502, "bad_gateway", "proxy hiccup"))
+        api.onPut = { call ->
+            // The user edits the same setting while the first PUT is in flight.
+            if (call.value == JsonPrimitive("480p")) flusher.enqueue("p1", stringKey, "1080p")
+        }
+
+        flusher.enqueue("p1", stringKey, "480p")
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(JsonPrimitive("480p"), JsonPrimitive("1080p")),
+            api.calls.map { it.value },
+            "the superseded value must not be replayed after the newer one landed",
+        )
+    }
+
+    @Test
+    fun `a delete that failed is not replayed after a newer set landed`() = runTest {
+        // Same defect, worse outcome: a re-queued delete clears a value the
+        // user explicitly chose after the reset.
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        api.failNextDeletes(1, ApiResult.Error(503, "unavailable", "restarting"))
+        api.onDelete = { flusher.enqueue("p1", stringKey, "1080p") }
+
+        flusher.enqueueDelete("p1", stringKey)
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(RecordingSettingsApi.Call.Kind.DELETE, RecordingSettingsApi.Call.Kind.PUT),
+            api.calls.map { it.kind },
+            "the failed delete must not be replayed over the value set after it",
+        )
+        assertEquals(JsonPrimitive("1080p"), api.calls.last().value)
+    }
+
+    @Test
+    fun `a newer value that also fails is the one retried`() = runTest {
+        // Evicting the stale entry must not lose a genuine failure: when the
+        // newer op fails too, it is the newer op — and its id — that stays
+        // queued.
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        api.failNextPuts(2, ApiResult.Error(500, "internal", "boom"))
+        api.onPut = { call ->
+            if (call.value == JsonPrimitive("480p")) flusher.enqueue("p1", stringKey, "1080p")
+        }
+
+        flusher.enqueue("p1", stringKey, "480p")
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        assertEquals(3, api.calls.size, "the newer failed write must still be retried")
+        assertEquals(JsonPrimitive("1080p"), api.calls[2].value)
+        assertEquals(
+            api.calls[1].mutationId, api.calls[2].mutationId,
+            "the retry replays the newer write's own id",
+        )
+    }
+
+    @Test
     fun `keys the contract does not store never reach the server`() = runTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
@@ -366,6 +437,13 @@ private class RecordingSettingsApi : SettingsApi(HttpClient()) {
 
     val calls = mutableListOf<Call>()
 
+    /**
+     * Runs while a call is "in flight", before its result is returned — the
+     * hook for simulating the user editing the same setting during a flush.
+     */
+    var onPut: ((Call) -> Unit)? = null
+    var onDelete: ((Call) -> Unit)? = null
+
     private var putFailuresRemaining = 0
     private var putFailure: ApiResult<StoredSettingValue>? = null
     private var deleteFailuresRemaining = 0
@@ -388,7 +466,9 @@ private class RecordingSettingsApi : SettingsApi(HttpClient()) {
         mutationId: String,
         profileId: String?,
     ): ApiResult<StoredSettingValue> {
-        calls.add(Call(Call.Kind.PUT, key, value, profileId, mutationId, scope))
+        val call = Call(Call.Kind.PUT, key, value, profileId, mutationId, scope)
+        calls.add(call)
+        onPut?.invoke(call)
         if (putFailuresRemaining > 0) {
             putFailuresRemaining--
             return putFailure ?: ApiResult.Error(500, "internal", "boom")
@@ -403,7 +483,9 @@ private class RecordingSettingsApi : SettingsApi(HttpClient()) {
         scope: SettingScopeIdentity,
         profileId: String?,
     ): ApiResult<Unit> {
-        calls.add(Call(Call.Kind.DELETE, key, null, profileId, null, scope))
+        val call = Call(Call.Kind.DELETE, key, null, profileId, null, scope)
+        calls.add(call)
+        onDelete?.invoke(call)
         if (deleteFailuresRemaining > 0) {
             deleteFailuresRemaining--
             return deleteFailure ?: ApiResult.Error(500, "internal", "boom")

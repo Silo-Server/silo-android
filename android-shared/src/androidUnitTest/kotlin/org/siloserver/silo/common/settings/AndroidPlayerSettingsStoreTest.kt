@@ -518,15 +518,51 @@ class AndroidPlayerSettingsStoreTest {
 
     @Test
     fun `a granular subtitle field projects into the composite on flush`() = runTest {
+        // A granular slot written WITHOUT a composite write — the state an
+        // upgrading user lands in, because ensureMigrated imports each legacy
+        // `subtitle.*` value straight into its granular slot. The contract has
+        // no key for those fields, so this is the only path that carries them
+        // to the server.
+        fakeLegacyCache.putString(serverUrl, PlaybackSettingsKeys.SubtitleFontSize, "xxlarge")
+        fakeLegacyCache.putString(serverUrl, PlaybackSettingsKeys.SubtitleTextColor, "#ff0000")
+        val store = newStore()
+        // Touch a flow so the migration import runs, then start clean.
+        store.subtitleAppearanceFlow.first()
+        fakeFlusher.calls.clear()
+
+        store.flushProjectedSubtitleAppearance()
+
+        val enqueued = fakeFlusher.calls.lastOrNull { it.key == PlaybackSettingsKeys.SubtitleAppearance }
+        assertTrue(
+            enqueued != null,
+            "a granular edit that never reaches the composite is device-local forever",
+        )
+        val sent = SubtitleAppearance.decode(enqueued.value.orEmpty())
+        assertEquals(SubtitleFontSizePreset.XXLarge, sent.fontSize)
+        assertEquals("#ff0000", sent.fontColor)
+    }
+
+    @Test
+    fun `a granular subtitle field overlays the composite on read`() = runTest {
+        // The other half of the projection: until the flush catches up, the
+        // granular slot is the newer edit and reads must show it, or the
+        // settings screen renders the value the user just replaced.
+        fakeLegacyCache.putString(serverUrl, PlaybackSettingsKeys.SubtitleFontSize, "small")
+        val store = newStore()
+
+        assertEquals(SubtitleFontSizePreset.Small, store.subtitleAppearanceFlow.first().fontSize)
+    }
+
+    @Test
+    fun `flushing an unchanged projection enqueues nothing`() = runTest {
         val store = newStore()
         store.setSubtitleAppearance(
             SubtitleAppearance.DEFAULT.copy(fontSize = SubtitleFontSizePreset.XXLarge),
         )
         fakeFlusher.calls.clear()
 
-        // The contract has no key for the granular fields, so a per-field edit
-        // only reaches the server once projected into the composite.
         store.flushProjectedSubtitleAppearance()
+
         assertTrue(
             fakeFlusher.calls.none { it.key == PlaybackSettingsKeys.SubtitleAppearance },
             "an unchanged projection must not enqueue a redundant write",

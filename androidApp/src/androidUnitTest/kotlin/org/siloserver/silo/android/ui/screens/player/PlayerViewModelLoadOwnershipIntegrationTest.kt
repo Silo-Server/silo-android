@@ -453,6 +453,154 @@ class MobileVideoPlaybackStarterCancellationTest {
         }
 }
 
+/**
+ * The phone starter must take its subtitle preferences from the server's
+ * resolved `effective_*` fields, the way TvVideoPlaybackStarter does.
+ *
+ * The settings screens write these preferences canonically now
+ * (`PUT /settings/values/{key}?scope=profile`); nothing on the server mirrors
+ * a canonical write back into `user_profiles`, so the profile columns
+ * `GET /profiles` serves are stale from the first edit. Reading them here is
+ * how the same profile ends up auto-selecting a different subtitle track on
+ * the phone than on the TV.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
+class MobileVideoPlaybackStarterSubtitlePreferenceTest {
+    private val dispatcher = UnconfinedTestDispatcher()
+
+    @BeforeTest
+    fun setUp() {
+        Dispatchers.setMain(dispatcher)
+    }
+
+    @AfterTest
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    @Test
+    fun serverResolvedSubtitlePreferencesWinOverTheStaleProfileColumns() = runTest(dispatcher) {
+        val ready = start(
+            effective = """
+                "effective_subtitle_language": "ja",
+                "effective_subtitle_mode": "always",
+                "effective_show_forced_subtitles": false,
+            """.trimIndent(),
+            // What GET /profiles still serves after a canonical-only write.
+            profile = Profile(
+                id = PROFILE_ID,
+                name = "Profile",
+                subtitleLanguage = "en",
+                subtitleMode = "off",
+                showForcedSubtitles = true,
+            ),
+        )
+
+        assertEquals("ja", ready.preferredTextLanguage)
+        assertEquals("always", ready.preferredSubtitleMode)
+        assertFalse(ready.showForcedSubtitles)
+    }
+
+    @Test
+    fun profileColumnsRemainTheFallbackWhenTheServerSendsNoResolvedValues() =
+        runTest(dispatcher) {
+            val ready = start(
+                effective = "",
+                profile = Profile(
+                    id = PROFILE_ID,
+                    name = "Profile",
+                    subtitleLanguage = "de",
+                    subtitleMode = "always",
+                    showForcedSubtitles = false,
+                ),
+            )
+
+            assertEquals("de", ready.preferredTextLanguage)
+            assertEquals("always", ready.preferredSubtitleMode)
+            assertFalse(ready.showForcedSubtitles)
+        }
+
+    private suspend fun TestScope.start(
+        effective: String,
+        profile: Profile,
+    ): VideoPlaybackStartResult.Ready {
+        val client = catalogClient(effective)
+        val tokenManager = FakeTokenManager()
+        val profileRepository = FakeProfileRepository(client, tokenManager, profile)
+        val manager = RecordingPlaybackSessionManager(client, tokenManager)
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val starter = MobileVideoPlaybackStarter(
+            catalogRepository = CatalogRepository(CatalogApi(client)),
+            playbackSessionManager = manager,
+            profileRepository = profileRepository,
+            capabilityDetector = PlaybackCapabilityDetector(
+                context,
+                AudioCapabilityManager(context),
+                LibassBridge(false),
+            ),
+            playerSettingsStore = FakePlayerSettingsStore(),
+            sessionLifecycle = PlaybackSessionLifecycle(
+                manager,
+                profileRepository,
+                HealthApi(client),
+                PersonalDataRepository(PersonalDataApi(client)),
+                backgroundScope,
+            ),
+            reachabilityMonitor = ServerReachabilityMonitor(HealthApi(client), backgroundScope),
+            sessionAllocator = { ApiResult.Success(allocatedReady("subtitle-session")) },
+            sessionAdopter = { _, _ -> },
+        )
+
+        val result = starter.start(
+            VideoPlaybackStartRequest(
+                contentId = "starter",
+                preferredFileId = 41,
+                roomId = null,
+                resumePositionOverride = null,
+            ),
+        )
+        assertTrue(result is VideoPlaybackStartResult.Ready, "expected a ready start, got $result")
+        return result
+    }
+
+    private fun catalogClient(effective: String): HttpClient =
+        HttpClient(
+            MockEngine { request ->
+                if (request.url.encodedPath == "/api/v1/watch/starter") {
+                    respond(
+                        content = """
+                            {
+                              "content_id": "starter",
+                              "type": "movie",
+                              "title": "Starter",
+                              $effective
+                              "versions": [
+                                {
+                                  "file_id": 41,
+                                  "container": "mkv",
+                                  "duration": 120.0
+                                }
+                              ]
+                            }
+                        """.trimIndent(),
+                        status = HttpStatusCode.OK,
+                        headers = JSON_HEADERS,
+                    )
+                } else {
+                    respond(
+                        content = """{"error":"not_found","message":"not found"}""",
+                        status = HttpStatusCode.NotFound,
+                        headers = JSON_HEADERS,
+                    )
+                }
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+        }
+}
+
 private class DeferredNonCooperativeStarter : VideoPlaybackStarter {
     private data class Pending(
         val request: VideoPlaybackStartRequest,
@@ -522,11 +670,11 @@ private class RecordingPlaybackSessionManager(
 private class FakeProfileRepository(
     client: HttpClient,
     tokenManager: TokenManager,
+    private val profile: Profile = Profile(id = PROFILE_ID, name = "Profile"),
 ) : ProfileRepository(ProfileApi(client), tokenManager) {
     override suspend fun getActiveProfileId(): String = PROFILE_ID
 
-    override suspend fun listProfiles(): ApiResult<List<Profile>> =
-        ApiResult.Success(listOf(Profile(id = PROFILE_ID, name = "Profile")))
+    override suspend fun listProfiles(): ApiResult<List<Profile>> = ApiResult.Success(listOf(profile))
 }
 
 private class FakeTokenManager : TokenManager {
