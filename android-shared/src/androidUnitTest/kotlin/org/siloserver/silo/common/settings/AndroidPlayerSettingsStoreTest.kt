@@ -270,6 +270,21 @@ class AndroidPlayerSettingsStoreTest {
         assertEquals(-10000, store.subtitleSyncMsFlow.first())
     }
 
+    @Test
+    fun `subtitleSyncMs writes the canonical remote device setting`() = runTest {
+        val store = newStore()
+
+        store.setSubtitleSyncMs(-1900)
+
+        assertEquals(-1900, store.subtitleSyncMsFlow.first())
+        val call = fakeFlusher.calls.last()
+        assertEquals(activeProfileId, call.profileId)
+        assertEquals(PlaybackSettingsKeys.SubtitleSyncMs, call.key)
+        assertEquals("-1900", call.value)
+        assertEquals(serverUrl, call.serverUrl)
+        assertFalse(call.isDelete)
+    }
+
     // ---- Server-sync surface ------------------------------------------
 
     @Test

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,7 +49,6 @@ import org.siloserver.silo.android.ui.screens.auth.AuthColors
 import org.siloserver.silo.android.ui.screens.auth.AuthErrorBanner
 import org.siloserver.silo.android.ui.screens.auth.SiloButton
 import org.siloserver.silo.android.ui.screens.auth.SiloTextField
-import org.siloserver.silo.model.profile.displayProfileQualityPreference
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -100,9 +100,11 @@ fun CreateProfileScreen(
 
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp),
         ) {
             state.error?.let { error ->
@@ -128,11 +130,11 @@ fun CreateProfileScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                for (emoji in AvatarOptions.emojis) {
+                for (avatarRef in AvatarOptions.presets) {
                     AvatarPickerItem(
-                        emoji = emoji,
-                        isSelected = state.selectedAvatar == emoji,
-                        onClick = { viewModel.onAvatarSelected(emoji) },
+                        avatarRef = avatarRef,
+                        isSelected = state.selectedAvatar == avatarRef,
+                        onClick = { viewModel.onAvatarSelected(avatarRef) },
                     )
                 }
             }
@@ -187,16 +189,6 @@ fun CreateProfileScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-
-            // -- Quality preference --
-            DropdownField(
-                label = "Quality Preference",
-                selected = displayProfileQualityPreference(state.qualityPreference),
-                options = QUALITY_OPTIONS,
-                onSelected = viewModel::onQualitySelected,
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             // -- Subtitle mode --
             DropdownField(

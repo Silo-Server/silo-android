@@ -6,9 +6,8 @@ import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 
 data class VideoPlayerMediaSpec(
     /**
-     * Catalog identity of what is playing, carried onto the MediaItem so the
-     * playback service can resolve per-item preferences (subtitle sync) from
-     * the player alone rather than needing a side channel from the UI.
+     * Catalog identity of what is playing, carried onto the MediaItem for
+     * media-session identity and playback diagnostics.
      */
     val contentId: String? = null,
     val streamUrl: String,

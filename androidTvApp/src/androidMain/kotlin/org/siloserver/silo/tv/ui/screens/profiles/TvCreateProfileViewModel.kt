@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.Profile
-import org.siloserver.silo.model.profile.canonicalProfileQualityPreference
 import org.siloserver.silo.model.profile.hasProfileNamed
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.ProfileRepository
@@ -28,7 +27,6 @@ data class TvCreateProfileUiState(
     val maxContentRating: String? = null,
     val pinEnabled: Boolean = false,
     val pin: String = "",
-    val qualityPreference: String? = null,
     val subtitleMode: String? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
@@ -117,12 +115,6 @@ class TvCreateProfileViewModel(
         _uiState.update { it.copy(pin = filtered, error = null) }
     }
 
-    fun onQualitySelected(quality: String) {
-        _uiState.update {
-            it.copy(qualityPreference = canonicalProfileQualityPreference(quality))
-        }
-    }
-
     fun onSubtitleModeSelected(mode: String) {
         _uiState.update {
             // Send the explicit "off" wire value rather than null so an "Off"
@@ -156,7 +148,6 @@ class TvCreateProfileViewModel(
                 pin = if (current.pinEnabled) current.pin else null,
                 isChild = if (current.isChild) true else null,
                 maxContentRating = current.maxContentRating,
-                qualityPreference = current.qualityPreference,
                 subtitleMode = current.subtitleMode,
             )
 

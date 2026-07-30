@@ -648,7 +648,11 @@ fun ItemDetailScreen(
                                         ?: playbackResumePosition(detail.userData),
                                 )
                             },
-                            onSuggestToRoom = if (suggestRoom != null && nextEpisode != null) {
+                            onSuggestToRoom = if (
+                                CLIENT_WATCH_TOGETHER_SURFACE_ENABLED &&
+                                suggestRoom != null &&
+                                nextEpisode != null
+                            ) {
                                 {
                                     suggestViewModel.suggest(
                                         contentId = nextEpisode.contentId,
@@ -846,7 +850,9 @@ fun ItemDetailScreen(
                                     resumePositionSeconds = playbackResumePosition(detail.userData),
                                 )
                             },
-                            onSuggestToRoom = suggestRoom?.let {
+                            onSuggestToRoom = if (
+                                CLIENT_WATCH_TOGETHER_SURFACE_ENABLED && suggestRoom != null
+                            ) {
                                 {
                                     suggestViewModel.suggest(
                                         contentId = detail.contentId,
@@ -856,6 +862,8 @@ fun ItemDetailScreen(
                                         posterUrl = detail.posterUrl,
                                     )
                                 }
+                            } else {
+                                null
                             },
                             onWatchTogether = if (CLIENT_WATCH_TOGETHER_SURFACE_ENABLED) {
                                 { onWatchTogether(detail.contentId, explicitFileId) }

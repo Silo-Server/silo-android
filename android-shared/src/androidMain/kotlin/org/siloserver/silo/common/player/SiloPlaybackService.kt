@@ -2,7 +2,6 @@ package org.siloserver.silo.common.player
 
 import android.content.Intent
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -18,7 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.BuildConfig
@@ -105,13 +103,6 @@ class SiloPlaybackService : MediaSessionService() {
     // The sole Media3 player owned by this service.
     @Volatile private var activePlayer: Player? = null
 
-    private val activeContentId = MutableStateFlow<String?>(null)
-    private val contentIdListener = object : Player.Listener {
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            activeContentId.value = mediaItem?.mediaId?.takeIf(String::isNotBlank)
-        }
-    }
-
     private val _positionMs = MutableStateFlow(0L)
 
     /**
@@ -132,8 +123,6 @@ class SiloPlaybackService : MediaSessionService() {
             player.addAnalyticsListener(analyticsListener)
         }
         activePlayer = player
-        player.addListener(contentIdListener)
-        activeContentId.value = player.currentMediaItem?.mediaId?.takeIf(String::isNotBlank)
         activePlayerHolder.set(player)
         val count = playerInstanceCount.incrementAndGet()
         android.util.Log.i(
@@ -177,16 +166,14 @@ class SiloPlaybackService : MediaSessionService() {
                 }
         }
 
-        // Mirror the per-profile SubtitleSyncMs preference into the active
+        // Mirror the per-device SubtitleSyncMs preference into the active
         // SubtitleOffsetHolder. The libass renderer reads this value live;
         // Media3 text sidecars are commonly parsed up front, so changing the
         // holder alone cannot retime their already-built cue timestamps.
         // Reprepare at the same position to rebuild those cues while preserving
         // play/pause intent (the libass clock remains continuous across it).
-        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
         subtitleSyncJob = scope.launch {
-            activeContentId
-                .flatMapLatest(playerSettingsStore::subtitleSyncMsFor)
+            playerSettingsStore.subtitleSyncMsFlow
                 .distinctUntilChanged()
                 .collect { offsetMs ->
                     val previous = subtitleOffsetHolder.getOffsetMs()

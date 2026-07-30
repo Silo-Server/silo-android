@@ -15,8 +15,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Encodes/decodes [CardOverlayPrefs] to/from the JSON string the server
- * stores under the `card_overlays` user setting. The shape MUST stay
+ * Encodes/decodes [CardOverlayPrefs] to/from the JSON object stored in the
+ * canonical `ui.card_overlays` profile setting. The shape MUST stay
  * compatible with web's `parseOverlayPrefs`, iOS `OverlaySchema`, and
  * tvOS, since clients share the setting.
  *
@@ -55,7 +55,7 @@ object OverlaySchema {
     }
 
     /**
-     * Parse a JSON string into a fully populated [CardOverlayPrefs].
+     * Parse a JSON object string into a fully populated [CardOverlayPrefs].
      * Unknown overlay IDs and malformed entries are dropped — the
      * remaining fields fall back to registry defaults so the user's real
      * overrides survive a schema upgrade. V1 docs (flat

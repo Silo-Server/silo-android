@@ -280,18 +280,6 @@ class AndroidPlayerSettingsStore(
     override val subtitleSyncMsFlow: Flow<Int> =
         profileScopedFlow(0) { p, s -> p.intFor(s, PlaybackSettingsKeys.SubtitleSyncMs, 0) }
 
-    override fun subtitleSyncMsFor(contentId: String?): Flow<Int> =
-        if (contentId.isNullOrBlank()) {
-            subtitleSyncMsFlow
-        } else {
-            profileScopedFlow(0) { p, s ->
-                decodeSubtitleSyncOverrides(
-                    p.stringFor(s, PlaybackSettingsKeys.SubtitleSyncMsByItem, ""),
-                )[contentId]
-                    ?: p.intFor(s, PlaybackSettingsKeys.SubtitleSyncMs, 0)
-            }
-        }
-
     override val nextUpPromptSecondsFlow: Flow<Int> =
         profileScopedFlow(30) { p, s -> p.intFor(s, PlaybackSettingsKeys.NextUpPromptSeconds, 30) }
 
@@ -433,28 +421,6 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun setSubtitleSyncMs(value: Int) =
         writeInt(PlaybackSettingsKeys.SubtitleSyncMs, value.coerceIn(-10000, 10000))
-
-    override suspend fun setSubtitleSyncMsFor(contentId: String, value: Int) {
-        if (contentId.isBlank()) return
-        val clamped = value.coerceIn(-10000, 10000)
-        withScope { scope, store ->
-            store.edit { prefs ->
-                val globalKey = intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleSyncMs)
-                val mapKey = stringPreferencesKey(
-                    scope.keyPrefix + PlaybackSettingsKeys.SubtitleSyncMsByItem,
-                )
-                val global = prefs[globalKey] ?: 0
-                val current = decodeSubtitleSyncOverrides(prefs[mapKey].orEmpty())
-                val next = LinkedHashMap(current).apply {
-                    remove(contentId)
-                    // Matching the profile default needs no override; dropping it
-                    // keeps the map from filling with no-op entries.
-                    if (clamped != global) put(contentId, clamped)
-                }
-                prefs[mapKey] = encodeSubtitleSyncOverrides(next)
-            }
-        }
-    }
 
     override suspend fun setNextUpPromptSeconds(value: Int) =
         writeInt(PlaybackSettingsKeys.NextUpPromptSeconds, value.coerceIn(0, 120))
@@ -908,33 +874,3 @@ class AndroidPlayerSettingsStore(
                 .joinToString(separator = "") { "%02x".format(it) }
     }
 }
-
-/**
- * `contentId=ms` pairs separated by newlines. Deliberately not JSON: the values
- * are a string id and an int, and this store already speaks plain preference
- * strings, so a serializer dependency here would buy nothing.
- *
- * Ids containing the separators are dropped rather than escaped — no catalog id
- * looks like that, and silently corrupting a neighbouring entry would be worse
- * than losing an override the user can set again.
- */
-internal fun decodeSubtitleSyncOverrides(raw: String): Map<String, Int> {
-    if (raw.isBlank()) return emptyMap()
-    val out = LinkedHashMap<String, Int>()
-    for (line in raw.lineSequence()) {
-        val id = line.substringBefore('=', "").trim()
-        val ms = line.substringAfter('=', "").trim().toIntOrNull()
-        if (id.isNotEmpty() && ms != null) out[id] = ms
-    }
-    return out
-}
-
-internal fun encodeSubtitleSyncOverrides(overrides: Map<String, Int>): String =
-    overrides.entries
-        .filter { (id, _) -> id.isNotBlank() && '=' !in id && '\n' !in id }
-        // Bounded so a long viewing history cannot grow this preference without
-        // limit; the most recently written entries are the ones worth keeping.
-        .takeLast(MAX_SUBTITLE_SYNC_OVERRIDES)
-        .joinToString(separator = "\n") { (id, ms) -> "$id=$ms" }
-
-private const val MAX_SUBTITLE_SYNC_OVERRIDES = 200

@@ -421,7 +421,10 @@ fun PlayerOverlay(
         // Sleep timer chip — top-right, fades in only while a timer is active.
         // The chip stays visible regardless of `state.showControls` so users
         // know a sleep timer is still running even when the controls have
-        // auto-hidden.
+        // auto-hidden. When the HUD is visible, move it below the 48dp toolbar
+        // controls (16dp edge padding + 48dp target + 8dp gap) so it cannot
+        // cover Cast or playback settings in landscape.
+        val sleepTimerTopPadding = if (state.showControls && !state.showUpNext) 72.dp else 16.dp
         AnimatedVisibility(
             visible = sleepTimerState is SleepTimerState.Active,
             enter = fadeIn(),
@@ -429,7 +432,7 @@ fun PlayerOverlay(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = 16.dp, end = 16.dp)
+                .padding(top = sleepTimerTopPadding, end = 16.dp)
                 .zIndex(2f),
         ) {
             val active = sleepTimerState as? SleepTimerState.Active

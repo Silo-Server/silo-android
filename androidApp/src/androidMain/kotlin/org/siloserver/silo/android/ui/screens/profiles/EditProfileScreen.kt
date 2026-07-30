@@ -128,11 +128,11 @@ fun EditProfileScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    for (emoji in AvatarOptions.emojis) {
+                    for (avatarRef in AvatarOptions.presets) {
                         AvatarPickerItem(
-                            emoji = emoji,
-                            isSelected = state.selectedAvatar == emoji,
-                            onClick = { viewModel.onAvatarSelected(emoji) },
+                            avatarRef = avatarRef,
+                            isSelected = state.selectedAvatar == avatarRef,
+                            onClick = { viewModel.onAvatarSelected(avatarRef) },
                         )
                     }
                 }

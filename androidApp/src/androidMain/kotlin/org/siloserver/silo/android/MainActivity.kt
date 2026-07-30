@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,7 +33,10 @@ import org.siloserver.silo.android.downloads.LEGACY_PUBLIC_DOWNLOAD_PERMISSION
 import org.siloserver.silo.android.downloads.hasLegacyPublicDownloadPermission
 import org.siloserver.silo.android.push.PushNotificationPresenter
 import org.siloserver.silo.android.ui.navigation.AppNavigation
+import org.siloserver.silo.android.ui.navigation.ExternalRouteRequest
+import org.siloserver.silo.android.ui.navigation.ExternalRouteRequestFactory
 import org.siloserver.silo.android.ui.navigation.Route
+import org.siloserver.silo.android.ui.navigation.clearConsumedExternalRouteRequest
 import org.siloserver.silo.android.ui.navigation.contentDeepLinkRouteOrNull
 import org.siloserver.silo.android.ui.navigation.deviceLoginPairRouteOrNull
 import org.siloserver.silo.android.ui.navigation.hasLocalDownloadsForScope
@@ -59,7 +63,8 @@ import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.koin.java.KoinJavaComponent.get
 
@@ -74,7 +79,11 @@ class MainActivity : ComponentActivity() {
         private var hasShownColdSplash = false
     }
 
-    private val incomingExternalRoutes = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    private val externalRouteRequestFactory = ExternalRouteRequestFactory()
+    // Retain the latest request even while Compose is between collectors (for
+    // example while an existing top Activity is being resumed by onNewIntent).
+    // A replay-free SharedFlow can silently drop exactly that warm delivery.
+    private val pendingExternalRouteRequests = MutableStateFlow<ExternalRouteRequest?>(null)
 
     // POST_NOTIFICATIONS is required on Android 13+ for any notification —
     // download progress / completion notifications silently never appear
@@ -92,7 +101,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var startRoute by remember { mutableStateOf<String?>(null) }
-            var pendingExternalRoute by remember { mutableStateOf<String?>(null) }
+            val pendingExternalRoute by pendingExternalRouteRequests.collectAsState()
             var splashPlaybackComplete by remember { mutableStateOf(hasShownColdSplash) }
 
             LaunchedEffect(Unit) {
@@ -104,13 +113,10 @@ class MainActivity : ComponentActivity() {
                 // The pending route is only consumed once the main graph is
                 // showing, so pre-auth starts just hold it.
                 (notificationRouteOrNull(intent) ?: contentDeepLinkRouteOrNull(intent?.dataString))
-                    ?.let { pendingExternalRoute = it }
+                    ?.let { route ->
+                        pendingExternalRouteRequests.value = externalRouteRequestFactory.create(route)
+                    }
                 launchAuthenticatedStartupWarmup(route)
-            }
-            LaunchedEffect(Unit) {
-                incomingExternalRoutes.collect { route ->
-                    pendingExternalRoute = route
-                }
             }
 
             SiloTheme {
@@ -145,7 +151,14 @@ class MainActivity : ComponentActivity() {
                         AppNavigation(
                             startDestination = resolvedRoute,
                             pendingExternalRoute = pendingExternalRoute,
-                            onExternalRouteConsumed = { pendingExternalRoute = null },
+                            onExternalRouteConsumed = { consumedRequest ->
+                                pendingExternalRouteRequests.update { pendingRequest ->
+                                    clearConsumedExternalRouteRequest(
+                                        pendingRequest = pendingRequest,
+                                        consumedRequest = consumedRequest,
+                                    )
+                                }
+                            },
                         )
                     }
                 }
@@ -169,7 +182,7 @@ class MainActivity : ComponentActivity() {
             ?: inviteClaimRouteOrNull(intent.dataString)
             ?: notificationRouteOrNull(intent)
             ?: contentDeepLinkRouteOrNull(intent.dataString)
-        route?.let { incomingExternalRoutes.tryEmit(it) }
+        route?.let { pendingExternalRouteRequests.value = externalRouteRequestFactory.create(it) }
     }
 
     /**

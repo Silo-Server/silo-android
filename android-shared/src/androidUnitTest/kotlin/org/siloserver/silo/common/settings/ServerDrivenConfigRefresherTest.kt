@@ -164,7 +164,6 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override val playbackSpeedFlow: Flow<Double> = flowOf(1.0)
     override val audioSyncMsFlow: Flow<Int> = flowOf(0)
     override val subtitleSyncMsFlow: Flow<Int> = flowOf(0)
-    override fun subtitleSyncMsFor(contentId: String?): Flow<Int> = subtitleSyncMsFlow
     override val nextUpPromptSecondsFlow: Flow<Int> = flowOf(30)
     override val sleepTimerDefaultMinutesFlow: Flow<Int> = flowOf(30)
     override val resumeRewindSecondsFlow: Flow<Int> = flowOf(7)
@@ -194,7 +193,6 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun setPlaybackSpeed(value: Double) = Unit
     override suspend fun setAudioSyncMs(value: Int) = Unit
     override suspend fun setSubtitleSyncMs(value: Int) = Unit
-    override suspend fun setSubtitleSyncMsFor(contentId: String, value: Int) = Unit
     override suspend fun setNextUpPromptSeconds(value: Int) = Unit
     override suspend fun setSleepTimerDefaultMinutes(value: Int) = Unit
     override suspend fun setResumeRewindSeconds(value: Int) = Unit

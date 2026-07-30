@@ -105,8 +105,8 @@ class EditProfileViewModel(
         _uiState.update { it.copy(name = value, error = null) }
     }
 
-    fun onAvatarSelected(emoji: String) {
-        _uiState.update { it.copy(selectedAvatar = emoji) }
+    fun onAvatarSelected(avatarRef: String) {
+        _uiState.update { it.copy(selectedAvatar = avatarRef) }
     }
 
     fun onChildToggled(checked: Boolean) {

@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 
 /**
  * Stable identifiers for every overlay the system knows about. The wire
- * format (server `defaults.card_overlays`, user `card_overlays`) uses
+ * format (server `defaults.card_overlays`, profile `ui.card_overlays`) uses
  * these as keys, so they MUST stay in sync with web's `OverlayId`,
  * iOS `OverlayId`, and tvOS. Adding a new overlay requires updating the
  * registry; renaming an existing one is a breaking change for stored
@@ -153,9 +153,9 @@ data class OverlayItemConfig(
 
 /**
  * Versioned root document stored under the user setting key
- * `card_overlays`. Serialized as a JSON string and PUT to
- * `/api/v1/settings/card_overlays`. Shared across web, iOS, tvOS, and
- * Android.
+ * `ui.card_overlays`. Serialized as a typed JSON object and PUT to
+ * `/api/v1/settings/values/ui.card_overlays?scope=profile`. Shared across
+ * web, iOS, tvOS, and Android.
  */
 data class CardOverlayPrefs(
     val version: Int,

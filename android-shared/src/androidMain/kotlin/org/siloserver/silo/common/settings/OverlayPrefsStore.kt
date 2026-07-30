@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.settings
 
+import org.siloserver.silo.model.settings.SettingKeys
+import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.overlays.CardOverlayPrefs
 import org.siloserver.silo.overlays.OverlaySchema
@@ -14,6 +16,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 
 /**
  * Cached card-overlay configuration for the signed-in profile. Mirrors
@@ -21,7 +26,7 @@ import kotlinx.coroutines.sync.withLock
  *
  * Resolves a single rendered [CardOverlayPrefs] from one of two sources,
  * in this priority:
- *   1. The user's saved prefs (`GET /settings/card_overlays`) — if
+ *   1. The user's canonical profile value (`ui.card_overlays`) — if
  *      present, this is the entire source of truth.
  *   2. Otherwise, the admin-configured baseline JSON from
  *      `GET /settings/overlay-config` (`defaults` field).
@@ -29,8 +34,9 @@ import kotlinx.coroutines.sync.withLock
  *
  * Winner-take-all, not layered merging — [setPrefs] always saves a full
  * document (not a diff), keeping the wire format compatible with web,
- * iOS, and tvOS. Hydrated lazily on first read and refreshed after every
- * save so card views always see the shape they just persisted.
+ * iOS, and tvOS. Hydrated lazily on first read; successful canonical writes
+ * become the confirmed local state so card views immediately see the shape
+ * they just persisted.
  */
 interface OverlayPrefsStore {
     /**
@@ -90,6 +96,15 @@ class DefaultOverlayPrefsStore(
     @Volatile
     private var adminDefaultsRaw: String? = null
 
+    // The last state confirmed by a successful canonical read or write. An
+    // optimistic edit rolls back here when its PUT fails, including when the
+    // network is unavailable and a follow-up refresh would fail as well.
+    @Volatile
+    private var confirmedPrefs: CardOverlayPrefs = _prefs.value
+
+    @Volatile
+    private var confirmedHasUserOverride: Boolean = false
+
     private val refreshLock = Mutex()
 
     // Coalesced-write state. `writeMutex` guards the mutable bookkeeping
@@ -117,13 +132,12 @@ class DefaultOverlayPrefsStore(
     }
 
     /**
-     * Re-fetch both the admin config and the user setting, then recompute
+     * Re-fetch both the admin config and the canonical profile value, then recompute
      * [prefs].
      *
      * Failure semantics mirror iOS:
-     * - A 404 on the user setting means "not set yet" and is treated as
-     *   success — `userRaw` stays null and we render from admin defaults
-     *   or registry defaults.
+     * - A canonical null/default means "not set yet" and renders from admin
+     *   defaults or registry defaults.
      * - Any other transport error on either endpoint leaves
      *   [hasHydrated] false so the next [hydrateIfNeeded] retries. This is
      *   critical for the admin kill-switch: if `/overlay-config` errors
@@ -153,19 +167,27 @@ class DefaultOverlayPrefsStore(
                 }
             }
 
-            var userRaw: String? = null
+            var userValue: JsonElement? = null
             var userFetchFailed = false
-            when (val entry = repository.getSetting(OVERLAY_SETTING_KEY)) {
-                is ApiResult.Success -> userRaw = entry.data
-                is ApiResult.Error ->
-                    if (entry.code == 404) {
-                        userRaw = null
-                    } else {
-                        _lastError.value = entry.message
+            when (val result = repository.getEffectiveValues(listOf(OVERLAY_SETTING_KEY))) {
+                is ApiResult.Success -> {
+                    val entry = result.data[OVERLAY_SETTING_KEY]
+                    if (entry == null) {
+                        _lastError.value = "The server did not resolve $OVERLAY_SETTING_KEY"
                         userFetchFailed = true
+                    } else if (
+                        entry.source == SettingScope.PROFILE.wire &&
+                        entry.value !is JsonNull
+                    ) {
+                        userValue = entry.value
                     }
+                }
+                is ApiResult.Error -> {
+                    _lastError.value = result.message
+                    userFetchFailed = true
+                }
                 is ApiResult.NetworkError -> {
-                    _lastError.value = entry.exception.message
+                    _lastError.value = result.exception.message
                     userFetchFailed = true
                 }
             }
@@ -178,9 +200,13 @@ class DefaultOverlayPrefsStore(
                 adminDefaultsRaw = resolvedAdminDefaults
             }
             if (!userFetchFailed) {
-                hasUserOverride = userRaw != null
+                val hasOverride = userValue != null
                 val defaults = if (configFetchFailed) adminDefaultsRaw else resolvedAdminDefaults
-                _prefs.value = OverlaySchema.parse(userRaw ?: defaults)
+                val resolvedPrefs = OverlaySchema.parse(userValue?.toString() ?: defaults)
+                hasUserOverride = hasOverride
+                _prefs.value = resolvedPrefs
+                confirmedHasUserOverride = hasOverride
+                confirmedPrefs = resolvedPrefs
             }
             // Only complete hydration when BOTH endpoints gave a
             // definitive answer.
@@ -204,6 +230,11 @@ class DefaultOverlayPrefsStore(
         hasUserOverride = true
         scope.launch {
             writeMutex.withLock {
+                // Re-assert the optimistic state while staging the snapshot.
+                // A preceding write may have completed between the immediate
+                // UI update above and this coroutine acquiring the mutex.
+                _prefs.value = next
+                hasUserOverride = true
                 pendingSnapshot = next
                 if (pendingWrite?.isActive != true) {
                     val generation = writeGeneration
@@ -233,22 +264,45 @@ class DefaultOverlayPrefsStore(
             // for the cleared session reaches the wire.
             if (currentCoroutineContext()[Job]?.isActive != true) return
             if (writeGeneration != generation) return
-            val json = OverlaySchema.serialize(snapshot)
+            val json = Json.parseToJsonElement(OverlaySchema.serialize(snapshot))
             if (currentCoroutineContext()[Job]?.isActive != true) return
             if (writeGeneration != generation) return
-            when (val result = repository.setSetting(OVERLAY_SETTING_KEY, json)) {
-                is ApiResult.Success -> Unit
+            when (val result = repository.setProfileValue(OVERLAY_SETTING_KEY, json)) {
+                is ApiResult.Success -> {
+                    writeMutex.withLock {
+                        confirmedPrefs = snapshot
+                        confirmedHasUserOverride = true
+                        // Do not paint an older successful snapshot over a
+                        // newer edit that is already queued.
+                        if (pendingSnapshot == null) {
+                            _prefs.value = snapshot
+                            hasUserOverride = true
+                            _lastError.value = null
+                        }
+                    }
+                }
                 is ApiResult.Error -> {
                     if (writeGeneration != generation) return
-                    _lastError.value = result.message
-                    refresh()
+                    reconcileFailedWrite(result.message)
                 }
                 is ApiResult.NetworkError -> {
                     if (writeGeneration != generation) return
-                    _lastError.value = result.exception.message
-                    refresh()
+                    reconcileFailedWrite(result.exception.message)
                 }
             }
+        }
+    }
+
+    private suspend fun reconcileFailedWrite(message: String?) {
+        writeMutex.withLock {
+            // If another edit is queued, it is still the optimistic state the
+            // user should see. Otherwise restore the last server-confirmed
+            // document instead of leaving a rejected value on screen.
+            if (pendingSnapshot == null) {
+                _prefs.value = confirmedPrefs
+                hasUserOverride = confirmedHasUserOverride
+            }
+            _lastError.value = message
         }
     }
 
@@ -269,17 +323,26 @@ class DefaultOverlayPrefsStore(
         pendingWrite?.join()
         writeMutex.withLock { pendingWrite = null }
 
-        when (val result = repository.deleteSetting(OVERLAY_SETTING_KEY)) {
-            is ApiResult.Success -> hasUserOverride = false
-            is ApiResult.Error ->
-                if (result.code == 404) {
-                    hasUserOverride = false
-                } else {
-                    _lastError.value = result.message
-                }
-            is ApiResult.NetworkError -> _lastError.value = result.exception.message
+        when (val result = repository.clearProfileValue(OVERLAY_SETTING_KEY)) {
+            is ApiResult.Success -> {
+                val fallback = OverlaySchema.parse(adminDefaultsRaw)
+                hasUserOverride = false
+                _prefs.value = fallback
+                confirmedHasUserOverride = false
+                confirmedPrefs = fallback
+                refresh()
+            }
+            is ApiResult.Error -> {
+                _prefs.value = confirmedPrefs
+                hasUserOverride = confirmedHasUserOverride
+                _lastError.value = result.message
+            }
+            is ApiResult.NetworkError -> {
+                _prefs.value = confirmedPrefs
+                hasUserOverride = confirmedHasUserOverride
+                _lastError.value = result.exception.message
+            }
         }
-        refresh()
     }
 
     override fun clear() {
@@ -299,13 +362,15 @@ class DefaultOverlayPrefsStore(
         inflight?.cancel()
         _enabled.value = true
         _prefs.value = OverlaySchema.buildDefaults()
+        confirmedPrefs = _prefs.value
         adminDefaultsRaw = null
         hasUserOverride = false
+        confirmedHasUserOverride = false
         hasHydrated = false
         _lastError.value = null
     }
 
     companion object {
-        const val OVERLAY_SETTING_KEY = "card_overlays"
+        const val OVERLAY_SETTING_KEY = SettingKeys.UI_CARD_OVERLAYS
     }
 }

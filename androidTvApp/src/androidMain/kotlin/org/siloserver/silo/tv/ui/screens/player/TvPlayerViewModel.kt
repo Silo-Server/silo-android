@@ -1025,7 +1025,7 @@ class TvPlayerViewModel(
     val audioDelayMs: StateFlow<Int> = playerSettingsStore.audioSyncMsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     /**
-     * Per-profile subtitle delay in ms, ±500 clamp. Sourced from
+     * Per-device subtitle delay in ms, ±10000 clamp. Sourced from
      * [PlayerSettingsStore.subtitleSyncMsFlow]; mirrored into the active
      * [org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder] by
      * [org.siloserver.silo.common.player.SiloPlaybackService] (A.3f T2).
@@ -3650,14 +3650,14 @@ class TvPlayerViewModel(
     }
 
     /**
-     * HUD Subtitles pane stepper handler. Coerced to ±500ms in the store; the
+     * HUD Subtitles pane stepper handler. Coerced to ±10000ms in the store; the
      * service binding (A.3f T2) picks up the new value and pushes it into the
      * shared [org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder]
-     * (forcing a flush via `seekTo(currentPosition)` so the change applies
-     * mid-playback by dropping already-buffered cues).
+     * while reparsing the current media item so the change applies to already-
+     * buffered cues.
      */
     fun onSubtitleDelayChanged(delayMs: Int) {
-        viewModelScope.launch { playerSettingsStore.setSubtitleSyncMsFor(contentId, delayMs) }
+        viewModelScope.launch { playerSettingsStore.setSubtitleSyncMs(delayMs) }
     }
 
     // ---- Sleep timer setters ---------------------------------------------------

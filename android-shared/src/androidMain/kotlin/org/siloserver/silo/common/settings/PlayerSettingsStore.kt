@@ -27,15 +27,8 @@ interface PlayerSettingsStore {
 
     // Ints
     val audioSyncMsFlow: Flow<Int>
+    /** Canonical device-scoped subtitle offset (`player.subtitle_sync_ms`). */
     val subtitleSyncMsFlow: Flow<Int>
-
-    /**
-     * Subtitle sync for one catalog item: its own override when it has one,
-     * otherwise the profile-wide value. A badly timed release is a property of
-     * that release, so correcting it must not silently shift every other title
-     * — which is what a single global value did.
-     */
-    fun subtitleSyncMsFor(contentId: String?): Flow<Int>
     val nextUpPromptSecondsFlow: Flow<Int>
     val sleepTimerDefaultMinutesFlow: Flow<Int>
     /** Seconds to skip back on resume (F1). Default 7; 0 = off. Local-only. */
@@ -93,13 +86,6 @@ interface PlayerSettingsStore {
 
     suspend fun setAudioSyncMs(value: Int)
     suspend fun setSubtitleSyncMs(value: Int)
-
-    /**
-     * Record sync for one item. Passing the profile-wide value clears the
-     * override instead of storing a redundant copy, so an item only carries an
-     * entry while it genuinely differs.
-     */
-    suspend fun setSubtitleSyncMsFor(contentId: String, value: Int)
     suspend fun setNextUpPromptSeconds(value: Int)
     suspend fun setSleepTimerDefaultMinutes(value: Int)
     /** Set resume skip-back seconds (clamped 0..30; 0 = off). */

@@ -30,6 +30,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navDeepLink
 import androidx.navigation.navArgument
+import kotlinx.coroutines.flow.map
 import org.siloserver.silo.android.cast.GoogleCastMiniBar
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.cast.SiloCastSessionManager
@@ -95,8 +96,8 @@ private const val PageFadeDurationMs = 200
 fun AppNavigation(
     navController: NavHostController = rememberNavController(),
     startDestination: String = Route.Login.route,
-    pendingExternalRoute: String? = null,
-    onExternalRouteConsumed: () -> Unit = {},
+    pendingExternalRoute: ExternalRouteRequest? = null,
+    onExternalRouteConsumed: (ExternalRouteRequest) -> Unit = {},
 ) {
     val tokenManager: TokenManager = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
@@ -122,43 +123,30 @@ fun AppNavigation(
         }
     }
 
-    // Keyed on the route so a notification arriving later restarts the
-    // collection; currentBackStackEntryFlow emits the current entry
-    // immediately on collect, so both "route arrives while on Main" and
-    // "Main arrives with route queued" are covered.
-    LaunchedEffect(pendingExternalRoute) {
-        // Consume only while the main (authenticated) graph is showing —
-        // a notification tapped pre-sign-in stays queued until auth lands,
-        // instead of pushing its target over Login. The back-stack flow makes
-        // this re-fire when Main arrives with the route still pending.
-        navController.currentBackStackEntryFlow.collect { entry ->
-            val route = pendingExternalRoute?.takeIf { it.isNotBlank() } ?: return@collect
-            // Every pre-auth / onboarding destination — a notification tapped
-            // on any of these stays queued until the authenticated graph
-            // shows, instead of pushing a content route that would 401.
-            val authRoutes = setOf(
-                Route.Login.route,
-                Route.ServerSetup.route,
-                Route.ServerList.route,
-                Route.Setup.route,
-                Route.Signup.route,
-                Route.ProfileSelection.route,
-                Route.CreateProfile.route,
-                Route.EditProfile.ROUTE,
-                Route.PairDevice.ROUTE,
-                Route.InviteClaim.ROUTE,
-                Route.OnboardingTour.route,
-            )
-            // An invite claim is itself the signed-out flow — holding it
-            // until the authenticated graph shows would queue it forever on
-            // Login, which is exactly where an invitee starts.
-            val isPreAuthTarget = route.startsWith("invite_claim")
-            if (!isPreAuthTarget && entry.destination.route in authRoutes) return@collect
-            navController.navigate(route) {
-                launchSingleTop = true
-            }
-            onExternalRouteConsumed()
-        }
+    // Keyed on request identity, not route text, so delivering the same deep
+    // link again after Back still restarts the wait. The back-stack flow emits
+    // the current entry immediately, covering both "request arrives on Main"
+    // and "Main arrives with a request queued". Delivery itself is one-shot.
+    LaunchedEffect(pendingExternalRoute?.generation) {
+        consumeExternalRouteOnce(
+            pendingExternalRoute = pendingExternalRoute,
+            currentDestinationRoutes = navController.currentBackStackEntryFlow
+                .map { entry -> entry.destination.route },
+            isAlreadyAtRoute = navController::isDisplayingExactPlayerRoute,
+            navigate = { route ->
+                val replaceCurrentPlayer = shouldReplaceCurrentPlayer(
+                    currentDestinationRoute = navController.currentBackStackEntry?.destination?.route,
+                    targetRoute = route,
+                )
+                navController.navigate(route) {
+                    if (replaceCurrentPlayer) {
+                        popUpTo(Route.Player.ROUTE) { inclusive = true }
+                    }
+                    launchSingleTop = true
+                }
+            },
+            onConsumed = onExternalRouteConsumed,
+        )
     }
 
     // Re-read the authenticated profile id whenever the current destination
@@ -972,4 +960,28 @@ fun AppNavigation(
     }
     }
     }
+}
+
+/**
+ * Exact player redelivery is idempotent. Navigating the same concrete route
+ * with launchSingleTop replaces the top entry and tears down active playback;
+ * a different content/file/quality/track route must still navigate normally.
+ */
+private fun NavHostController.isDisplayingExactPlayerRoute(route: String): Boolean {
+    val entry = currentBackStackEntry ?: return false
+    if (entry.destination.route != Route.Player.ROUTE) return false
+    val arguments = entry.arguments ?: return false
+    val contentId = arguments.getString("contentId")?.takeIf(String::isNotBlank) ?: return false
+    val currentRoute = Route.Player(
+        contentId = contentId,
+        fileId = arguments.getString("fileId")?.toIntOrNull(),
+        quality = arguments.getString("quality"),
+        audioTrackIndex = arguments.getString("audioTrackIndex")?.toIntOrNull(),
+        subtitleTrackIndex = arguments.getString("subtitleTrackIndex")?.toIntOrNull(),
+        resumePositionSeconds = VideoPlayerRouteArgs.parseResumePosition(
+            arguments.getString("resumePosition"),
+        ),
+        roomId = arguments.getString("roomId"),
+    ).route
+    return currentRoute == route
 }

@@ -794,7 +794,8 @@ private fun HeroActionRow(
     val hasWatchTogether =
         CLIENT_WATCH_TOGETHER_SURFACE_ENABLED && !isAudiobookItemType(detail.type)
     val hasSuggestionTarget = detail.type in setOf("movie", "episode") || nextUp != null
-    val canSuggestToRoom = activeRoom != null && hasSuggestionTarget
+    val canSuggestToRoom =
+        CLIENT_WATCH_TOGETHER_SURFACE_ENABLED && activeRoom != null && hasSuggestionTarget
     val hasOverflowMenu = hasOverflowNavigation || hasWatchTogether || canSuggestToRoom
 
     // Version set + selection state driving the selector row / Play file id.

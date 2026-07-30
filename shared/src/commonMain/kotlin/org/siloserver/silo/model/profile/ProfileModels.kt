@@ -45,7 +45,6 @@ data class CreateProfileRequest(
     val pin: String? = null,
     @SerialName("is_child") val isChild: Boolean? = null,
     @SerialName("max_content_rating") val maxContentRating: String? = null,
-    @SerialName("quality_preference") val qualityPreference: String? = null,
     val language: String? = null,
     @SerialName("subtitle_language") val subtitleLanguage: String? = null,
     @SerialName("preferred_metadata_language") val preferredMetadataLanguage: String? = null,

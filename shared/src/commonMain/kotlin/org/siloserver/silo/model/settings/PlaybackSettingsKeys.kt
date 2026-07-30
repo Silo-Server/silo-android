@@ -25,14 +25,6 @@ object PlaybackSettingsKeys {
     const val PlaybackSpeed = "player.playback_speed"
     const val AudioSyncMs = "player.audio_sync_ms"
     const val SubtitleSyncMs = "player.subtitle_sync_ms"
-
-    /**
-     * Per-item subtitle sync overrides, encoded as `contentId=ms` pairs.
-     * Deliberately absent from [DeviceSettings]: it is local-only, because the
-     * server has no schema for it and an unknown key would poison a settings
-     * flush batch.
-     */
-    const val SubtitleSyncMsByItem = "player.subtitle_sync_ms_by_item"
     const val VideoGravity = "player.video_gravity"
     const val OrientationMode = "player.orientation_mode"
     // Android shipped this under player.* while Apple and the server used

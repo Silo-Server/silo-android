@@ -621,7 +621,7 @@ class PlayerViewModel(
     val subtitleAppearance: StateFlow<SubtitleAppearance> = playerSettingsStore.effectiveSubtitleAppearanceFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, SubtitleAppearance.DEFAULT)
     /**
-     * Per-profile audio/subtitle delay in ms. Mirrors iOS phone's `audioSyncMs` /
+     * Per-device audio/subtitle delay in ms. Mirrors iOS phone's `audioSyncMs` /
      * `subtitleSyncMs` (`iosApp/Screens/Player/Sheets/PlayerSettingsSheet.swift:265-285`).
      * Applied by SiloPlaybackService via DelayAudioProcessor (audio) and
      * OffsetSubtitleParserFactory (subtitle); the settings sheet rows write
@@ -3327,14 +3327,7 @@ class PlayerViewModel(
      * the new offset at every cue parse.
      */
     fun onSetSubtitleDelay(value: Int) {
-        val contentId = _uiState.value.contentId.takeIf(String::isNotBlank)
-        viewModelScope.launch {
-            if (contentId == null) {
-                playerSettingsStore.setSubtitleSyncMs(value)
-            } else {
-                playerSettingsStore.setSubtitleSyncMsFor(contentId, value)
-            }
-        }
+        viewModelScope.launch { playerSettingsStore.setSubtitleSyncMs(value) }
     }
 
     // ---- Sleep timer setters ---------------------------------------------------

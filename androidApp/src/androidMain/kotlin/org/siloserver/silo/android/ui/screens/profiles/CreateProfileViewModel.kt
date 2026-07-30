@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.Profile
-import org.siloserver.silo.model.profile.canonicalProfileQualityPreference
 import org.siloserver.silo.model.profile.hasProfileNamed
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.ProfileRepository
@@ -21,7 +20,6 @@ data class CreateProfileUiState(
     val maxContentRating: String? = null,
     val pinEnabled: Boolean = false,
     val pin: String = "",
-    val qualityPreference: String? = null,
     val language: String? = null,
     val subtitleLanguage: String? = null,
     val subtitleMode: String? = null,
@@ -62,8 +60,8 @@ class CreateProfileViewModel(
         _uiState.update { it.copy(name = value, error = null) }
     }
 
-    fun onAvatarSelected(emoji: String) {
-        _uiState.update { it.copy(selectedAvatar = emoji) }
+    fun onAvatarSelected(avatarRef: String) {
+        _uiState.update { it.copy(selectedAvatar = avatarRef) }
     }
 
     fun onChildToggled(checked: Boolean) {
@@ -88,12 +86,6 @@ class CreateProfileViewModel(
         // Restrict to 4 digits.
         val filtered = value.filter { it.isDigit() }.take(4)
         _uiState.update { it.copy(pin = filtered, error = null) }
-    }
-
-    fun onQualitySelected(quality: String) {
-        _uiState.update {
-            it.copy(qualityPreference = canonicalProfileQualityPreference(quality))
-        }
     }
 
     fun onLanguageSelected(language: String?) {
@@ -135,7 +127,6 @@ class CreateProfileViewModel(
                 pin = if (current.pinEnabled) current.pin else null,
                 isChild = if (current.isChild) true else null,
                 maxContentRating = current.maxContentRating,
-                qualityPreference = current.qualityPreference,
                 language = current.language,
                 subtitleLanguage = current.subtitleLanguage,
                 subtitleMode = current.subtitleMode,

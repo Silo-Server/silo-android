@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -87,7 +88,11 @@ fun TvPairDeviceScreen(
     ) {
         Column(
             modifier = Modifier
-                .widthIn(max = 360.dp)
+                // 480dp content width plus the 48dp horizontal padding on
+                // each side. On narrower displays fillMaxWidth keeps the
+                // panel responsive instead of clipping long match phrases.
+                .widthIn(max = 576.dp)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 48.dp, vertical = 48.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -229,7 +234,7 @@ private fun DetailRow(label: String, value: String) {
     if (value.isBlank()) return
     Row(
         modifier = Modifier
-            .widthIn(max = 480.dp)
+            .fillMaxWidth()
             .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -245,6 +250,7 @@ private fun DetailRow(label: String, value: String) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
         )
     }
 }
