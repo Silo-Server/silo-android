@@ -14,7 +14,7 @@ import org.robolectric.annotation.Config
 
 // Asserts on real Route.route strings, which call android.net.Uri.encode —
 // Robolectric provides the real Android impl under plain JVM unit tests.
-// Pinned to SDK 34 (the project targetSdk 35 is newer than this Robolectric
+// Pinned to SDK 34 (the project targetSdk 36 is newer than this Robolectric
 // release ships an emulated runtime for).
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = android.app.Application::class)

@@ -16,9 +16,9 @@ class AndroidManifestPolicyTest {
     }
 
     @Test
-    fun mobileKeepsAndroid7InstallFloor() {
+    fun mobileKeepsAndroid7InstallFloorAndTargetsApi36() {
         assertTrue(buildFile.contains("minSdk = 24"))
-        assertTrue(buildFile.contains("targetSdk = 35"))
+        assertTrue(buildFile.contains("targetSdk = 36"))
         assertTrue(buildFile.contains("compileSdk = 36"))
     }
 

@@ -143,7 +143,7 @@ android {
     defaultConfig {
         applicationId = "org.siloserver.silo"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         // Shares one Play listing with the TV app (same applicationId). Two
         // artifacts under one listing need distinct versionCodes: phone =
         // base*2, TV = base*2+1, so each release bumps both by 2 with no reuse.

@@ -133,7 +133,7 @@ android {
         // collide with the phone module.
         applicationId = "org.siloserver.silo"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         // Two artifacts under one listing need distinct versionCodes: phone =
         // base*2, TV = base*2+1, so each release bumps both by 2 with no reuse.
         versionCode = siloVersionCode.get() * 2 + 1

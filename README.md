@@ -38,7 +38,7 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 | **Persistence** | AndroidX DataStore · EncryptedSharedPreferences (tokens) · WorkManager (downloads) |
 | **Diagnostics** | Native bounded capture · local review/consent · self-hosted Silo upload |
 | **Images** | Coil 3 (Ktor-backed) |
-| **SDK** | Android 7.0+ / minSdk 24 · targetSdk 35 · compileSdk 36 · JDK 21 |
+| **SDK** | Android 7.0+ / minSdk 24 · targetSdk 36 · compileSdk 36 · JDK 21 |
 
 The clients talk to a Silo server over its `/api/v1/*` REST + WebSocket API. The server owns the library, scanning, metadata, transcoding decisions, and auth; the clients render it and drive playback.
 
