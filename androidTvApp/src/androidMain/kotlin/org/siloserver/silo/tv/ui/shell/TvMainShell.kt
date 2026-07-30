@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.shell
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -45,6 +46,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -82,6 +84,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import androidx.navigation.NamedNavArgument
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -696,70 +701,97 @@ fun TvMainShell(
         }
     }
 
+    fun handleShellBack(): Boolean {
+        // Settings owns a two-stage Back model (detail pane -> selected rail
+        // category -> Home), so its nested BackHandler must remain in charge.
+        if (currentRoute == TvMainRoute.Settings.route) return false
+
+        return when (focusState.onBack(
+            onTabRoot = selectedRoot != null,
+            menuFocusTarget = selectedMenuFocusTarget,
+        )) {
+            // Panel/dropdown already closed by onBack(): just consume.
+            TvShellBackAction.ClosePanel,
+            TvShellBackAction.CloseProfileMenu -> true
+            // Content on a tab root: onBack() already routed focus to the bar's
+            // selected tab -- just consume.
+            TvShellBackAction.MoveFocusToMenu -> true
+            // Bar focused: Home exits the app (fall through to the activity),
+            // any other section goes Home with the bar still focused.
+            TvShellBackAction.MenuBack -> {
+                if (selectedRoot == TvRootDestination.Home) {
+                    false
+                } else {
+                    navigateToRoute(firstTvRoute())
+                    focusState.requestMenuFocus()
+                    true
+                }
+            }
+            // Secondary screens: pop the flat inner NavHost when possible;
+            // otherwise let the activity-level callback finish the app.
+            TvShellBackAction.DelegateToNav -> {
+                if (currentRoute == TvMainRoute.Search.route && !searchInputHasFocus) {
+                    searchBackToInputRequest += 1
+                    true
+                } else if (nestedNav.previousBackStackEntry != null) {
+                    nestedNav.popBackStack()
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    // Android 16 no longer dispatches KEYCODE_BACK to apps targeting API 36.
+    // Register the shell's stateful routing through the supported callback and
+    // enable it only when this layer can consume the press, so child callbacks
+    // and the activity fallback retain their existing priority.
+    val pendingShellBackAction = tvShellBackAction(
+        panelOpen = focusState.openPanel != null,
+        profileMenuOpen = focusState.profileMenuOpen,
+        menuFocused = focusState.isMenuFocused,
+        onTabRoot = selectedRoot != null,
+    )
+    val shellHandlesBack = currentRoute != TvMainRoute.Settings.route && when (pendingShellBackAction) {
+        TvShellBackAction.ClosePanel,
+        TvShellBackAction.CloseProfileMenu,
+        TvShellBackAction.MoveFocusToMenu -> true
+        TvShellBackAction.MenuBack -> selectedRoot != TvRootDestination.Home
+        TvShellBackAction.DelegateToNav ->
+            (currentRoute == TvMainRoute.Search.route && !searchInputHasFocus) ||
+                nestedNav.previousBackStackEntry != null
+    }
+    // NavHost installs its own predictive-back callback before composing the
+    // active destination. Put the shell callback inside each destination so
+    // it registers after Navigation, but before screen-level dialogs and
+    // overlays. That preserves the intended priority: screen > shell > nav.
+    val latestShellHandlesBack = rememberUpdatedState(shellHandlesBack)
+    val latestHandleShellBack = rememberUpdatedState<() -> Unit>({ handleShellBack() })
+    fun NavGraphBuilder.shellComposable(
+        route: String,
+        arguments: List<NamedNavArgument> = emptyList(),
+        content: @Composable (NavBackStackEntry) -> Unit,
+    ) {
+        composable(route = route, arguments = arguments) { entry ->
+            BackHandler(enabled = latestShellHandlesBack.value) {
+                latestHandleShellBack.value()
+            }
+            content(entry)
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            // Shell-level Back/Escape. Placed on the outer Box (an ancestor of
-            // BOTH the content layer and the top menu bar) so it fires no
-            // matter which has focus. When the menu is focused, Back returns to
-            // content instead of falling through to the activity and exiting.
+            // Keep the key-event path as a pre-Android-16 remote/keyboard
+            // fallback. API 36 Back presses arrive through BackHandler above.
             .onPreviewKeyEvent { ev ->
                 if (ev.type == KeyEventType.KeyUp &&
                     (ev.key == Key.Back || ev.key == Key.Escape)
                 ) {
-                    // Settings owns a two-stage Back model (detail pane →
-                    // selected rail category → Home). Let its BackHandler see
-                    // the event instead of applying the shell-wide routing.
-                    if (currentRoute == TvMainRoute.Settings.route) {
-                        return@onPreviewKeyEvent false
-                    }
-                    // Centralized shell Back. The 4-way priority (panel >
-                    // profile menu > focused bar > nav) is decided by
-                    // [TvShellFocusState.onBack], which also applies the state
-                    // half (close panel / dropdown); we run only the side effect
-                    // each action needs. Keeping it here — not in the selector or
-                    // the bar — means Back can never be double-handled.
-                    when (focusState.onBack(
-                        onTabRoot = selectedRoot != null,
-                        menuFocusTarget = selectedMenuFocusTarget,
-                    )) {
-                        // Panel/dropdown already closed by onBack(): just consume.
-                        TvShellBackAction.ClosePanel,
-                        TvShellBackAction.CloseProfileMenu -> true
-                        // Content on a tab root: onBack() already routed focus
-                        // to the bar's selected tab — just consume.
-                        TvShellBackAction.MoveFocusToMenu -> true
-                        // Bar focused: Home exits the app (fall through to the
-                        // activity), any other section goes Home with the bar
-                        // still focused (now on the Home tab).
-                        TvShellBackAction.MenuBack -> {
-                            if (selectedRoot == TvRootDestination.Home) {
-                                false
-                            } else {
-                                navigateToRoute(firstTvRoute())
-                                focusState.requestMenuFocus()
-                                true
-                            }
-                        }
-                        // Secondary screens (Settings, Search, admin, …): pop
-                        // the flat inner NavHost when there's history; otherwise
-                        // fall through so the activity finishes the app.
-                        TvShellBackAction.DelegateToNav -> {
-                            if (currentRoute == TvMainRoute.Search.route && !searchInputHasFocus) {
-                                searchBackToInputRequest += 1
-                                true
-                            } else if (nestedNav.previousBackStackEntry != null) {
-                                // Focus restoration after the pop is owned by the
-                                // restored screen itself (the section feed re-targets
-                                // its last-focused card via its recreation ladder).
-                                nestedNav.popBackStack()
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                    }
+                    handleShellBack()
                 } else {
                     false
                 }
@@ -852,7 +884,7 @@ fun TvMainShell(
                 popEnterTransition = { fadeIn(tween(500)) },
                 popExitTransition = { fadeOut(tween(500)) },
             ) {
-                composable(TvMainRoute.Video.route) {
+                shellComposable(TvMainRoute.Video.route) {
                     TvHomeScreen(
                         onItemClick = openHomeItemDetail,
                         onPlayItem = onPlayItem,
@@ -873,7 +905,7 @@ fun TvMainShell(
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
-                composable(TvMainRoute.Home.route) {
+                shellComposable(TvMainRoute.Home.route) {
                     TvHomeScreen(
                         onItemClick = openHomeItemDetail,
                         onPlayItem = onPlayItem,
@@ -894,7 +926,7 @@ fun TvMainShell(
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
-                composable(TvMainRoute.Search.route) {
+                shellComposable(TvMainRoute.Search.route) {
                     TvSearchScreen(
                         onResultClick = { item ->
                             openBrowseItem(
@@ -912,7 +944,7 @@ fun TvMainShell(
                         onSearchFieldFocusChanged = { searchInputHasFocus = it },
                     )
                 }
-                composable(TvMainRoute.Audio.route) {
+                shellComposable(TvMainRoute.Audio.route) {
                     TvLibrariesScreen(
                         onItemClick = onOpenItemDetail,
                         onLibraryCollectionClick = onOpenLibraryCollectionDetail,
@@ -920,7 +952,7 @@ fun TvMainShell(
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                composable(TvMainRoute.Libraries.route) {
+                shellComposable(TvMainRoute.Libraries.route) {
                     TvLibrariesScreen(
                         onItemClick = onOpenItemDetail,
                         onLibraryCollectionClick = onOpenLibraryCollectionDetail,
@@ -933,7 +965,7 @@ fun TvMainShell(
                 // picker stays the switch mechanism this stage (TvLibrariesScreen
                 // still hosts it for the legacy Libraries route); the cascade
                 // selector arrives in Stage 4.
-                composable(TvMainRoute.Movies.route) {
+                shellComposable(TvMainRoute.Movies.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Movies,
                         library = activeLibrary(TvLibraryTabType.Movies),
@@ -947,7 +979,7 @@ fun TvMainShell(
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
-                composable(TvMainRoute.Series.route) {
+                shellComposable(TvMainRoute.Series.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Series,
                         library = activeLibrary(TvLibraryTabType.Series),
@@ -961,7 +993,7 @@ fun TvMainShell(
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
-                composable(TvMainRoute.Music.route) {
+                shellComposable(TvMainRoute.Music.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Music,
                         library = activeLibrary(TvLibraryTabType.Music),
@@ -975,7 +1007,7 @@ fun TvMainShell(
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
-                composable(TvMainRoute.Audiobooks.route) {
+                shellComposable(TvMainRoute.Audiobooks.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Audiobooks,
                         library = activeLibrary(TvLibraryTabType.Audiobooks),
@@ -989,7 +1021,7 @@ fun TvMainShell(
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
-                composable(TvMainRoute.ForYou.route) {
+                shellComposable(TvMainRoute.ForYou.route) {
                     TvRecommendationsScreen(
                         onItemClick = onOpenItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -997,7 +1029,7 @@ fun TvMainShell(
                         entryRequest = forYouEntryRequest,
                     )
                 }
-                composable(TvMainRoute.Requests.route) {
+                shellComposable(TvMainRoute.Requests.route) {
                     TvRequestsScreen(
                         onOpenLibraryItem = onOpenItemDetail,
                         onOpenMyRequests = { navigateToSecondary(TvMainRoute.MyRequests.route) },
@@ -1007,7 +1039,7 @@ fun TvMainShell(
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                composable(TvMainRoute.MyRequests.route) {
+                shellComposable(TvMainRoute.MyRequests.route) {
                     TvMyRequestsScreen(
                         onOpenLibraryItem = onOpenItemDetail,
                         onOpenRequestDetail = { mt, id ->
@@ -1016,7 +1048,7 @@ fun TvMainShell(
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                composable(
+                shellComposable(
                     route = TvMainRoute.RequestDetail.ROUTE,
                     arguments = listOf(
                         navArgument(TvMainRoute.RequestDetail.ARG_MEDIA_TYPE) { type = NavType.StringType },
@@ -1029,31 +1061,31 @@ fun TvMainShell(
                         onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
                     )
                 }
-                composable(TvMainRoute.Collections.route) {
+                shellComposable(TvMainRoute.Collections.route) {
                     TvCollectionsScreen(
                         onCollectionClick = onOpenCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                composable(TvMainRoute.Watchlist.route) {
+                shellComposable(TvMainRoute.Watchlist.route) {
                     TvWatchlistScreen(
                         onItemClick = onOpenItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                composable(TvMainRoute.Favorites.route) {
+                shellComposable(TvMainRoute.Favorites.route) {
                     TvFavoritesScreen(
                         onItemClick = onOpenItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                composable(TvMainRoute.History.route) {
+                shellComposable(TvMainRoute.History.route) {
                     TvHistoryScreen(
                         onItemClick = onOpenItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                composable(TvMainRoute.Settings.route) {
+                shellComposable(TvMainRoute.Settings.route) {
                     TvSettingsScreen(
                         onNavigateToAdmin = {
                             // Apple parity: the stats dashboard is the whole
@@ -1074,10 +1106,10 @@ fun TvMainShell(
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                composable(TvMainRoute.ManageSessions.route) {
+                shellComposable(TvMainRoute.ManageSessions.route) {
                     TvManageSessionsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
                 }
-                composable(TvMainRoute.Calendar.route) {
+                shellComposable(TvMainRoute.Calendar.route) {
                     TvCalendarScreen(
                         onOpenItemDetail = onOpenItemDetail,
                         onInitialContentFocus = {
@@ -1093,13 +1125,13 @@ fun TvMainShell(
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
                 }
-                composable(TvMainRoute.Browse.route) {
+                shellComposable(TvMainRoute.Browse.route) {
                     TvBrowseScreen(
                         onOpenItemDetail = onOpenItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                composable(TvMainRoute.AdminHub.route) {
+                shellComposable(TvMainRoute.AdminHub.route) {
                     TvAdminHubScreen(
                         onOpenDashboard = { navigateToSecondary(TvMainRoute.AdminDashboard.route) },
                         onOpenUsers = { navigateToSecondary(TvMainRoute.AdminUsers.route) },
@@ -1109,17 +1141,17 @@ fun TvMainShell(
                         onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
                     )
                 }
-                composable(TvMainRoute.AdminDashboard.route) {
+                shellComposable(TvMainRoute.AdminDashboard.route) {
                     TvAdminScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
                 }
-                composable(TvMainRoute.AdminUsers.route) {
+                shellComposable(TvMainRoute.AdminUsers.route) {
                     TvAdminUsersScreen(
                         onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
                         onCreateUser = { navigateToForm(TvMainRoute.AdminUserEdit().route) },
                         onEditUser = { id -> navigateToForm(TvMainRoute.AdminUserEdit(id).route) },
                     )
                 }
-                composable(
+                shellComposable(
                     route = TvMainRoute.AdminUserEdit.ROUTE,
                     arguments = listOf(
                         navArgument(TvMainRoute.AdminUserEdit.ARG_USER_ID) {
@@ -1138,13 +1170,13 @@ fun TvMainShell(
                         onSaved = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
                     )
                 }
-                composable(TvMainRoute.AdminSessions.route) {
+                shellComposable(TvMainRoute.AdminSessions.route) {
                     TvAdminSessionsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
                 }
-                composable(TvMainRoute.AdminScans.route) {
+                shellComposable(TvMainRoute.AdminScans.route) {
                     TvAdminScansScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
                 }
-                composable(TvMainRoute.AdminLogs.route) {
+                shellComposable(TvMainRoute.AdminLogs.route) {
                     TvAdminLogsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
                 }
             }

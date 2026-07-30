@@ -22,7 +22,7 @@ class TvLibraryReviewWiringSourceTest {
         val calendarScreen = extractBetween(
             source = mainShell,
             startAnchor = "TvCalendarScreen(",
-            endAnchor = "composable(TvMainRoute.Browse.route)",
+            endAnchor = "shellComposable(TvMainRoute.Browse.route)",
         )
 
         assertTrue(alphabetTab.contains("onContentUpFallbackChanged = onContentUpFallbackChanged"))

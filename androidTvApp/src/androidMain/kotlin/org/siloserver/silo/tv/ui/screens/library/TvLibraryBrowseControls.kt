@@ -351,7 +351,10 @@ fun TvBrowseFilterPanel(
         runCatching { screenFocusRequester.requestFocus() }
     }
 
-    BrowsePanelScrim(onClose = handleBack, dismissOnBack = false) {
+    // Popup's dismissOnBackPress uses the supported system callback on Android
+    // 16. onDismissRequest still runs this two-stage values -> filters -> close
+    // handler, while the key handler below remains an Escape/legacy fallback.
+    BrowsePanelScrim(onClose = handleBack) {
         Column(
             modifier = Modifier
                 .width(360.dp)

@@ -311,12 +311,6 @@ fun TvPlayerScreen(
     var requestedHudTab by remember { mutableStateOf(HudTab.Info) }
     var showQuickSubtitlePicker by remember { mutableStateOf(false) }
     var subtitleFocusedStableId by remember { mutableStateOf<String?>(null) }
-    // Mirrors the HUD's internal active-picker slot so the screen-level
-    // BackHandler can defer to an open picker (Back closes only the picker).
-    var hudPickerOpen by remember { mutableStateOf(false) }
-    // Clear the mirror whenever the HUD itself is gone, so a stale "picker open"
-    // can never wedge the screen BackHandler off.
-    LaunchedEffect(state.hudOpen) { if (!state.hudOpen) hudPickerOpen = false }
     // Captured PlayerView reference so subtitleManager.applyAppearance can hit
     // the inflated subtitleView after the AndroidView factory runs. Mirrors
     // the phone PlayerScreen's `playerViewRef` pattern.
@@ -827,12 +821,14 @@ fun TvPlayerScreen(
         }
     }
 
-    // While a HUD picker dialog is open, the HUD owns Back: its onPreviewKeyEvent
-    // closes only the active picker and consumes the event, so the screen-level
-    // BackHandler must defer (disabled) rather than tearing down the whole HUD.
-    BackHandler(enabled = !(state.hudOpen && hudPickerOpen)) {
+    // More-specific overlays register their own BackHandlers later in the
+    // composition and therefore run first. This screen callback owns the
+    // remaining player-state ladder on Android 16, where KEYCODE_BACK is no
+    // longer dispatched to apps targeting API 36.
+    BackHandler {
         when {
             cleanSeekRate != 0 -> stopCleanPlaybackSeek()
+            state.isScrubbing -> viewModel.cancelScrub()
             showQuickSubtitlePicker -> showQuickSubtitlePicker = false
             state.showSubtitleStyleDialog -> viewModel.closeSubtitleStyleDialog()
             state.showSubtitleMenu -> viewModel.closeSubtitleMenu()
@@ -2002,7 +1998,6 @@ fun TvPlayerScreen(
                             },
                             onDismiss = { viewModel.closeHUD() },
                             initialTab = requestedHudTab,
-                            onPickerOpenChanged = { hudPickerOpen = it },
                         )
                         }
                     }

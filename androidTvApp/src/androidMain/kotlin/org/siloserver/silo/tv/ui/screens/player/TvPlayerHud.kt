@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -183,7 +184,6 @@ internal fun TvPlayerHud(
     onSelectChapter: (Int) -> Unit,
     onDismiss: () -> Unit,
     initialTab: HudTab = HudTab.Info,
-    onPickerOpenChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val tabs = visibleHudTabs(
@@ -269,11 +269,10 @@ internal fun TvPlayerHud(
     val presentPicker: (HudPickerPresentation) -> Unit = { activePicker = it }
     val closePicker: () -> Unit = { activePicker = null }
 
-    // Hoist picker-open state up so the screen-level BackHandler can defer to
-    // the picker (Back should dismiss only the active picker, not the whole
-    // HUD, while a picker is open).
-    val pickerOpen = activePicker != null
-    LaunchedEffect(pickerOpen) { onPickerOpenChanged(pickerOpen) }
+    // Android 16 no longer dispatches KEYCODE_BACK to target-36 apps. Register
+    // the picker as the most specific callback; when it is closed, the player
+    // screen's callback remains responsible for dismissing the HUD itself.
+    BackHandler(enabled = activePicker != null) { closePicker() }
 
     // Top-center card. No full-screen scrim — the video stays visible behind it.
     Box(
@@ -292,7 +291,8 @@ internal fun TvPlayerHud(
                 if (ev.type == KeyEventType.KeyUp &&
                     (ev.key == Key.Back || ev.key == Key.Escape)
                 ) {
-                    // Back closes the picker first (if open), else dismisses the HUD.
+                    // Pre-Android-16 remote and keyboard fallback. System Back
+                    // uses the callbacks above and on TvPlayerScreen.
                     if (activePicker != null) {
                         activePicker = null
                     } else {
