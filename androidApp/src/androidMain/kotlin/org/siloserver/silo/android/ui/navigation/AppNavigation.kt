@@ -61,7 +61,9 @@ import org.siloserver.silo.android.ui.screens.personal.FavoritesScreen
 import org.siloserver.silo.android.ui.screens.personal.HistoryScreen
 import org.siloserver.silo.android.ui.screens.personal.PersonalListsScreen
 import org.siloserver.silo.android.ui.screens.personal.WatchlistScreen
+import org.siloserver.silo.android.ui.screens.player.MobilePlayerRouteTarget
 import org.siloserver.silo.android.ui.screens.player.PlayerScreen
+import org.siloserver.silo.android.ui.screens.player.PlayerViewModel
 import org.siloserver.silo.android.ui.screens.profiles.CreateProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.EditProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.ProfileSelectionScreen
@@ -91,6 +93,21 @@ import org.koin.compose.viewmodel.koinViewModel
 /** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
 private const val PageFadeDurationMs = 200
 
+internal class PlayerTargetProviderRegistration(
+    val backStackEntryId: String,
+    val target: () -> MobilePlayerRouteTarget?,
+)
+
+internal fun currentPlayerTargetOrNull(
+    currentBackStackEntryId: String?,
+    registration: PlayerTargetProviderRegistration?,
+): MobilePlayerRouteTarget? {
+    if (currentBackStackEntryId == null || registration?.backStackEntryId != currentBackStackEntryId) {
+        return null
+    }
+    return registration.target()
+}
+
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun AppNavigation(
@@ -104,6 +121,9 @@ fun AppNavigation(
     val siloCastController: SiloCastController = koinInject()
     val diagnosticsViewModel = koinViewModel<DiagnosticsViewModel>()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
+    var activePlayerTargetProvider by remember {
+        mutableStateOf<PlayerTargetProviderRegistration?>(null)
+    }
 
     DisposableEffect(siloCastController) {
         siloCastController.startBrowsing()
@@ -132,7 +152,15 @@ fun AppNavigation(
             pendingExternalRoute = pendingExternalRoute,
             currentDestinationRoutes = navController.currentBackStackEntryFlow
                 .map { entry -> entry.destination.route },
-            isAlreadyAtRoute = navController::isDisplayingExactPlayerRoute,
+            isAlreadyAtRoute = { route ->
+                navController.isDisplayingExactPlayerRoute(
+                    route = route,
+                    currentPlayerTarget = currentPlayerTargetOrNull(
+                        currentBackStackEntryId = navController.currentBackStackEntry?.id,
+                        registration = activePlayerTargetProvider,
+                    ),
+                )
+            },
             navigate = { route ->
                 val replaceCurrentPlayer = shouldReplaceCurrentPlayer(
                     currentDestinationRoute = navController.currentBackStackEntry?.destination?.route,
@@ -806,6 +834,19 @@ fun AppNavigation(
                 },
             ),
         ) { backStackEntry ->
+            val playerViewModel = koinViewModel<PlayerViewModel>()
+            DisposableEffect(backStackEntry.id, playerViewModel) {
+                val registration = PlayerTargetProviderRegistration(
+                    backStackEntryId = backStackEntry.id,
+                    target = playerViewModel::currentExternalRouteTarget,
+                )
+                activePlayerTargetProvider = registration
+                onDispose {
+                    if (activePlayerTargetProvider === registration) {
+                        activePlayerTargetProvider = null
+                    }
+                }
+            }
             PlayerScreen(
                 contentId = backStackEntry.arguments?.getString("contentId") ?: "",
                 initialFileId = backStackEntry.arguments?.getString("fileId")?.toIntOrNull(),
@@ -819,6 +860,7 @@ fun AppNavigation(
                 ),
                 roomId = backStackEntry.arguments?.getString("roomId"),
                 navController = navController,
+                viewModel = playerViewModel,
             )
         }
 
@@ -967,21 +1009,17 @@ fun AppNavigation(
  * with launchSingleTop replaces the top entry and tears down active playback;
  * a different content/file/quality/track route must still navigate normally.
  */
-private fun NavHostController.isDisplayingExactPlayerRoute(route: String): Boolean {
+private fun NavHostController.isDisplayingExactPlayerRoute(
+    route: String,
+    currentPlayerTarget: MobilePlayerRouteTarget?,
+): Boolean {
     val entry = currentBackStackEntry ?: return false
     if (entry.destination.route != Route.Player.ROUTE) return false
     val arguments = entry.arguments ?: return false
-    val contentId = arguments.getString("contentId")?.takeIf(String::isNotBlank) ?: return false
-    val currentRoute = Route.Player(
-        contentId = contentId,
-        fileId = arguments.getString("fileId")?.toIntOrNull(),
-        quality = arguments.getString("quality"),
-        audioTrackIndex = arguments.getString("audioTrackIndex")?.toIntOrNull(),
-        subtitleTrackIndex = arguments.getString("subtitleTrackIndex")?.toIntOrNull(),
-        resumePositionSeconds = VideoPlayerRouteArgs.parseResumePosition(
-            arguments.getString("resumePosition"),
-        ),
-        roomId = arguments.getString("roomId"),
-    ).route
-    return currentRoute == route
+    // A normal silo://play link is a solo-playback request. Never swallow it
+    // merely because a Watch Together room currently happens to play the same
+    // content/file.
+    if (!arguments.getString("roomId").isNullOrBlank()) return false
+    val requestedTarget = playerRouteIntentOrNull(route) ?: return false
+    return currentPlayerTarget?.let(requestedTarget::matches) == true
 }

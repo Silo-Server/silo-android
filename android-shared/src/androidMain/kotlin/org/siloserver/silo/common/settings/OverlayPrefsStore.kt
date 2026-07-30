@@ -105,7 +105,25 @@ class DefaultOverlayPrefsStore(
     @Volatile
     private var confirmedHasUserOverride: Boolean = false
 
+    // Refreshes run on a foreground IO coroutine while edits are drained on
+    // the application Main scope. Keep their short state commits atomic so a
+    // response captured before a newer edit cannot replace that edit after it
+    // succeeds. This is deliberately separate from [writeGeneration], whose
+    // only job is invalidating queued/in-flight drains at a session boundary.
+    private val stateLock = Any()
+
+    // Only [clear] crosses an authenticated-session boundary. Resetting the
+    // profile value must not discard an otherwise valid admin-config response.
+    private var sessionStateEpoch: Long = 0L
+
+    private var canonicalStateEpoch: Long = 0L
+
     private val refreshLock = Mutex()
+
+    // A reset must finish its DELETE before a later edit is staged for PUT.
+    // The edit still updates [_prefs] synchronously, but its drain waits here
+    // so the wire order is always DELETE -> PUT and the later edit wins.
+    private val mutationBoundaryMutex = Mutex()
 
     // Coalesced-write state. `writeMutex` guards the mutable bookkeeping
     // below; the actual PUT happens inside the drain coroutine.
@@ -146,34 +164,43 @@ class DefaultOverlayPrefsStore(
      *   toggle is silently ignored for the session.
      */
     override suspend fun refresh() = refreshLock.withLock {
-        _isLoading.value = true
-        _lastError.value = null
+        val refreshState = synchronized(stateLock) {
+            _isLoading.value = true
+            _lastError.value = null
+            RefreshState(
+                sessionStateEpoch = sessionStateEpoch,
+                canonicalStateEpoch = canonicalStateEpoch,
+                adminDefaultsRaw = adminDefaultsRaw,
+            )
+        }
         try {
             var resolvedEnabled = true
             var resolvedAdminDefaults: String? = null
             var configFetchFailed = false
+            var configError: String? = null
             when (val config = repository.overlayConfig()) {
                 is ApiResult.Success -> {
                     resolvedEnabled = config.data.enabled
                     resolvedAdminDefaults = config.data.defaults
                 }
                 is ApiResult.Error -> {
-                    _lastError.value = config.message
+                    configError = config.message
                     configFetchFailed = true
                 }
                 is ApiResult.NetworkError -> {
-                    _lastError.value = config.exception.message
+                    configError = config.exception.message
                     configFetchFailed = true
                 }
             }
 
             var userValue: JsonElement? = null
             var userFetchFailed = false
+            var userError: String? = null
             when (val result = repository.getEffectiveValues(listOf(OVERLAY_SETTING_KEY))) {
                 is ApiResult.Success -> {
                     val entry = result.data[OVERLAY_SETTING_KEY]
                     if (entry == null) {
-                        _lastError.value = "The server did not resolve $OVERLAY_SETTING_KEY"
+                        userError = "The server did not resolve $OVERLAY_SETTING_KEY"
                         userFetchFailed = true
                     } else if (
                         entry.source == SettingScope.PROFILE.wire &&
@@ -183,35 +210,81 @@ class DefaultOverlayPrefsStore(
                     }
                 }
                 is ApiResult.Error -> {
-                    _lastError.value = result.message
+                    userError = result.message
                     userFetchFailed = true
                 }
                 is ApiResult.NetworkError -> {
-                    _lastError.value = result.exception.message
+                    userError = result.exception.message
                     userFetchFailed = true
                 }
             }
 
-            // Preserve cached config state on transient failures. The
-            // sentinel `resolvedEnabled = true` is only valid when the
-            // fetch actually succeeded.
-            if (!configFetchFailed) {
-                _enabled.value = resolvedEnabled
-                adminDefaultsRaw = resolvedAdminDefaults
+            val resolvedPrefs = if (userFetchFailed) {
+                null
+            } else {
+                val defaults = if (configFetchFailed) {
+                    refreshState.adminDefaultsRaw
+                } else {
+                    resolvedAdminDefaults
+                }
+                OverlaySchema.parse(userValue?.toString() ?: defaults)
             }
-            if (!userFetchFailed) {
-                val hasOverride = userValue != null
-                val defaults = if (configFetchFailed) adminDefaultsRaw else resolvedAdminDefaults
-                val resolvedPrefs = OverlaySchema.parse(userValue?.toString() ?: defaults)
-                hasUserOverride = hasOverride
-                _prefs.value = resolvedPrefs
-                confirmedHasUserOverride = hasOverride
-                confirmedPrefs = resolvedPrefs
+            val resolvedAdminPrefs = if (configFetchFailed) {
+                null
+            } else {
+                OverlaySchema.parse(resolvedAdminDefaults)
             }
-            // Only complete hydration when BOTH endpoints gave a
-            // definitive answer.
-            if (!configFetchFailed && !userFetchFailed) {
-                hasHydrated = true
+
+            synchronized(stateLock) {
+                // Clear crosses a session boundary, so none of the old refresh
+                // may land. Profile edits and reset only invalidate the
+                // user-derived half: the independent admin kill-switch and
+                // baseline remain valid and must still update.
+                if (sessionStateEpoch == refreshState.sessionStateEpoch) {
+                    val userResponseIsCurrent =
+                        canonicalStateEpoch == refreshState.canonicalStateEpoch
+                    // Preserve cached config state on transient failures. The
+                    // sentinel `resolvedEnabled = true` is only valid when the
+                    // fetch actually succeeded.
+                    if (!configFetchFailed) {
+                        _enabled.value = resolvedEnabled
+                        adminDefaultsRaw = resolvedAdminDefaults
+                        // When the current confirmed state has no user value,
+                        // the admin baseline is independently authoritative.
+                        // Keep an optimistic edit visible, but update its
+                        // rollback target so a failed PUT cannot restore an
+                        // obsolete baseline.
+                        if (
+                            (!userResponseIsCurrent || userFetchFailed) &&
+                            !confirmedHasUserOverride &&
+                            resolvedAdminPrefs != null
+                        ) {
+                            val wasShowingConfirmedState =
+                                _prefs.value == confirmedPrefs &&
+                                    hasUserOverride == confirmedHasUserOverride
+                            confirmedPrefs = resolvedAdminPrefs
+                            if (wasShowingConfirmedState) {
+                                _prefs.value = resolvedAdminPrefs
+                            }
+                        }
+                    }
+
+                    if (userResponseIsCurrent) {
+                        _lastError.value = userError ?: configError
+                        if (!userFetchFailed && resolvedPrefs != null) {
+                            val hasOverride = userValue != null
+                            hasUserOverride = hasOverride
+                            _prefs.value = resolvedPrefs
+                            confirmedHasUserOverride = hasOverride
+                            confirmedPrefs = resolvedPrefs
+                        }
+                        // Only complete hydration when BOTH endpoints gave a
+                        // definitive answer.
+                        if (!configFetchFailed && !userFetchFailed) {
+                            hasHydrated = true
+                        }
+                    }
+                }
             }
         } finally {
             _isLoading.value = false
@@ -226,19 +299,34 @@ class DefaultOverlayPrefsStore(
      * lands after a faster later one.
      */
     override fun setPrefs(next: CardOverlayPrefs) {
-        _prefs.value = next
-        hasUserOverride = true
+        val generation = synchronized(stateLock) {
+            canonicalStateEpoch += 1
+            _prefs.value = next
+            hasUserOverride = true
+            writeGeneration
+        }
         scope.launch {
-            writeMutex.withLock {
-                // Re-assert the optimistic state while staging the snapshot.
-                // A preceding write may have completed between the immediate
-                // UI update above and this coroutine acquiring the mutex.
-                _prefs.value = next
-                hasUserOverride = true
-                pendingSnapshot = next
-                if (pendingWrite?.isActive != true) {
-                    val generation = writeGeneration
-                    pendingWrite = scope.launch { flushPendingWrites(generation) }
+            mutationBoundaryMutex.withLock {
+                writeMutex.withLock {
+                    val belongsToCurrentSession = synchronized(stateLock) {
+                        if (writeGeneration != generation) {
+                            false
+                        } else {
+                            // Re-assert the optimistic state while staging the
+                            // snapshot. A preceding write may have completed
+                            // between the immediate UI update above and this
+                            // coroutine acquiring the mutex.
+                            _prefs.value = next
+                            hasUserOverride = true
+                            true
+                        }
+                    }
+                    if (!belongsToCurrentSession) return@withLock
+
+                    pendingSnapshot = next
+                    if (pendingWrite?.isActive != true) {
+                        pendingWrite = scope.launch { flushPendingWrites(generation) }
+                    }
                 }
             }
         }
@@ -269,40 +357,60 @@ class DefaultOverlayPrefsStore(
             if (writeGeneration != generation) return
             when (val result = repository.setProfileValue(OVERLAY_SETTING_KEY, json)) {
                 is ApiResult.Success -> {
-                    writeMutex.withLock {
-                        confirmedPrefs = snapshot
-                        confirmedHasUserOverride = true
-                        // Do not paint an older successful snapshot over a
-                        // newer edit that is already queued.
-                        if (pendingSnapshot == null) {
-                            _prefs.value = snapshot
-                            hasUserOverride = true
-                            _lastError.value = null
+                    val applied = writeMutex.withLock {
+                        synchronized(stateLock) {
+                            if (writeGeneration != generation) {
+                                false
+                            } else {
+                                // Every confirmed snapshot invalidates a GET
+                                // that was captured before this PUT completed,
+                                // even when a newer snapshot is already queued.
+                                canonicalStateEpoch += 1
+                                confirmedPrefs = snapshot
+                                confirmedHasUserOverride = true
+                                // Do not paint an older successful snapshot
+                                // over a newer edit that is already queued.
+                                if (pendingSnapshot == null) {
+                                    _prefs.value = snapshot
+                                    hasUserOverride = true
+                                    _lastError.value = null
+                                }
+                                true
+                            }
                         }
                     }
+                    if (!applied) return
                 }
                 is ApiResult.Error -> {
                     if (writeGeneration != generation) return
-                    reconcileFailedWrite(result.message)
+                    reconcileFailedWrite(result.message, generation)
                 }
                 is ApiResult.NetworkError -> {
                     if (writeGeneration != generation) return
-                    reconcileFailedWrite(result.exception.message)
+                    reconcileFailedWrite(result.exception.message, generation)
                 }
             }
         }
     }
 
-    private suspend fun reconcileFailedWrite(message: String?) {
+    private suspend fun reconcileFailedWrite(message: String?, generation: Int) {
         writeMutex.withLock {
-            // If another edit is queued, it is still the optimistic state the
-            // user should see. Otherwise restore the last server-confirmed
-            // document instead of leaving a rejected value on screen.
-            if (pendingSnapshot == null) {
-                _prefs.value = confirmedPrefs
-                hasUserOverride = confirmedHasUserOverride
+            synchronized(stateLock) {
+                if (writeGeneration != generation) return@synchronized
+                // A refresh may have started after the optimistic edit but
+                // before this terminal failure. Make that response stale so
+                // it cannot erase the rejection or re-confirm old state.
+                canonicalStateEpoch += 1
+                // If another edit is queued, it is still the optimistic state
+                // the user should see. Otherwise restore the last
+                // server-confirmed document instead of leaving a rejected
+                // value on screen.
+                if (pendingSnapshot == null) {
+                    _prefs.value = confirmedPrefs
+                    hasUserOverride = confirmedHasUserOverride
+                }
+                _lastError.value = message
             }
-            _lastError.value = message
         }
     }
 
@@ -312,35 +420,76 @@ class DefaultOverlayPrefsStore(
      * a slower earlier PUT can't land server-side after the DELETE and
      * recreate the document the user just asked us to drop.
      */
-    override suspend fun resetToDefaults() {
+    override suspend fun resetToDefaults() = mutationBoundaryMutex.withLock {
         // Bump first so any drain that's mid-flight (already past its snapshot
         // grab) sees the generation change and bails before its PUT lands.
-        writeGeneration += 1
-        writeMutex.withLock {
-            pendingSnapshot = null
-            pendingWrite?.cancel()
+        val resetState = synchronized(stateLock) {
+            writeGeneration += 1
+            canonicalStateEpoch += 1
+            ResetState(
+                writeGeneration = writeGeneration,
+                canonicalStateEpoch = canonicalStateEpoch,
+            )
         }
-        pendingWrite?.join()
-        writeMutex.withLock { pendingWrite = null }
+        val inflight = writeMutex.withLock {
+            pendingSnapshot = null
+            pendingWrite.also { it?.cancel() }
+        }
+        inflight?.join()
+        writeMutex.withLock {
+            if (pendingWrite === inflight) pendingWrite = null
+        }
 
         when (val result = repository.clearProfileValue(OVERLAY_SETTING_KEY)) {
             is ApiResult.Success -> {
-                val fallback = OverlaySchema.parse(adminDefaultsRaw)
-                hasUserOverride = false
-                _prefs.value = fallback
-                confirmedHasUserOverride = false
-                confirmedPrefs = fallback
-                refresh()
+                val shouldRefresh = synchronized(stateLock) {
+                    if (writeGeneration != resetState.writeGeneration) {
+                        false
+                    } else {
+                        val isStillLatestMutation =
+                            canonicalStateEpoch == resetState.canonicalStateEpoch
+                        canonicalStateEpoch += 1
+                        // The DELETE is canonical even when a newer optimistic
+                        // edit is waiting. If that later PUT fails, it must
+                        // roll back to the now-cleared server state, not the
+                        // override that the DELETE removed.
+                        val fallback = OverlaySchema.parse(adminDefaultsRaw)
+                        confirmedHasUserOverride = false
+                        confirmedPrefs = fallback
+                        if (isStillLatestMutation) {
+                            hasUserOverride = false
+                            _prefs.value = fallback
+                        }
+                        isStillLatestMutation
+                    }
+                }
+                if (shouldRefresh) refresh()
             }
             is ApiResult.Error -> {
-                _prefs.value = confirmedPrefs
-                hasUserOverride = confirmedHasUserOverride
-                _lastError.value = result.message
+                synchronized(stateLock) {
+                    if (writeGeneration == resetState.writeGeneration) {
+                        val isStillLatestMutation =
+                            canonicalStateEpoch == resetState.canonicalStateEpoch
+                        canonicalStateEpoch += 1
+                        if (!isStillLatestMutation) return@synchronized
+                        _prefs.value = confirmedPrefs
+                        hasUserOverride = confirmedHasUserOverride
+                        _lastError.value = result.message
+                    }
+                }
             }
             is ApiResult.NetworkError -> {
-                _prefs.value = confirmedPrefs
-                hasUserOverride = confirmedHasUserOverride
-                _lastError.value = result.exception.message
+                synchronized(stateLock) {
+                    if (writeGeneration == resetState.writeGeneration) {
+                        val isStillLatestMutation =
+                            canonicalStateEpoch == resetState.canonicalStateEpoch
+                        canonicalStateEpoch += 1
+                        if (!isStillLatestMutation) return@synchronized
+                        _prefs.value = confirmedPrefs
+                        hasUserOverride = confirmedHasUserOverride
+                        _lastError.value = result.exception.message
+                    }
+                }
             }
         }
     }
@@ -355,20 +504,40 @@ class DefaultOverlayPrefsStore(
         // and exits. Cancelling the Job + nulling `pendingWrite` still happens
         // under the mutex on the write coroutine, but correctness no longer
         // depends on that running before the session boundary.
-        writeGeneration += 1
-        pendingSnapshot = null
-        val inflight = pendingWrite
-        pendingWrite = null
+        val inflight = synchronized(stateLock) {
+            writeGeneration += 1
+            sessionStateEpoch += 1
+            canonicalStateEpoch += 1
+            pendingSnapshot = null
+            val activeWrite = pendingWrite
+            pendingWrite = null
+            _enabled.value = true
+            _prefs.value = OverlaySchema.buildDefaults()
+            confirmedPrefs = _prefs.value
+            adminDefaultsRaw = null
+            hasUserOverride = false
+            confirmedHasUserOverride = false
+            hasHydrated = false
+            // Let the next authenticated session queue its refresh behind any
+            // old in-flight request. Otherwise hydrateIfNeeded() observes the
+            // previous session's loading flag, returns, and never retries.
+            _isLoading.value = false
+            _lastError.value = null
+            activeWrite
+        }
         inflight?.cancel()
-        _enabled.value = true
-        _prefs.value = OverlaySchema.buildDefaults()
-        confirmedPrefs = _prefs.value
-        adminDefaultsRaw = null
-        hasUserOverride = false
-        confirmedHasUserOverride = false
-        hasHydrated = false
-        _lastError.value = null
     }
+
+    private data class RefreshState(
+        val sessionStateEpoch: Long,
+        val canonicalStateEpoch: Long,
+        val adminDefaultsRaw: String?,
+    )
+
+    private data class ResetState(
+        val writeGeneration: Int,
+        val canonicalStateEpoch: Long,
+    )
 
     companion object {
         const val OVERLAY_SETTING_KEY = SettingKeys.UI_CARD_OVERLAYS

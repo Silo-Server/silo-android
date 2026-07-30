@@ -39,6 +39,7 @@ import org.siloserver.silo.common.player.seek.playerPositionForSource
 import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
+import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
 import org.siloserver.silo.common.player.video.canPlayResolvedStreamDirectly
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
@@ -232,6 +233,10 @@ class PlayerViewModel(
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
     private var lastLoadArgs: LoadArgs? = null
+    // Route semantics are separate from resolved playback state. In particular,
+    // a null file/track means automatic selection and must remain null after the
+    // first successful resolution; recovery reloads must not turn it explicit.
+    private val routeIntentState = MobilePlayerRouteIntentState()
 
     private data class LoadArgs(
         val contentId: String,
@@ -242,6 +247,9 @@ class PlayerViewModel(
         val resumePositionOverride: Double?,
         val suppressResumeRewind: Boolean,
     )
+
+    internal fun currentExternalRouteTarget(): MobilePlayerRouteTarget? =
+        mobilePlayerRouteTarget(routeIntentState.current, _uiState.value)
 
     companion object {
         private const val TAG = "PlayerViewModel"
@@ -739,6 +747,7 @@ class PlayerViewModel(
                         initialSubtitleTrackIndex = state.selectedSubtitleIndex,
                         resumePositionOverride = position,
                         suppressResumeRewind = true,
+                        preserveRouteIntent = true,
                     )
                 }
             }
@@ -813,6 +822,11 @@ class PlayerViewModel(
         initialAudioTrackIndex: Int? = null,
         initialSubtitleTrackIndex: Int? = null,
         resumePositionOverride: Double? = null,
+        // Route provenance is separate from an operational seek/restart
+        // position. Only PlayerScreen's initial route load supplies this;
+        // internal auto-advance and recovery positions must not become route
+        // intent.
+        routeResumePositionSeconds: Double? = null,
         // True for Watch Together (the synced anchor must land exactly — no
         // skip-back nudge). The request's roomId is always null on mobile, so WT
         // can't be inferred from it the way the TV starter does.
@@ -820,19 +834,39 @@ class PlayerViewModel(
         // Try Anyway escape hatch (issue #33): bypass the pre-play reachability
         // gate and attempt the server even while it reports unreachable.
         force: Boolean = false,
+        // Recovery restarts resolved media in place, but they do not change the
+        // route-level auto/explicit choices used for deep-link idempotence.
+        preserveRouteIntent: Boolean = false,
     ) {
+        val normalizedPreferredQuality = VideoPlayerRouteArgs.normalizeQuality(preferredQuality)
+        routeIntentState.beginLoad(
+            contentId = contentId,
+            fileId = preferredFileId,
+            quality = normalizedPreferredQuality,
+            audioTrackIndex = initialAudioTrackIndex,
+            subtitleTrackIndex = initialSubtitleTrackIndex,
+            resumePositionSeconds = VideoPlayerRouteArgs.parseResumePosition(
+                routeResumePositionSeconds?.toString(),
+            ),
+            preserveCurrent = preserveRouteIntent,
+        )
+        val effectivePreferredQuality = routeIntentState.qualityForLoad(
+            contentId = contentId,
+            normalizedRequestedQuality = normalizedPreferredQuality,
+            preserveCurrent = preserveRouteIntent,
+        )
         loadJob?.cancel()
         val loadOwner = loadOwners.begin(
             contentId = contentId,
             preferredFileId = preferredFileId,
-            preferredQuality = preferredQuality,
+            preferredQuality = effectivePreferredQuality,
         )
         // Remember the exact request so a "Can't reach server" Retry / Try Anyway
         // can replay it faithfully (this screen has no other retry entry point).
         lastLoadArgs = LoadArgs(
             contentId = contentId,
             preferredFileId = preferredFileId,
-            preferredQuality = preferredQuality,
+            preferredQuality = effectivePreferredQuality,
             initialAudioTrackIndex = initialAudioTrackIndex,
             initialSubtitleTrackIndex = initialSubtitleTrackIndex,
             resumePositionOverride = resumePositionOverride,
@@ -895,7 +929,7 @@ class PlayerViewModel(
                     VideoPlaybackStartRequest(
                         contentId = contentId,
                         preferredFileId = preferredFileId,
-                        preferredQualityOverride = preferredQuality,
+                        preferredQualityOverride = effectivePreferredQuality,
                         roomId = null,
                         resumePositionOverride = resumePositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,
@@ -990,6 +1024,7 @@ class PlayerViewModel(
             resumePositionOverride = args.resumePositionOverride,
             suppressResumeRewind = args.suppressResumeRewind,
             force = force,
+            preserveRouteIntent = true,
         )
     }
 
@@ -1230,7 +1265,7 @@ class PlayerViewModel(
                 persistedAudioIndex != selectedAudioOrdinal &&
                 persistedAudioIndex in _uiState.value.audioTracks.indices
             ) {
-                onSelectAudio(persistedAudioIndex)
+                selectAudio(persistedAudioIndex, userInitiated = false)
             }
         }
         if (!published) {
@@ -2617,6 +2652,14 @@ class PlayerViewModel(
                 subtitleApplying = snapshot.subtitleApplying,
             )
         }
+        val state = _uiState.value
+        routeIntentState.applyCommittedTracks(
+            contentId = state.contentId,
+            committedAudioServerIndex = snapshot.transition.committed.audioTrackIndex,
+            committedSubtitleIdentity = snapshot.committedIdentity,
+            transactionFailed = snapshot.failureMessage != null,
+            transactionActive = mobileSubtitleTransactions.hasActiveTransaction,
+        )
         snapshot.failureMessage?.let {
             showVersionSwitchMessage("Couldn't apply subtitles — playback continues unchanged.")
         }
@@ -2707,6 +2750,7 @@ class PlayerViewModel(
             initialSubtitleTrackIndex = state.selectedSubtitleIndex,
             resumePositionOverride = state.position,
             suppressResumeRewind = true,
+            preserveRouteIntent = true,
         )
         Log.w(TAG, "Subtitle committed-playback adoption failed: $detail")
     }
@@ -2719,6 +2763,11 @@ class PlayerViewModel(
             .getOrNull(index)
             ?.let(::mobileSubtitleIdentity)
             ?: SubtitleIdentity.Off
+        routeIntentState.beginSubtitleSelection(
+            contentId = state.contentId,
+            routeOrdinal = catalogSubtitleRouteOrdinal(state, identity),
+            identity = identity,
+        )
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
         mobileSubtitleTransactions.select(identity)
     }
@@ -2738,9 +2787,18 @@ class PlayerViewModel(
     }
 
     /** Select an audio track (may require server-side switch). */
-    fun onSelectAudio(index: Int) {
+    fun onSelectAudio(index: Int) = selectAudio(index, userInitiated = true)
+
+    private fun selectAudio(index: Int, userInitiated: Boolean) {
         val state = _uiState.value
         val serverIndex = selectedServerAudioTrackIndex(index, state.audioTracks) ?: return
+        if (userInitiated) {
+            routeIntentState.beginAudioSelection(
+                contentId = state.contentId,
+                routeOrdinal = index,
+                serverIndex = serverIndex,
+            )
+        }
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
         mobileSubtitleTransactions.selectAudio(serverIndex)
     }
@@ -3366,6 +3424,11 @@ class PlayerViewModel(
         val state = _uiState.value
         val version = state.versions.getOrNull(index) ?: return
         if (!isRecovery && index == state.selectedVersionIndex) return
+        if (isRecovery) {
+            routeIntentState.recoverVersionSelection(state.contentId)
+        } else {
+            routeIntentState.beginVersionSelection(state.contentId, version.fileId)
+        }
         viewModelScope.launch {
             sessionLifecycle.stop()
             loadContent(
@@ -3375,6 +3438,7 @@ class PlayerViewModel(
                 initialSubtitleTrackIndex = state.selectedSubtitleIndex,
                 resumePositionOverride = state.position,
                 suppressResumeRewind = true,
+                preserveRouteIntent = true,
             )
         }
     }
@@ -3459,6 +3523,7 @@ class PlayerViewModel(
     /** Called when the user exits the player. */
     fun onExit() {
         if (!exitPrepared.compareAndSet(false, true)) return
+        routeIntentState.clear()
         resetPlaybackRecoveryState()
         loadOwners.invalidate()
         loadJob?.cancel()

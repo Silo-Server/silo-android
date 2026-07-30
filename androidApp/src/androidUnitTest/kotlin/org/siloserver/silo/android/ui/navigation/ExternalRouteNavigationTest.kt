@@ -3,10 +3,14 @@ package org.siloserver.silo.android.ui.navigation
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import org.siloserver.silo.android.ui.screens.player.MobilePlayerRouteIntent
+import org.siloserver.silo.android.ui.screens.player.MobilePlayerRouteTarget
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ExternalRouteNavigationTest {
     @Test
@@ -79,6 +83,34 @@ class ExternalRouteNavigationTest {
     }
 
     @Test
+    fun playerTargetProviderIsInvokedOnlyForItsOwningBackStackEntry() {
+        var providerCalls = 0
+        val registration = PlayerTargetProviderRegistration(
+            backStackEntryId = "player-a",
+            target = {
+                providerCalls += 1
+                null
+            },
+        )
+
+        assertNull(
+            currentPlayerTargetOrNull(
+                currentBackStackEntryId = "player-b",
+                registration = registration,
+            ),
+        )
+        assertEquals(0, providerCalls)
+
+        assertNull(
+            currentPlayerTargetOrNull(
+                currentBackStackEntryId = "player-a",
+                registration = registration,
+            ),
+        )
+        assertEquals(1, providerCalls)
+    }
+
+    @Test
     fun staleConsumptionDoesNotClearANewerRequest() {
         val requests = ExternalRouteRequestFactory()
         val first = requests.create("player/movie-tmdb-463015")
@@ -135,4 +167,130 @@ class ExternalRouteNavigationTest {
             ),
         )
     }
+
+    @Test
+    fun canonicalPlayerTargetParsesEveryPlaybackChoice() {
+        assertEquals(
+            MobilePlayerRouteIntent(
+                contentId = "movie-1",
+                fileId = 121,
+                quality = "original",
+                audioTrackIndex = 2,
+                subtitleTrackIndex = -1,
+                resumePositionSeconds = 42.0,
+            ),
+            playerRouteIntentOrNull(
+                "player/movie-1?fileId=121&quality=original&audioTrackIndex=2&subtitleTrackIndex=-1&resumePosition=42.0",
+            ),
+        )
+        assertNull(playerRouteIntentOrNull("item/movie-1"))
+        assertNull(playerRouteIntentOrNull("player/movie-1?fileId=invalid"))
+        assertNull(playerRouteIntentOrNull("player/movie-1?resumePosition=invalid"))
+        assertNull(playerRouteIntentOrNull("player/movie-1?roomId=room-1"))
+    }
+
+    @Test
+    fun bareRouteRemainsExactAfterItsInitialAutomaticResolution() {
+        val intent = MobilePlayerRouteIntent(contentId = "movie-1")
+        val current = target(
+            intent = intent,
+            contentId = "movie-1",
+            fileId = 121,
+            quality = "auto",
+            audioTrackIndex = 1,
+            subtitleTrackIndex = -1,
+        )
+
+        assertTrue(requireNotNull(playerRouteIntentOrNull("player/movie-1")).matches(current))
+    }
+
+    @Test
+    fun bareRouteStopsMatchingAfterAnExplicitVersionSwitch() {
+        val intent = MobilePlayerRouteIntent(contentId = "movie-1", fileId = 222)
+        val current = target(intent = intent, contentId = "movie-1", fileId = 222)
+
+        assertFalse(requireNotNull(playerRouteIntentOrNull("player/movie-1")).matches(current))
+        assertTrue(requireNotNull(playerRouteIntentOrNull("player/movie-1?fileId=222")).matches(current))
+        assertFalse(requireNotNull(playerRouteIntentOrNull("player/movie-1?fileId=121")).matches(current))
+    }
+
+    @Test
+    fun liveContentQualityAndTracksMustMatchExplicitRequest() {
+        val intent = MobilePlayerRouteIntent(
+            contentId = "episode-2",
+            fileId = 222,
+            quality = "720p",
+            audioTrackIndex = 1,
+            subtitleTrackIndex = -1,
+        )
+        val current = target(
+            intent = intent,
+            contentId = "episode-2",
+            fileId = 222,
+            quality = "720p",
+            audioTrackIndex = 1,
+            subtitleTrackIndex = -1,
+        )
+
+        assertTrue(
+            requireNotNull(
+                playerRouteIntentOrNull(
+                    "player/episode-2?fileId=222&quality=720p&audioTrackIndex=1&subtitleTrackIndex=-1",
+                ),
+            ).matches(current),
+        )
+        assertFalse(requireNotNull(playerRouteIntentOrNull("player/episode-1?fileId=222")).matches(current))
+        assertFalse(requireNotNull(playerRouteIntentOrNull("player/episode-2?quality=1080p")).matches(current))
+        assertFalse(requireNotNull(playerRouteIntentOrNull("player/episode-2?audioTrackIndex=0")).matches(current))
+        assertFalse(requireNotNull(playerRouteIntentOrNull("player/episode-2?subtitleTrackIndex=0")).matches(current))
+    }
+
+    @Test
+    fun resumePositionIsExactIntentRatherThanTheAdvancingPlaybackClock() {
+        val resumed = target(
+            intent = MobilePlayerRouteIntent(
+                contentId = "movie-1",
+                resumePositionSeconds = 42.0,
+            ),
+            contentId = "movie-1",
+            resumePositionSeconds = 42.0,
+        )
+        val fromStart = target(
+            intent = MobilePlayerRouteIntent(
+                contentId = "movie-1",
+                resumePositionSeconds = 0.0,
+            ),
+            contentId = "movie-1",
+            resumePositionSeconds = 0.0,
+        )
+
+        assertTrue(
+            requireNotNull(playerRouteIntentOrNull("player/movie-1?resumePosition=42.0"))
+                .matches(resumed),
+        )
+        assertFalse(
+            requireNotNull(playerRouteIntentOrNull("player/movie-1?resumePosition=43.0"))
+                .matches(resumed),
+        )
+        assertFalse(requireNotNull(playerRouteIntentOrNull("player/movie-1")).matches(resumed))
+        assertFalse(requireNotNull(playerRouteIntentOrNull("player/movie-1")).matches(fromStart))
+    }
+
+    private fun target(
+        intent: MobilePlayerRouteIntent,
+        contentId: String,
+        fileId: Int? = null,
+        quality: String? = null,
+        audioTrackIndex: Int? = null,
+        subtitleTrackIndex: Int? = null,
+        resumePositionSeconds: Double? = null,
+    ) = MobilePlayerRouteTarget(
+        intent = intent,
+        contentId = contentId,
+        fileId = fileId,
+        quality = quality,
+        audioTrackIndex = audioTrackIndex,
+        subtitleTrackIndex = subtitleTrackIndex,
+        resumePositionSeconds = resumePositionSeconds,
+    )
 }
