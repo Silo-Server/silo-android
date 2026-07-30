@@ -70,6 +70,7 @@ data class SettingsUiState(
     val qualityConstrained: Boolean = false,
     // BCP 47 tag, "" = no preference. The picker converts to and from labels.
     val audioLanguage: String = "",
+    val audioLanguageSuggestions: List<String> = emptyList(),
     val autoSkipIntro: Boolean = false,
     val autoSkipCredits: Boolean = false,
     val pictureInPictureEnabled: Boolean = true,
@@ -96,9 +97,11 @@ data class SettingsUiState(
     // Subtitles
     // BCP 47 tag, "" = off. The picker converts to and from labels.
     val subtitleLanguage: String = "",
+    val subtitleLanguageSuggestions: List<String> = emptyList(),
     // Metadata AI: preferred description/metadata language.
     // ISO 639-1 code; "" = inherit library metadata language.
     val metadataLanguage: String = "",
+    val metadataLanguageSuggestions: List<String> = emptyList(),
     val subtitleMode: SubtitleMode = SubtitleMode.AUTO,
     val showForcedSubtitles: Boolean = true,
 
@@ -196,6 +199,9 @@ class SettingsViewModel(
                     subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
                     showForcedSubtitles = snapshot.showForcedSubtitles,
                     metadataLanguage = snapshot.metadataLanguage,
+                    audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
+                    subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
+                    metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
                 )
             }
         }
@@ -577,9 +583,13 @@ class SettingsViewModel(
     ) {
         if (snapshot == null) return
         if (fieldOf(snapshot) == edited) {
-            // The server agrees with the user's choice — nothing to correct,
-            // and rewriting state would clobber a concurrent edit to a
-            // different field in the same pane.
+            _uiState.update {
+                it.copy(
+                    audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
+                    subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
+                    metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
+                )
+            }
             return
         }
         _uiState.update { state ->
@@ -588,6 +598,9 @@ class SettingsViewModel(
                 subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
                 showForcedSubtitles = snapshot.showForcedSubtitles,
                 metadataLanguage = snapshot.metadataLanguage,
+                audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
+                subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
+                metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
             )
         }
     }

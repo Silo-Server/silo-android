@@ -82,9 +82,12 @@ class TvSettingsViewModel(
         val maxBitrateKbps: Int? = null,
         val subtitleMode: SubtitleMode = SubtitleMode.Auto,
         val subtitleLanguage: String = "",
+        val subtitleLanguageSuggestions: List<String> = emptyList(),
         // Metadata AI: preferred description/metadata language ("" = server default).
         val metadataLanguage: String = "",
+        val metadataLanguageSuggestions: List<String> = emptyList(),
         val audioLanguage: String = "",
+        val audioLanguageSuggestions: List<String> = emptyList(),
         val subtitleSize: SubtitleSize = SubtitleSize.Medium,
         val showForcedSubtitles: Boolean = true,
         // Full subtitle appearance + whether the device-scoped override is on.
@@ -219,6 +222,9 @@ class TvSettingsViewModel(
                     subtitleLanguage = snapshot.subtitleLanguage,
                     metadataLanguage = snapshot.metadataLanguage,
                     showForcedSubtitles = snapshot.showForcedSubtitles,
+                    audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
+                    subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
+                    metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
                 )
             }
         }
@@ -240,13 +246,25 @@ class TvSettingsViewModel(
         fieldOf: (ProfileSettingsController.Snapshot) -> String,
     ) {
         if (snapshot == null) return
-        if (fieldOf(snapshot) == edited) return
+        if (fieldOf(snapshot) == edited) {
+            _uiState.update {
+                it.copy(
+                    audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
+                    subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
+                    metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
+                )
+            }
+            return
+        }
         _uiState.update { state ->
             state.copy(
                 subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
                 subtitleLanguage = snapshot.subtitleLanguage,
                 metadataLanguage = snapshot.metadataLanguage,
                 showForcedSubtitles = snapshot.showForcedSubtitles,
+                audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
+                subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
+                metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
             )
         }
     }

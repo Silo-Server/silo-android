@@ -79,6 +79,7 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityPresets
+import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
@@ -798,6 +799,13 @@ private fun TvPlaybackSettingsPane(
     onResetPlaybackOverrides: () -> Unit,
 ) {
     var activePicker by remember { mutableStateOf<PlaybackPicker?>(null) }
+    val audioLanguages = remember(state.audioLanguage, state.audioLanguageSuggestions) {
+        LanguageOptions.options(
+            key = SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
+            currentValue = state.audioLanguage,
+            runtimeValues = state.audioLanguageSuggestions,
+        )
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -814,7 +822,10 @@ private fun TvPlaybackSettingsPane(
                 )
                 SettingsValueRow(
                     label = "Audio Language",
-                    value = audioLanguageLabel(state.audioLanguage),
+                    value = LanguageOptions.label(
+                        state.audioLanguage,
+                        SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
+                    ),
                     onClick = { activePicker = PlaybackPicker.AudioLanguage },
                 )
                 // tvOS TVPlaybackSettingsPane STREAMING parity: Dolby Vision
@@ -969,6 +980,26 @@ private fun TvSubtitleSettingsPane(
     var activePicker by remember { mutableStateOf<SubtitlePicker?>(null) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     val appearance = state.subtitleAppearance
+    val subtitleLanguages = remember(
+        state.subtitleLanguage,
+        state.subtitleLanguageSuggestions,
+    ) {
+        LanguageOptions.options(
+            key = SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
+            currentValue = state.subtitleLanguage,
+            runtimeValues = state.subtitleLanguageSuggestions,
+        )
+    }
+    val metadataLanguages = remember(
+        state.metadataLanguage,
+        state.metadataLanguageSuggestions,
+    ) {
+        LanguageOptions.options(
+            key = SettingKeys.CATALOG_METADATA_LANGUAGE,
+            currentValue = state.metadataLanguage,
+            runtimeValues = state.metadataLanguageSuggestions,
+        )
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -990,13 +1021,19 @@ private fun TvSubtitleSettingsPane(
                 )
                 SettingsValueRow(
                     label = "Language",
-                    value = subtitleLanguageLabel(state.subtitleLanguage),
+                    value = LanguageOptions.label(
+                        state.subtitleLanguage,
+                        SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
+                    ),
                     onClick = { activePicker = SubtitlePicker.Language },
                 )
                 if (metadataLanguageEnabled) {
                     SettingsValueRow(
                         label = "Metadata Language",
-                        value = metadataLanguageLabel(state.metadataLanguage),
+                        value = LanguageOptions.label(
+                            state.metadataLanguage,
+                            SettingKeys.CATALOG_METADATA_LANGUAGE,
+                        ),
                         onClick = { activePicker = SubtitlePicker.MetadataLanguage },
                     )
                 }
@@ -2058,29 +2095,6 @@ private val PassOutThresholdOptions = listOf(0, 2, 3, 4, 5)
 
 // Up-Next prompt timing (seconds before end; 0 = at end). Mirrors tvOS.
 private val NextUpPromptOptions = listOf(0, 10, 30, 60, 120)
-
-// Both store BCP 47 tags, which is what the server's settings contract declares
-// for playback.audio_language and the profile's subtitle_language. Audio used
-// to store the display name here, which the server now rejects — and which
-// never matched a track anyway, since ExoPlayer compares against `eng`.
-private val audioLanguages = LanguageOptions.options(unsetLabel = "Default")
-
-private val subtitleLanguages = LanguageOptions.options(unsetLabel = "Off")
-
-// "Off" is right for subtitles — no language means no subtitles — but wrong for
-// metadata, where unset inherits the library's language rather than disabling
-// anything (catalog.metadata_language: "Language Silo prefers for titles,
-// descriptions, and artwork").
-private val metadataLanguages = LanguageOptions.options(unsetLabel = "Default")
-
-private fun audioLanguageLabel(wire: String): String =
-    LanguageOptions.label(wire, unsetLabel = "Default")
-
-private fun subtitleLanguageLabel(wire: String): String =
-    LanguageOptions.label(wire, unsetLabel = "Off")
-
-private fun metadataLanguageLabel(wire: String): String =
-    LanguageOptions.label(wire, unsetLabel = "Default")
 
 private fun resumeRewindLabel(seconds: Int): String =
     if (seconds <= 0) "Off" else "${seconds}s"

@@ -143,7 +143,8 @@ class SettingsApiValuesTest {
         val (api, captured) = api(
             responseBody = """
                 {"settings":[
-                   {"key":"playback.auto_play_next","value":true,"source":"default"},
+                   {"key":"playback.auto_play_next","value":true,"source":"default",
+                    "suggested_values":["en","pt-BR"]},
                    {"key":"playback.preferred_quality","value":"1080p","source":"profile_device",
                     "stored_value":"2160p","constrained":true,"constraint_kind":"ceiling",
                     "scope":"profile_device","profile_id":"p1","device_id":"d1"}
@@ -172,6 +173,7 @@ class SettingsApiValuesTest {
         assertEquals(true, default.value.jsonPrimitive.content.toBoolean())
         assertFalse(default.constrained)
         assertNull(default.scope)
+        assertEquals(listOf("en", "pt-BR"), default.suggestedValues)
 
         val capped = response.settings[1]
         assertEquals("1080p", capped.value.jsonPrimitive.content)

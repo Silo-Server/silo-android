@@ -8,8 +8,23 @@
 
 package org.siloserver.silo.model.settings
 
+data class SettingSuggestedOption(
+    val value: String,
+    val introducedIn: Int,
+)
+
+data class SettingOptionSet(
+    val type: String,
+    val options: List<SettingSuggestedOption>,
+)
+
+data class SettingPresentation(
+    val suggestedOptions: String? = null,
+    val unsetLabel: String? = null,
+)
+
 object SettingKeys {
-    const val REVISION = 1
+    const val REVISION = 2
 
     /** Metadata language */
     const val CATALOG_METADATA_LANGUAGE = "catalog.metadata_language"
@@ -194,4 +209,158 @@ object SettingKeys {
     val DOUBLE_KEYS: Set<String> = setOf(
         PLAYER_PLAYBACK_SPEED,
     )
+}
+
+object SettingPresentationMetadata {
+    val OPTION_SETS: Map<String, SettingOptionSet> = mapOf(
+        "catalog_metadata_languages" to SettingOptionSet(
+            type = "language_tag",
+            options = listOf(
+                SettingSuggestedOption("ar", 1),
+                SettingSuggestedOption("bn", 1),
+                SettingSuggestedOption("bg", 1),
+                SettingSuggestedOption("zh", 1),
+                SettingSuggestedOption("hr", 1),
+                SettingSuggestedOption("cs", 1),
+                SettingSuggestedOption("da", 1),
+                SettingSuggestedOption("nl", 1),
+                SettingSuggestedOption("en", 1),
+                SettingSuggestedOption("fi", 1),
+                SettingSuggestedOption("fr", 1),
+                SettingSuggestedOption("de", 1),
+                SettingSuggestedOption("el", 1),
+                SettingSuggestedOption("he", 1),
+                SettingSuggestedOption("hi", 1),
+                SettingSuggestedOption("hu", 1),
+                SettingSuggestedOption("id", 1),
+                SettingSuggestedOption("it", 1),
+                SettingSuggestedOption("ja", 1),
+                SettingSuggestedOption("ko", 1),
+                SettingSuggestedOption("ms", 1),
+                SettingSuggestedOption("no", 1),
+                SettingSuggestedOption("fa", 1),
+                SettingSuggestedOption("pl", 1),
+                SettingSuggestedOption("pt", 1),
+                SettingSuggestedOption("ro", 1),
+                SettingSuggestedOption("ru", 1),
+                SettingSuggestedOption("sk", 1),
+                SettingSuggestedOption("sl", 1),
+                SettingSuggestedOption("es", 1),
+                SettingSuggestedOption("sv", 1),
+                SettingSuggestedOption("ta", 1),
+                SettingSuggestedOption("te", 1),
+                SettingSuggestedOption("th", 1),
+                SettingSuggestedOption("tr", 1),
+                SettingSuggestedOption("uk", 1),
+                SettingSuggestedOption("vi", 1),
+            ),
+        ),
+        "playback_audio_languages" to SettingOptionSet(
+            type = "language_tag",
+            options = listOf(
+                SettingSuggestedOption("ar", 1),
+                SettingSuggestedOption("bn", 1),
+                SettingSuggestedOption("bg", 1),
+                SettingSuggestedOption("zh", 1),
+                SettingSuggestedOption("hr", 1),
+                SettingSuggestedOption("cs", 1),
+                SettingSuggestedOption("da", 1),
+                SettingSuggestedOption("nl", 1),
+                SettingSuggestedOption("en", 1),
+                SettingSuggestedOption("fi", 1),
+                SettingSuggestedOption("fr", 1),
+                SettingSuggestedOption("de", 1),
+                SettingSuggestedOption("el", 1),
+                SettingSuggestedOption("he", 1),
+                SettingSuggestedOption("hi", 1),
+                SettingSuggestedOption("hu", 1),
+                SettingSuggestedOption("id", 1),
+                SettingSuggestedOption("it", 1),
+                SettingSuggestedOption("ja", 1),
+                SettingSuggestedOption("ko", 1),
+                SettingSuggestedOption("ms", 1),
+                SettingSuggestedOption("no", 1),
+                SettingSuggestedOption("fa", 1),
+                SettingSuggestedOption("pl", 1),
+                SettingSuggestedOption("pt", 1),
+                SettingSuggestedOption("ro", 1),
+                SettingSuggestedOption("ru", 1),
+                SettingSuggestedOption("sk", 1),
+                SettingSuggestedOption("sl", 1),
+                SettingSuggestedOption("es", 1),
+                SettingSuggestedOption("sv", 1),
+                SettingSuggestedOption("ta", 1),
+                SettingSuggestedOption("te", 1),
+                SettingSuggestedOption("th", 1),
+                SettingSuggestedOption("tr", 1),
+                SettingSuggestedOption("uk", 1),
+                SettingSuggestedOption("vi", 1),
+            ),
+        ),
+        "playback_subtitle_languages" to SettingOptionSet(
+            type = "language_tag",
+            options = listOf(
+                SettingSuggestedOption("ar", 1),
+                SettingSuggestedOption("bn", 1),
+                SettingSuggestedOption("bg", 1),
+                SettingSuggestedOption("zh", 1),
+                SettingSuggestedOption("hr", 1),
+                SettingSuggestedOption("cs", 1),
+                SettingSuggestedOption("da", 1),
+                SettingSuggestedOption("nl", 1),
+                SettingSuggestedOption("en", 1),
+                SettingSuggestedOption("fi", 1),
+                SettingSuggestedOption("fr", 1),
+                SettingSuggestedOption("de", 1),
+                SettingSuggestedOption("el", 1),
+                SettingSuggestedOption("he", 1),
+                SettingSuggestedOption("hi", 1),
+                SettingSuggestedOption("hu", 1),
+                SettingSuggestedOption("id", 1),
+                SettingSuggestedOption("it", 1),
+                SettingSuggestedOption("ja", 1),
+                SettingSuggestedOption("ko", 1),
+                SettingSuggestedOption("ms", 1),
+                SettingSuggestedOption("no", 1),
+                SettingSuggestedOption("fa", 1),
+                SettingSuggestedOption("pl", 1),
+                SettingSuggestedOption("pt", 1),
+                SettingSuggestedOption("ro", 1),
+                SettingSuggestedOption("ru", 1),
+                SettingSuggestedOption("sk", 1),
+                SettingSuggestedOption("sl", 1),
+                SettingSuggestedOption("es", 1),
+                SettingSuggestedOption("sv", 1),
+                SettingSuggestedOption("ta", 1),
+                SettingSuggestedOption("te", 1),
+                SettingSuggestedOption("th", 1),
+                SettingSuggestedOption("tr", 1),
+                SettingSuggestedOption("uk", 1),
+                SettingSuggestedOption("vi", 1),
+            ),
+        ),
+    )
+
+    val DEFINITIONS: Map<String, SettingPresentation> = mapOf(
+        SettingKeys.CATALOG_METADATA_LANGUAGE to SettingPresentation(
+            suggestedOptions = "catalog_metadata_languages",
+            unsetLabel = "Library default",
+        ),
+        SettingKeys.PLAYBACK_AUDIO_LANGUAGE to SettingPresentation(
+            suggestedOptions = "playback_audio_languages",
+            unsetLabel = "No preference",
+        ),
+        SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE to SettingPresentation(
+            suggestedOptions = "playback_subtitle_languages",
+            unsetLabel = "None",
+        ),
+    )
+
+    fun suggestedValues(key: String, revision: Int = SettingKeys.REVISION): List<String> {
+        val setId = DEFINITIONS[key]?.suggestedOptions ?: return emptyList()
+        return OPTION_SETS[setId]?.options
+            ?.filter { it.introducedIn <= revision }
+            ?.map { it.value }
+            .orEmpty()
+    }
 }

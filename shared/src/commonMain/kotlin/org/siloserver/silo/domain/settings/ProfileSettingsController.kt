@@ -56,6 +56,9 @@ class ProfileSettingsController(
         val showForcedSubtitles: Boolean = true,
         /** BCP 47 tag; "" inherits the library metadata language. */
         val metadataLanguage: String = "",
+        val audioLanguageSuggestions: List<String> = emptyList(),
+        val subtitleLanguageSuggestions: List<String> = emptyList(),
+        val metadataLanguageSuggestions: List<String> = emptyList(),
     )
 
     /** Probe result plus the values, so a screen loads both in one call. */
@@ -170,6 +173,12 @@ class ProfileSettingsController(
             ),
             showForcedSubtitles = effective.boolOr(SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES, true),
             metadataLanguage = effective.stringOrEmpty(SettingKeys.CATALOG_METADATA_LANGUAGE),
+            audioLanguageSuggestions =
+                effective[SettingKeys.PLAYBACK_AUDIO_LANGUAGE]?.suggestedValues.orEmpty(),
+            subtitleLanguageSuggestions =
+                effective[SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE]?.suggestedValues.orEmpty(),
+            metadataLanguageSuggestions =
+                effective[SettingKeys.CATALOG_METADATA_LANGUAGE]?.suggestedValues.orEmpty(),
         )
 
     private companion object {
@@ -185,6 +194,7 @@ class ProfileSettingsController(
          * device's own row and the picker would appear not to save.
          */
         val PROFILE_KEYS: List<String> = listOf(
+            SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
             SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
             SettingKeys.PLAYBACK_SUBTITLE_MODE,
             SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES,

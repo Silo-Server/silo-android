@@ -1,25 +1,12 @@
 package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.model.settings.LanguageOptions
-
-// Both language rows store codes, not the labels shown in the picker: the
-// profile's subtitle_language and the metadata language are BCP 47 on the wire.
-// Hoisted so recomposition doesn't rebuild the label list per frame.
-private val languageOptionLabels =
-    LanguageOptions.options(unsetLabel = SUBTITLE_UNSET_LABEL).map { it.second }
-
-// "Off" is right for subtitles — no language means no subtitles — but wrong for
-// metadata, where unset inherits the library's language rather than disabling
-// anything. Same table, different name for the same empty wire value.
-private const val SUBTITLE_UNSET_LABEL = "Off"
-private const val METADATA_UNSET_LABEL = "Default"
-
-private val metadataLanguageOptionLabels =
-    LanguageOptions.options(unsetLabel = METADATA_UNSET_LABEL).map { it.second }
+import org.siloserver.silo.model.settings.SettingKeys
 
 /**
  * Subtitle settings section with language, display mode, and forced subtitles toggle.
@@ -27,6 +14,7 @@ private val metadataLanguageOptionLabels =
 @Composable
 fun SubtitleSettings(
     subtitleLanguage: String,
+    subtitleLanguageSuggestions: List<String> = emptyList(),
     subtitleMode: SubtitleMode,
     showForcedSubtitles: Boolean,
     onLanguageChanged: (String) -> Unit,
@@ -39,17 +27,32 @@ fun SubtitleSettings(
     // Metadata AI description translation (server-gated; row hidden when off).
     metadataLanguageEnabled: Boolean = false,
     metadataLanguage: String = "",
+    metadataLanguageSuggestions: List<String> = emptyList(),
     onMetadataLanguageChanged: (String) -> Unit = {},
 ) {
+    val subtitleLanguageOptions = remember(subtitleLanguage, subtitleLanguageSuggestions) {
+        LanguageOptions.options(
+            key = SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
+            currentValue = subtitleLanguage,
+            runtimeValues = subtitleLanguageSuggestions,
+        )
+    }
+    val metadataLanguageOptions = remember(metadataLanguage, metadataLanguageSuggestions) {
+        LanguageOptions.options(
+            key = SettingKeys.CATALOG_METADATA_LANGUAGE,
+            currentValue = metadataLanguage,
+            runtimeValues = metadataLanguageSuggestions,
+        )
+    }
     SettingsSectionCard(modifier = modifier) {
         SettingsSectionHeader("Subtitles")
 
         SettingsDropdownRow(
             label = "Subtitle Language",
-            value = LanguageOptions.label(subtitleLanguage, unsetLabel = SUBTITLE_UNSET_LABEL),
-            options = languageOptionLabels,
+            value = LanguageOptions.label(subtitleLanguage, SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE),
+            options = subtitleLanguageOptions.map { it.second },
             onOptionSelected = { label ->
-                onLanguageChanged(LanguageOptions.wireValue(label))
+                onLanguageChanged(LanguageOptions.wireValue(label, subtitleLanguageOptions))
             },
         )
 
@@ -87,10 +90,10 @@ fun SubtitleSettings(
         if (metadataLanguageEnabled) {
             SettingsDropdownRow(
                 label = "Metadata Language",
-                value = LanguageOptions.label(metadataLanguage, unsetLabel = METADATA_UNSET_LABEL),
-                options = metadataLanguageOptionLabels,
+                value = LanguageOptions.label(metadataLanguage, SettingKeys.CATALOG_METADATA_LANGUAGE),
+                options = metadataLanguageOptions.map { it.second },
                 onOptionSelected = { label ->
-                    onMetadataLanguageChanged(LanguageOptions.wireValue(label))
+                    onMetadataLanguageChanged(LanguageOptions.wireValue(label, metadataLanguageOptions))
                 },
             )
         }

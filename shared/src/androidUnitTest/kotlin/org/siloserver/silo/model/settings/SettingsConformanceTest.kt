@@ -188,6 +188,25 @@ class SettingsConformanceTest {
     }
 
     @Test
+    fun generatedPresentationMetadataMatchesTheVendoredManifest() {
+        for ((key, presentation) in SettingPresentationMetadata.DEFINITIONS) {
+            val definition = assertNotNull(manifest.lookup(key), "$key is not in the manifest")
+            assertEquals(definition.suggestedOptions, presentation.suggestedOptions)
+            assertEquals(definition.unsetLabel, presentation.unsetLabel)
+
+            val setId = definition.suggestedOptions ?: continue
+            val optionSet = assertNotNull(manifest.optionSets[setId], "$setId is not in the manifest")
+            assertEquals("language_tag", optionSet.type)
+            assertEquals(
+                optionSet.options
+                    .filter { it.introducedIn <= manifest.revision }
+                    .map { it.value },
+                SettingPresentationMetadata.suggestedValues(key),
+            )
+        }
+    }
+
+    @Test
     fun everyCaseIsDeclaredOnce() {
         val names = fixture.cases.map { it.name }
         assertFalse(names.any { it.isBlank() }, "a conformance case has no name")

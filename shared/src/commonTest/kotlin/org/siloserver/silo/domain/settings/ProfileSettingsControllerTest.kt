@@ -213,6 +213,7 @@ class ProfileSettingsControllerTest {
                             value = JsonPrimitive("nl"),
                             source = "explicit",
                             scope = "profile",
+                            suggestedValues = listOf("en", "nl", "pt-BR"),
                         ),
                         EffectiveSettingValue(
                             key = SettingKeys.PLAYBACK_SUBTITLE_MODE,
@@ -241,6 +242,7 @@ class ProfileSettingsControllerTest {
         assertEquals("always", snapshot.subtitleMode)
         assertEquals(false, snapshot.showForcedSubtitles)
         assertEquals("", snapshot.metadataLanguage)
+        assertEquals(listOf("en", "nl", "pt-BR"), snapshot.subtitleLanguageSuggestions)
     }
 
     @Test

@@ -26,12 +26,14 @@ import kotlinx.serialization.json.JsonElement
  * `allowed_scopes` (a write-side concern, and its entries may be either a
  * scope name or an object), the numeric `minimum`/`maximum` bounds (which may
  * be either a bare number or a widening history array), and all of the UI
- * metadata.
+ * metadata except the language option-set fields, which are retained to gate
+ * the generated picker presentation against the vendored manifest.
  */
 @Serializable
 data class SettingsManifest(
     @SerialName("api_version") val apiVersion: Int,
     val revision: Int,
+    @SerialName("option_sets") val optionSets: Map<String, ContractOptionSet> = emptyMap(),
     val definitions: List<SettingDefinition>,
 ) {
     private val byKey: Map<String, SettingDefinition> = definitions.associateBy { it.key }
@@ -51,6 +53,8 @@ data class SettingDefinition(
     // JsonElement and JsonNull is a real default, not a missing one.
     @SerialName("default_value") val defaultValue: JsonElement,
     @SerialName("constrained_by") val constrainedBy: SettingConstraintBinding? = null,
+    @SerialName("suggested_options") val suggestedOptions: String? = null,
+    @SerialName("unset_label") val unsetLabel: String? = null,
 ) {
     /** True when the server stores this setting; client_local keys never resolve. */
     val isRemote: Boolean get() = persistence == PERSISTENCE_REMOTE
@@ -66,6 +70,18 @@ data class SettingDefinition(
         const val TYPE_ENUM = "enum"
     }
 }
+
+@Serializable
+data class ContractOptionSet(
+    val type: String,
+    val options: List<ContractSuggestedOption>,
+)
+
+@Serializable
+data class ContractSuggestedOption(
+    val value: String,
+    @SerialName("introduced_in") val introducedIn: Int,
+)
 
 @Serializable
 data class SettingValueSchema(

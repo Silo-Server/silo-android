@@ -198,6 +198,7 @@ fun SettingsScreen(
                     qualityResolution = state.qualityResolution,
                     maxBitrateKbps = state.maxBitrateKbps,
                     audioLanguage = state.audioLanguage,
+                    audioLanguageSuggestions = state.audioLanguageSuggestions,
                     autoSkipIntro = state.autoSkipIntro,
                     autoSkipCredits = state.autoSkipCredits,
                     pictureInPictureEnabled = state.pictureInPictureEnabled,
@@ -227,6 +228,7 @@ fun SettingsScreen(
                 val metadataAiStatus by metadataAiStore.status.collectAsState()
                 SubtitleSettings(
                     subtitleLanguage = state.subtitleLanguage,
+                    subtitleLanguageSuggestions = state.subtitleLanguageSuggestions,
                     subtitleMode = state.subtitleMode,
                     showForcedSubtitles = state.showForcedSubtitles,
                     onLanguageChanged = viewModel::setSubtitleLanguage,
@@ -238,6 +240,7 @@ fun SettingsScreen(
                     metadataLanguageEnabled = metadataAiStatus.enabled &&
                         metadataAiStatus.onView != MetadataAiOnView.Off,
                     metadataLanguage = state.metadataLanguage,
+                    metadataLanguageSuggestions = state.metadataLanguageSuggestions,
                     onMetadataLanguageChanged = viewModel::setMetadataLanguage,
                 )
             }

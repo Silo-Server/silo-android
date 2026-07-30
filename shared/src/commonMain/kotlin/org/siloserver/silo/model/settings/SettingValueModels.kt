@@ -137,6 +137,8 @@ data class EffectiveSettingValue(
     val constrained: Boolean = false,
     /** One of "ceiling", "floor", "allowlist", "locked" when [constrained]. */
     @SerialName("constraint_kind") val constraintKind: String? = null,
+    /** Advisory values for an open picker; never a write allowlist. */
+    @SerialName("suggested_values") val suggestedValues: List<String> = emptyList(),
     val scope: String? = null,
     @SerialName("profile_id") val profileId: String? = null,
     @SerialName("device_id") val deviceId: String? = null,

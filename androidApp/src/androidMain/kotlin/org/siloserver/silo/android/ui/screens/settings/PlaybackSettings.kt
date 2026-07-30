@@ -17,17 +17,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.QualityPresets
+import org.siloserver.silo.model.settings.SettingKeys
 
 // Quality is two settings behind one picker: playback.preferred_quality (a
 // resolution cap) and playback.max_bitrate_kbps (a bandwidth cap, null =
 // uncapped). The preset table is shared with the TV app and mirrors the web
 // client's, so the same choice reads back with the same label everywhere.
-
-// Audio language stores BCP 47 tags ("" = no preference) — display labels,
-// persist codes, as the server's settings contract requires. Shared with the TV
-// UI and with subtitles so the four surfaces cannot drift apart again.
-private val audioLanguageOptions = LanguageOptions.options(unsetLabel = "Default")
-private val audioLanguageLabels = audioLanguageOptions.map { it.second }
 
 // Discrete choices for the two behavior settings (0 = off). Dropdown idiom
 // matches the rest of this section; the label↔value maps below convert.
@@ -53,6 +48,7 @@ fun PlaybackSettings(
     qualityResolution: String,
     maxBitrateKbps: Int?,
     audioLanguage: String,
+    audioLanguageSuggestions: List<String> = emptyList(),
     autoSkipIntro: Boolean,
     autoSkipCredits: Boolean,
     pictureInPictureEnabled: Boolean,
@@ -77,6 +73,13 @@ fun PlaybackSettings(
     onResetPlaybackOverrides: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val audioLanguageOptions = remember(audioLanguage, audioLanguageSuggestions) {
+        LanguageOptions.options(
+            key = SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
+            currentValue = audioLanguage,
+            runtimeValues = audioLanguageSuggestions,
+        )
+    }
     SettingsSectionCard(modifier = modifier) {
         SettingsSectionHeader("Playback")
 
@@ -95,10 +98,10 @@ fun PlaybackSettings(
 
         SettingsDropdownRow(
             label = "Audio Language",
-            value = LanguageOptions.label(audioLanguage, unsetLabel = "Default"),
-            options = audioLanguageLabels,
+            value = LanguageOptions.label(audioLanguage, SettingKeys.PLAYBACK_AUDIO_LANGUAGE),
+            options = audioLanguageOptions.map { it.second },
             onOptionSelected = { label ->
-                onAudioLanguageChanged(LanguageOptions.wireValue(label))
+                onAudioLanguageChanged(LanguageOptions.wireValue(label, audioLanguageOptions))
             },
         )
 
