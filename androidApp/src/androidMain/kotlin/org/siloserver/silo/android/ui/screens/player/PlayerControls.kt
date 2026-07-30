@@ -74,6 +74,7 @@ fun PlayerControls(
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter> = emptyList(),
     intro: org.siloserver.silo.model.catalog.TimeRange? = null,
     isOrientationLocked: Boolean,
+    orientationLockSupported: Boolean = true,
     // Watch Together guest gate: when false the scrubber + skip buttons are
     // inert and dimmed (seek is host-only, so disabled for all guests).
     // Defaults true for solo playback.
@@ -149,6 +150,7 @@ fun PlayerControls(
                         castSlot()
                         PlayerToolbarOverflow(
                             isOrientationLocked = isOrientationLocked,
+                            orientationLockSupported = orientationLockSupported,
                             hasChapters = hasChapters,
                             hasTracks = hasTracks,
                             hasMultipleVersions = hasMultipleVersions,
@@ -161,6 +163,7 @@ fun PlayerControls(
                     } else {
                         PlayerToolbarActions(
                             isOrientationLocked = isOrientationLocked,
+                            orientationLockSupported = orientationLockSupported,
                             hasChapters = hasChapters,
                             hasTracks = hasTracks,
                             hasMultipleVersions = hasMultipleVersions,
@@ -265,6 +268,7 @@ private fun PlayerToolbarTitle(
 @Composable
 private fun PlayerToolbarActions(
     isOrientationLocked: Boolean,
+    orientationLockSupported: Boolean,
     hasChapters: Boolean,
     hasTracks: Boolean,
     hasMultipleVersions: Boolean,
@@ -276,9 +280,18 @@ private fun PlayerToolbarActions(
     castSlot: @Composable () -> Unit,
 ) {
     ControlButton(
-        icon = if (isOrientationLocked) Icons.Default.ScreenLockRotation else Icons.Default.ScreenRotation,
-        contentDescription = if (isOrientationLocked) "Landscape Locked" else "Rotate Freely",
+        icon = if (isOrientationLocked && orientationLockSupported) {
+            Icons.Default.ScreenLockRotation
+        } else {
+            Icons.Default.ScreenRotation
+        },
+        contentDescription = when {
+            !orientationLockSupported -> "Orientation follows device on large screens"
+            isOrientationLocked -> "Landscape Locked"
+            else -> "Rotate Freely"
+        },
         onClick = onToggleOrientationLock,
+        enabled = orientationLockSupported,
     )
     if (hasChapters) {
         ControlButton(
@@ -311,6 +324,7 @@ private fun PlayerToolbarActions(
 @Composable
 private fun PlayerToolbarOverflow(
     isOrientationLocked: Boolean,
+    orientationLockSupported: Boolean,
     hasChapters: Boolean,
     hasTracks: Boolean,
     hasMultipleVersions: Boolean,
@@ -334,8 +348,15 @@ private fun PlayerToolbarOverflow(
         ) {
             DropdownMenuItem(
                 text = {
-                    Text(if (isOrientationLocked) "Unlock orientation" else "Lock orientation")
+                    Text(
+                        when {
+                            !orientationLockSupported -> "Orientation follows device"
+                            isOrientationLocked -> "Unlock orientation"
+                            else -> "Lock orientation"
+                        },
+                    )
                 },
+                enabled = orientationLockSupported,
                 onClick = {
                     expanded = false
                     onToggleOrientationLock()

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.pm.ActivityInfo
 import android.graphics.Rect
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.ViewGroup
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -535,17 +537,31 @@ fun PlayerScreen(
     // Orientation policy (iOS PlayerOrientationCoordinator parity): entering
     // the player locks to landscape by default; the persisted "rotateFreely"
     // opt-out (HUD lock toggle / synced setting) falls back to USER so the
-    // system rotation preference stays in charge. Released on exit by the
-    // immersive effect's originalOrientation restore above.
+    // system rotation preference stays in charge. Android 16 ignores requested
+    // orientation on 600dp+ displays, so those layouts stay adaptive and the
+    // overlay disables the lock affordance instead of claiming a no-op lock.
+    // Released on exit by the immersive effect's UNSPECIFIED restore above.
     // Wait for the persisted preference before touching the activity: the
     // resolved flow is null until it arrives, and applying the eager locked
     // default on the first frame would snap rotateFreely users back to
     // landscape on every player entry.
+    val smallestScreenWidthDp = LocalConfiguration.current.smallestScreenWidthDp
+    val orientationLockSupported = supportsPlayerOrientationLock(
+        sdkInt = Build.VERSION.SDK_INT,
+        smallestScreenWidthDp = smallestScreenWidthDp,
+    )
     val orientationLockedResolved by viewModel.orientationLockedResolved.collectAsState()
-    LaunchedEffect(activity, orientationLockedResolved, castState.isConnected) {
+    LaunchedEffect(
+        activity,
+        orientationLockedResolved,
+        castState.isConnected,
+        orientationLockSupported,
+    ) {
         // While casting, the screen shows the cast takeover panel, not video —
         // no reason to force landscape (and it must unlock if already forced).
-        if (castState.isConnected) {
+        // Large Android 16 displays likewise own their orientation by platform
+        // policy, so explicitly release any lock left by a smaller display.
+        if (castState.isConnected || !orientationLockSupported) {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             return@LaunchedEffect
         }
@@ -1175,6 +1191,7 @@ fun PlayerScreen(
                         state = uiState.withPlaybackClock(clock),
                         viewModel = viewModel,
                         roomSnapshot = roomSnapshot,
+                        orientationLockSupported = orientationLockSupported,
                         castSlot = {
                             SiloCastButton(
                                 castManager = castManager,

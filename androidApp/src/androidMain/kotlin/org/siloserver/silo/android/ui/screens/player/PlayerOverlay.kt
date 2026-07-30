@@ -61,6 +61,7 @@ fun PlayerOverlay(
     viewModel: PlayerViewModel,
     roomSnapshot: RoomSnapshot? = null,
     isFastForwardHoldActive: Boolean = false,
+    orientationLockSupported: Boolean = true,
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
     onSeek: (Double) -> Unit,
@@ -127,7 +128,8 @@ fun PlayerOverlay(
     // Orientation lock — toggled from the top-bar lock icon (iOS parity).
     // Persisted via the orientation-mode setting (default landscape-locked,
     // like iOS's PlayerOrientationCoordinator); PlayerScreen applies the
-    // matching requestedOrientation whenever the setting changes.
+    // matching requestedOrientation whenever the setting changes. Android 16
+    // large screens keep the preference but disable this no-op affordance.
     val isOrientationLocked by viewModel.orientationLocked.collectAsState()
     val context = LocalContext.current
 
@@ -332,6 +334,7 @@ fun PlayerOverlay(
                 hasTracks = state.subtitleTracks.isNotEmpty() || state.audioTracks.isNotEmpty(),
                 hasMultipleVersions = state.versions.size > 1,
                 isOrientationLocked = isOrientationLocked,
+                orientationLockSupported = orientationLockSupported,
                 seekEnabled = seekEnabled,
                 playPauseEnabled = playPauseEnabled,
                 onBack = handleBack,
@@ -340,7 +343,9 @@ fun PlayerOverlay(
                 onSkipForward = gatedSkipForward,
                 onSkipBackward = gatedSkipBackward,
                 onToggleOrientationLock = {
-                    viewModel.onSetOrientationLocked(!isOrientationLocked)
+                    if (orientationLockSupported) {
+                        viewModel.onSetOrientationLocked(!isOrientationLocked)
+                    }
                 },
                 onOpenChapters = { chaptersSheetVisible = true },
                 onOpenTracks = { tracksSheetVisible = true },
