@@ -76,7 +76,6 @@ import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.libass.LibassBridge
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
@@ -312,7 +311,6 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                 introAutoSkipController = IntroAutoSkipController(scope),
                 sessionLifecycle = PlaybackSessionLifecycle(
                     manager,
-                    profileRepository,
                     healthApi,
                     personalDataRepository,
                     scope,
@@ -390,7 +388,6 @@ class MobileVideoPlaybackStarterCancellationTest {
                 playerSettingsStore = FakePlayerSettingsStore(),
                 sessionLifecycle = PlaybackSessionLifecycle(
                     manager,
-                    profileRepository,
                     HealthApi(client),
                     PersonalDataRepository(PersonalDataApi(client)),
                     backgroundScope,
@@ -560,7 +557,6 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             playerSettingsStore = FakePlayerSettingsStore(),
             sessionLifecycle = PlaybackSessionLifecycle(
                 manager,
-                profileRepository,
                 HealthApi(client),
                 PersonalDataRepository(PersonalDataApi(client)),
                 backgroundScope,
@@ -802,7 +798,6 @@ private fun allocatedReady(sessionId: String): VideoSessionStartV3.Ready {
         planId = "plan-$sessionId",
         sessionId = sessionId,
         delivery = PlaybackDelivery.ORIGINAL_HTTP,
-        engine = PlaybackEngineKind.MEDIA3_DIRECT,
         stream = PlaybackStreamV3(
             url = "https://silo.test/stream/$sessionId",
             protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,

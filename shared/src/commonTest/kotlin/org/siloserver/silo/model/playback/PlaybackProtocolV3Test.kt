@@ -16,7 +16,6 @@ class PlaybackProtocolV3Test {
         planId = "plan-1",
         sessionId = "session-1",
         delivery = PlaybackDelivery.ORIGINAL_HTTP,
-        engine = PlaybackEngineKind.MEDIA3_DIRECT,
         stream = PlaybackStreamV3(
             url = "/api/v1/playback/session-1/stream",
             protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
@@ -119,7 +118,10 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
-    fun playablePlanMustUseMedia3() {
+    fun playablePlanValidatesOnDeliveryAlone() {
+        // The neutral contract names a delivery class, not a client engine, so
+        // there is nothing left for the client to disagree with the server
+        // about here: a well-formed plan on any delivery is playable.
         val playable = PlaybackDecisionResponseV3(
             protocolVersion = 3,
             serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
@@ -128,13 +130,16 @@ class PlaybackProtocolV3Test {
         ).validateForMedia3()
         assertIs<PlaybackV3Validation.Playable>(playable)
 
-        val stale = PlaybackDecisionResponseV3(
+        val hls = PlaybackDecisionResponseV3(
             protocolVersion = 3,
             serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
             outcome = PlaybackDecisionOutcome.PLAYABLE,
-            playbackPlan = plan.copy(engine = PlaybackEngineKind.MPV_DIRECT),
+            playbackPlan = plan.copy(
+                delivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
+                stream = plan.stream.copy(protocol = PlaybackStreamProtocol.HLS),
+            ),
         ).validateForMedia3()
-        assertIs<PlaybackV3Validation.ReplanRequired>(stale)
+        assertIs<PlaybackV3Validation.Playable>(hls)
     }
 
     @Test
@@ -213,13 +218,18 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
-    fun clientTransformationRequiresDirectMedia3Engine() {
+    fun clientTransformationRequiresOriginalDelivery() {
+        // A client-side Dolby Vision rewrite edits the elementary stream on its
+        // way into the decoder, which the client only owns while playing the
+        // original file. On a server-produced delivery the server already made
+        // the dynamic-range decision.
         val result = PlaybackDecisionResponseV3(
             protocolVersion = 3,
             serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan.copy(
-                engine = PlaybackEngineKind.MEDIA3_HLS,
+                delivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
+                stream = plan.stream.copy(protocol = PlaybackStreamProtocol.HLS),
                 transformations = listOf(
                     PlaybackTransformationV3(
                         name = CLIENT_DV7_TO_HDR10,
@@ -231,7 +241,7 @@ class PlaybackProtocolV3Test {
         ).validateForMedia3()
 
         assertEquals(
-            "client_transformation_requires_media3_direct",
+            "client_transformation_requires_original_delivery",
             assertIs<PlaybackV3Validation.ReplanRequired>(result).reason,
         )
     }
@@ -272,84 +282,38 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
-    fun attemptKeyIsCanonicalAndOutputRouteAware() {
-        val a = plan.copy(
-            transformations = listOf(
-                PlaybackTransformationV3("audio_adapt"),
-                PlaybackTransformationV3("container_remux"),
-            ),
-        ).planAttemptKey(7, listOf("pcm:truehd:8", "transport_reopen"))
-        val b = plan.copy(
-            transformations = listOf(
-                PlaybackTransformationV3("container_remux"),
-                PlaybackTransformationV3("audio_adapt"),
-            ),
-        ).planAttemptKey(7, listOf("transport_reopen", "pcm:truehd:8"))
-        assertEquals(a, b)
-        assertNotEquals(a, plan.planAttemptKey(8, listOf("pcm:truehd:8", "transport_reopen")))
-        assertTrue(a.matches(Regex("v3:[0-9a-f]{16}")))
-    }
+    fun attemptKeyIsServerOwnedAndEchoedVerbatim() {
+        // The client no longer derives attempt keys: the server mints them and
+        // the client stores and echoes the opaque value. Anything the client
+        // did locally is reported as `local_mutations` for the server to fold
+        // into the next key, rather than hashed here.
+        val decoded = SiloJson.decodeFromString<PlaybackDecisionResponseV3>(
+            """{"protocol_version":3,"server_features":["$PLAYBACK_PLAN_V3_FEATURE"],"outcome":"playable",""" +
+                """"playback_plan":{"plan_id":"p","session_id":"s","plan_attempt_key":"v3:server-minted",""" +
+                """"delivery":"original_http","stream":{"url":"/s","protocol":"http_progressive"},""" +
+                """"decision_reason":"validated_original_playback"}}""",
+        )
+        assertEquals("v3:server-minted", decoded.playbackPlan?.planAttemptKey)
 
-    @Test
-    fun attemptKeyMatchesGoClientTransformationFixture() {
-        val fixture = plan.copy(
-            planId = "plan:dv81-fixture",
-            delivery = PlaybackDelivery.ORIGINAL_HTTP,
-            stream = plan.stream.copy(
-                protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
-                container = "mkv",
-            ),
-            effectiveRecipe = plan.effectiveRecipe.copy(
-                videoCodec = "hevc",
-                audioCodec = "truehd",
-                width = 3840,
-                height = 2160,
-                bitrateKbps = 65_000,
-                dynamicRange = "dolby_vision",
-            ),
-            subtitle = PlaybackSubtitleDecisionV3(mode = PlaybackSubtitleModeV3.OFF),
-            transformations = listOf(
-                PlaybackTransformationV3(
-                    name = CLIENT_DV7_TO_DV81,
-                    executor = PlaybackTransformationExecutor.CLIENT,
-                    recipeVersion = "1",
-                ),
+        val echoed = SiloJson.encodeToString(
+            PlaybackReplanRequestV3(
+                playbackAttemptId = "attempt",
+                replanRequestId = "request",
+                failedPlanId = "p",
+                planAttemptId = "plan-attempt",
+                planAttemptKey = "v3:server-minted",
+                attemptedPlanKeys = listOf("v3:server-minted"),
+                localMutations = listOf("pcm:truehd:8"),
+                attemptCount = 2,
+                positionSeconds = 10.0,
+                selectedTracks = SelectedPlaybackTracksV3(),
+                failure = PlaybackFailureV3("transport_stall"),
+                capabilities = ClientCodecCapabilities(),
+                clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
             ),
         )
-
-        assertEquals("v3:2a88b5e686373440", fixture.planAttemptKey(9))
-    }
-
-    @Test
-    fun attemptKeyMatchesGoDeviceQuirkFixture() {
-        val fixture = plan.copy(
-            planId = "plan:quirk",
-            delivery = PlaybackDelivery.ORIGINAL_HTTP,
-            stream = plan.stream.copy(
-                protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
-                container = "mkv",
-            ),
-            effectiveRecipe = plan.effectiveRecipe.copy(
-                videoCodec = "hevc",
-                audioCodec = "eac3",
-                width = 3840,
-                height = 2160,
-                bitrateKbps = 60_000,
-                dynamicRange = "dolby_vision",
-            ),
-            subtitle = PlaybackSubtitleDecisionV3(mode = PlaybackSubtitleModeV3.OFF),
-            transformations = emptyList(),
-            appliedQuirks = listOf(
-                PlaybackAppliedQuirkV3(
-                    id = "android.fire_tv.dv8_hdr10plus_sei_v1",
-                    registryRevision = "2026-07-13.1",
-                    action = "client_runtime_correction",
-                ),
-            ),
-            runtimeCorrections = listOf(CLIENT_DV8_HDR10_PLUS_SANITIZER),
-        )
-
-        assertEquals("v3:8d843bfffeb3adc3", fixture.planAttemptKey(9))
+        assertTrue(echoed.contains("\"plan_attempt_key\":\"v3:server-minted\""))
+        assertTrue(echoed.contains("\"local_mutations\":[\"pcm:truehd:8\"]"))
     }
 
     @Test
@@ -368,21 +332,27 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
-    fun startRequestNeverForcesAPlayMethod() {
+    fun startRequestNeverForcesAPlayMethodOrNamesAnEngine() {
         val encoded = SiloJson.encodeToString(
             PlaybackStartRequestV3(
                 fileId = 12,
                 profileId = "profile",
                 playbackAttemptId = "attempt",
                 subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
-                outputRouteGeneration = 4,
                 capabilities = ClientCodecCapabilities(),
-                clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
+                clientPlaybackContext = ClientPlaybackContext(
+                    formFactor = "tv",
+                    appVersion = "test",
+                    output = PlaybackOutputContext(outputContextId = "4"),
+                ),
             ),
         )
         assertFalse(encoded.contains("play_method"))
         assertTrue(encoded.contains("\"protocol_version\":3"))
-        assertTrue(encoded.contains("media3_only"))
+        // The neutral contract negotiates delivery classes, so the request must
+        // not leak this client's internal player component names.
+        assertFalse(encoded.contains("media3"))
+        assertTrue(encoded.contains("\"output_context_id\":\"4\""))
     }
 
     @Test
@@ -393,7 +363,6 @@ class PlaybackProtocolV3Test {
                 profileId = "profile",
                 playbackAttemptId = "attempt",
                 subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
-                outputRouteGeneration = 4,
                 metered = true,
                 bandwidthEstimateKbps = 22_000,
                 bandwidthCapKbps = 15_000,
@@ -411,7 +380,6 @@ class PlaybackProtocolV3Test {
                 attemptedPlanKeys = listOf("key"),
                 attemptCount = 2,
                 positionSeconds = 10.0,
-                outputRouteGeneration = 4,
                 metered = true,
                 bandwidthEstimateKbps = 9_000,
                 bandwidthCapKbps = 8_000,
@@ -437,7 +405,6 @@ class PlaybackProtocolV3Test {
                 profileId = "profile",
                 playbackAttemptId = "attempt",
                 subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
-                outputRouteGeneration = 4,
                 capabilities = ClientCodecCapabilities(),
                 clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
             ),
@@ -453,7 +420,6 @@ class PlaybackProtocolV3Test {
                 attemptedPlanKeys = listOf("key"),
                 attemptCount = 1,
                 positionSeconds = 10.0,
-                outputRouteGeneration = 4,
                 selectedTracks = SelectedPlaybackTracksV3(),
                 failure = PlaybackFailureV3(SEEK_REANCHOR_V3_OPERATION),
                 capabilities = ClientCodecCapabilities(),
@@ -463,6 +429,37 @@ class PlaybackProtocolV3Test {
 
         assertTrue(start.contains(SEEK_REANCHOR_V3_FEATURE))
         assertTrue(reanchor.contains("\"operation\":\"seek_reanchor\""))
+    }
+
+    @Test
+    fun intentOperationsCarryNoFailure() {
+        // `track_change` and `quality_change` replace what used to be separate
+        // endpoints. Nothing failed, so no failure is reported and the previous
+        // route stays eligible — the server may legitimately hand back a plan
+        // the client has already tried, which is not a loop.
+        for (operation in INTENT_V3_OPERATIONS) {
+            val encoded = SiloJson.encodeToString(
+                PlaybackReplanRequestV3(
+                    operation = operation,
+                    playbackAttemptId = "attempt",
+                    replanRequestId = "request",
+                    failedPlanId = "plan",
+                    planAttemptId = "plan-attempt",
+                    planAttemptKey = "key",
+                    attemptedPlanKeys = emptyList(),
+                    attemptCount = 1,
+                    qualityPreference = "1080p",
+                    positionSeconds = 10.0,
+                    selectedTracks = SelectedPlaybackTracksV3(),
+                    failure = null,
+                    capabilities = ClientCodecCapabilities(),
+                    clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
+                ),
+            )
+
+            assertTrue(encoded.contains("\"operation\":\"$operation\""))
+            assertFalse(encoded.contains("\"failure\""))
+        }
     }
 
     @Test
@@ -478,17 +475,23 @@ class PlaybackProtocolV3Test {
                 ),
             ),
         )
-        val encoded = SiloJson.encodeToString(
-            ClientPlaybackContext(
-                formFactor = "tv",
-                appVersion = "test",
-                features = listOf(LAYOUT_AWARE_PASSTHROUGH_FEATURE),
-                output = PlaybackOutputContext(audioPassthrough = passthrough),
-            ),
+        val context = ClientPlaybackContext(
+            formFactor = "tv",
+            appVersion = "test",
+            output = PlaybackOutputContext(audioPassthrough = passthrough),
         )
+        val encoded = SiloJson.encodeToString(context)
 
-        assertTrue(encoded.contains("layout_aware_passthrough"))
         assertTrue(encoded.contains("\"channel_counts\":[2,6,8]"))
         assertTrue(encoded.contains("\"layouts\":[\"stereo\",\"5.1(side)\",\"7.1\"]"))
+        // The context itself carries no feature list: feature advertisement
+        // lives only in the request's top-level `client_features`, and the
+        // layout-aware claim is earned by enumerating real layouts.
+        assertFalse(encoded.contains(LAYOUT_AWARE_PASSTHROUGH_FEATURE))
+        assertTrue(LAYOUT_AWARE_PASSTHROUGH_FEATURE in playbackClientFeaturesV3(context))
+        assertFalse(
+            LAYOUT_AWARE_PASSTHROUGH_FEATURE in
+                playbackClientFeaturesV3(context.copy(output = PlaybackOutputContext())),
+        )
     }
 }

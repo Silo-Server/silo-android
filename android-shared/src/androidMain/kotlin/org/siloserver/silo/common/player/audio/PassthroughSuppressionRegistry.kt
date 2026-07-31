@@ -9,11 +9,33 @@ data class PassthroughSuppressionSnapshot(
 )
 
 /**
+ * The write side of passthrough suppression, as a session manager sees it.
+ *
+ * It exists so a manager that does not drive a local audio sink can be handed
+ * [None] instead of the process-global registry. Cast preparation runs its own
+ * throwaway [org.siloserver.silo.common.player.PlaybackSessionManager], and its
+ * plan keys would otherwise reset the suppression set belonging to the phone's
+ * still-playing local session.
+ */
+interface PassthroughSuppressionScope {
+    fun beginAttempt(key: String)
+
+    fun suppressForSinglePcmRetry(mime: String, channels: Int): Boolean
+
+    /** Accepts and discards; for sessions whose audio never reaches a local sink. */
+    object None : PassthroughSuppressionScope {
+        override fun beginAttempt(key: String) = Unit
+
+        override fun suppressForSinglePcmRetry(mime: String, channels: Int): Boolean = false
+    }
+}
+
+/**
  * Attempt-scoped suppression for a passthrough encoding and channel layout.
  * A failed direct sink configuration gets one same-plan retry through a local
  * decoder/PCM renderer. New server plans clear the suppression set.
  */
-object PassthroughSuppressionRegistry {
+object PassthroughSuppressionRegistry : PassthroughSuppressionScope {
     private data class Key(val mime: String, val channels: Int)
 
     private var attemptKey: String? = null
@@ -21,7 +43,7 @@ object PassthroughSuppressionRegistry {
     private var retryUsed = false
 
     @Synchronized
-    fun beginAttempt(key: String) {
+    override fun beginAttempt(key: String) {
         if (attemptKey == key) return
         attemptKey = key
         blocked.clear()
@@ -29,7 +51,7 @@ object PassthroughSuppressionRegistry {
     }
 
     @Synchronized
-    fun suppressForSinglePcmRetry(mime: String, channels: Int): Boolean {
+    override fun suppressForSinglePcmRetry(mime: String, channels: Int): Boolean {
         if (attemptKey == null || retryUsed || mime.isBlank()) return false
         retryUsed = true
         blocked += Key(mime.lowercase(), channels.coerceAtLeast(0))

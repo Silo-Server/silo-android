@@ -103,7 +103,11 @@ internal data class TvSubtitleManagerStageInput(
 )
 
 internal fun TvSubtitleStageRequest.toManagerStageInput(): ApiResult<TvSubtitleManagerStageInput> {
-    if (clientPlaybackContext.output.outputRouteGeneration != outputRouteGeneration) {
+    // The contract's output context token is opaque to the server; this client
+    // mints it from the route generation it is tracking here, so an equality
+    // check against the stringified generation is the same staleness test the
+    // server performs.
+    if (clientPlaybackContext.output.outputContextId != outputRouteGeneration.toString()) {
         return ApiResult.Error(
             code = 409,
             error = "stale_output_route_context",
@@ -2304,6 +2308,9 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                 qualityPreference = request.qualityPreference,
                 capabilities = input.capabilities,
                 clientPlaybackContext = input.clientPlaybackContext,
+                operation = PlaybackSessionManager.replanOperationForClassification(
+                    request.classification,
+                ),
             )
         ) {
             is ApiResult.Success -> {
@@ -2319,7 +2326,8 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                         hasSidecar = ready.plan.subtitle.artifact?.url?.isNotBlank() == true,
                         subtitleTracks = ready.session.subtitleUrls.orEmpty(),
                         qualityPreference = request.qualityPreference,
-                        outputRouteGeneration = handle.outputRouteGeneration,
+                        outputRouteGeneration = handle.outputContextId?.toLongOrNull()
+                            ?: input.outputRouteGeneration,
                         managerHandle = handle,
                     ),
                 )

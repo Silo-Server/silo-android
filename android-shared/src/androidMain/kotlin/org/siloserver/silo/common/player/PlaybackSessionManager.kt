@@ -5,20 +5,9 @@ import android.os.SystemClock
 import android.util.Log
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
-import org.siloserver.silo.model.playback.PlayMethod
-import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEngineKind
-import org.siloserver.silo.model.playback.PlaybackRouteFamily
-import org.siloserver.silo.model.playback.PlaybackStreamRequest
-import org.siloserver.silo.model.playback.PlaybackSessionResponse
-import org.siloserver.silo.model.playback.PlaybackTimeline
-import org.siloserver.silo.model.playback.TranscodeStartRequest
-import org.siloserver.silo.model.playback.TranscodeStartResponse
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
 import org.siloserver.silo.model.playback.PlaybackV3Validation
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
-import org.siloserver.silo.model.playback.planAttemptKey
-import org.siloserver.silo.model.playback.playbackStartClientFeatures
 import org.siloserver.silo.model.playback.validateForMedia3
 import org.siloserver.silo.model.playback.PlaybackFailureV3
 import org.siloserver.silo.model.playback.PlaybackPlanV3
@@ -27,9 +16,14 @@ import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
+import org.siloserver.silo.model.playback.FAILURE_RECOVERY_V3_OPERATION
+import org.siloserver.silo.model.playback.INTENT_V3_OPERATIONS
+import org.siloserver.silo.model.playback.QUALITY_CHANGE_V3_OPERATION
 import org.siloserver.silo.model.playback.SEEK_FAILURE_RECOVERY_V3_OPERATION
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_OPERATION
+import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
+import org.siloserver.silo.model.playback.playbackClientFeaturesV3
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.PlaybackRepository
@@ -52,6 +46,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import org.siloserver.silo.common.player.audio.PassthroughSuppressionRegistry
+import org.siloserver.silo.common.player.audio.PassthroughSuppressionScope
 
 data class StagedVideoReplan(
     val basePlaybackAttemptId: String,
@@ -59,7 +54,12 @@ data class StagedVideoReplan(
     val basePlanAttemptId: String,
     val candidate: VideoSessionStartV3.Ready,
     val candidateSessionId: String,
-    val outputRouteGeneration: Long,
+    /**
+     * The opaque output context the candidate was planned against. Route events
+     * emitted while the stage is in flight carry it so server-side diagnostics
+     * can tell a stale route apart from a current one.
+     */
+    val outputContextId: String?,
 )
 
 /**
@@ -87,6 +87,16 @@ open class PlaybackSessionManager(
      * [NEVER_SELF_HEAL]; the test that asserts self-healing passes a real value.
      */
     private val pendingPublicationSettleTimeoutMs: Long? = PENDING_PUBLICATION_SETTLE_TIMEOUT_MS,
+    /**
+     * Where this manager scopes passthrough suppression. The registry is
+     * process-global by necessity — the audio sink that reads it is constructed
+     * deep inside Media3 with no route back to a session — so a manager whose
+     * audio never reaches a local sink must pass
+     * [PassthroughSuppressionScope.None] rather than reset the suppression set
+     * belonging to whatever is actually playing. Cast preparation is the case
+     * that matters: its plans are for a receiver across the room.
+     */
+    private val passthroughSuppression: PassthroughSuppressionScope = PassthroughSuppressionRegistry,
 ) {
     private data class ActiveVideoAttempt(
         val fileId: Int,
@@ -305,7 +315,6 @@ open class PlaybackSessionManager(
             val playbackAttemptId = UUID.randomUUID().toString()
             val network = networkEvidenceProvider.snapshot()
             val request = PlaybackStartRequestV3(
-                clientFeatures = playbackStartClientFeatures(clientPlaybackContext),
                 fileId = fileId,
                 profileId = profileId,
                 playbackAttemptId = playbackAttemptId,
@@ -325,7 +334,7 @@ open class PlaybackSessionManager(
                 // identical without tripping the validator. The replan path and
                 // the track id above already filter negatives the same way.
                 subtitleTrackIndex = subtitleTrackIndex?.takeIf { it >= 0 },
-                outputRouteGeneration = clientPlaybackContext.output.outputRouteGeneration,
+                clientFeatures = playbackClientFeaturesV3(clientPlaybackContext),
                 metered = network.metered,
                 bandwidthEstimateKbps = network.bandwidthEstimateKbps,
                 bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
@@ -355,7 +364,7 @@ open class PlaybackSessionManager(
                         // Published: the manager owns this id now, so teardown
                         // is its problem rather than this call's.
                         leasedSessionId = null
-                        PassthroughSuppressionRegistry.beginAttempt(active.planAttemptKey)
+                        passthroughSuppression.beginAttempt(active.planAttemptKey)
                         reportActiveVideoEvent("plan_selected", network.asRouteDiagnostics())
                         ApiResult.Success(
                             VideoSessionStartV3.Ready(
@@ -381,7 +390,7 @@ open class PlaybackSessionManager(
                                 sessionId = result.data.sessionId,
                                 event = "terminal",
                                 fallbackReason = validated.reason,
-                                outputRouteGeneration = request.outputRouteGeneration,
+                                outputContextId = request.clientPlaybackContext.output.outputContextId,
                             ),
                         )
                         // Only a stop the server acknowledged discharges the
@@ -408,10 +417,11 @@ open class PlaybackSessionManager(
                         ApiResult.Success(VideoSessionStartV3.ServerUpgradeRequired)
                     }
                     is PlaybackV3Validation.ReplanRequired -> {
-                        // Decode stale engine enums, but never execute them. Preserve
-                        // the allocated session and give the v3 planner exactly one
-                        // opportunity to replace the route with a Media3 plan.
                         leasedSessionId = validated.sessionId
+                        // The plan is well-formed but names a client-side
+                        // correction or transformation this build cannot
+                        // execute. Preserve the allocated session and give the
+                        // planner exactly one chance to route around it.
                         val planAttemptId = UUID.randomUUID().toString()
                         val active = newActiveAttempt(
                             request = request,
@@ -432,11 +442,11 @@ open class PlaybackSessionManager(
                         // installed, unknown to every caller, and running until
                         // the server expired it. The branches after the replan
                         // clear or re-arm it once its fate is decided.
-                        PassthroughSuppressionRegistry.beginAttempt(active.planAttemptKey)
+                        passthroughSuppression.beginAttempt(active.planAttemptKey)
                         finishContentReset()
                         val replanResult = replanActiveVideoSession(
                             classification = validated.reason,
-                            message = "The server returned a legacy player route.",
+                            message = UNEXECUTABLE_ROUTE_MESSAGE,
                             positionSeconds = startPosition ?: 0.0,
                             audioTrackIndex = audioTrackIndex,
                             subtitleTrackIndex = subtitleTrackIndex,
@@ -458,7 +468,7 @@ open class PlaybackSessionManager(
                                     }
                                     revertRenderedPlanKeepingCursor(predecessorForPublication)
                                     predecessorForPublication?.let {
-                                        PassthroughSuppressionRegistry.beginAttempt(it.planAttemptKey)
+                                        passthroughSuppression.beginAttempt(it.planAttemptKey)
                                     }
                                 }
                             }
@@ -521,7 +531,9 @@ open class PlaybackSessionManager(
         serverFeatures: Set<String>,
         planAttemptId: String,
     ): ActiveVideoAttempt {
-        val planAttemptKey = plan.planAttemptKey(request.outputRouteGeneration)
+        // Server-minted and opaque: the client stores it and echoes it back, it
+        // never derives one.
+        val planAttemptKey = plan.planAttemptKey
         return ActiveVideoAttempt(
             fileId = request.fileId,
             profileId = request.profileId,
@@ -675,6 +687,7 @@ open class PlaybackSessionManager(
         qualityPreference: String? = null,
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
+        operation: String = FAILURE_RECOVERY_V3_OPERATION,
     ): ApiResult<VideoSessionStartV3> = immediateVideoReplanMutex.withLock {
         when (
             val prepared = prepareActiveVideoSessionReplan(
@@ -688,6 +701,7 @@ open class PlaybackSessionManager(
                 qualityPreference = qualityPreference,
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
+                operation = operation,
                 preserveImmediateOutcomes = true,
             )
         ) {
@@ -711,6 +725,7 @@ open class PlaybackSessionManager(
         qualityPreference: String? = null,
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
+        operation: String = FAILURE_RECOVERY_V3_OPERATION,
     ): ApiResult<StagedVideoReplan> = when (
         val prepared = prepareActiveVideoSessionReplan(
             classification = classification,
@@ -723,6 +738,7 @@ open class PlaybackSessionManager(
             qualityPreference = qualityPreference,
             capabilities = capabilities,
             clientPlaybackContext = clientPlaybackContext,
+            operation = operation,
             preserveImmediateOutcomes = false,
         )
     ) {
@@ -749,6 +765,7 @@ open class PlaybackSessionManager(
         qualityPreference: String? = null,
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
+        operation: String = FAILURE_RECOVERY_V3_OPERATION,
         preserveImmediateOutcomes: Boolean,
     ): ApiResult<PreparedVideoReplan> = withSettledVideoAttempt {
         if (contentResetInProgress) {
@@ -763,20 +780,44 @@ open class PlaybackSessionManager(
             error = "playback_attempt_not_active",
             message = "No protocol-v3 playback attempt is active.",
         )
-        if (classification == SEEK_REANCHOR_V3_OPERATION ||
-            classification == SEEK_FAILURE_RECOVERY_V3_OPERATION
-        ) {
+        if (operation == SEEK_REANCHOR_V3_OPERATION || operation == SEEK_FAILURE_RECOVERY_V3_OPERATION) {
             return@withSettledVideoAttempt ApiResult.Error(
                 code = 400,
                 error = "reserved_playback_operation",
                 message = "Seek operations must use the dedicated playback session methods.",
             )
         }
+        val intent = operation in INTENT_V3_OPERATIONS
+        val effectiveQuality = qualityPreference?.lowercase() ?: active.qualityPreference
+        // Mirror the server's own validator so a malformed operation is caught
+        // before it costs a round trip: failure recovery must name what failed,
+        // and a quality change must name the rung it wants — an empty
+        // preference would silently mean "auto", a different user intent than
+        // the menu selection this operation models.
+        if (!intent && classification.isBlank()) {
+            return@withSettledVideoAttempt ApiResult.Error(
+                code = 400,
+                error = "invalid_replan_operation",
+                message = "Failure recovery requires a failure classification.",
+            )
+        }
+        if (operation == QUALITY_CHANGE_V3_OPERATION && effectiveQuality.isBlank()) {
+            return@withSettledVideoAttempt ApiResult.Error(
+                code = 400,
+                error = "invalid_replan_operation",
+                message = "A quality change requires a quality preference.",
+            )
+        }
         val currentCapabilities = capabilities ?: active.capabilities
         val currentContext = clientPlaybackContext ?: active.context
         val network = networkEvidenceProvider.snapshot()
         val failedKey = active.planAttemptKey
-        val invalidation = classification in USER_INVALIDATION_CLASSIFICATIONS
+        // An intent operation is a user's choice, not a failure: the previous
+        // route stays eligible, so no attempt history is sent and the attempt
+        // counter restarts. `output_route_changed` is still failure-shaped —
+        // the route the client was using genuinely stopped working — so it
+        // keeps the legacy classification path while resetting the same state.
+        val invalidation = intent || classification in USER_INVALIDATION_CLASSIFICATIONS
         val attemptedKeys = if (invalidation) {
             emptyList()
         } else {
@@ -791,10 +832,10 @@ open class PlaybackSessionManager(
                 planAttemptId = active.planAttemptId,
                 planAttemptKey = failedKey,
                 event = if (invalidation) "plan_invalidated" else "plan_failed",
-                failureClassification = classification,
+                failureClassification = classification.takeIf { it.isNotBlank() },
                 appliedQuirkIds = active.plan.appliedQuirks.map { it.id },
                 quirkRegistryRevision = active.plan.appliedQuirks.firstOrNull()?.registryRevision,
-                outputRouteGeneration = currentContext.output.outputRouteGeneration,
+                outputContextId = currentContext.output.outputContextId,
                 diagnostics = diagnostics + mapOfNotNull("decoder_name" to decoderName) +
                     network.asRouteDiagnostics(),
             ),
@@ -804,16 +845,21 @@ open class PlaybackSessionManager(
         // retired failedPlanId that the server rejects with 409.
         val cursor = active.serverPlanCursor
         val request = PlaybackReplanRequestV3(
+            clientFeatures = playbackClientFeaturesV3(currentContext),
+            operation = operation,
             playbackAttemptId = active.playbackAttemptId,
             replanRequestId = UUID.randomUUID().toString(),
             failedPlanId = active.serverPlanId,
             planAttemptId = cursor?.planAttemptId ?: active.planAttemptId,
             planAttemptKey = failedKey,
             attemptedPlanKeys = attemptedKeys,
+            // Route changes the client made to the server's recipe on its own.
+            // The server folds them into the keys it excludes; the client never
+            // hashes anything itself.
+            localMutations = active.localMutations,
             attemptCount = requestAttemptCount,
-            qualityPreference = qualityPreference?.lowercase() ?: active.qualityPreference,
+            qualityPreference = effectiveQuality,
             positionSeconds = positionSeconds,
-            outputRouteGeneration = currentContext.output.outputRouteGeneration,
             metered = network.metered,
             bandwidthEstimateKbps = network.bandwidthEstimateKbps,
             // The cap is a per-request delivery ceiling: omitting it on a
@@ -825,7 +871,9 @@ open class PlaybackSessionManager(
                 subtitle = subtitleTrackIndex?.takeIf { it >= 0 }
                     ?.let { selectedTrackIdentity(active, "subtitle", it, active.plan.selectedTracks.subtitle) },
             ),
-            failure = PlaybackFailureV3(classification, message, decoderName),
+            // Intent operations describe a user's choice, so they carry no
+            // failure block at all.
+            failure = if (intent) null else PlaybackFailureV3(classification, message, decoderName),
             capabilities = currentCapabilities,
             clientPlaybackContext = currentContext,
         )
@@ -836,9 +884,7 @@ open class PlaybackSessionManager(
             // invalid candidate, discard) and every one of them would otherwise
             // leave the cursor addressing a plan the server has already retired.
             result.data.playbackPlan?.let { committedPlan ->
-                val committedKey = committedPlan.planAttemptKey(
-                    currentContext.output.outputRouteGeneration,
-                )
+                val committedKey = committedPlan.planAttemptKey
                 // Compare-and-set: a supersession may already have swapped the
                 // attempt while this response was in flight, and a plain
                 // get()/set() would silently restore the superseded one.
@@ -866,7 +912,7 @@ open class PlaybackSessionManager(
         when (result) {
             is ApiResult.Success -> when (val validated = result.data.validateForMedia3()) {
                 is PlaybackV3Validation.Playable -> {
-                    val nextKey = validated.plan.planAttemptKey(currentContext.output.outputRouteGeneration)
+                    val nextKey = validated.plan.planAttemptKey
                     if (nextKey in attemptedKeys) {
                         stopCandidateSessionIfUnowned(active.sessionId, validated.sessionId)
                         if (preserveImmediateOutcomes) {
@@ -942,7 +988,7 @@ open class PlaybackSessionManager(
                         basePlanAttemptId = active.planAttemptId,
                         candidate = ready,
                         candidateSessionId = validated.sessionId,
-                        outputRouteGeneration = next.context.output.outputRouteGeneration,
+                        outputContextId = next.context.output.outputContextId,
                     )
                     stagedVideoReplans[staged] = PreparedStagedVideoReplan(
                         nextAttempt = next,
@@ -1016,8 +1062,8 @@ open class PlaybackSessionManager(
                         ApiResult.Success(
                             PreparedVideoReplan.ImmediateOutcome(
                                 VideoSessionStartV3.Terminal(
-                                    "unsupported_legacy_engine",
-                                    "The server could not provide a Media3 playback route.",
+                                    UNEXECUTABLE_ROUTE_REASON,
+                                    UNEXECUTABLE_ROUTE_MESSAGE,
                                     false,
                                 ),
                             ),
@@ -1026,8 +1072,8 @@ open class PlaybackSessionManager(
                         stopCandidateSessionIfUnowned(active.sessionId, validated.sessionId)
                         ApiResult.Error(
                             code = 502,
-                            error = "unsupported_legacy_engine",
-                            message = "The server could not provide a Media3 playback route.",
+                            error = UNEXECUTABLE_ROUTE_REASON,
+                            message = UNEXECUTABLE_ROUTE_MESSAGE,
                         )
                     }
                 }
@@ -1071,7 +1117,7 @@ open class PlaybackSessionManager(
         }
 
         val next = prepared.nextAttempt
-        PassthroughSuppressionRegistry.beginAttempt(next.planAttemptKey)
+        passthroughSuppression.beginAttempt(next.planAttemptKey)
         val routeEvent = PlaybackRouteEventV3(
             playbackAttemptId = next.playbackAttemptId,
             sessionId = next.sessionId,
@@ -1082,7 +1128,7 @@ open class PlaybackSessionManager(
             fallbackReason = prepared.fallbackReason,
             appliedQuirkIds = next.plan.appliedQuirks.map { it.id },
             quirkRegistryRevision = next.plan.appliedQuirks.firstOrNull()?.registryRevision,
-            outputRouteGeneration = next.context.output.outputRouteGeneration,
+            outputContextId = next.context.output.outputContextId,
         )
 
         // This is the commit point. Everything after it is best-effort,
@@ -1288,7 +1334,7 @@ open class PlaybackSessionManager(
         pendingVideoPublication = null
         revertRenderedPlanKeepingCursor(pending.predecessor)
         pending.predecessor?.let {
-            PassthroughSuppressionRegistry.beginAttempt(it.planAttemptKey)
+            passthroughSuppression.beginAttempt(it.planAttemptKey)
         }
         val protectedSessionIds = setOfNotNull(
             sessionId,
@@ -1719,6 +1765,7 @@ open class PlaybackSessionManager(
 
         val network = networkEvidenceProvider.snapshot()
         val request = PlaybackReplanRequestV3(
+            clientFeatures = playbackClientFeaturesV3(active.context),
             operation = SEEK_REANCHOR_V3_OPERATION,
             playbackAttemptId = active.playbackAttemptId,
             replanRequestId = UUID.randomUUID().toString(),
@@ -1726,10 +1773,10 @@ open class PlaybackSessionManager(
             planAttemptId = active.planAttemptId,
             planAttemptKey = active.planAttemptKey,
             attemptedPlanKeys = active.attemptedPlanKeys,
+            localMutations = active.localMutations,
             attemptCount = active.attemptCount,
             qualityPreference = active.qualityPreference,
             positionSeconds = positionSeconds,
-            outputRouteGeneration = active.context.output.outputRouteGeneration,
             metered = active.networkEvidence.metered,
             bandwidthEstimateKbps = active.networkEvidence.bandwidthEstimateKbps,
             bandwidthCapKbps = active.bandwidthCapKbps,
@@ -1751,7 +1798,7 @@ open class PlaybackSessionManager(
                 event = "seek_reanchor_requested",
                 appliedQuirkIds = active.plan.appliedQuirks.map { it.id },
                 quirkRegistryRevision = active.plan.appliedQuirks.firstOrNull()?.registryRevision,
-                outputRouteGeneration = active.context.output.outputRouteGeneration,
+                outputContextId = active.context.output.outputContextId,
                 diagnostics = diagnostics + network.asRouteDiagnostics() +
                     ("target_source_position_seconds" to positionSeconds.toString()),
             ),
@@ -1801,7 +1848,7 @@ open class PlaybackSessionManager(
                                 event = "seek_reanchored",
                                 appliedQuirkIds = next.plan.appliedQuirks.map { it.id },
                                 quirkRegistryRevision = next.plan.appliedQuirks.firstOrNull()?.registryRevision,
-                                outputRouteGeneration = next.context.output.outputRouteGeneration,
+                                outputContextId = next.context.output.outputContextId,
                                 diagnostics = diagnostics +
                                     ("target_source_position_seconds" to positionSeconds.toString()),
                             ),
@@ -1824,7 +1871,10 @@ open class PlaybackSessionManager(
                         "The server returned an incompatible seek re-anchor response.",
                     )
                     is PlaybackV3Validation.ReplanRequired -> invalidSeekReanchorResponse(
-                        "The server changed the player engine during seek re-anchoring.",
+                        // Re-anchoring is not allowed to change the route, so a
+                        // plan this client cannot execute means the server moved
+                        // it off the route already playing.
+                        "$UNEXECUTABLE_ROUTE_MESSAGE Re-anchoring may not change the playback route.",
                     )
                 }
             }
@@ -1860,18 +1910,26 @@ open class PlaybackSessionManager(
         if (candidate.selectedTracks != active.plan.selectedTracks) {
             return "The server changed the selected tracks during seek re-anchoring."
         }
-        if (!candidate.hasSameSeekReanchorBaseRoute(active.plan, active.context.output.outputRouteGeneration)) {
+        if (!candidate.hasSameSeekReanchorBaseRoute(active.plan)) {
             return "The server changed the playback route during seek re-anchoring."
         }
         return null
     }
 
-    private fun PlaybackPlanV3.hasSameSeekReanchorBaseRoute(
-        current: PlaybackPlanV3,
-        outputRouteGeneration: Long,
-    ): Boolean =
-        planAttemptKey(outputRouteGeneration) == current.planAttemptKey(outputRouteGeneration) &&
-            engine == current.engine &&
+    /**
+     * Mirrors the server's own re-anchor validator: a re-anchored plan may move
+     * the timeline, rotate signed URLs, and refresh the transport, but it may
+     * not change the route it describes.
+     *
+     * The attempt keys compared here are server-minted, so an unchanged pair is
+     * the server's own assertion that the recipe survived. The field comparison
+     * that follows is the client's independent check of what it actually
+     * renders, and the delivery class is what the two sides negotiate over —
+     * there is no engine name in the neutral contract to compare.
+     */
+    private fun PlaybackPlanV3.hasSameSeekReanchorBaseRoute(current: PlaybackPlanV3): Boolean =
+        planAttemptKey == current.planAttemptKey &&
+            delivery == current.delivery &&
             stream.mimeType == current.stream.mimeType &&
             stream.headerRefresh == current.stream.headerRefresh &&
             effectiveRecipe == current.effectiveRecipe &&
@@ -1880,6 +1938,7 @@ open class PlaybackSessionManager(
             subtitle.trackId == current.subtitle.trackId &&
             subtitle.artifact?.mimeType == current.subtitle.artifact?.mimeType &&
             subtitle.artifact?.format == current.subtitle.artifact?.format &&
+            subtitleFidelityPolicy == current.subtitleFidelityPolicy &&
             transformations.toSet() == current.transformations.toSet() &&
             appliedQuirks.toSet() == current.appliedQuirks.toSet() &&
             runtimeCorrections.toSet() == current.runtimeCorrections.toSet()
@@ -1978,6 +2037,7 @@ open class PlaybackSessionManager(
         val network = networkEvidenceProvider.snapshot()
         val attemptedKeys = (active.attemptedPlanKeys + active.planAttemptKey).distinct()
         val request = PlaybackReplanRequestV3(
+            clientFeatures = playbackClientFeaturesV3(active.context),
             operation = SEEK_FAILURE_RECOVERY_V3_OPERATION,
             playbackAttemptId = active.playbackAttemptId,
             replanRequestId = UUID.randomUUID().toString(),
@@ -1985,10 +2045,10 @@ open class PlaybackSessionManager(
             planAttemptId = active.planAttemptId,
             planAttemptKey = active.planAttemptKey,
             attemptedPlanKeys = attemptedKeys,
+            localMutations = active.localMutations,
             attemptCount = active.attemptCount,
             qualityPreference = active.qualityPreference,
             positionSeconds = positionSeconds,
-            outputRouteGeneration = active.context.output.outputRouteGeneration,
             // Fresh snapshot, matching replanActiveVideoSession: this path lets
             // the server pick a different route, so session-start network
             // evidence would misinform that decision.
@@ -2015,7 +2075,7 @@ open class PlaybackSessionManager(
                 failureClassification = classification,
                 appliedQuirkIds = active.plan.appliedQuirks.map { it.id },
                 quirkRegistryRevision = active.plan.appliedQuirks.firstOrNull()?.registryRevision,
-                outputRouteGeneration = active.context.output.outputRouteGeneration,
+                outputContextId = active.context.output.outputContextId,
                 diagnostics = diagnostics + mapOfNotNull("decoder_name" to decoderName) +
                     network.asRouteDiagnostics() +
                     ("seek_recovery_position_seconds" to positionSeconds.toString()),
@@ -2040,9 +2100,7 @@ open class PlaybackSessionManager(
                         if (mismatch != null) {
                             return@withSettledVideoAttempt invalidSeekRecoveryResponse(mismatch)
                         }
-                        val nextKey = validated.plan.planAttemptKey(
-                            active.context.output.outputRouteGeneration,
-                        )
+                        val nextKey = validated.plan.planAttemptKey
                         if (nextKey in attemptedKeys) {
                             return@withSettledVideoAttempt ApiResult.Success(
                                 VideoSessionStartV3.Terminal(
@@ -2068,7 +2126,7 @@ open class PlaybackSessionManager(
                                 message = "The active playback attempt changed during seek recovery.",
                             )
                         }
-                        PassthroughSuppressionRegistry.beginAttempt(nextKey)
+                        passthroughSuppression.beginAttempt(nextKey)
                         emitRouteEvent(
                             PlaybackRouteEventV3(
                                 playbackAttemptId = next.playbackAttemptId,
@@ -2080,7 +2138,7 @@ open class PlaybackSessionManager(
                                 fallbackReason = classification,
                                 appliedQuirkIds = next.plan.appliedQuirks.map { it.id },
                                 quirkRegistryRevision = next.plan.appliedQuirks.firstOrNull()?.registryRevision,
-                                outputRouteGeneration = next.context.output.outputRouteGeneration,
+                                outputContextId = next.context.output.outputContextId,
                             ),
                         )
                         ApiResult.Success(
@@ -2104,7 +2162,7 @@ open class PlaybackSessionManager(
                         "The server returned an incompatible seek recovery response.",
                     )
                     is PlaybackV3Validation.ReplanRequired -> invalidSeekRecoveryResponse(
-                        "The server returned an unsupported player engine during seek recovery.",
+                        UNEXECUTABLE_ROUTE_MESSAGE,
                     )
                 }
             }
@@ -2219,7 +2277,7 @@ open class PlaybackSessionManager(
                 event = event,
                 appliedQuirkIds = active.plan.appliedQuirks.map { it.id },
                 quirkRegistryRevision = active.plan.appliedQuirks.firstOrNull()?.registryRevision,
-                outputRouteGeneration = active.context.output.outputRouteGeneration,
+                outputContextId = active.context.output.outputContextId,
                 diagnostics = diagnostics,
             ),
         )
@@ -2242,7 +2300,7 @@ open class PlaybackSessionManager(
                 event = "first_frame",
                 appliedQuirkIds = active.plan.appliedQuirks.map { it.id },
                 quirkRegistryRevision = active.plan.appliedQuirks.firstOrNull()?.registryRevision,
-                outputRouteGeneration = active.context.output.outputRouteGeneration,
+                outputContextId = active.context.output.outputContextId,
                 diagnostics = stats.firstFrameDiagnostics(firstFrameMs),
             ),
         )
@@ -2263,142 +2321,43 @@ open class PlaybackSessionManager(
             ?: PlaybackTrackIdentityV3(stableTrackId(effectiveFileId, kind, index), index)
     }
 
-    fun trySingleLocalPcmRetry(mime: String, channels: Int): Boolean {
-        val active = activeVideoAttempt.get() ?: return false
-        val mutation = "pcm:${mime.lowercase()}:${channels.coerceAtLeast(0)}"
-        if (active.localMutations.any { it.startsWith("pcm:") }) return false
-        val mutations = active.localMutations + mutation
-        val key = active.plan.planAttemptKey(active.context.output.outputRouteGeneration, mutations)
-        val next = active.copy(
-            planAttemptKey = key,
-            localMutations = mutations,
-            attemptedPlanKeys = (active.attemptedPlanKeys + key).distinct(),
-        )
-        if (!activeVideoAttempt.compareAndSet(active, next)) return false
-        PassthroughSuppressionRegistry.beginAttempt(key)
-        return PassthroughSuppressionRegistry.suppressForSinglePcmRetry(mime, channels)
-    }
-
-    fun recordTransportReopen(): Boolean {
-        val active = activeVideoAttempt.get() ?: return false
-        val mutation = "transport_reopen"
-        if (mutation in active.localMutations) return false
-        val mutations = active.localMutations + mutation
-        val key = active.plan.planAttemptKey(active.context.output.outputRouteGeneration, mutations)
-        val next = active.copy(
-            planAttemptKey = key,
-            localMutations = mutations,
-            attemptedPlanKeys = (active.attemptedPlanKeys + key).distinct(),
-        )
-        if (!activeVideoAttempt.compareAndSet(active, next)) return false
-        PassthroughSuppressionRegistry.beginAttempt(key)
-        return true
-    }
-
     /**
-     * Starts a new playback session for the given file.
-     * The server decides the play method (direct, remux, transcode).
+     * Records a client-applied route mutation on the active attempt.
+     *
+     * The mutation is NOT hashed here. Attempt keys are server-minted under the
+     * neutral v3 contract, so the client records what it changed locally and
+     * echoes it in `local_mutations` on the next replan; the server folds it
+     * into the keys it excludes. Returns the new attempt, or null when there is
+     * no active attempt, the mutation is already recorded, or another thread
+     * won the CAS.
      */
-    open suspend fun startSession(
-        fileId: Int,
-        profileId: String,
-        capabilities: ClientCodecCapabilities,
-        audioTrackIndex: Int? = null,
-        qualityPreference: String? = null,
-        startPosition: Double? = null,
-        disableProgressPersistence: Boolean = false,
-    ): ApiResult<PlaybackSessionResponse> = startSessionInternal(
-        fileId = fileId,
-        profileId = profileId,
-        capabilities = capabilities,
-        audioTrackIndex = audioTrackIndex,
-        subtitleTrackIndex = null,
-        qualityPreference = qualityPreference,
-        startPosition = startPosition,
-        clientPlaybackContext = null,
-        preserveDirectAudioSelection = false,
-        playMethod = null,
-        disableProgressPersistence = disableProgressPersistence,
-    )
-
-    suspend fun startSessionV2(
-        fileId: Int,
-        profileId: String,
-        capabilities: ClientCodecCapabilities,
-        audioTrackIndex: Int? = null,
-        subtitleTrackIndex: Int? = null,
-        qualityPreference: String? = null,
-        startPosition: Double? = null,
-        clientPlaybackContext: ClientPlaybackContext? = null,
-        preserveDirectAudioSelection: Boolean = false,
-        playMethod: PlayMethod? = null,
-        seekableStreamsOnly: Boolean = false,
-    ): ApiResult<PlaybackSessionResponse> = startSessionInternal(
-        fileId = fileId,
-        profileId = profileId,
-        capabilities = capabilities,
-        audioTrackIndex = audioTrackIndex,
-        subtitleTrackIndex = subtitleTrackIndex,
-        qualityPreference = qualityPreference,
-        startPosition = startPosition,
-        clientPlaybackContext = clientPlaybackContext,
-        preserveDirectAudioSelection = preserveDirectAudioSelection,
-        playMethod = playMethod,
-        disableProgressPersistence = false,
-        seekableStreamsOnly = seekableStreamsOnly,
-    )
-
-    private suspend fun startSessionInternal(
-        fileId: Int,
-        profileId: String,
-        capabilities: ClientCodecCapabilities,
-        audioTrackIndex: Int?,
-        subtitleTrackIndex: Int?,
-        qualityPreference: String?,
-        startPosition: Double?,
-        clientPlaybackContext: ClientPlaybackContext?,
-        preserveDirectAudioSelection: Boolean,
-        playMethod: PlayMethod?,
-        disableProgressPersistence: Boolean,
-        seekableStreamsOnly: Boolean = false,
-    ): ApiResult<PlaybackSessionResponse> {
-        Log.i(
-            TAG,
-            "startSession fileId=$fileId profileId=$profileId " +
-                "video=${capabilities.codecsVideo} audio=${capabilities.codecsAudio} " +
-                "containers=${capabilities.containers} max=${capabilities.maxResolution} " +
-                "hdr=${capabilities.hdr} hdrDetails=${capabilities.hdrDetails} " +
-                "passthrough=${capabilities.audioPassthrough} " +
-                "qualityPreference=$qualityPreference " +
-                "preserveDirectAudioSelection=$preserveDirectAudioSelection " +
-                "requestedPlayMethod=$playMethod",
+    private fun recordLocalMutation(
+        mutation: String,
+        alreadyRecorded: (List<String>) -> Boolean,
+    ): ActiveVideoAttempt? {
+        val active = activeVideoAttempt.get() ?: return null
+        if (alreadyRecorded(active.localMutations)) return null
+        val next = active.copy(localMutations = active.localMutations + mutation)
+        if (!activeVideoAttempt.compareAndSet(active, next)) return null
+        // The suppression registry only equality-compares an opaque scope token,
+        // so a locally-derived one is sufficient — and necessary, because the
+        // server-minted key does not change when the client mutates its own
+        // route.
+        passthroughSuppression.beginAttempt(
+            "${next.planAttemptKey}#${next.localMutations.joinToString("|")}",
         )
-        val result = playbackRepository.startPlayback(
-            fileId = fileId,
-            profileId = profileId,
-            audioTrackIndex = audioTrackIndex,
-            subtitleTrackIndex = subtitleTrackIndex,
-            qualityPreference = qualityPreference,
-            startPosition = startPosition,
-            capabilities = capabilities,
-            clientPlaybackContext = clientPlaybackContext,
-            preserveDirectAudioSelection = preserveDirectAudioSelection,
-            playMethod = playMethod,
-            disableProgressPersistence = disableProgressPersistence,
-            seekableStreamsOnly = seekableStreamsOnly,
-        )
-        when (result) {
-            is ApiResult.Success -> Log.i(
-                TAG,
-                "startSession -> playMethod=${result.data.playMethod} " +
-                    "playbackInfo=${result.data.playbackInfo} " +
-                    "plan=${result.data.playbackPlan?.planId}:${result.data.playbackPlan?.engine}",
-            )
-            is ApiResult.Error -> Log.w(TAG, "startSession error: ${result.code} ${result.message}")
-            is ApiResult.NetworkError -> Log.w(TAG, "startSession network error: ${result.exception}")
-        }
-        return result
+        return next
     }
+
+    fun trySingleLocalPcmRetry(mime: String, channels: Int): Boolean {
+        val mutation = "pcm:${mime.lowercase()}:${channels.coerceAtLeast(0)}"
+        recordLocalMutation(mutation) { mutations -> mutations.any { it.startsWith("pcm:") } }
+            ?: return false
+        return passthroughSuppression.suppressForSinglePcmRetry(mime, channels)
+    }
+
+    fun recordTransportReopen(): Boolean =
+        recordLocalMutation("transport_reopen") { mutations -> "transport_reopen" in mutations } != null
 
     companion object {
         private const val TAG = "PlaybackSessionMgr"
@@ -2442,6 +2401,34 @@ open class PlaybackSessionManager(
             "quality_changed",
             "output_route_changed",
         )
+
+        /**
+         * The v3 replan operation a classification means.
+         *
+         * Track and quality changes are user intents, not failures, and the
+         * contract now has operations that say so — so the classification the
+         * player already computes selects the operation instead of every call
+         * site having to name both. `output_route_changed` deliberately stays
+         * failure recovery: the route the client was using genuinely stopped
+         * working, and the server should exclude it.
+         */
+        fun replanOperationForClassification(classification: String): String = when (classification) {
+            "audio_track_changed", "subtitle_track_changed" -> TRACK_CHANGE_V3_OPERATION
+            "quality_changed" -> QUALITY_CHANGE_V3_OPERATION
+            else -> FAILURE_RECOVERY_V3_OPERATION
+        }
+
+        /**
+         * The server returned a structurally valid plan that names a client-side
+         * runtime correction or transformation this build cannot execute.
+         *
+         * Not a protocol mismatch: the neutral v3 contract has no engine field
+         * for the server to get wrong, so the only way a plan is unexecutable
+         * here is a capability this client does not have.
+         */
+        internal const val UNEXECUTABLE_ROUTE_REASON = "unexecutable_client_route"
+        internal const val UNEXECUTABLE_ROUTE_MESSAGE =
+            "The server returned a playback route this client cannot execute."
     }
 
     /**
@@ -2568,171 +2555,12 @@ open class PlaybackSessionManager(
         return requireNotNull(result)
     }
 
-    /**
-     * Requests transcoding with specific parameters.
-     * Used when switching quality mid-playback or when the server chose transcode
-     * and the encoding needs to be started explicitly.
-     */
-    suspend fun startTranscode(request: TranscodeStartRequest): ApiResult<TranscodeStartResponse> =
-        playbackRepository.startTranscode(request)
-
     /** Returns the current access token for stream authentication. */
     suspend fun getAccessToken(): String? = tokenManager.getAccessToken()
 
     /** Returns the server base URL for resolving relative stream URLs. */
     suspend fun getServerUrl(): String = tokenManager.getServerUrl()
 
-    enum class TranscodeMode { REMUX, FULL }
-
-    /**
-     * Issue a `TranscodeStartRequest` for a fallback path — either because the
-     * server chose REMUX / TRANSCODE up front (`handleSessionStarted`) or
-     * because client-side preflight determined direct play was impossible
-     * ([PlaybackPreflightListener] in PR 8). Folds the resulting HLS URL back
-     * into a [PlaybackSessionResponse] so both VMs can treat the result like
-     * any other session start.
-     *
-     * Does **not** stop the caller's current session — ViewModels handle that
-     * alongside their state cleanup, which is the point they also tear down
-     * progress reporting.
-     */
-    suspend fun startTranscodeFallback(
-        session: PlaybackSessionResponse,
-        seekSeconds: Double,
-        resolution: String,
-        mode: TranscodeMode,
-        audioTrackIndex: Int? = null,
-        subtitleTrackIndex: Int? = null,
-    ): ApiResult<PlaybackSessionResponse> {
-        val isRemux = mode == TranscodeMode.REMUX
-        val request = TranscodeStartRequest(
-            sessionId = session.sessionId,
-            seekSeconds = seekSeconds,
-            targetResolution = if (isRemux) "" else resolution,
-            targetCodecVideo = if (isRemux) "copy" else "h264",
-            // REMUX copies audio to preserve passthrough codecs
-            // (EAC3/TrueHD/DTS). Forcing AAC clobbers the play-method
-            // decision.
-            targetCodecAudio = if (isRemux) "copy" else "aac",
-            targetBitrateKbps = if (isRemux) 0 else 8000,
-            segmentDuration = 2,
-            audioTrackIndex = audioTrackIndex,
-            subtitleTrackIndex = subtitleTrackIndex,
-            subtitleBurnIn = shouldBurnStyledSubtitle(
-                isRemux = isRemux,
-                subtitleTrackIndex = subtitleTrackIndex,
-                subtitleCodec = session.playbackPlan?.source?.subtitleCodec,
-            ),
-        )
-        Log.i(
-            TAG,
-            "startTranscodeFallback session=${session.sessionId} mode=$mode seekSeconds=$seekSeconds " +
-                "targetResolution=${request.targetResolution} " +
-                "targetCodecVideo=${request.targetCodecVideo} " +
-                "targetCodecAudio=${request.targetCodecAudio} " +
-                "targetBitrateKbps=${request.targetBitrateKbps} " +
-                "audioTrackIndex=$audioTrackIndex subtitleTrackIndex=$subtitleTrackIndex",
-        )
-        return when (val r = playbackRepository.startTranscode(request)) {
-            is ApiResult.Success -> {
-                val tc = r.data
-                ApiResult.Success(
-                    session.copy(
-                        sessionId = tc.sessionId,
-                        playMethod = if (isRemux) {
-                            org.siloserver.silo.model.playback.PlayMethod.REMUX
-                        } else {
-                            org.siloserver.silo.model.playback.PlayMethod.TRANSCODE
-                        },
-                        streamUrl = tc.manifestUrl,
-                        durationSeconds = tc.durationSeconds ?: session.durationSeconds,
-                        position = tc.playerStartSeconds,
-                        playbackPlan = session.playbackPlan?.let { plan ->
-                            plan.copy(
-                                delivery = if (isRemux) {
-                                    PlaybackDelivery.SERVER_REMUX_HLS
-                                } else {
-                                    PlaybackDelivery.SERVER_TRANSCODE_HLS
-                                },
-                                engine = PlaybackEngineKind.MEDIA3_HLS,
-                                routeFamily = PlaybackRouteFamily.SERVER_ADAPTIVE,
-                                stream = PlaybackStreamRequest(
-                                    url = tc.manifestUrl,
-                                    streamType = "hls",
-                                    playMethod = if (isRemux) {
-                                        org.siloserver.silo.model.playback.PlayMethod.REMUX
-                                    } else {
-                                        org.siloserver.silo.model.playback.PlayMethod.TRANSCODE
-                                    },
-                                ),
-                                timeline = PlaybackTimeline(
-                                    playerStartSeconds = tc.playerStartSeconds,
-                                    streamOriginSeconds = tc.streamOriginSeconds,
-                                    timelineOffsetSeconds = tc.timelineOffsetSeconds,
-                                    canSeekAnywhere = tc.canSeekAnywhere,
-                                ),
-                                degradationWarnings = plan.degradationWarnings +
-                                    org.siloserver.silo.model.playback.PlaybackDegradationWarning(
-                                        code = if (isRemux) {
-                                            "server_remux_fallback"
-                                        } else {
-                                            "server_transcode_fallback"
-                                        },
-                                        message = if (isRemux) {
-                                            "Playback fell back to server remux."
-                                        } else {
-                                            "Playback fell back to server transcode."
-                                        },
-                                    ),
-                            )
-                        },
-                    ),
-                )
-            }
-            is ApiResult.Error -> r
-            is ApiResult.NetworkError -> r
-        }
-    }
-
-    suspend fun startTranscodeFallbackRecoveringMissingSession(
-        session: PlaybackSessionResponse,
-        seekSeconds: Double,
-        resolution: String,
-        mode: TranscodeMode,
-        audioTrackIndex: Int? = null,
-        subtitleTrackIndex: Int? = null,
-        renewSession: suspend () -> ApiResult<PlaybackSessionResponse>,
-    ): ApiResult<PlaybackSessionResponse> {
-        val first = startTranscodeFallback(
-            session = session,
-            seekSeconds = seekSeconds,
-            resolution = resolution,
-            mode = mode,
-            audioTrackIndex = audioTrackIndex,
-            subtitleTrackIndex = subtitleTrackIndex,
-        )
-        if (!first.isPlaybackSessionMissingError()) return first
-
-        Log.w(TAG, "Fallback session missing; renewing playback session before retry")
-        return when (val renewed = renewSession()) {
-            is ApiResult.Success -> {
-                val retry = startTranscodeFallback(
-                    session = renewed.data,
-                    seekSeconds = seekSeconds,
-                    resolution = resolution,
-                    mode = mode,
-                    audioTrackIndex = audioTrackIndex,
-                    subtitleTrackIndex = subtitleTrackIndex,
-                )
-                if (retry !is ApiResult.Success) {
-                    stopSession(renewed.data.sessionId)
-                }
-                retry
-            }
-            is ApiResult.Error -> renewed
-            is ApiResult.NetworkError -> renewed
-        }
-    }
 }
 
 internal fun ApiResult<*>.isPlaybackSessionMissingError(): Boolean {
@@ -2740,16 +2568,3 @@ internal fun ApiResult<*>.isPlaybackSessionMissingError(): Boolean {
     return error.code == 404 &&
         (error.error == "playback_session_not_found" || error.message == "Playback session not found")
 }
-
-/**
- * A styled subtitle selected for a full server transcode is burned in. Remux
- * has no video encode surface, and plain text stays client-rendered.
- */
-internal fun shouldBurnStyledSubtitle(
-    isRemux: Boolean,
-    subtitleTrackIndex: Int?,
-    subtitleCodec: String?,
-): Boolean =
-    !isRemux &&
-        subtitleTrackIndex != null &&
-        subtitleCodec?.trim()?.lowercase() in setOf("ass", "ssa")

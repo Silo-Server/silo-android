@@ -2,7 +2,6 @@ package org.siloserver.silo.common.player
 
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackRouteFamily
@@ -104,7 +103,6 @@ internal fun PlaybackPlanV3.toSessionResponse(
         planId = planId,
         protocolVersion = protocolVersion,
         delivery = delivery,
-        engine = engine,
         routeFamily = routeFamily,
         stream = PlaybackStreamRequest(
             url = stream.url,
@@ -144,6 +142,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
         transformations = transformations,
         appliedQuirks = appliedQuirks,
         runtimeCorrections = runtimeCorrections,
+        availableQualities = availableQualities,
         degradationWarnings = degradationWarnings,
         decisionTrace = listOf(decisionReason),
         requestedMediaFileId = requestedMediaFileId ?: mediaFileId,

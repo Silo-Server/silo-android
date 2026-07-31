@@ -1,6 +1,8 @@
 package org.siloserver.silo.common.player
 
+import android.app.UiModeManager
 import android.content.Context
+import android.content.res.Configuration
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
@@ -12,24 +14,19 @@ import org.siloserver.silo.player.DolbyVisionPolicy
 import org.siloserver.silo.common.player.video.media3OriginalPlaybackContainers
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
-import org.siloserver.silo.model.playback.EngineCapabilityEnvelope
-import org.siloserver.silo.model.playback.EngineSubtitleCapabilities
-import org.siloserver.silo.model.playback.DETAILED_DECODE_CAPABILITIES_FEATURE
-import org.siloserver.silo.model.playback.EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE
-import org.siloserver.silo.model.playback.LAYOUT_AWARE_PASSTHROUGH_FEATURE
-import org.siloserver.silo.model.playback.CLIENT_VIDEO_TRANSFORMATIONS_FEATURE
-import org.siloserver.silo.model.playback.DEVICE_QUIRKS_V3_FEATURE
+import org.siloserver.silo.model.playback.CAPABILITY_EVIDENCE_EXACT
+import org.siloserver.silo.model.playback.DELIVERY_CLASS_HLS
+import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
+import org.siloserver.silo.model.playback.DELIVERY_CLASS_PROGRESSIVE
+import org.siloserver.silo.model.playback.DeliveryCapability
+import org.siloserver.silo.model.playback.DeliverySubtitleCapabilities
 import org.siloserver.silo.model.playback.CLIENT_DV8_HDR10_PLUS_SANITIZER
 import org.siloserver.silo.model.playback.CLIENT_POST_RESUME_VIDEO_RECOVERY
 import org.siloserver.silo.model.playback.CLIENT_SURFACE_RECOVERY
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
 import org.siloserver.silo.model.playback.CLIENT_DV_TRANSFORM_RECIPE_VERSION
-import org.siloserver.silo.model.playback.MEDIA3_ONLY_FEATURE
-import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
-import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDeviceContext
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackTransformationExecutor
 import org.siloserver.silo.model.playback.PlaybackTransformationV3
 import org.siloserver.silo.model.playback.PlaybackOutputContext
@@ -186,6 +183,14 @@ class PlaybackCapabilityDetector(
             intersectedHdr.dolbyVisionProfiles.isNotEmpty()
 
         return ClientCodecCapabilities(
+            // Stated rather than defaulted: both lists below come from a
+            // MediaCodecList probe of the concrete profile/level/bit-depth
+            // tuples this device reports, which is what "exact" claims. If a
+            // future path ever fabricates part of them, the tier has to drop
+            // here — the server strictly validates plans against exact
+            // evidence, and only exact evidence earns audio passthrough.
+            videoEvidence = CAPABILITY_EVIDENCE_EXACT,
+            audioEvidence = CAPABILITY_EVIDENCE_EXACT,
             codecsVideo = codecProbe.videoCodecs.toList(),
             codecsVideoHardware = codecProbe.videoCodecs.toList(),
             // This list is decode-only. Encoded formats accepted by the
@@ -201,30 +206,30 @@ class PlaybackCapabilityDetector(
         )
     }
 
+    /**
+     * The form factor implied by the current UI mode, for callers that live in
+     * `android-shared` and so cannot see either app's `BuildConfig`. The app
+     * modules pass their own literal ("mobile" / "tv") because they know it
+     * statically; shared players (the audiobook one) call this instead of
+     * guessing.
+     */
+    fun detectedFormFactor(): String = androidFormFactor(context)
+
+    /** The installed version name, for the same shared callers. */
+    fun detectedAppVersion(): String = androidAppVersion(context)
+
     fun detectPlaybackContext(
-        formFactor: String,
-        appVersion: String = "unknown",
+        formFactor: String = detectedFormFactor(),
+        appVersion: String = detectedAppVersion(),
         ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
         dolbyVision: DolbyVisionPolicy.Snapshot = DolbyVisionPolicy.Snapshot(),
     ): ClientPlaybackContext {
         val caps = detect(ffmpegAvailable, dolbyVision)
-        val supportedAbis = Build.SUPPORTED_ABIS?.toList().orEmpty()
         val passthrough = caps.audioPassthrough
         val decodeAudio = caps.codecsAudio
-        val media3Audio = decodeAudio
         val libassRendering = libassBridge.isRenderingSupported
         val libassEmbeddedFonts = libassBridge.isEmbeddedFontsSupported
         val libassDirectFidelity = libassRendering && libassEmbeddedFonts
-        val contextFeatures = buildList {
-            add(PLAYBACK_PLAN_V3_FEATURE)
-            add(SEEK_REANCHOR_V3_FEATURE)
-            add(MEDIA3_ONLY_FEATURE)
-            add(DETAILED_DECODE_CAPABILITIES_FEATURE)
-            if (!passthrough?.entries.isNullOrEmpty()) add(LAYOUT_AWARE_PASSTHROUGH_FEATURE)
-            add(CLIENT_VIDEO_TRANSFORMATIONS_FEATURE)
-            add(DEVICE_QUIRKS_V3_FEATURE)
-            add(EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE)
-        }
         val clientVideoTransformations = buildList {
             if (8 in caps.hdrDetails?.dolbyVisionProfiles.orEmpty() && NativeDolbyVisionRpuConverter.isAvailable) {
                 add(
@@ -256,43 +261,40 @@ class PlaybackCapabilityDetector(
             }
         }
         return ClientPlaybackContext(
-            features = contextFeatures,
             formFactor = formFactor,
             appVersion = appVersion,
             device = PlaybackDeviceContext(
+                platform = "android",
+                osVersion = Build.VERSION.RELEASE,
                 manufacturer = Build.MANUFACTURER,
                 model = Build.MODEL,
-                brand = Build.BRAND,
-                device = Build.DEVICE,
-                product = Build.PRODUCT,
-                socManufacturer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    Build.SOC_MANUFACTURER
-                } else null,
-                socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else null,
-                buildId = Build.ID,
-                buildDisplay = Build.DISPLAY,
-                securityPatch = Build.VERSION.SECURITY_PATCH,
-                sdkInt = Build.VERSION.SDK_INT,
-                abis = supportedAbis,
+                // Everything below is Android-shaped detail the neutral
+                // contract does not model. It exists for device quirks and
+                // support diagnostics, so it goes in the free-form bag rather
+                // than growing platform-specific fields on the wire type.
+                platformDetails = androidPlatformDetails(),
             ),
             output = PlaybackOutputContext(
                 hdrDetails = caps.hdrDetails,
                 audioPassthrough = passthrough,
                 currentSink = if (passthrough?.passthroughCodecs?.isNotEmpty() == true) "passthrough_sink" else "local_output",
                 sinkType = audioCapabilityManager.currentSinkType(),
-                outputRouteGeneration = audioCapabilityManager.outputRouteGeneration.value,
+                // Opaque to the server, which only ever compares it for
+                // equality. Android's route generation counter is exactly that:
+                // it changes when the audio route changes and nothing else.
+                outputContextId = audioCapabilityManager.outputRouteGeneration.value.toString(),
             ),
-            engines = mapOf(
-                PlaybackEngineKind.MEDIA3_DIRECT to EngineCapabilityEnvelope(
+            deliveries = mapOf(
+                DELIVERY_CLASS_ORIGINAL_HTTP to DeliveryCapability(
                     enabled = true,
                     supportedOnDevice = true,
                     containers = media3OriginalPlaybackContainers,
                     videoCodecs = caps.codecsVideo,
-                    audioDecodeCodecs = media3Audio,
+                    audioDecodeCodecs = decodeAudio,
                     audioPassthroughCodecs = passthrough?.passthroughCodecs.orEmpty(),
                     maxChannels = passthrough?.maxChannels,
                     hdrDetails = caps.hdrDetails,
-                    subtitles = EngineSubtitleCapabilities(
+                    subtitles = DeliverySubtitleCapabilities(
                         embeddedText = true,
                         sidecarText = true,
                         assStyling = libassDirectFidelity,
@@ -317,17 +319,17 @@ class PlaybackCapabilityDetector(
                     authHeaderRefresh = true,
                     validatedClaims = emptyList(),
                 ),
-                PlaybackEngineKind.MEDIA3_PROGRESSIVE_REMUX to EngineCapabilityEnvelope(
+                DELIVERY_CLASS_PROGRESSIVE to DeliveryCapability(
                     enabled = false,
                     supportedOnDevice = false,
                     failureReason = "disabled_pending_seekable_transport",
                     containers = listOf("mp4", "m4v", "webm", "mkv", "matroska"),
                     videoCodecs = caps.codecsVideo,
-                    audioDecodeCodecs = media3Audio,
+                    audioDecodeCodecs = decodeAudio,
                     audioPassthroughCodecs = passthrough?.passthroughCodecs.orEmpty(),
                     maxChannels = passthrough?.maxChannels,
                     hdrDetails = caps.hdrDetails,
-                    subtitles = EngineSubtitleCapabilities(
+                    subtitles = DeliverySubtitleCapabilities(
                         embeddedText = true,
                         sidecarText = true,
                     ),
@@ -342,16 +344,16 @@ class PlaybackCapabilityDetector(
                     authHeaderRefresh = true,
                     validatedClaims = emptyList(),
                 ),
-                PlaybackEngineKind.MEDIA3_HLS to EngineCapabilityEnvelope(
+                DELIVERY_CLASS_HLS to DeliveryCapability(
                     enabled = true,
                     supportedOnDevice = true,
                     containers = listOf("m3u8", "hls"),
                     videoCodecs = caps.codecsVideo,
-                    audioDecodeCodecs = media3Audio,
+                    audioDecodeCodecs = decodeAudio,
                     audioPassthroughCodecs = passthrough?.passthroughCodecs.orEmpty(),
                     maxChannels = passthrough?.maxChannels,
                     hdrDetails = caps.hdrDetails,
-                    subtitles = EngineSubtitleCapabilities(
+                    subtitles = DeliverySubtitleCapabilities(
                         embeddedText = true,
                         sidecarText = true,
                         assStyling = libassRendering,
@@ -375,6 +377,50 @@ class PlaybackCapabilityDetector(
             ),
         )
     }
+
+    /**
+     * The Android-specific half of the device description, as a flat string map.
+     *
+     * The server bounds this at 16 entries with keys and values under 128
+     * characters, so keep it to the fields device quirks actually match on.
+     */
+    private fun androidPlatformDetails(): Map<String, String> = buildMap {
+        Build.BRAND?.let { put("brand", it) }
+        Build.DEVICE?.let { put("device", it) }
+        Build.PRODUCT?.let { put("product", it) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Build.SOC_MANUFACTURER?.let { put("soc_manufacturer", it) }
+            Build.SOC_MODEL?.let { put("soc_model", it) }
+        }
+        Build.ID?.let { put("build_id", it) }
+        Build.DISPLAY?.let { put("build_display", it) }
+        Build.VERSION.SECURITY_PATCH?.let { put("security_patch", it) }
+        put("sdk_int", Build.VERSION.SDK_INT.toString())
+        Build.SUPPORTED_ABIS?.toList()?.takeIf { it.isNotEmpty() }
+            ?.let { put("abis", it.joinToString(",")) }
+    }
+
+    /**
+     * Derives the form factor from the current UI mode. Mirrors the diagnostics
+     * collector's classification so a device reports the same shape to the
+     * playback contract and to support bundles.
+     */
+    private fun androidFormFactor(context: Context): String {
+        val uiMode = (context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager)?.currentModeType
+        return when {
+            uiMode == Configuration.UI_MODE_TYPE_TELEVISION -> "tv"
+            uiMode == Configuration.UI_MODE_TYPE_WATCH -> "watch"
+            uiMode == Configuration.UI_MODE_TYPE_CAR -> "automotive"
+            context.resources.configuration.smallestScreenWidthDp >= 600 -> "tablet"
+            else -> "mobile"
+        }
+    }
+
+    private fun androidAppVersion(context: Context): String =
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: "unknown"
 
     /** Returns codecs backed by an Android platform [MediaCodec] decoder. */
     private fun detectPlatformSoftwareAudioCodecs(): List<String> {

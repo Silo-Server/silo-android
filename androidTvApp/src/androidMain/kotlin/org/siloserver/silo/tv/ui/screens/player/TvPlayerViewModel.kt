@@ -1525,7 +1525,6 @@ class TvPlayerViewModel(
                 startPosition = ready.session.position,
             ),
             session = ready.session,
-            renewMissingSessionWithLegacyStart = false,
             deferPublication = true,
             isCurrent = adoption::isCurrent,
         )
@@ -2221,6 +2220,7 @@ class TvPlayerViewModel(
                 qualityPreference = qualityPreference,
                 capabilities = capabilities,
                 clientPlaybackContext = playbackContext,
+                operation = PlaybackSessionManager.replanOperationForClassification(classification),
             )
             // PlaybackRepository's safe-call layer may translate cancellation to an ApiResult.
             // Re-check both coroutine and content generations before any response can adopt.
@@ -2286,7 +2286,6 @@ class TvPlayerViewModel(
                                     startPosition = decision.session.position,
                                 ),
                                 session = decision.session,
-                                renewMissingSessionWithLegacyStart = false,
                                 isCurrent = {
                                     recoveryContentGeneration == contentLoadGeneration &&
                                         isActive
@@ -3161,7 +3160,6 @@ class TvPlayerViewModel(
                 startPosition = sourcePosition,
             ),
             session = decision.session,
-            renewMissingSessionWithLegacyStart = false,
             isCurrent = { isCurrentSeekRecovery(request) },
         )
         // Deliberately no stop on refusal. A seek re-anchor is validated to

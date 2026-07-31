@@ -20,6 +20,7 @@ import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PLAYBACK_START_CLIENT_FEATURES_V3
 import org.siloserver.silo.model.playback.PlaybackFailureV3
+import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
@@ -54,7 +55,11 @@ class PlaybackApiTest {
         return PlaybackApi(client)
     }
 
-    private fun context() = ClientPlaybackContext(formFactor = "tv", appVersion = "test")
+    private fun context(outputContextId: String? = null) = ClientPlaybackContext(
+        formFactor = "tv",
+        appVersion = "test",
+        output = PlaybackOutputContext(outputContextId = outputContextId),
+    )
 
     @Test
     fun `v3 start uses canonical endpoint and negotiation fields`() = runTest {
@@ -67,9 +72,8 @@ class PlaybackApiTest {
                 subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
                 audioTrackId = "file:42:audio:2",
                 audioTrackIndex = 2,
-                outputRouteGeneration = 7,
                 capabilities = ClientCodecCapabilities(),
-                clientPlaybackContext = context(),
+                clientPlaybackContext = context(outputContextId = "7"),
             ),
         )
 
@@ -99,7 +103,6 @@ class PlaybackApiTest {
                 attemptCount = 2,
                 qualityPreference = "720p",
                 positionSeconds = 12.5,
-                outputRouteGeneration = 8,
                 metered = true,
                 bandwidthEstimateKbps = 18_500,
                 bandwidthCapKbps = 12_000,
@@ -128,7 +131,7 @@ class PlaybackApiTest {
                 playbackAttemptId = "attempt",
                 sessionId = "session",
                 event = "plan_failed",
-                outputRouteGeneration = 9,
+                outputContextId = "9",
             ),
         )
 
@@ -137,5 +140,6 @@ class PlaybackApiTest {
         val body = SiloJson.parseToJsonElement(captured.body).jsonObject
         assertEquals("attempt", body["playback_attempt_id"]!!.jsonPrimitive.content)
         assertEquals("plan_failed", body["event"]!!.jsonPrimitive.content)
+        assertEquals("9", body["output_context_id"]!!.jsonPrimitive.content)
     }
 }

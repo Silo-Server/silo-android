@@ -36,7 +36,6 @@ import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
@@ -146,7 +145,7 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `staged replacement exposes manager derived output route generation`() = runTest {
+    fun `staged replacement exposes the output context the candidate was planned against`() = runTest {
         val harness = Harness(
             replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
         )
@@ -161,12 +160,12 @@ class PlaybackSessionManagerStagedReplanTest {
                 clientPlaybackContext = ClientPlaybackContext(
                     formFactor = "tv",
                     appVersion = "test",
-                    output = PlaybackOutputContext(outputRouteGeneration = 11),
+                    output = PlaybackOutputContext(outputContextId = "11"),
                 ),
             ),
         ).data
 
-        assertEquals(11, staged.outputRouteGeneration)
+        assertEquals("11", staged.outputContextId)
     }
 
     @Test
@@ -818,13 +817,13 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `deferred legacy fresh start terminal replan restores prior active attempt`() = runTest {
+    fun `deferred unexecutable fresh start terminal replan restores prior active attempt`() = runTest {
         val harness = Harness(
             startResponses = listOf(
                 response(basePlan(sessionId = "s1", fileId = 42)),
                 response(
                     basePlan(sessionId = "s3", fileId = 84).copy(
-                        engine = PlaybackEngineKind.MPV_DIRECT,
+                        runtimeCorrections = listOf("future_runtime_fix"),
                     ),
                 ),
             ),
@@ -1316,7 +1315,7 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `immediate legacy engine response preserves terminal outcome and cleanup`() = runTest {
+    fun `immediate unexecutable route response preserves terminal outcome and cleanup`() = runTest {
         val harness = Harness(
             replanResponse = { index, _ ->
                 if (index == 0) {
@@ -1324,7 +1323,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 } else {
                     response(
                         sidecarPlan(sessionId = "s3").copy(
-                            engine = PlaybackEngineKind.MPV_DIRECT,
+                            runtimeCorrections = listOf("future_runtime_fix"),
                         ),
                     )
                 }
@@ -1343,7 +1342,7 @@ class PlaybackSessionManagerStagedReplanTest {
         val terminal = assertIs<VideoSessionStartV3.Terminal>(
             assertIs<ApiResult.Success<VideoSessionStartV3>>(result).data,
         )
-        assertEquals("unsupported_legacy_engine", terminal.reason)
+        assertEquals(PlaybackSessionManager.UNEXECUTABLE_ROUTE_REASON, terminal.reason)
         assertEquals(null, harness.manager.activeSessionIdForTest())
         assertEquals(
             mapOf("s1" to 1, "s3" to 1),
@@ -1463,7 +1462,7 @@ class PlaybackSessionManagerStagedReplanTest {
                     clientPlaybackContext = ClientPlaybackContext(
                         formFactor = "tv",
                         appVersion = "test",
-                        output = PlaybackOutputContext(outputRouteGeneration = 7),
+                        output = PlaybackOutputContext(outputContextId = "7"),
                     ),
                     audioTrackIndex = 0,
                     subtitleTrackIndex = null,
@@ -1506,7 +1505,6 @@ class PlaybackSessionManagerStagedReplanTest {
             planId = "plan-$sessionId",
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
-            engine = PlaybackEngineKind.MEDIA3_HLS,
             stream = PlaybackStreamV3(
                 url = "/stream/$sessionId/master.m3u8",
                 protocol = PlaybackStreamProtocol.HLS,

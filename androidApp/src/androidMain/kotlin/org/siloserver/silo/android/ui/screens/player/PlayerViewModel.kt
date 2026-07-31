@@ -1637,6 +1637,7 @@ class PlayerViewModel(
                 diagnostics = diagnostics,
                 capabilities = capabilities,
                 clientPlaybackContext = playbackContext,
+                operation = PlaybackSessionManager.replanOperationForClassification(classification),
             )
             // Returning on a stale generation is not enough on its own. By the
             // time this call returns, the manager has already committed and
@@ -1680,7 +1681,6 @@ class PlayerViewModel(
                                     startPosition = decision.session.position,
                                 ),
                                 session = decision.session,
-                                renewMissingSessionWithLegacyStart = false,
                                 isCurrent = {
                                     recoveryGeneration == playbackRecoveryGeneration && isActive
                                 },
@@ -2624,7 +2624,6 @@ class PlayerViewModel(
                 startPosition = sourcePosition,
             ),
             session = decision.session,
-            renewMissingSessionWithLegacyStart = false,
             isCurrent = { isCurrentServerSeek(request, recoveryGeneration) },
         )
         // Deliberately no stop on refusal, unlike the replan paths. A seek
@@ -2847,7 +2846,6 @@ class PlayerViewModel(
                 clientPlaybackContext = playbackContext,
             ),
             session = ready.session.copy(subtitleUrls = playback.subtitleTracks),
-            renewMissingSessionWithLegacyStart = false,
             isCurrent = adoption::isCurrent,
         )
         // The lifecycle owns this session from here, so the exit token has to

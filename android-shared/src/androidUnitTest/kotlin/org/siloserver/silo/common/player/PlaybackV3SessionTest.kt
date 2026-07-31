@@ -1,7 +1,6 @@
 package org.siloserver.silo.common.player
 
 import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
@@ -189,7 +188,6 @@ class PlaybackV3SessionTest {
             {
               "plan_id": "plan",
               "delivery": "original_http",
-              "engine": "media3_direct",
               "stream": {"url": "/stream/session", "protocol": "http_progressive"},
               "decision_reason": "test"
             }
@@ -211,7 +209,6 @@ class PlaybackV3SessionTest {
         source = source,
         planId = "plan",
         delivery = PlaybackDelivery.ORIGINAL_HTTP,
-        engine = PlaybackEngineKind.MEDIA3_DIRECT,
         stream = PlaybackStreamV3(
             url = "/stream/session",
             protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,

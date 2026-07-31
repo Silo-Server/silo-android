@@ -243,7 +243,6 @@ class TvVideoPlaybackStarter(
                     clientPlaybackContext = playbackContext,
                 ),
                 session = resolved,
-                renewMissingSessionWithLegacyStart = false,
                 deferPublication = true,
                 expectedOwnershipEpoch = ownershipEpoch,
             )

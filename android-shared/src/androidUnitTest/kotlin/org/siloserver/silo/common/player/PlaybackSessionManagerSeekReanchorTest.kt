@@ -33,7 +33,6 @@ import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
@@ -161,12 +160,22 @@ class PlaybackSessionManagerSeekReanchorTest {
         assertEquals(90.0, request["position_seconds"]!!.jsonPrimitive.double)
         assertEquals("plan-1", request.string("failed_plan_id"))
         assertEquals("original", request.string("quality_preference"))
-        assertEquals(7, request["output_route_generation"]!!.jsonPrimitive.int)
+        assertEquals(
+            "7",
+            request["client_playback_context"]!!.jsonObject["output"]!!.jsonObject.string("output_context_id"),
+        )
         assertFalse(request["metered"]!!.jsonPrimitive.content.toBoolean())
         assertEquals(50_000, request["bandwidth_estimate_kbps"]!!.jsonPrimitive.int)
         assertEquals("file:42:audio:1", request["selected_tracks"]!!.jsonObject["audio"]!!.jsonObject.string("id"))
         assertEquals(listOf("hevc"), request["client_capabilities"]!!.jsonObject["codecs_video"]!!.jsonArray.map { it.jsonPrimitive.content })
-        assertEquals(2, request["attempted_plan_keys"]!!.jsonArray.size)
+        // Keys are server-owned: a local mutation records itself in
+        // `local_mutations` and leaves the key history alone, because only the
+        // server can mint the key for a route it has not planned yet.
+        assertEquals(
+            listOf("transport_reopen"),
+            request["local_mutations"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals(1, request["attempted_plan_keys"]!!.jsonArray.size)
         assertEquals(
             request.string("plan_attempt_key"),
             request["attempted_plan_keys"]!!.jsonArray.last().jsonPrimitive.content,
@@ -283,10 +292,14 @@ class PlaybackSessionManagerSeekReanchorTest {
 
     @Test
     fun failedImmediateStartupReplanStopsAllocatedSessionAndClearsAttempt() = runTest {
-        val harness = Harness(response(plan().copy(engine = PlaybackEngineKind.MPV_DIRECT))) { _, _ ->
+        // An unknown runtime correction is a route this client cannot execute,
+        // so the manager replans immediately at startup — and that replan fails.
+        val harness = Harness(
+            response(plan().copy(runtimeCorrections = listOf("future_runtime_fix"))),
+        ) { _, _ ->
             MockResponse(
                 HttpStatusCode.InternalServerError,
-                """{"error":"replan_failed","message":"Could not replace legacy route"}""",
+                """{"error":"replan_failed","message":"Could not replace unexecutable route"}""",
             )
         }
 
@@ -333,6 +346,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         val initial = plan()
         val fallback = initial.copy(
             planId = "plan-2",
+            planAttemptKey = "v3:00000000000000a2",
             delivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
             stream = initial.stream.copy(url = "/stream/session-1/seek-recovery.m3u8"),
             effectiveRecipe = initial.effectiveRecipe.copy(audioCodec = "aac"),
@@ -340,6 +354,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         )
         val thirdRoute = fallback.copy(
             planId = "plan-3",
+            planAttemptKey = "v3:00000000000000a3",
             stream = fallback.stream.copy(container = "fmp4"),
         )
         val harness = Harness(response(initial)) { index, _ ->
@@ -381,6 +396,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         val initial = plan()
         val fallback = initial.copy(
             planId = "plan-2",
+            planAttemptKey = "v3:00000000000000a2",
             stream = initial.stream.copy(url = "/stream/session-1/seek-recovery.m3u8"),
             requestedMediaFileId = null,
             effectiveMediaFileId = null,
@@ -403,6 +419,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         val initial = plan()
         val switchedFile = initial.copy(
             planId = "plan-other-file",
+            planAttemptKey = "v3:00000000000000b1",
             requestedMediaFileId = 84,
             effectiveMediaFileId = 84,
             selectedTracks = SelectedPlaybackTracksV3(
@@ -411,6 +428,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         )
         val fallback = initial.copy(
             planId = "plan-2",
+            planAttemptKey = "v3:00000000000000a2",
             delivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
             effectiveRecipe = initial.effectiveRecipe.copy(audioCodec = "aac"),
         )
@@ -541,7 +559,7 @@ class PlaybackSessionManagerSeekReanchorTest {
                 clientPlaybackContext = ClientPlaybackContext(
                     formFactor = "tv",
                     appVersion = "test",
-                    output = PlaybackOutputContext(outputRouteGeneration = 7),
+                    output = PlaybackOutputContext(outputContextId = "7"),
                 ),
                 audioTrackIndex = 1,
                 subtitleTrackIndex = null,
@@ -553,8 +571,11 @@ class PlaybackSessionManagerSeekReanchorTest {
     private fun plan(): PlaybackPlanV3 = PlaybackPlanV3(
         planId = "plan-1",
         sessionId = "session-1",
+        // Server-minted and opaque. Fixtures use the server's `v3:%016x` shape
+        // and give every distinct route its own key, because the client's loop
+        // guard compares keys and can no longer derive one to tell routes apart.
+        planAttemptKey = "v3:00000000000000a1",
         delivery = PlaybackDelivery.SERVER_REMUX_HLS,
-        engine = PlaybackEngineKind.MEDIA3_HLS,
         stream = PlaybackStreamV3(
             url = "/stream/session-1/master.m3u8",
             protocol = PlaybackStreamProtocol.HLS,

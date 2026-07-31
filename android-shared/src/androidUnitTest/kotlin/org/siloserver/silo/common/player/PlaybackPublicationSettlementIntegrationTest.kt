@@ -29,7 +29,6 @@ import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
@@ -46,10 +45,8 @@ import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.PlaybackApi
-import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
-import org.siloserver.silo.repository.ProfileRepository
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -500,7 +497,6 @@ class PlaybackPublicationSettlementIntegrationTest {
         )
         val lifecycle = PlaybackSessionLifecycle(
             sessionManager = manager,
-            profileRepository = SettlementProfileRepository(),
             healthApi = SettlementHealthApi(),
             personalDataRepository = SettlementPersonalDataRepository(),
             scope = scope,
@@ -552,7 +548,6 @@ class PlaybackPublicationSettlementIntegrationTest {
             ),
             session = ready.session,
             manageProgress = false,
-            renewMissingSessionWithLegacyStart = false,
             deferPublication = deferPublication,
             isCurrent = { true },
         )
@@ -579,7 +574,7 @@ class PlaybackPublicationSettlementIntegrationTest {
             val playbackContext = ClientPlaybackContext(
                 formFactor = "tv",
                 appVersion = "test",
-                output = PlaybackOutputContext(outputRouteGeneration = 7),
+                output = PlaybackOutputContext(outputContextId = "7"),
             )
         }
     }
@@ -601,7 +596,6 @@ class PlaybackPublicationSettlementIntegrationTest {
             planId = "plan-$sessionId",
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
-            engine = PlaybackEngineKind.MEDIA3_HLS,
             stream = PlaybackStreamV3(
                 url = "/stream/$sessionId/master.m3u8",
                 protocol = PlaybackStreamProtocol.HLS,
@@ -624,13 +618,6 @@ class PlaybackPublicationSettlementIntegrationTest {
 
 private fun PlaybackSessionLifecycle.activeSessionId(): String? =
     (state.value as? SessionState.Active)?.session?.sessionId
-
-private class SettlementProfileRepository : ProfileRepository(
-    profileApi = ProfileApi(HttpClient()),
-    tokenManager = SettlementTokenManager,
-) {
-    override suspend fun getActiveProfileId(): String = "profile-1"
-}
 
 private class SettlementHealthApi : HealthApi(HttpClient()) {
     override suspend fun checkHealth(): ApiResult<HealthStatus> =

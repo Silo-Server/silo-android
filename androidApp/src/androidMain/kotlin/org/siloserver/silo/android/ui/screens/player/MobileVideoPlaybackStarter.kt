@@ -255,7 +255,6 @@ internal class MobileVideoPlaybackStarter(
                     sessionLifecycle.adoptActiveSessionIfCurrent(
                         params = startParams,
                         session = resolved,
-                        renewMissingSessionWithLegacyStart = false,
                         expectedOwnershipEpoch = ownershipEpoch,
                     )
                 } catch (cancellation: CancellationException) {

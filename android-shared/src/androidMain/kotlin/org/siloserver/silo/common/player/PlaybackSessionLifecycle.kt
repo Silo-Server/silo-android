@@ -7,12 +7,10 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackSessionRecorder
 import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
-import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.repository.PersonalDataRepository
-import org.siloserver.silo.repository.ProfileRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -45,15 +43,20 @@ import kotlinx.coroutines.withContext
  * collapse to a single observer of [state] and [notice].
  *
  * Lifecycle:
- *   start(params) -> Loading -> Active(session) | Failed(message)
+ *   adoptActiveSession(params, session) -> Active(session)
  *   reportPosition(...) -> debounced 10s flush via `sessionManager`
- *     - 404 session_not_found  -> sync snapshot, re-invoke start with override
+ *     - 404 session_not_found  -> sync snapshot, emit [missingSessionEvents]
  *     - NetworkError           -> Reconnecting + health-probe loop
  *   stop() -> Idle (also flushes one final progress snapshot)
+ *
+ * This class does not start sessions. Under protocol v3 a session is planned
+ * by [PlaybackSessionManager.startVideoSessionV3] — which owns the attempt key,
+ * the staged-replan machinery, and the publication handshake — and handed here
+ * already started, so a second start entry point could only produce a session
+ * the manager does not know it owns.
  */
 class PlaybackSessionLifecycle(
     private val sessionManager: PlaybackSessionManager,
-    private val profileRepository: ProfileRepository,
     private val healthApi: HealthApi,
     private val personalDataRepository: PersonalDataRepository,
     private val scope: CoroutineScope,
@@ -84,7 +87,6 @@ class PlaybackSessionLifecycle(
     @Volatile private var recoveringFromMissingSession: String? = null
     @Volatile private var flushProgressOnStop: Boolean = true
     @Volatile private var stopActiveSessionOnStop: Boolean = true
-    @Volatile private var renewMissingSessionWithLegacyStart: Boolean = true
     @Volatile private var diagnosticsRecording: DiagnosticsPlaybackSessionRecording =
         DiagnosticsPlaybackSessionRecording.None
 
@@ -118,7 +120,6 @@ class PlaybackSessionLifecycle(
         val recoveringFromMissingSession: String?,
         val flushProgressOnStop: Boolean,
         val stopActiveSessionOnStop: Boolean,
-        val renewMissingSessionWithLegacyStart: Boolean,
         val diagnosticsRecording: DiagnosticsPlaybackSessionRecording,
         val reporterWasActive: Boolean,
     )
@@ -134,11 +135,11 @@ class PlaybackSessionLifecycle(
      * The session this lifecycle owns, independent of what it is presenting.
      *
      * [SessionState] carries a session id only while Active, so any guard that
-     * reads state alone is blind exactly when it matters. During Reconnecting,
-     * Loading or Failed a stale deferred stop finds no id, falls through, and
-     * cancels the reconnect for a session it has no business touching — the
-     * banner vanishes with nothing replacing it and progress reporting for that
-     * episode is dead for the rest of playback.
+     * reads state alone is blind exactly when it matters. During Reconnecting or
+     * Failed a stale deferred stop finds no id, falls through, and cancels the
+     * reconnect for a session it has no business touching — the banner vanishes
+     * with nothing replacing it and progress reporting for that episode is dead
+     * for the rest of playback.
      */
     @Volatile
     private var lastAdoptedSessionId: String? = null
@@ -146,11 +147,12 @@ class PlaybackSessionLifecycle(
     /**
      * Bumped by every [stop] that actually tears down.
      *
-     * `start()` runs its API call outside the mutex, and during that window
-     * `_state` is Loading and [lastAdoptedSessionId] is null — so the ownership
-     * guard in [stop] finds no id to compare and tears down regardless. Compare
-     * this instead: an unchanged value at publication time proves no stop ran
-     * while the start was in flight.
+     * The owner plans a session before handing it here, and that planning runs
+     * outside this mutex — so between [acquireOwnershipEpoch] and adoption
+     * there is a window where [lastAdoptedSessionId] is still null and the
+     * ownership guard in [stop] has no id to compare. Compare this instead: an
+     * epoch unchanged at adoption time proves no stop ran while the plan was in
+     * flight.
      */
     @Volatile
     private var stopEpoch: Long = 0L
@@ -158,36 +160,15 @@ class PlaybackSessionLifecycle(
     // ---- Public API ---------------------------------------------------------
 
     /**
-     * Starts a new playback session. Resolves to [SessionState.Active] on
-     * success or [SessionState.Failed] on profile-id absence or session API
-     * failure (Error or NetworkError).
-     */
-    suspend fun start(params: StartParams): SessionState {
-        awaitPendingStop()
-        DiagnosticsPlaybackLogger.sessionEvent("session start requested")
-        // New start cancels any in-flight recovery / outage probing, by design:
-        // this is the explicit "user/code wants a fresh session now" path.
-        cancelRecoveryJobs()
-        mutex.withLock {
-            pendingActiveSessionPublication = null
-        }
-        val recording = playbackSessions.recording()
-        diagnosticsRecording = recording
-        return startInternal(params, recording)
-    }
-
-    /**
-     * Hands the lifecycle a session that the caller already started. By
-     * default, the lifecycle also owns progress reporting, recovery, final
-     * progress flush, and stop. Callers that have not migrated those paths yet
-     * can adopt passively without creating a second playback session.
+     * Hands the lifecycle a session the caller already started. The lifecycle
+     * then owns progress reporting, recovery, the final progress flush, and
+     * stop.
      */
     suspend fun adoptActiveSession(
         params: StartParams,
         session: PlaybackSessionResponse,
         manageProgress: Boolean = true,
         stopSessionOnStop: Boolean = true,
-        renewMissingSessionWithLegacyStart: Boolean = true,
         deferPublication: Boolean = false,
     ) {
         awaitPendingStop()
@@ -196,7 +177,6 @@ class PlaybackSessionLifecycle(
             session = session,
             manageProgress = manageProgress,
             stopSessionOnStop = stopSessionOnStop,
-            renewMissingSessionWithLegacyStart = renewMissingSessionWithLegacyStart,
             deferPublication = deferPublication,
             isCurrent = { true },
         )
@@ -221,7 +201,6 @@ class PlaybackSessionLifecycle(
         session: PlaybackSessionResponse,
         manageProgress: Boolean = true,
         stopSessionOnStop: Boolean = true,
-        renewMissingSessionWithLegacyStart: Boolean = true,
         deferPublication: Boolean = false,
         isCurrent: () -> Boolean,
     ): Boolean {
@@ -245,7 +224,6 @@ class PlaybackSessionLifecycle(
             recoveringFromMissingSession = null
             flushProgressOnStop = manageProgress
             stopActiveSessionOnStop = stopSessionOnStop
-            this.renewMissingSessionWithLegacyStart = renewMissingSessionWithLegacyStart
             this.diagnosticsRecording = diagnosticsRecording
             diagnosticsRecording.record(session.sessionId)
             lastAdoptedSessionId = session.sessionId
@@ -273,7 +251,6 @@ class PlaybackSessionLifecycle(
         session: PlaybackSessionResponse,
         manageProgress: Boolean = true,
         stopSessionOnStop: Boolean = true,
-        renewMissingSessionWithLegacyStart: Boolean = true,
         deferPublication: Boolean = false,
         expectedOwnershipEpoch: Long,
     ): Boolean = try {
@@ -283,7 +260,6 @@ class PlaybackSessionLifecycle(
             session = session,
             manageProgress = manageProgress,
             stopSessionOnStop = stopSessionOnStop,
-            renewMissingSessionWithLegacyStart = renewMissingSessionWithLegacyStart,
             deferPublication = deferPublication,
             isCurrent = { stopEpoch == expectedOwnershipEpoch },
         )
@@ -384,7 +360,6 @@ class PlaybackSessionLifecycle(
             recoveringFromMissingSession = recoveringFromMissingSession,
             flushProgressOnStop = flushProgressOnStop,
             stopActiveSessionOnStop = stopActiveSessionOnStop,
-            renewMissingSessionWithLegacyStart = renewMissingSessionWithLegacyStart,
             diagnosticsRecording = diagnosticsRecording,
             reporterWasActive = reporterJob?.isActive == true,
         )
@@ -400,7 +375,6 @@ class PlaybackSessionLifecycle(
         recoveringFromMissingSession = snapshot.recoveringFromMissingSession
         flushProgressOnStop = snapshot.flushProgressOnStop
         stopActiveSessionOnStop = snapshot.stopActiveSessionOnStop
-        renewMissingSessionWithLegacyStart = snapshot.renewMissingSessionWithLegacyStart
         diagnosticsRecording = snapshot.diagnosticsRecording
         _notice.value = snapshot.notice
         // Restore the token the snapshot captured, rather than deriving it from
@@ -419,124 +393,6 @@ class PlaybackSessionLifecycle(
             snapshot.state is SessionState.Active
         ) {
             startProgressReporter()
-        }
-    }
-
-    private suspend fun startInternal(
-        params: StartParams,
-        diagnosticsRecording: DiagnosticsPlaybackSessionRecording,
-        alreadyLocked: Boolean = false,
-    ): SessionState {
-        // `handleSessionMissing` calls this from inside the lifecycle mutex, and
-        // Mutex is not reentrant, so locking is the caller's choice.
-        suspend fun <T> guarded(block: suspend () -> T): T =
-            if (alreadyLocked) block() else mutex.withLock { block() }
-
-        // Read under the lock together with the state we are about to publish:
-        // `stop()` bumps this, so an unchanged value at publication time proves
-        // no teardown ran while the start API call was in flight.
-        val epochAtStart = guarded {
-            _notice.value = null
-            // Starting fresh: the previous session is no longer ours. start() has
-            // already awaited any pending stop, so nothing is left to guard.
-            lastAdoptedSessionId = null
-            _state.value = SessionState.Loading
-            lastStartParams = params
-            flushProgressOnStop = true
-            stopActiveSessionOnStop = true
-            renewMissingSessionWithLegacyStart = true
-            stopEpoch
-        }
-        suspend fun publishFailureUnlessStopped(message: String): SessionState =
-            guarded {
-                if (stopEpoch != epochAtStart) {
-                    SessionState.Idle.also { _state.value = it }
-                } else {
-                    SessionState.Failed(message).also { _state.value = it }
-                }
-            }
-
-        val profileId = profileRepository.getActiveProfileId()
-        if (profileId == null) {
-            return publishFailureUnlessStopped("No active profile selected.")
-        }
-
-        val result = if (
-            params.clientPlaybackContext != null ||
-            params.subtitleTrackIndex != null ||
-            params.preserveDirectAudioSelection ||
-            params.playMethod != null
-        ) {
-            sessionManager.startSessionV2(
-                fileId = params.fileId,
-                profileId = profileId,
-                capabilities = params.capabilities,
-                audioTrackIndex = params.audioTrackIndex,
-                subtitleTrackIndex = params.subtitleTrackIndex,
-                qualityPreference = params.qualityPreference,
-                startPosition = params.startPosition,
-                clientPlaybackContext = params.clientPlaybackContext,
-                preserveDirectAudioSelection = params.preserveDirectAudioSelection,
-                playMethod = params.playMethod,
-            )
-        } else {
-            sessionManager.startSession(
-                fileId = params.fileId,
-                profileId = profileId,
-                capabilities = params.capabilities,
-                audioTrackIndex = params.audioTrackIndex,
-                qualityPreference = params.qualityPreference,
-                startPosition = params.startPosition,
-            )
-        }
-        return when (result) {
-            is ApiResult.Success -> guarded {
-                // A stop that landed while this start was in flight means the
-                // user left. Publishing anyway would resurrect a screen they
-                // dismissed, and — because that stop has already run its
-                // teardown and never saw this id — would strand the session on
-                // the server, where it keeps counting against the account's
-                // concurrent-stream cap until it times out.
-                if (stopEpoch != epochAtStart) {
-                    DiagnosticsPlaybackLogger.sessionEvent("session abandoned, stopped during start")
-                    Log.w(TAG, "stop landed during start; stopping session ${result.data.sessionId}")
-                    when (val stopResult = sessionManager.stopSession(result.data.sessionId)) {
-                        is ApiResult.Error ->
-                            Log.w(TAG, "abandon stopSession error: ${stopResult.code} ${stopResult.message}")
-                        is ApiResult.NetworkError ->
-                            Log.w(TAG, "abandon stopSession network error: ${stopResult.exception}")
-                        else -> {}
-                    }
-                    _state.value = SessionState.Idle
-                    return@guarded SessionState.Idle
-                }
-                DiagnosticsPlaybackLogger.sessionEvent("session active")
-                diagnosticsRecording.record(result.data.sessionId)
-                val active = SessionState.Active(result.data)
-                lastAdoptedSessionId = result.data.sessionId
-                _state.value = active
-                // Re-assert: a concurrent stop clears these, and without them
-                // 404-session recovery and the final progress flush both no-op,
-                // which silently loses the user's resume position on exit.
-                lastStartParams = params
-                lastReportedPosition = params.startPosition ?: result.data.position
-                // Clear the missing-session debounce — fresh session id.
-                recoveringFromMissingSession = null
-                startProgressReporter()
-                active
-            }
-            is ApiResult.Error -> {
-                DiagnosticsPlaybackLogger.sessionEvent("session start failed")
-                Log.w(TAG, "start session error: ${result.code} ${result.error} ${result.message}")
-                publishFailureUnlessStopped(
-                    result.message.ifBlank { "Failed to start playback." },
-                )
-            }
-            is ApiResult.NetworkError -> {
-                DiagnosticsPlaybackLogger.sessionEvent("session start network failure")
-                Log.w(TAG, "start session network error: ${result.exception}")
-                publishFailureUnlessStopped("Network error starting playback.")
-            }
         }
     }
 
@@ -685,7 +541,6 @@ class PlaybackSessionLifecycle(
             recoveringFromMissingSession = null
             flushProgressOnStop = true
             stopActiveSessionOnStop = true
-            renewMissingSessionWithLegacyStart = true
             pendingActiveSessionPublication = null
             _notice.value = null
             lastAdoptedSessionId = null
@@ -847,6 +702,16 @@ class PlaybackSessionLifecycle(
 
     // ---- Internal: 404 session-missing recovery -----------------------------
 
+    /**
+     * The session vanished server-side (404). Renewal is the owner's job: only
+     * the ViewModel that planned this session can replan it through
+     * [PlaybackSessionManager.startVideoSessionV3] and re-adopt the result, so
+     * the lifecycle persists the resume position and hands it over.
+     *
+     * The snapshot is written before the event because the owner's replan can
+     * fail — and if it does, this write is all that stands between the user and
+     * losing their place.
+     */
     private fun handleSessionMissing(staleSessionId: String) {
         // Debounce: a flurry of 404s should only trigger one renewal.
         if (recoveringFromMissingSession == staleSessionId) return
@@ -854,29 +719,16 @@ class PlaybackSessionLifecycle(
 
         recoveringFromMissingSession = staleSessionId
         DiagnosticsPlaybackLogger.sessionEvent("session missing")
-        if (!renewMissingSessionWithLegacyStart) {
-            _missingSessionEvents.tryEmit(lastReportedPosition ?: params.startPosition ?: 0.0)
-            return
-        }
+        val resumePosition = lastReportedPosition ?: params.startPosition ?: 0.0
         recoveryJob?.cancel()
         recoveryJob = scope.launch {
-            mutex.withLock {
-                Log.w(TAG, "Playback session missing; renewing")
-                val resumePos = lastReportedPosition ?: params.startPosition
-                syncProgressSnapshot(
-                    contentId = params.contentId,
-                    position = resumePos,
-                    duration = lastReportedDuration,
-                )
-                // Re-invoke the start flow with the latest position without
-                // cancelling this recovery coroutine out from under itself.
-                startInternal(
-                    params.copy(startPosition = resumePos),
-                    diagnosticsRecording,
-                    alreadyLocked = true,
-                )
-                recoveryJob = null
-            }
+            syncProgressSnapshot(
+                contentId = params.contentId,
+                position = resumePosition,
+                duration = lastReportedDuration,
+            )
+            _missingSessionEvents.emit(resumePosition)
+            recoveryJob = null
         }
     }
 
@@ -1024,10 +876,14 @@ internal fun Int.isGatewayOrTunnelFailureStatus(): Boolean =
 
 // ---- Public types ----------------------------------------------------------
 
-/** State of the playback session lifecycle. */
+/**
+ * State of the playback session lifecycle.
+ *
+ * There is no Loading state: this lifecycle is handed sessions that are already
+ * planned and started, so it is never the thing waiting on the server.
+ */
 sealed interface SessionState {
     data object Idle : SessionState
-    data object Loading : SessionState
     data class Active(val session: PlaybackSessionResponse) : SessionState
     data class Reconnecting(
         val deadlineEpochMs: Long,
@@ -1050,9 +906,9 @@ data class PlayerNotice(
 )
 
 /**
- * Parameters for [PlaybackSessionLifecycle.start]. Captured on every call so
- * 404-session-missing recovery can re-invoke `start()` with the same shape
- * plus an updated `startPosition`.
+ * The shape of the session [PlaybackSessionLifecycle] is presenting. Captured
+ * on adoption so a 404-session-missing event can hand its owner back the
+ * content id and the position to replan from.
  */
 data class StartParams(
     val contentId: String,
@@ -1063,6 +919,4 @@ data class StartParams(
     val qualityPreference: String? = null,
     val startPosition: Double? = null,
     val clientPlaybackContext: ClientPlaybackContext? = null,
-    val preserveDirectAudioSelection: Boolean = false,
-    val playMethod: PlayMethod? = null,
 )

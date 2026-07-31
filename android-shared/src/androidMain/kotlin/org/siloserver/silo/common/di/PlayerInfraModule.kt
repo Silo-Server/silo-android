@@ -170,7 +170,6 @@ val playerInfraModule = module {
     single<PlaybackSessionLifecycle> {
         PlaybackSessionLifecycle(
             sessionManager = get(),
-            profileRepository = get(),
             healthApi = get(),
             personalDataRepository = get(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),

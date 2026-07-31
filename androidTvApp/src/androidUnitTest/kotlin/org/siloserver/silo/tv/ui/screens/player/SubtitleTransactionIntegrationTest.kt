@@ -55,7 +55,6 @@ import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
@@ -77,10 +76,8 @@ import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.PlaybackApi
-import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
-import org.siloserver.silo.repository.ProfileRepository
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -538,7 +535,6 @@ class SubtitleTransactionIntegrationTest {
         )
         val lifecycle = PlaybackSessionLifecycle(
             sessionManager = manager,
-            profileRepository = IntegrationProfileRepository(),
             healthApi = IntegrationHealthApi(),
             personalDataRepository = IntegrationPersonalDataRepository(),
             scope = scope,
@@ -585,7 +581,6 @@ class SubtitleTransactionIntegrationTest {
                 ),
                 session = ready.session,
                 manageProgress = false,
-                renewMissingSessionWithLegacyStart = false,
             )
             mountedSubtitleIdentity = committedIdentity
             adapter = TvSubtitleTransactionAdapter(
@@ -615,7 +610,6 @@ class SubtitleTransactionIntegrationTest {
                         ),
                         session = candidate.session,
                         manageProgress = false,
-                        renewMissingSessionWithLegacyStart = false,
                         deferPublication = true,
                         isCurrent = adoption::isCurrent,
                     )
@@ -670,7 +664,6 @@ class SubtitleTransactionIntegrationTest {
                 ),
                 session = ready.session,
                 manageProgress = false,
-                renewMissingSessionWithLegacyStart = false,
             )
             assertIs<ApiResult.Success<Unit>>(manager.stopSession("s1"))
             return context(
@@ -853,6 +846,7 @@ class SubtitleTransactionIntegrationTest {
         const val B_INDEX = 4
         const val DOWNLOAD_ID = 312
         const val OUTPUT_GENERATION = 7L
+        const val OUTPUT_CONTEXT_ID = "7"
 
         val sidecarA = SubtitleIdentity.ServerSidecar(A_INDEX)
         val sidecarB = SubtitleIdentity.ServerSidecar(
@@ -867,7 +861,7 @@ class SubtitleTransactionIntegrationTest {
         val playbackContext = ClientPlaybackContext(
             formFactor = "tv",
             appVersion = "integration-test",
-            output = PlaybackOutputContext(outputRouteGeneration = OUTPUT_GENERATION),
+            output = PlaybackOutputContext(outputContextId = OUTPUT_CONTEXT_ID),
         )
 
         fun startParams(
@@ -902,7 +896,6 @@ class SubtitleTransactionIntegrationTest {
             planId = "plan-$sessionId",
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
-            engine = PlaybackEngineKind.MEDIA3_HLS,
             stream = PlaybackStreamV3(
                 url = "/stream/$sessionId/master.m3u8",
                 protocol = PlaybackStreamProtocol.HLS,
@@ -962,6 +955,19 @@ class SubtitleTransactionIntegrationTest {
             ),
         )
 
+        /**
+         * Output identity is nested under the playback context in the neutral
+         * contract: there is no top-level output field on either request.
+         */
+        fun assertOutputContext(body: JsonObject) {
+            assertEquals(
+                OUTPUT_CONTEXT_ID,
+                body.getValue("client_playback_context").jsonObject
+                    .getValue("output").jsonObject
+                    .getValue("output_context_id").jsonPrimitive.content,
+            )
+        }
+
         fun assertReplan(body: JsonObject, audioIndex: Int, subtitleIndex: Int) {
             val selected = body.getValue("selected_tracks").jsonObject
             assertEquals(audioIndex, selected.getValue("audio").jsonObject.getValue("index").jsonPrimitive.int)
@@ -973,7 +979,7 @@ class SubtitleTransactionIntegrationTest {
                     selected.getValue("subtitle").jsonObject.getValue("index").jsonPrimitive.int,
                 )
             }
-            assertEquals(OUTPUT_GENERATION, body.getValue("output_route_generation").jsonPrimitive.content.toLong())
+            assertOutputContext(body)
         }
 
         fun assertStart(body: JsonObject, audioIndex: Int, subtitleIndex: Int) {
@@ -982,10 +988,7 @@ class SubtitleTransactionIntegrationTest {
                 subtitleIndex,
                 body["subtitle_track_index"]?.jsonPrimitive?.intOrNull ?: -1,
             )
-            assertEquals(
-                OUTPUT_GENERATION,
-                body.getValue("output_route_generation").jsonPrimitive.content.toLong(),
-            )
+            assertOutputContext(body)
         }
 
         fun downloadedIdentity(downloadId: Int) = SubtitleIdentity.Downloaded(
@@ -1034,13 +1037,6 @@ private fun SubtitleIdentity.serverTrackIndex(): Int = when (this) {
     is SubtitleIdentity.Downloaded,
     is SubtitleIdentity.LocalMedia3,
     -> -1
-}
-
-private class IntegrationProfileRepository : ProfileRepository(
-    profileApi = ProfileApi(HttpClient()),
-    tokenManager = IntegrationTokenManager,
-) {
-    override suspend fun getActiveProfileId(): String = "profile-1"
 }
 
 private class IntegrationHealthApi : HealthApi(HttpClient()) {
