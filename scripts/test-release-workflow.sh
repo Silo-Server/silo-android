@@ -22,30 +22,33 @@ publish_job="$({
     }
   ' "${workflow_file}"
 } | sed '/^[[:space:]]*#/d')"
+publish_job_header="$(
+  awk '/^    steps:[[:space:]]*$/ { exit } { print }' <<< "${publish_job}"
+)"
 
-expect_publish_job_to_contain() {
+expect_publish_job_header_to_contain() {
   local description="$1"
   local expected="$2"
 
-  if ! grep -Fq "${expected}" <<< "${publish_job}"; then
+  if ! grep -Fq "${expected}" <<< "${publish_job_header}"; then
     printf 'FAIL: publish-release must %s\n' "${description}" >&2
     failures=$((failures + 1))
   fi
 }
 
-expect_publish_job_to_contain \
+expect_publish_job_header_to_contain \
   "depend on setup and APK artifacts" \
   "needs: [setup, apks]"
-expect_publish_job_to_contain \
+expect_publish_job_header_to_contain \
   "define an explicit job condition" \
   "if: >-"
-expect_publish_job_to_contain \
+expect_publish_job_header_to_contain \
   "stop when the workflow is cancelled" \
   "!cancelled()"
-expect_publish_job_to_contain \
+expect_publish_job_header_to_contain \
   "require successful setup" \
   "needs.setup.result == 'success'"
-expect_publish_job_to_contain \
+expect_publish_job_header_to_contain \
   "require successful APK builds" \
   "needs.apks.result == 'success'"
 
