@@ -187,6 +187,7 @@ jobs:
 
       - name: Check build supply chain
         run: |
+          ./scripts/test-release-workflow.sh
           ./scripts/test-check-build-supply-chain.sh
           ./scripts/check-build-supply-chain.sh
 
@@ -397,6 +398,10 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     needs: [setup, apks]
+    if: >-
+      ${{ !cancelled() &&
+          needs.setup.result == 'success' &&
+          needs.apks.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
