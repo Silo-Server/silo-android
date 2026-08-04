@@ -15,16 +15,21 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -55,6 +60,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.common.pairing.CompanionPairingApproval
 import org.siloserver.silo.common.pairing.CompanionPairingServer
 import org.siloserver.silo.common.pairing.CompanionPairingStatus
@@ -145,10 +151,20 @@ private fun PairingCard(
     onDecline: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val bottomInset = maxOf(
+        LocalBottomChromeInset.current,
+        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+    )
+
     Card(
         modifier = Modifier
-            .navigationBarsPadding()
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
+            .padding(
+                start = 10.dp,
+                top = 8.dp,
+                end = 10.dp,
+                bottom = bottomInset + 8.dp,
+            )
             .widthIn(max = 640.dp)
             .fillMaxWidth()
             .animateContentSize()
