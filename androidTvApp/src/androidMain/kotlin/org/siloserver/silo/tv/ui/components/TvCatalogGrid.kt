@@ -120,6 +120,24 @@ fun TvCatalogGrid(
     // hand the same item back across pages, so the grid guarantees uniqueness
     // itself rather than trusting every caller to.
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
+    // The caller speaks positions in the list it handed us; we render the
+    // deduplicated one. Translate on both edges — the incoming restore index
+    // through contentId into our list, and outgoing focus reports back into
+    // the caller's list — so a duplicate earlier in the feed cannot shift
+    // either side's arithmetic. distinctBy keeps first occurrences, so the
+    // first raw index of a rendered item is the item itself.
+    val resolvedRestoreItemIndex = remember(items, uniqueItems, restoreItemIndex) {
+        items.getOrNull(restoreItemIndex)?.contentId
+            ?.let { id -> uniqueItems.indexOfFirst { it.contentId == id } }
+            ?: -1
+    }
+    val rawIndexByContentId = remember(items) {
+        buildMap {
+            items.forEachIndexed { rawIndex, item ->
+                putIfAbsent(item.contentId, rawIndex)
+            }
+        }
+    }
 
     // Backoff gate against an endless load-more retry storm. When a load-more
     // completes without growing the list while the server still reports more
@@ -240,7 +258,7 @@ fun TvCatalogGrid(
             ) { index, item ->
                 val (actions, userState) = rememberTvBrowseItemCardActions(item)
                 val isRestoreTarget =
-                    restoreItemFocusRequester != null && index == restoreItemIndex
+                    restoreItemFocusRequester != null && index == resolvedRestoreItemIndex
                 if (isRestoreTarget) {
                     // Keyed on the callback as well as the item: an owner
                     // change while the same card survives has to re-announce
@@ -290,7 +308,13 @@ fun TvCatalogGrid(
                         // card's outer Column while the Material Card inside it
                         // owns focus, so isFocused is never true here and the
                         // helper would never see a card take focus at all.
-                        .onFocusChanged { onItemFocusedAtIndex(item, index, it.hasFocus) },
+                        .onFocusChanged {
+                            onItemFocusedAtIndex(
+                                item,
+                                rawIndexByContentId[item.contentId] ?: index,
+                                it.hasFocus,
+                            )
+                        },
                     overlay = OverlayDataExtractor.fromBrowseItem(item),
                     actions = actions,
                 )

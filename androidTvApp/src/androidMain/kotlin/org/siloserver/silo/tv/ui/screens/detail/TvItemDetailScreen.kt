@@ -806,7 +806,7 @@ private fun TvDetailContent(
                                     restoreFocusRequest = similarRestoreRequest
                                         .takeIf { pendingSimilarIndex >= 0 } ?: 0,
                                     onItemFocusedAtIndex = if (pendingSimilarIndex >= 0) {
-                                        { _, focusedIndex ->
+                                        { focusedItem, _ ->
                                             // ONLY the target counts. Revoking
                                             // when some other card gains focus
                                             // was self-defeating: the row's own
@@ -816,7 +816,11 @@ private fun TvDetailContent(
                                             // onFocusChanged carries no evidence
                                             // that a move was user-initiated —
                                             // the key handler on the root does.
-                                            if (focusedIndex == pendingSimilarIndex) {
+                                            // Identity, not position: index
+                                            // arithmetic is what broke when the
+                                            // row learned to deduplicate, and
+                                            // the item is right here anyway.
+                                            if (focusedItem.contentId == pendingSimilarContentId) {
                                                 similarRestoreFocused.value = true
                                             }
                                         }

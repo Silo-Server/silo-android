@@ -142,6 +142,15 @@ fun TvMediaRow(
     // deduplicated one, which can be shorter. Translate through contentId so a
     // duplicate earlier in the row cannot shift the restored card.
     val restoreFocusContentId = items.getOrNull(restoreFocusIndex)?.contentId
+    // Outbound focus reports also speak the caller's list. distinctBy keeps
+    // first occurrences, so a rendered item's first raw index is itself.
+    val rawIndexByContentId = remember(items) {
+        buildMap {
+            items.forEachIndexed { rawIndex, item ->
+                putIfAbsent(item.contentId, rawIndex)
+            }
+        }
+    }
     val resolvedRestoreFocusIndex = remember(rowItems, restoreFocusContentId) {
         restoreFocusContentId
             ?.let { contentId -> rowItems.indexOfFirst { it.item.contentId == contentId } }
@@ -246,8 +255,10 @@ fun TvMediaRow(
                     },
                 ).then(
                     if (isRestoreFocusTarget && onRestoreFocusTargetPlaced != null) {
+                        // Caller's coordinates, matching Disposed below: the
+                        // consumer compares this against the index it passed in.
                         Modifier.onGloballyPositioned {
-                            onRestoreFocusTargetPlaced(restoreFocusRequest, index)
+                            onRestoreFocusTargetPlaced(restoreFocusRequest, restoreFocusIndex)
                         }
                     } else {
                         Modifier
@@ -275,7 +286,10 @@ fun TvMediaRow(
                         Modifier.onFocusChanged { st ->
                             if (st.isFocused) {
                                 onItemFocused?.invoke(item)
-                                onItemFocusedAtIndex?.invoke(item, index)
+                                onItemFocusedAtIndex?.invoke(
+                                    item,
+                                    rawIndexByContentId[item.contentId] ?: index,
+                                )
                             }
                         }
                     } else {
