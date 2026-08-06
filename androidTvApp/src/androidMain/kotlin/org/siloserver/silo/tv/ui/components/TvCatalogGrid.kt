@@ -116,6 +116,10 @@ fun TvCatalogGrid(
     emptyState: (@Composable () -> Unit)? = null,
 ) {
     val resolvedGridState = gridState ?: rememberLazyGridState()
+    // Keyed lazy lists throw on a repeated key, which is fatal. Paging can
+    // hand the same item back across pages, so the grid guarantees uniqueness
+    // itself rather than trusting every caller to.
+    val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
 
     // Backoff gate against an endless load-more retry storm. When a load-more
     // completes without growing the list while the server still reports more
@@ -130,19 +134,19 @@ fun TvCatalogGrid(
     // Trigger pagination when the user is within 6 items of the end. The
     // `loadMoreRequestedSize` guard is read inside the derived state so a failed
     // page (size unchanged) stays gated until a retry or a successful growth.
-    val shouldLoadMore by remember(items.size, hasMore, isLoading) {
+    val shouldLoadMore by remember(uniqueItems.size, hasMore, isLoading) {
         derivedStateOf {
-            if (!hasMore || isLoading || items.isEmpty()) return@derivedStateOf false
-            if (items.size == loadMoreRequestedSize) return@derivedStateOf false
+            if (!hasMore || isLoading || uniqueItems.isEmpty()) return@derivedStateOf false
+            if (uniqueItems.size == loadMoreRequestedSize) return@derivedStateOf false
             val lastVisible = resolvedGridState.layoutInfo.visibleItemsInfo
                 .lastOrNull()?.index ?: return@derivedStateOf false
-            lastVisible >= items.size - loadMoreThreshold
+            lastVisible >= uniqueItems.size - loadMoreThreshold
         }
     }
 
     LaunchedEffect(shouldLoadMore) {
         if (shouldLoadMore) {
-            loadMoreRequestedSize = items.size
+            loadMoreRequestedSize = uniqueItems.size
             onLoadMore()
         }
     }
@@ -153,7 +157,7 @@ fun TvCatalogGrid(
     // list back to page size while keeping the same first item) — so a fresh
     // list is never mistaken for a stalled page. A failed load-more changes
     // neither key, so the gate correctly holds until the retry footer is used.
-    LaunchedEffect(items.firstOrNull()?.contentId, items.size) {
+    LaunchedEffect(uniqueItems.firstOrNull()?.contentId, uniqueItems.size) {
         loadMoreRequestedSize = -1
     }
 
@@ -179,8 +183,8 @@ fun TvCatalogGrid(
 
     val loadMoreStalled = hasMore &&
         !isLoading &&
-        items.isNotEmpty() &&
-        loadMoreRequestedSize == items.size
+        uniqueItems.isNotEmpty() &&
+        loadMoreRequestedSize == uniqueItems.size
 
     CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
     LazyVerticalGrid(
@@ -215,7 +219,7 @@ fun TvCatalogGrid(
             }
         }
 
-        if (items.isEmpty() && !isLoading && emptyState != null) {
+        if (uniqueItems.isEmpty() && !isLoading && emptyState != null) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Box(
                     modifier = Modifier
@@ -228,7 +232,9 @@ fun TvCatalogGrid(
             }
         } else {
             itemsIndexed(
-                items = items,
+                // See TvMediaRow: a repeated contentId is fatal to a keyed
+                // lazy list, and paging can hand the same item back twice.
+                items = uniqueItems,
                 key = { _, item -> item.contentId },
                 contentType = { _, item -> item.type },
             ) { index, item ->

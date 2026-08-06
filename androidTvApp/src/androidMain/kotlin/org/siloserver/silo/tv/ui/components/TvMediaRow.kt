@@ -119,7 +119,12 @@ fun TvMediaRow(
     if (items.isEmpty()) return
     val rowState = rememberLazyListState()
     val rowItems = remember(items, showProgress, style, cardLayout) {
-        items.map { item ->
+        // Deduplicate before keying. A repeated contentId inside one row makes
+        // the lazy list throw ("Key ... was already used"), which is fatal —
+        // and a row has no reason to show the same title twice anyway. Feeds
+        // can legitimately overlap, so this is a property of the row, not a
+        // bug to fix upstream of it.
+        items.distinctBy { it.contentId }.map { item ->
             TvMediaRowItemModel(
                 item = item,
                 progress = if (showProgress) item.progressFraction() else null,

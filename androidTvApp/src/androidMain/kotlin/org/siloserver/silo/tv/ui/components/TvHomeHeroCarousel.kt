@@ -92,19 +92,23 @@ fun TvHomeHeroCarousel(
     onFocusEntered: () -> Unit = {},
     onActiveItemChanged: (SectionItem) -> Unit = {},
 ) {
-    if (items.isEmpty()) return
+    // See TvCatalogGrid: a repeated key is fatal to a keyed lazy list. Every
+    // index below addresses this list, not the caller's, so the card the
+    // carousel reports as active is the card it actually drew.
+    val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
+    if (uniqueItems.isEmpty()) return
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val internalInitialFocusRequester = remember { FocusRequester() }
     val targetInitialFocusRequester = initialFocusRequester ?: internalInitialFocusRequester
-    var activeIndex by remember(items.map { it.contentId }) { mutableIntStateOf(0) }
+    var activeIndex by remember(uniqueItems.map { it.contentId }) { mutableIntStateOf(0) }
     var heroHasFocus by remember { androidx.compose.runtime.mutableStateOf(false) }
 
-    LaunchedEffect(items.map { it.contentId }) {
-        activeIndex = activeIndex.coerceIn(0, items.lastIndex)
+    LaunchedEffect(uniqueItems.map { it.contentId }) {
+        activeIndex = activeIndex.coerceIn(0, uniqueItems.lastIndex)
         listState.scrollToItem(activeIndex)
-        onActiveItemChanged(items[activeIndex])
+        onActiveItemChanged(uniqueItems[activeIndex])
     }
 
     LaunchedEffect(autoFocus) {
@@ -122,14 +126,14 @@ fun TvHomeHeroCarousel(
     }
 
     LaunchedEffect(activeIndex) {
-        onActiveItemChanged(items[activeIndex])
+        onActiveItemChanged(uniqueItems[activeIndex])
         scope.launch { listState.animateScrollToItem(activeIndex) }
     }
 
-    LaunchedEffect(activeIndex, heroHasFocus, items.size) {
-        if (heroHasFocus || items.size <= 1) return@LaunchedEffect
+    LaunchedEffect(activeIndex, heroHasFocus, uniqueItems.size) {
+        if (heroHasFocus || uniqueItems.size <= 1) return@LaunchedEffect
         delay(HOME_HERO_AUTO_ADVANCE_MS)
-        activeIndex = (activeIndex + 1) % items.size
+        activeIndex = (activeIndex + 1) % uniqueItems.size
     }
 
     BoxWithConstraints(
@@ -160,7 +164,9 @@ fun TvHomeHeroCarousel(
                 .height(heroHeight),
         ) {
             itemsIndexed(
-                items,
+                // See TvMediaRow: a repeated contentId is fatal to a keyed
+                // lazy list.
+                uniqueItems,
                 key = { _, item -> item.contentId },
                 contentType = { _, _ -> "hero-card" },
             ) { index, item ->
@@ -187,7 +193,7 @@ fun TvHomeHeroCarousel(
         }
 
         HeroPageIndicator(
-            total = items.size,
+            total = uniqueItems.size,
             activeIndex = activeIndex,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
