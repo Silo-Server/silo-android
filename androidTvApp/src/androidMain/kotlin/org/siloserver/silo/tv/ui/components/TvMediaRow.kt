@@ -138,12 +138,20 @@ fun TvMediaRow(
             )
         }
     }
-    val restoreFocusContentId = rowItems.getOrNull(restoreFocusIndex)?.item?.contentId
+    // The caller counts positions in the list it handed us; we render a
+    // deduplicated one, which can be shorter. Translate through contentId so a
+    // duplicate earlier in the row cannot shift the restored card.
+    val restoreFocusContentId = items.getOrNull(restoreFocusIndex)?.contentId
+    val resolvedRestoreFocusIndex = remember(rowItems, restoreFocusContentId) {
+        restoreFocusContentId
+            ?.let { contentId -> rowItems.indexOfFirst { it.item.contentId == contentId } }
+            ?: -1
+    }
 
-    LaunchedEffect(restoreFocusRequest, restoreFocusIndex, restoreFocusContentId) {
+    LaunchedEffect(restoreFocusRequest, resolvedRestoreFocusIndex, restoreFocusContentId) {
         prepareTvMediaRowFocusRestore(
             requestId = restoreFocusRequest,
-            restoreFocusIndex = restoreFocusIndex,
+            restoreFocusIndex = resolvedRestoreFocusIndex,
             itemCount = rowItems.size,
             scrollToItem = rowState::scrollToItem,
         )
@@ -213,11 +221,14 @@ fun TvMediaRow(
             ) { index, rowItem ->
                 val item = rowItem.item
                 val isRestoreFocusTarget =
-                    restoreFocusRequest > 0 && index == restoreFocusIndex
+                    restoreFocusRequest > 0 && index == resolvedRestoreFocusIndex
                 if (isRestoreFocusTarget && onRestoreFocusTargetDisposed != null) {
-                    DisposableEffect(restoreFocusRequest, index) {
+                    // Report the position the caller asked about, not ours. It
+                    // compares this against the index it passed in, and after
+                    // deduplication the two coordinate spaces can differ.
+                    DisposableEffect(restoreFocusRequest, restoreFocusIndex) {
                         onDispose {
-                            onRestoreFocusTargetDisposed(restoreFocusRequest, index)
+                            onRestoreFocusTargetDisposed(restoreFocusRequest, restoreFocusIndex)
                         }
                     }
                 }
@@ -228,7 +239,7 @@ fun TvMediaRow(
                 val appliedCardModifier = itemCardModifier.then(
                     if (index == 0) firstItemCardModifier else Modifier,
                 ).then(
-                    if (restoreFocusRequester != null && index == restoreFocusIndex) {
+                    if (restoreFocusRequester != null && index == resolvedRestoreFocusIndex) {
                         Modifier.focusRequester(restoreFocusRequester)
                     } else {
                         Modifier
