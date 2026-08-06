@@ -90,6 +90,7 @@ import org.siloserver.silo.common.player.SiloPlaybackService
 import org.siloserver.silo.common.player.DisplayHdrProbe
 import org.siloserver.silo.common.player.HdrDisplayController
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
+import org.siloserver.silo.common.player.PlayerNotice
 import org.siloserver.silo.common.player.PlaybackPreflightListener
 import org.siloserver.silo.common.player.LetterboxInsets
 import org.siloserver.silo.common.player.SessionState
@@ -2151,145 +2152,40 @@ fun TvPlayerScreen(
             }
         }
 
-        // Lifecycle-driven notice toast (top-start). Slides in for outage
-        // recovery, fades out when the lifecycle clears the notice.
-        if (!isInPictureInPictureMode) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 32.dp, start = 32.dp),
-                contentAlignment = Alignment.TopStart,
-            ) {
-                TvPlayerNoticeOverlay(notice = notice)
-            }
-        }
-
-        // Remote-control "display_message" toast (top-center), shown a few
-        // seconds regardless of controls visibility.
-        if (!isInPictureInPictureMode) remoteMessage?.let { message ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 48.dp)
-                    .zIndex(10f),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .background(
-                            color = Color.Black.copy(alpha = 0.82f),
-                            shape = RoundedCornerShape(12.dp),
-                        )
-                        .padding(horizontal = 24.dp, vertical = 14.dp),
-                ) {
-                    Text(
-                        text = message.text,
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                }
-            }
-        }
-
-        // Watch Together room indicator (top-end so it doesn't collide with
-        // the top-start lifecycle notice). Member count, a "Waiting for
-        // members…" pill while the room is on the wait barrier, and the join
-        // code for the host. Only shown while the idle overlay is up.
-        val snapshot = roomSnapshot
-        if (!isInPictureInPictureMode && roomController != null && snapshot != null && state.showControls && !state.hudOpen) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 32.dp, end = 32.dp),
-                contentAlignment = Alignment.TopEnd,
-            ) {
-                TvRoomIndicator(
-                    memberCount = snapshot.memberCount,
-                    waiting = snapshot.playbackState == RoomPlaybackState.Waiting,
-                    joinCode = snapshot.code.takeIf { snapshot.selfCanManageRoom && it.isNotBlank() },
-                )
-            }
-        }
-
-        // Host close-confirm dialog. Closing tears the room down for everyone
-        // (server emits room_closed → every member exits). Cancel resumes.
-        if (!isInPictureInPictureMode && showLeaveDialog && roomController != null) {
-            TvRoomCloseConfirmDialog(
-                onClose = {
-                    showLeaveDialog = false
-                    roomController.leave(closeRoom = true)
-                    stopPlaybackAndExit()
-                },
-                onCancel = { showLeaveDialog = false },
-            )
-        }
-
-        // F2 / Up-Next end-of-playback surface. Replaces the old "Still
-        // watching?" dialog: a 16:9 mini-player (the still-playing video,
-        // visible behind a bordered frame) beside a next-episode panel with
-        // Play Now / Keep Watching / Back and an auto-play countdown ring.
-        if (!isInPictureInPictureMode) {
-            if (state.showNextUp) {
-                TvPlayerNextUpOverlay(
-                    nextEpisode = state.nextEpisode,
-                    videoEnded = state.nextUpVideoEnded,
-                    countdownSeconds = state.nextUpCountdownSeconds,
-                    countdownTotalSeconds = state.nextUpCountdownTotalSeconds,
-                    autoPlayEnabled = autoPlayNextEnabled,
-                    onPlayNow = viewModel::playNextEpisodeNow,
-                    onKeepWatching = viewModel::dismissNextUp,
-                    onToggleAutoPlay = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
-                    onBack = { stopPlaybackAndExit() },
-                )
-            }
-        }
-
-        // Intro auto-skip banner (bottom-end, above the transport cluster).
-        // It must remain visible even when transport controls auto-hide; D-pad
-        // Center routes directly to [handleSkipIntroNow] while the manual prompt
-        // is active, so the viewer does not need a first click just to reveal UI.
-        // Bottom inset (200dp) clears the transport cluster + scrubber column.
-        if (!isInPictureInPictureMode) {
-            if (!state.hudOpen && !state.showNextUp) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(bottom = 200.dp, end = 32.dp),
-                    contentAlignment = Alignment.BottomEnd,
-                ) {
-                    TvIntroAutoSkipBanner(
-                        state = introSkipState,
-                        onSkipNow = { handleSkipIntroNow() },
-                        onCancelCountdown = viewModel::onCancelIntroAutoSkip,
-                    )
-                }
-            }
-        }
-
-        // Outage spinner. Native ExoPlayer buffering now surfaces as the
-        // top-right Buffering capsule inside the idle overlay's statusColumn
-        // (mirroring tvOS), so the centered full-screen spinner is reserved for
-        // the lifecycle Reconnecting state (the server-outage probe loop, which
-        // the player itself can't observe) — and only when the idle overlay
-        // isn't already showing the chip. The Up-Next overlay owns its own
-        // loading state, so no spinner there either.
-        val showSpinner = shouldShowReconnectSpinner(
-            isReconnecting = sessionState is SessionState.Reconnecting,
-            showNextUp = state.showNextUp,
+        TvPlayerOverlays(
             isInPictureInPictureMode = isInPictureInPictureMode,
+            notice = notice,
+            remoteMessage = remoteMessage,
+            roomSnapshot = roomSnapshot,
+            roomActive = roomController != null,
+            showControls = state.showControls,
+            hudOpen = state.hudOpen,
+            showLeaveDialog = showLeaveDialog,
+            showNextUp = state.showNextUp,
+            nextEpisode = state.nextEpisode,
+            nextUpVideoEnded = state.nextUpVideoEnded,
+            nextUpCountdownSeconds = state.nextUpCountdownSeconds,
+            nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
+            autoPlayNextEnabled = autoPlayNextEnabled,
+            introSkipState = introSkipState,
+            showSpinner = shouldShowReconnectSpinner(
+                isReconnecting = sessionState is SessionState.Reconnecting,
+                showNextUp = state.showNextUp,
+                isInPictureInPictureMode = isInPictureInPictureMode,
+            ),
+            onCloseRoom = {
+                showLeaveDialog = false
+                roomController?.leave(closeRoom = true)
+                stopPlaybackAndExit()
+            },
+            onCancelLeaveDialog = { showLeaveDialog = false },
+            onPlayNextNow = viewModel::playNextEpisodeNow,
+            onKeepWatching = viewModel::dismissNextUp,
+            onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
+            onExitPlayback = { stopPlaybackAndExit() },
+            onSkipIntroNow = { handleSkipIntroNow() },
+            onCancelIntroAutoSkip = viewModel::onCancelIntroAutoSkip,
         )
-        if (showSpinner) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(
-                    color = Color.White,
-                    strokeWidth = 4.dp,
-                    modifier = Modifier.size(64.dp),
-                )
-            }
-        }
     }
 }
 
@@ -3314,4 +3210,175 @@ internal fun selectVideoQuality(player: Player, id: String): Boolean {
         ordinal++
     }
     return false
+}
+
+
+/**
+ * The overlay layer stacked above the player surface: lifecycle notice, remote
+ * message toast, Watch Together indicator and close confirmation, the Up Next
+ * surface, the intro auto-skip banner, and the reconnect spinner.
+ *
+ * Split out of [TvPlayerScreen] to keep that composable's generated method
+ * within ART's JIT limit. Past it the method is never compiled, so the whole
+ * player screen runs interpreted and the runtime logs "Method exceeds compiler
+ * instruction limit" on every recomposition — roughly once a second during
+ * playback.
+ */
+@Composable
+private fun TvPlayerOverlays(
+    isInPictureInPictureMode: Boolean,
+    notice: PlayerNotice?,
+    remoteMessage: RemoteMessage?,
+    roomSnapshot: RoomSnapshot?,
+    roomActive: Boolean,
+    showControls: Boolean,
+    hudOpen: Boolean,
+    showLeaveDialog: Boolean,
+    showNextUp: Boolean,
+    nextEpisode: NextEpisodeState?,
+    nextUpVideoEnded: Boolean,
+    nextUpCountdownSeconds: Int?,
+    nextUpCountdownTotalSeconds: Int,
+    autoPlayNextEnabled: Boolean,
+    introSkipState: IntroAutoSkipState,
+    showSpinner: Boolean,
+    onCloseRoom: () -> Unit,
+    onCancelLeaveDialog: () -> Unit,
+    onPlayNextNow: () -> Unit,
+    onKeepWatching: () -> Unit,
+    onToggleAutoPlayNext: () -> Unit,
+    onExitPlayback: () -> Unit,
+    onSkipIntroNow: () -> Unit,
+    onCancelIntroAutoSkip: () -> Unit,
+) {
+        // Lifecycle-driven notice toast (top-start). Slides in for outage
+        // recovery, fades out when the lifecycle clears the notice.
+        if (!isInPictureInPictureMode) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 32.dp, start = 32.dp),
+                contentAlignment = Alignment.TopStart,
+            ) {
+                TvPlayerNoticeOverlay(notice = notice)
+            }
+        }
+
+        // Remote-control "display_message" toast (top-center), shown a few
+        // seconds regardless of controls visibility.
+        if (!isInPictureInPictureMode) remoteMessage?.let { message ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 48.dp)
+                    .zIndex(10f),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(
+                            color = Color.Black.copy(alpha = 0.82f),
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        .padding(horizontal = 24.dp, vertical = 14.dp),
+                ) {
+                    Text(
+                        text = message.text,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+            }
+        }
+
+        // Watch Together room indicator (top-end so it doesn't collide with
+        // the top-start lifecycle notice). Member count, a "Waiting for
+        // members…" pill while the room is on the wait barrier, and the join
+        // code for the host. Only shown while the idle overlay is up.
+        val snapshot = roomSnapshot
+        if (!isInPictureInPictureMode && roomActive && snapshot != null && showControls && !hudOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 32.dp, end = 32.dp),
+                contentAlignment = Alignment.TopEnd,
+            ) {
+                TvRoomIndicator(
+                    memberCount = snapshot.memberCount,
+                    waiting = snapshot.playbackState == RoomPlaybackState.Waiting,
+                    joinCode = snapshot.code.takeIf { snapshot.selfCanManageRoom && it.isNotBlank() },
+                )
+            }
+        }
+
+        // Host close-confirm dialog. Closing tears the room down for everyone
+        // (server emits room_closed → every member exits). Cancel resumes.
+        if (!isInPictureInPictureMode && showLeaveDialog && roomActive) {
+            TvRoomCloseConfirmDialog(
+                onClose = onCloseRoom,
+                onCancel = onCancelLeaveDialog,
+            )
+        }
+
+        // F2 / Up-Next end-of-playback surface. Replaces the old "Still
+        // watching?" dialog: a 16:9 mini-player (the still-playing video,
+        // visible behind a bordered frame) beside a next-episode panel with
+        // Play Now / Keep Watching / Back and an auto-play countdown ring.
+        if (!isInPictureInPictureMode) {
+            if (showNextUp) {
+                TvPlayerNextUpOverlay(
+                    nextEpisode = nextEpisode,
+                    videoEnded = nextUpVideoEnded,
+                    countdownSeconds = nextUpCountdownSeconds,
+                    countdownTotalSeconds = nextUpCountdownTotalSeconds,
+                    autoPlayEnabled = autoPlayNextEnabled,
+                    onPlayNow = onPlayNextNow,
+                    onKeepWatching = onKeepWatching,
+                    onToggleAutoPlay = onToggleAutoPlayNext,
+                    onBack = onExitPlayback,
+                )
+            }
+        }
+
+        // Intro auto-skip banner (bottom-end, above the transport cluster).
+        // It must remain visible even when transport controls auto-hide; D-pad
+        // Center routes directly to [onSkipIntroNow] while the manual prompt
+        // is active, so the viewer does not need a first click just to reveal UI.
+        // Bottom inset (200dp) clears the transport cluster + scrubber column.
+        if (!isInPictureInPictureMode) {
+            if (!hudOpen && !showNextUp) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 200.dp, end = 32.dp),
+                    contentAlignment = Alignment.BottomEnd,
+                ) {
+                    TvIntroAutoSkipBanner(
+                        state = introSkipState,
+                        onSkipNow = onSkipIntroNow,
+                        onCancelCountdown = onCancelIntroAutoSkip,
+                    )
+                }
+            }
+        }
+
+        // Outage spinner. Native ExoPlayer buffering now surfaces as the
+        // top-right Buffering capsule inside the idle overlay's statusColumn
+        // (mirroring tvOS), so the centered full-screen spinner is reserved for
+        // the lifecycle Reconnecting state (the server-outage probe loop, which
+        // the player itself can't observe) — and only when the idle overlay
+        // isn't already showing the chip. The Up-Next overlay owns its own
+        // loading state, so no spinner there either.
+        if (showSpinner) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    color = Color.White,
+                    strokeWidth = 4.dp,
+                    modifier = Modifier.size(64.dp),
+                )
+            }
+        }
 }
