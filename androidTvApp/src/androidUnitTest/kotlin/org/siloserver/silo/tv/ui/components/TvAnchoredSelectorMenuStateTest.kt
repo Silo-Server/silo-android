@@ -150,6 +150,24 @@ class TvAnchoredSelectorMenuStateTest {
         assertEquals(250, selectorMenuScrollTarget(250, 900, 0, viewport = 1000, maxValue = 700))
     }
 
+    // Aiming initial focus at a disabled row loses it silently: the row cannot
+    // take focus, so the menu opens with focus nowhere and the d-pad dead.
+    @Test
+    fun menuReportsNoInitialRowWhenNothingIsSelectable() {
+        val allDisabled = listOf(option("unknown", enabled = false), option("also-unknown", enabled = false))
+
+        assertEquals(-1, initialSelectorMenuIndex(allDisabled))
+        assertEquals(-1, initialSelectorMenuIndex(emptyList()))
+    }
+
+    // From that state a d-pad press must still reach the first selectable row.
+    @Test
+    fun walkFromNoInitialRowStillReachesTheFirstSelectableOne() {
+        val options = listOf(option("unknown", enabled = false), option("english"))
+
+        assertEquals(1, nextSelectorMenuIndex(options, from = -1, forward = true))
+    }
+
     @Test
     fun menuOpensOnTheFirstSelectableRowWhenNothingIsSelected() {
         val options = listOf(option("unknown", enabled = false), option("english"))

@@ -136,12 +136,18 @@ internal fun selectorMenuScrollTarget(
     return target.coerceIn(0, maxOf(0, maxValue))
 }
 
-/** Index the menu should focus when it opens: the selected row, else the first
- *  selectable one. */
+/**
+ * Index the menu should focus when it opens: the selected row, else the first
+ * selectable one, or -1 when there is nothing selectable at all.
+ *
+ * Returning 0 for a list with no enabled rows would aim focus at a disabled
+ * one, which cannot take it — the request fails silently and the menu opens
+ * with focus nowhere.
+ */
 internal fun initialSelectorMenuIndex(options: List<TvSelectorOption>): Int {
     val selected = options.indexOfFirst { it.selected && it.enabled }
     if (selected >= 0) return selected
-    return options.indexOfFirst { it.enabled }.coerceAtLeast(0)
+    return options.indexOfFirst { it.enabled }
 }
 
 /**
@@ -272,6 +278,7 @@ fun TvAnchoredSelectorMenu(
             val rowFocusRequesters = remember(options) { List(options.size) { FocusRequester() } }
             var focusedIndex by remember(options) { mutableStateOf(initialSelectorMenuIndex(options)) }
             LaunchedEffect(options) {
+                if (focusedIndex < 0) return@LaunchedEffect
                 rowFocusRequesters.getOrNull(focusedIndex)?.let { requester ->
                     runCatching { requester.requestFocus() }
                 }
