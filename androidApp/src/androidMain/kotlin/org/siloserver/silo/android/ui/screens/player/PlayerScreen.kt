@@ -103,6 +103,10 @@ import androidx.compose.ui.unit.sp
 
 private const val TAG = "PlayerScreen"
 
+/** See the TV screen's copy: a capability change waits this long before track
+ *  presets are re-applied, so a sink being rebuilt is not asked to reselect. */
+private const val TrackSelectionSettleMs = 1_500L
+
 internal fun shouldClearPlaybackOnControllerDispose(isChangingConfigurations: Boolean): Boolean =
     !isChangingConfigurations
 
@@ -346,6 +350,9 @@ fun PlayerScreen(
             )
         }
     }
+    // False until presets have been applied once for the current backend, so
+    // only later capability changes wait for the route to settle.
+    var trackPresetsApplied by remember(videoBackend) { mutableStateOf(false) }
 
     // Applies a local audio switch. The ViewModel does not commit on this call:
     // AudioTrackManager returns Unit and does nothing silently when the group is
@@ -474,6 +481,11 @@ fun PlayerScreen(
         hdrEnabled,
     ) {
         val backend = videoBackend ?: return@LaunchedEffect
+        // Let the audio route settle first — see the TV screen's copy of this.
+        // Here the route change is a headphone unplug or a Bluetooth drop
+        // rather than an HDMI switch, but the failure is the same: a
+        // reselection during a sink rebuild has no media period to seek.
+        if (trackPresetsApplied) delay(TrackSelectionSettleMs)
         backend.applyTrackSelection(
             audioCaps = audioCaps,
             displayHdr = if (hdrEnabled) displayHdr else org.siloserver.silo.model.playback.HdrCapabilities(),
@@ -481,6 +493,7 @@ fun PlayerScreen(
             preferredTextLanguage = uiState.preferredTextLanguage,
             hdrEnabled = hdrEnabled,
         )
+        trackPresetsApplied = true
     }
 
     // Mirror the user's preferred playback speed onto the live MediaController,

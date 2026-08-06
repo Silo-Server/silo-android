@@ -428,6 +428,9 @@ fun TvPlayerScreen(
             )
         }
     }
+    // False until presets have been applied once for the current backend, so
+    // only later capability changes wait for the route to settle.
+    var trackPresetsApplied by remember(videoBackend) { mutableStateOf(false) }
     LaunchedEffect(videoBackend) {
         videoBackend?.let { backend ->
             viewModel.onBackendCapabilities(backend.capabilities)
@@ -1159,6 +1162,23 @@ fun TvPlayerScreen(
         dolbyVisionEnabled,
     ) {
         val backend = videoBackend ?: return@LaunchedEffect
+        // Let the audio route settle before asking media3 to reselect.
+        //
+        // A reselection is resolved by seeking the current media period, and
+        // while an audio sink is being torn down and rebuilt there is no such
+        // period — the seek then dereferences a null holder and kills playback
+        // outright (MediaPeriodHolder.info in seekToCurrentPosition). A KVM
+        // switching inputs produces exactly that: HDMI drops or returns, the
+        // sink is rebuilt, and capabilities are re-reported mid-rebuild.
+        //
+        // Guarding by state cannot see this window — the player looks healthy
+        // from here throughout, which is why two previous attempts (#182, #186)
+        // did not help. Waiting does: this effect restarts on every capability
+        // report, so route churn coalesces into a single application once the
+        // reports stop. Only capability *changes* wait; the first application
+        // for a backend still runs immediately, because startup track selection
+        // must not be deferred.
+        if (trackPresetsApplied) delay(TrackSelectionSettleMs)
         // With Dolby Vision off, drop DV profiles (except 5 — no watchable
         // base layer) so the DV MIME preference is not added and multi-track
         // content selects the HEVC/HDR10 variant. DolbyVisionPolicy is the
@@ -1176,6 +1196,7 @@ fun TvPlayerScreen(
             preferredTextLanguage = state.preferredTextLanguage,
             hdrEnabled = hdrEnabled,
         )
+        trackPresetsApplied = true
     }
 
     // HDR display-mode switching: attach the controller to the activity window
@@ -2984,6 +3005,15 @@ private fun PlaybackExecutionPlan?.validatedPassthroughCodecs(): List<String> {
 }
 
 private const val TAG = "TvPlayerScreen"
+
+/**
+ * How long a capability change waits before track-selection presets are
+ * re-applied, so an audio sink that is being rebuilt is not asked to reselect
+ * mid-rebuild. Long enough to cover a KVM input switch settling; short enough
+ * that a genuine capability change (AVR powered on, headphones paired) still
+ * takes effect while the viewer is watching.
+ */
+private const val TrackSelectionSettleMs = 1_500L
 
 /**
  * Flatten an ExoPlayer [Tracks] object into TV-facing entries. Audio/video
