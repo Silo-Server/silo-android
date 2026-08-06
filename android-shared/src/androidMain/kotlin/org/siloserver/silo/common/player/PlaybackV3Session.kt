@@ -14,6 +14,9 @@ import org.siloserver.silo.model.playback.PlaybackTimeline
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SelectedPlaybackTracks
 
+private const val SUBTITLE_DELIVERY_SIDECAR = "sidecar"
+private const val SUBTITLE_DELIVERY_BURN_IN_ONLY = "burn_in_only"
+
 sealed interface VideoSessionStartV3 {
     data class Ready(
         val session: PlaybackSessionResponse,
@@ -68,7 +71,41 @@ internal fun PlaybackPlanV3.toSessionResponse(
             ),
         )
     }
-    val sidecarSubtitles = subtitle.sidecars.asSequence()
+    // Neutral v3 publishes the complete subtitle inventory on every plan,
+    // including plans with subtitles off. Project it directly into the native
+    // phone/TV session so Media3 can mount every deliverable representation and
+    // both menus retain burn-in-only ordinals. During a burn-in plan the
+    // inventory stays visible but its URLs are deliberately blanked: mounting
+    // alternatives alongside captions already baked into the video can make a
+    // forced sidecar render twice.
+    val inventorySubtitles = subtitle.inventory.asSequence()
+        .filter { it.combinedIndex >= 0 && it.trackId.isNotBlank() }
+        .map { item ->
+            PlayerSubtitleInfo(
+                index = item.combinedIndex,
+                language = item.language,
+                codec = item.codec,
+                label = item.label,
+                source = item.source,
+                forced = item.forced,
+                url = item.url.orEmpty().takeIf {
+                    subtitle.mode != PlaybackSubtitleModeV3.BURN_IN &&
+                        item.delivery == SUBTITLE_DELIVERY_SIDECAR
+                }.orEmpty(),
+                catalogLabel = item.label,
+                catalogSource = item.source,
+                isDefault = item.isDefault,
+                serverTrackId = item.trackId,
+                serverDelivery = item.delivery.takeIf {
+                    it == SUBTITLE_DELIVERY_SIDECAR ||
+                        it == SUBTITLE_DELIVERY_BURN_IN_ONLY
+                },
+            )
+        }
+        .distinctBy(PlayerSubtitleInfo::index)
+        .sortedBy(PlayerSubtitleInfo::index)
+        .toList()
+    val transitionalSidecars = subtitle.sidecars.asSequence()
         .takeUnless { subtitle.mode == PlaybackSubtitleModeV3.BURN_IN }
         .orEmpty()
         .filter { sidecar ->
@@ -88,8 +125,9 @@ internal fun PlaybackPlanV3.toSessionResponse(
         }
         .distinctBy(PlayerSubtitleInfo::index)
         .toList()
-    val mountedIndexes = sidecarSubtitles.mapTo(mutableSetOf(), PlayerSubtitleInfo::index)
-    val subtitles = (sidecarSubtitles + selectedSubtitle.orEmpty().filterNot { it.index in mountedIndexes })
+    val plannedSubtitles = inventorySubtitles.ifEmpty { transitionalSidecars }
+    val plannedIndexes = plannedSubtitles.mapTo(mutableSetOf(), PlayerSubtitleInfo::index)
+    val subtitles = (plannedSubtitles + selectedSubtitle.orEmpty().filterNot { it.index in plannedIndexes })
         .takeIf(List<PlayerSubtitleInfo>::isNotEmpty)
     val routeFamily = when (delivery) {
         PlaybackDelivery.ORIGINAL_HTTP -> PlaybackRouteFamily.PLATFORM_NATIVE

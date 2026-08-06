@@ -2318,6 +2318,10 @@ open class PlaybackSessionManager(
         if (index == null) return null
         val effectiveFileId = active.plan.effectiveMediaFileId ?: active.fileId
         return selected?.takeIf { it.index == index }
+            ?: active.plan.subtitle.inventory
+                .takeIf { kind == "subtitle" }
+                ?.singleOrNull { it.combinedIndex == index }
+                ?.let { PlaybackTrackIdentityV3(it.trackId, index) }
             ?: PlaybackTrackIdentityV3(stableTrackId(effectiveFileId, kind, index), index)
     }
 

@@ -894,6 +894,7 @@ class SubtitleTransactionIntegrationTest {
             audioIndex: Int,
         ) = PlaybackPlanV3(
             planId = "plan-$sessionId",
+            planAttemptKey = "v3:test:$sessionId",
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
             stream = PlaybackStreamV3(

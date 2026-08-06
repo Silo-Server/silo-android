@@ -8,6 +8,7 @@ import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
+import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.playback.canonicalSubtitleCodecFamily
 import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
@@ -26,9 +27,7 @@ internal sealed class MobileSubtitleAutoSelection {
 internal fun mobileSubtitleIdentity(subtitle: PlayerSubtitleInfo): SubtitleIdentity {
     val source = subtitle.source?.trim()?.lowercase()
     val catalogSource = subtitle.catalogSource?.trim()?.lowercase()
-    val downloaded = subtitle.downloadId != null ||
-        source == "downloaded" ||
-        catalogSource == "downloaded"
+    val downloaded = subtitle.isLocalDownloadedSubtitle()
     val media = SubtitleMediaIdentity(
         trackId = subtitle.downloadId?.let(::downloadedSubtitleArtifactTrackId)
             ?: subtitle.mediaTrackId,
@@ -42,6 +41,10 @@ internal fun mobileSubtitleIdentity(subtitle: PlayerSubtitleInfo): SubtitleIdent
             subtitle.catalogLabel ?: subtitle.label,
         ).takeIf { it },
     )
+    when (subtitle.serverDelivery) {
+        "burn_in_only" -> return SubtitleIdentity.ServerBurnIn(subtitle.index, media)
+        "sidecar" -> return SubtitleIdentity.ServerSidecar(subtitle.index, media)
+    }
     if (downloaded) {
         val downloadId = subtitle.downloadId
         return if (downloadId != null) {

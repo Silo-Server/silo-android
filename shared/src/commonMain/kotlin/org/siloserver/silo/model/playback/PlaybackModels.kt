@@ -66,7 +66,21 @@ data class PlayerSubtitleInfo(
     @SerialName("download_id") val downloadId: Int? = null,
     /** Optional exact Media3 Format.id retained by client-created/local rows. */
     @SerialName("media_track_id") val mediaTrackId: String? = null,
+    /** Exact protocol-v3 server identity from the authoritative subtitle inventory. */
+    @SerialName("server_track_id") val serverTrackId: String? = null,
+    /** Protocol-v3 representation: `sidecar` or `burn_in_only`. */
+    @SerialName("server_delivery") val serverDelivery: String? = null,
 )
+
+/**
+ * Whether this row represents a subtitle artifact downloaded onto this Android
+ * device, rather than a server-managed provider download in the v3 inventory.
+ */
+fun PlayerSubtitleInfo.isLocalDownloadedSubtitle(): Boolean =
+    downloadId != null ||
+        (serverTrackId == null && serverDelivery == null &&
+            (source.equals("downloaded", ignoreCase = true) ||
+                catalogSource.equals("downloaded", ignoreCase = true)))
 
 /**
  * Granular HDR support advertised by the client. Optional; absent means the

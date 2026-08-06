@@ -796,6 +796,7 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
 private fun allocatedReady(sessionId: String): VideoSessionStartV3.Ready {
     val plan = PlaybackPlanV3(
         planId = "plan-$sessionId",
+        planAttemptKey = "v3:test:$sessionId",
         sessionId = sessionId,
         delivery = PlaybackDelivery.ORIGINAL_HTTP,
         stream = PlaybackStreamV3(

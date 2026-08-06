@@ -6,6 +6,7 @@ import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
+import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.audioTrackFingerprint
@@ -274,9 +275,7 @@ internal fun resolveTvRemoteAudioIntent(
 ): Int? = playerOrdinal.takeIf { it in audioTracks.indices }
 
 private fun PlayerSubtitleInfo.isDownloadedTvPolicyRow(): Boolean =
-    downloadId != null ||
-        source.equals("downloaded", ignoreCase = true) ||
-        catalogSource.equals("downloaded", ignoreCase = true)
+    isLocalDownloadedSubtitle()
 
 private fun PlayerSubtitleInfo.tvMediaIdentity(): SubtitleMediaIdentity = when (
     val identity = tvSubtitleIdentity(this)

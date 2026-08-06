@@ -1503,6 +1503,7 @@ class PlaybackSessionManagerStagedReplanTest {
             fileId: Int = 42,
         ): PlaybackPlanV3 = PlaybackPlanV3(
             planId = "plan-$sessionId",
+            planAttemptKey = "v3:test:$sessionId",
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
             stream = PlaybackStreamV3(

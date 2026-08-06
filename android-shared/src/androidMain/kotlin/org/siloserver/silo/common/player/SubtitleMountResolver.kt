@@ -3,6 +3,7 @@ package org.siloserver.silo.common.player
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
+import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.playback.canonicalSubtitleCodecFamily
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.isTextSubtitleCodecFamily
@@ -245,8 +246,7 @@ private fun String?.isReservedArtifactTrackId(): Boolean =
         this?.startsWith(DOWNLOADED_SUBTITLE_ARTIFACT_TRACK_ID_PREFIX) == true
 
 internal fun PlayerSubtitleInfo.isDownloadedSubtitleArtifact(): Boolean =
-    source.normalizedValue().equals("downloaded", ignoreCase = true) ||
-        catalogSource.normalizedValue().equals("downloaded", ignoreCase = true)
+    isLocalDownloadedSubtitle()
 
 private fun PlayerSubtitleInfo.effectiveSubtitleSource(): String? =
     source.normalizedValue() ?: catalogSource.normalizedValue()

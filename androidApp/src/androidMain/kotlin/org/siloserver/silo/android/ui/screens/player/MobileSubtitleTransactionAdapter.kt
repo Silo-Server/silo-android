@@ -32,6 +32,7 @@ import org.siloserver.silo.model.playback.SubtitleTransitionEvent
 import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
 import org.siloserver.silo.model.playback.UpdateAudioPreference
+import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
 import org.siloserver.silo.network.ApiResult
@@ -1297,9 +1298,8 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
 private fun MobileSubtitleCommittedPlayback.withRebasedDownloads(
     oldContext: MobileSubtitlePlaybackContext,
 ): MobileSubtitleCommittedPlayback {
-    val downloadedPredicate: (PlayerSubtitleInfo) -> Boolean = {
-        it.downloadId != null || it.source.equals("downloaded", ignoreCase = true)
-    }
+    val downloadedPredicate: (PlayerSubtitleInfo) -> Boolean =
+        PlayerSubtitleInfo::isLocalDownloadedSubtitle
     val downloaded = oldContext.subtitleTracks
         .filter(downloadedPredicate)
         .map { track ->

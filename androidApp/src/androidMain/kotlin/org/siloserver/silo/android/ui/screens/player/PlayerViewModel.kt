@@ -61,6 +61,7 @@ import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.SubtitleIdentity
+import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
@@ -1717,10 +1718,7 @@ class PlayerViewModel(
                         val mountGeneration = expectNextMediaMount()
                         _uiState.update { current ->
                             val downloaded = current.subtitleTracks
-                                .filter {
-                                    it.downloadId != null ||
-                                        it.source.equals("downloaded", ignoreCase = true)
-                                }
+                                .filter(PlayerSubtitleInfo::isLocalDownloadedSubtitle)
                                 .map { track ->
                                     track.copy(
                                         url = rebaseDownloadedSubtitleUrl(
@@ -1731,10 +1729,7 @@ class PlayerViewModel(
                                 }
                             val recoveredSubtitles = decision.session.subtitleUrls
                                 .orEmpty()
-                                .filterNot {
-                                    it.downloadId != null ||
-                                        it.source.equals("downloaded", ignoreCase = true)
-                                } + downloaded
+                                .filterNot(PlayerSubtitleInfo::isLocalDownloadedSubtitle) + downloaded
                             current.copy(
                                 error = null,
                                 sessionId = decision.session.sessionId

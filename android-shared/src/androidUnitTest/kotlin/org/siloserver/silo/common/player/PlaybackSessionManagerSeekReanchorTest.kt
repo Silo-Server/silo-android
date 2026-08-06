@@ -27,7 +27,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
-import org.siloserver.silo.model.playback.EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE
+import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
+import org.siloserver.silo.model.playback.DeliveryCapability
+import org.siloserver.silo.model.playback.DeliverySubtitleCapabilities
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
@@ -39,6 +41,7 @@ import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleArtifactV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTimelineV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
@@ -46,6 +49,7 @@ import org.siloserver.silo.model.playback.SEEK_FAILURE_RECOVERY_V3_OPERATION
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
+import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
@@ -60,16 +64,22 @@ import kotlin.test.assertTrue
 
 class PlaybackSessionManagerSeekReanchorTest {
     @Test
-    fun startRequestNegotiatesExternalTextSidecarsOnlyWhenContextSupportsThem() = runTest {
+    fun startRequestCarriesSubtitleSupportOnlyInTheNeutralDeliveryContext() = runTest {
         val capable = Harness(startResponse = response(plan())) { _, _ -> error("unused") }
         capable.manager.startVideoSessionV3(
             fileId = 42,
             profileId = "profile-1",
             capabilities = ClientCodecCapabilities(),
             clientPlaybackContext = ClientPlaybackContext(
-                features = listOf(EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE),
                 formFactor = "tv",
                 appVersion = "test",
+                deliveries = mapOf(
+                    DELIVERY_CLASS_ORIGINAL_HTTP to DeliveryCapability(
+                        enabled = true,
+                        supportedOnDevice = true,
+                        subtitles = DeliverySubtitleCapabilities(sidecarText = true),
+                    ),
+                ),
             ),
             audioTrackIndex = null,
             subtitleTrackIndex = null,
@@ -77,27 +87,15 @@ class PlaybackSessionManagerSeekReanchorTest {
             startPosition = 0.0,
         )
         val capableBody = capable.startBodies.single()
-        assertTrue(
-            EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE in capableBody["client_features"]!!.jsonArray.map { it.jsonPrimitive.content },
-        )
-        assertTrue(
-            EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE in capableBody["client_playback_context"]!!.jsonObject["features"]!!.jsonArray.map { it.jsonPrimitive.content },
-        )
-
-        val legacy = Harness(startResponse = response(plan())) { _, _ -> error("unused") }
-        legacy.manager.startVideoSessionV3(
-            fileId = 42,
-            profileId = "profile-1",
-            capabilities = ClientCodecCapabilities(),
-            clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "cast-test"),
-            audioTrackIndex = null,
-            subtitleTrackIndex = null,
-            qualityPreference = "original",
-            startPosition = 0.0,
-        )
-        val legacyBody = legacy.startBodies.single()
         assertFalse(
-            EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE in legacyBody["client_features"]!!.jsonArray.map { it.jsonPrimitive.content },
+            "external_text_sidecar_set_v1" in
+                capableBody["client_features"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertFalse("features" in capableBody["client_playback_context"]!!.jsonObject)
+        assertTrue(
+            capableBody["client_playback_context"]!!.jsonObject["deliveries"]!!.jsonObject[
+                DELIVERY_CLASS_ORIGINAL_HTTP
+            ]!!.jsonObject["subtitles"]!!.jsonObject["sidecar_text"]!!.jsonPrimitive.content.toBoolean(),
         )
     }
 
@@ -452,22 +450,55 @@ class PlaybackSessionManagerSeekReanchorTest {
     }
 
     @Test
-    fun replanSynthesizesChangedTrackIdsFromTheEffectiveFile() = runTest {
+    fun replanEchoesInventorySubtitleIdAndSynthesizesChangedAudioId() = runTest {
         val initial = plan().copy(
             effectiveMediaFileId = 84,
             selectedTracks = SelectedPlaybackTracksV3(
                 audio = PlaybackTrackIdentityV3("file:84:audio:1", 1),
             ),
+            subtitle = PlaybackSubtitleDecisionV3(
+                inventory = listOf(
+                    PlaybackSubtitleInventoryItemV3(
+                        trackId = "server-subtitle-0",
+                        combinedIndex = 0,
+                        source = "external",
+                        delivery = "sidecar",
+                        url = "/stream/session-1/subtitles/0.vtt",
+                    ),
+                    PlaybackSubtitleInventoryItemV3(
+                        trackId = "server-subtitle-1",
+                        combinedIndex = 1,
+                        source = "embedded",
+                        delivery = "sidecar",
+                        url = "/stream/session-1/subtitles/1.vtt",
+                    ),
+                    PlaybackSubtitleInventoryItemV3(
+                        trackId = "server-subtitle-2",
+                        combinedIndex = 2,
+                        source = "embedded",
+                        delivery = "burn_in_only",
+                    ),
+                    PlaybackSubtitleInventoryItemV3(
+                        trackId = "server-owned-subtitle-id",
+                        combinedIndex = 3,
+                        source = "embedded",
+                        codec = "ass",
+                        delivery = "sidecar",
+                        url = "/stream/session-1/subtitles/3.ass",
+                    ),
+                ),
+            ),
         )
         val replanned = initial.copy(
             planId = "plan-2",
+            planAttemptKey = "v3:00000000000000a2",
             selectedTracks = SelectedPlaybackTracksV3(
                 audio = PlaybackTrackIdentityV3("file:84:audio:2", 2),
-                subtitle = PlaybackTrackIdentityV3("file:84:subtitle:3", 3),
+                subtitle = PlaybackTrackIdentityV3("server-owned-subtitle-id", 3),
             ),
             subtitle = PlaybackSubtitleDecisionV3(
                 mode = PlaybackSubtitleModeV3.RENDER,
-                trackId = "file:84:subtitle:3",
+                trackId = "server-owned-subtitle-id",
                 artifact = PlaybackSubtitleArtifactV3(
                     url = "/stream/session-1/subtitles/3.vtt",
                     mimeType = "text/vtt",
@@ -483,14 +514,18 @@ class PlaybackSessionManagerSeekReanchorTest {
             positionSeconds = 15.0,
             audioTrackIndex = 2,
             subtitleTrackIndex = 3,
+            operation = TRACK_CHANGE_V3_OPERATION,
         )
 
         assertIs<VideoSessionStartV3.Ready>(
-            assertIs<ApiResult.Success<VideoSessionStartV3>>(result).data,
+            assertIs<ApiResult.Success<VideoSessionStartV3>>(
+                result,
+                "track-identity replan failed: $result",
+            ).data,
         )
         val selectedTracks = harness.replanBodies.single()["selected_tracks"]!!.jsonObject
         assertEquals("file:84:audio:2", selectedTracks["audio"]!!.jsonObject.string("id"))
-        assertEquals("file:84:subtitle:3", selectedTracks["subtitle"]!!.jsonObject.string("id"))
+        assertEquals("server-owned-subtitle-id", selectedTracks["subtitle"]!!.jsonObject.string("id"))
     }
 
     private class Harness(

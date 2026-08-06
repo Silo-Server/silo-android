@@ -14,6 +14,7 @@ import kotlin.test.assertTrue
 class PlaybackProtocolV3Test {
     private val plan = PlaybackPlanV3(
         planId = "plan-1",
+        planAttemptKey = "v3:0000000000000001",
         sessionId = "session-1",
         delivery = PlaybackDelivery.ORIGINAL_HTTP,
         stream = PlaybackStreamV3(
@@ -140,6 +141,47 @@ class PlaybackProtocolV3Test {
             ),
         ).validateForMedia3()
         assertIs<PlaybackV3Validation.Playable>(hls)
+    }
+
+    @Test
+    fun playablePlanRequiresAServerMintedAttemptKey() {
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = 3,
+            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(planAttemptKey = ""),
+        ).validateForMedia3()
+
+        assertEquals(
+            "invalid_playback_plan",
+            assertIs<PlaybackV3Validation.Terminal>(result).reason,
+        )
+    }
+
+    @Test
+    fun playablePlanRejectsAGappedOrUndeliverableSubtitleInventory() {
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = 3,
+            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(
+                subtitle = PlaybackSubtitleDecisionV3(
+                    inventory = listOf(
+                        PlaybackSubtitleInventoryItemV3(
+                            trackId = "track",
+                            combinedIndex = 1,
+                            source = "external",
+                            delivery = "sidecar",
+                        ),
+                    ),
+                ),
+            ),
+        ).validateForMedia3()
+
+        assertEquals(
+            "invalid_playback_plan",
+            assertIs<PlaybackV3Validation.Terminal>(result).reason,
+        )
     }
 
     @Test

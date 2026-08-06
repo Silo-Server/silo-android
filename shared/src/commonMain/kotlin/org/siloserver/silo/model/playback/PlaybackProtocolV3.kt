@@ -19,7 +19,6 @@ const val CLIENT_VIDEO_TRANSFORMATIONS_FEATURE = "client_video_transformations_v
 const val DEVICE_QUIRKS_V3_FEATURE = "device_quirks_v1"
 const val SEEK_REANCHOR_V3_FEATURE = "seek_reanchor_v1"
 const val DIRECT_STREAM_RESUME_V1_FEATURE = "direct_stream_resume_v1"
-const val EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE = "external_text_sidecar_set_v1"
 
 /**
  * How a capability list was obtained. The server validates strictly against
@@ -83,14 +82,6 @@ fun playbackClientFeaturesV3(context: ClientPlaybackContext): List<String> = bui
     addAll(PLAYBACK_START_CLIENT_FEATURES_V3)
     if (!context.output.audioPassthrough?.entries.isNullOrEmpty()) {
         add(LAYOUT_AWARE_PASSTHROUGH_FEATURE)
-    }
-    if (context.deliveries.values.any { capability ->
-            capability.enabled &&
-                capability.supportedOnDevice &&
-                capability.subtitles.sidecarText
-        }
-    ) {
-        add(EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE)
     }
 }
 
@@ -346,7 +337,7 @@ data class PlaybackSubtitleInventoryItemV3(
     val forced: Boolean = false,
     @SerialName("default") val isDefault: Boolean = false,
     @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
-    /** `embedded`, `sidecar`, or `burn_in_only`; the last carries no [url]. */
+    /** `sidecar` or `burn_in_only`; the last carries no [url]. */
     val delivery: String = "",
     val url: String? = null,
     @SerialName("font_bundle_url") val fontBundleUrl: String? = null,
@@ -486,6 +477,20 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
     if (plan.protocolVersion != PLAYBACK_PROTOCOL_V3) {
         return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned an unsupported plan version.", false)
     }
+    if (plan.planAttemptKey.isBlank()) {
+        return PlaybackV3Validation.Terminal(
+            "invalid_playback_plan",
+            "The server returned no plan-attempt identity.",
+            false,
+        )
+    }
+    if (!plan.hasValidSubtitleInventory()) {
+        return PlaybackV3Validation.Terminal(
+            "invalid_playback_plan",
+            "The server returned an invalid subtitle inventory.",
+            false,
+        )
+    }
     if (plan.stream.url.isBlank()) {
         return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned an empty stream URL.", false)
     }
@@ -552,6 +557,32 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
         return PlaybackV3Validation.ReplanRequired("invalid_original_server_transformation", plan, resolvedSessionId)
     }
     return PlaybackV3Validation.Playable(plan, resolvedSessionId)
+}
+
+private fun PlaybackPlanV3.hasValidSubtitleInventory(): Boolean {
+    if (subtitle.inventory.isEmpty()) return true
+    if (subtitle.inventory.map { it.combinedIndex }.sorted() != subtitle.inventory.indices.toList()) {
+        return false
+    }
+    if (subtitle.inventory.any { it.trackId.isBlank() } ||
+        subtitle.inventory.map { it.trackId }.distinct().size != subtitle.inventory.size
+    ) {
+        return false
+    }
+    if (subtitle.inventory.any { item ->
+            when (item.delivery) {
+                "sidecar" -> item.url.isNullOrBlank()
+                "burn_in_only" -> !item.url.isNullOrBlank()
+                else -> true
+            }
+        }
+    ) {
+        return false
+    }
+    val selected = selectedTracks.subtitle ?: return true
+    return subtitle.inventory.any {
+        it.combinedIndex == selected.index && it.trackId == selected.id
+    }
 }
 
 fun PlaybackPlanV3.executableMedia3ClientTransformations(): List<String> =

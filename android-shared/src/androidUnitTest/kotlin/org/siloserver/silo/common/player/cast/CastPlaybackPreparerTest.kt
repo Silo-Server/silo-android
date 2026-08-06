@@ -1,14 +1,15 @@
 package org.siloserver.silo.common.player.cast
 
-import org.siloserver.silo.model.playback.EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE
+import org.siloserver.silo.model.playback.playbackClientFeaturesV3
 import kotlin.test.Test
 import kotlin.test.assertFalse
 
 class CastPlaybackPreparerTest {
     @Test
-    fun castContextDoesNotNegotiateLocalMedia3SidecarMounting() {
+    fun castContextDoesNotAdvertiseThePreNeutralSidecarFeature() {
         assertFalse(
-            EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE in chromecastPlaybackContext("test").features,
+            "external_text_sidecar_set_v1" in
+                playbackClientFeaturesV3(chromecastPlaybackContext("test")),
         )
     }
 }
