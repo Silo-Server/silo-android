@@ -375,6 +375,11 @@ class SiloPlayerFactory(
      * Apply capability-aware track selection presets to [player]. Call at
      * player construction and again whenever [AudioPassthroughCapabilities]
      * changes (HDMI hot-plug, BT pair, user-toggled "force Atmos" setting).
+     *
+     * Returns whether parameters were actually assigned. A skip — teardown
+     * guard or no-op parameters — must be visible to callers that track
+     * "presets have been applied once", or a skipped first run silently
+     * reclassifies the real first application as a later change.
      */
     fun applyTrackSelectionPresets(
         player: Player,
@@ -383,7 +388,7 @@ class SiloPlayerFactory(
         preferredAudioLanguage: String? = null,
         preferredTextLanguage: String? = null,
         hdrEnabled: Boolean = true,
-    ) {
+    ): Boolean {
         // ExoPlayer resolves a track reselection by seeking the current media
         // period. With no media period — idle, empty timeline, or torn down
         // while this was in flight — that path dereferences a null holder and
@@ -398,7 +403,7 @@ class SiloPlayerFactory(
         // player is already past the point of having anything to reselect.
         // Presets are re-applied on the next construction anyway, so skipping
         // costs nothing.
-        if (shouldSkipTrackReselection(player.playbackState, player.currentTimeline.isEmpty)) return
+        if (shouldSkipTrackReselection(player.playbackState, player.currentTimeline.isEmpty)) return false
 
         val base = player.trackSelectionParameters
         val next = if (isTv) {
@@ -422,6 +427,7 @@ class SiloPlayerFactory(
             )
         }
         player.trackSelectionParameters = next
+        return true
     }
 
     /**

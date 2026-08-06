@@ -38,13 +38,14 @@ interface VideoPlaybackBackend {
 
     fun selectAudioTrack(track: VideoPlayerTrackEntry)
 
+    /** Returns whether presets were actually assigned; false = skipped. */
     fun applyTrackSelection(
         audioCaps: AudioPassthroughCapabilities,
         displayHdr: HdrCapabilities = HdrCapabilities(),
         preferredAudioLanguage: String? = null,
         preferredTextLanguage: String? = null,
         hdrEnabled: Boolean = true,
-    )
+    ): Boolean
 
     fun release()
 }

@@ -486,14 +486,17 @@ fun PlayerScreen(
         // rather than an HDMI switch, but the failure is the same: a
         // reselection during a sink rebuild has no media period to seek.
         if (trackPresetsApplied) delay(TrackSelectionSettleMs)
-        backend.applyTrackSelection(
-            audioCaps = audioCaps,
-            displayHdr = if (hdrEnabled) displayHdr else org.siloserver.silo.model.playback.HdrCapabilities(),
-            preferredAudioLanguage = uiState.preferredAudioLanguage,
-            preferredTextLanguage = uiState.preferredTextLanguage,
-            hdrEnabled = hdrEnabled,
-        )
-        trackPresetsApplied = true
+        // Only a REAL application counts — see the TV screen's copy.
+        if (backend.applyTrackSelection(
+                audioCaps = audioCaps,
+                displayHdr = if (hdrEnabled) displayHdr else org.siloserver.silo.model.playback.HdrCapabilities(),
+                preferredAudioLanguage = uiState.preferredAudioLanguage,
+                preferredTextLanguage = uiState.preferredTextLanguage,
+                hdrEnabled = hdrEnabled,
+            )
+        ) {
+            trackPresetsApplied = true
+        }
     }
 
     // Mirror the user's preferred playback speed onto the live MediaController,

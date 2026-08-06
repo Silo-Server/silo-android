@@ -88,7 +88,7 @@ class Media3VideoPlaybackBackend(
         preferredAudioLanguage: String?,
         preferredTextLanguage: String?,
         hdrEnabled: Boolean,
-    ) {
+    ): Boolean =
         playerFactory.applyTrackSelectionPresets(
             player = player,
             audioCaps = audioCaps,
@@ -97,7 +97,6 @@ class Media3VideoPlaybackBackend(
             preferredTextLanguage = preferredTextLanguage,
             hdrEnabled = hdrEnabled,
         )
-    }
 
     override fun release() {
         playerFactory.releasePlayer(player)

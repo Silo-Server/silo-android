@@ -1189,14 +1189,20 @@ fun TvPlayerScreen(
                 org.siloserver.silo.player.DolbyVisionPolicy.Snapshot(dolbyVisionEnabled = dolbyVisionEnabled),
             ),
         )
-        backend.applyTrackSelection(
-            audioCaps = audioCaps,
-            displayHdr = effectiveDisplayHdr,
-            preferredAudioLanguage = state.preferredAudioLanguage,
-            preferredTextLanguage = state.preferredTextLanguage,
-            hdrEnabled = hdrEnabled,
-        )
-        trackPresetsApplied = true
+        // Only a REAL application counts. The factory skips silently while the
+        // player is idle or unmounted; letting that skip flip the flag would
+        // reclassify the true first application as a "later capability change"
+        // and defer startup track selection by the settle delay.
+        if (backend.applyTrackSelection(
+                audioCaps = audioCaps,
+                displayHdr = effectiveDisplayHdr,
+                preferredAudioLanguage = state.preferredAudioLanguage,
+                preferredTextLanguage = state.preferredTextLanguage,
+                hdrEnabled = hdrEnabled,
+            )
+        ) {
+            trackPresetsApplied = true
+        }
     }
 
     // HDR display-mode switching: attach the controller to the activity window
