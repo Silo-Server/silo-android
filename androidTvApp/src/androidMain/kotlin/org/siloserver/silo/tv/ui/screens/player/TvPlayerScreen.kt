@@ -1186,16 +1186,23 @@ fun TvPlayerScreen(
         onDispose { hdrDisplayController.restore() }
     }
 
-    DisposableEffect(context) {
+    // Hold the screen awake only while playback is actually advancing. The
+    // flag used to be held for the life of the screen, which on a TV meant a
+    // paused player suppressed the system screensaver indefinitely — a static
+    // image parked on the panel for hours is exactly what burn-in protection
+    // exists to prevent. Mirrors the phone player's gate (same user-visible
+    // rule: pause long enough and the screensaver takes over, resume and the
+    // screen is held again). Buffering counts as playing so a rebuffer at a
+    // scene boundary cannot blank the screen mid-watch.
+    val keepScreenAwake = !state.isPaused && (state.isPlaying || state.isBuffering)
+    DisposableEffect(context, keepScreenAwake) {
         val window = (context as? Activity)?.window
-        if (window != null) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (keepScreenAwake) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
-        onDispose {
-            if (window != null) {
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            }
-        }
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
 
     val latestLifecycleRoomSnapshot by rememberUpdatedState(roomSnapshot)
