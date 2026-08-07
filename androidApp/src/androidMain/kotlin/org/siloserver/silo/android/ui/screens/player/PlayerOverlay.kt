@@ -66,6 +66,8 @@ fun PlayerOverlay(
     alwaysShowControls: Boolean = false,
     tabletopMode: Boolean = false,
     tabletopPaneHeight: Dp? = null,
+    brightnessFraction: Float,
+    onSetBrightness: (Float) -> Unit,
     showBufferingIndicator: Boolean = true,
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
@@ -346,6 +348,7 @@ fun PlayerOverlay(
                 tabletopMode = tabletopMode,
                 playbackSpeed = playbackSpeed,
                 nextEpisode = state.nextEpisode.takeUnless { inRoom },
+                brightnessFraction = brightnessFraction,
                 seekEnabled = seekEnabled,
                 playPauseEnabled = playPauseEnabled,
                 onBack = handleBack,
@@ -364,6 +367,7 @@ fun PlayerOverlay(
                 onOpenSettings = { settingsSheetVisible = true },
                 onSetPlaybackSpeed = viewModel::onSetPlaybackSpeed,
                 onPlayNextEpisode = viewModel::playUpNextNow,
+                onSetBrightness = onSetBrightness,
                 castSlot = castSlot,
             )
         }

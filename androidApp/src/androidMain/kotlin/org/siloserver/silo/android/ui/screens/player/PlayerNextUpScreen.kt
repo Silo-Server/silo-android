@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -56,6 +58,7 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
  * Watching / Back actions, an auto-play countdown ring, the auto-play
  * toggle, and an On Deck carousel of other in-progress items.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlayerNextUpScreen(
     nextEpisode: PlayerViewModel.NextEpisodeInfo?,
@@ -157,42 +160,18 @@ fun PlayerNextUpScreen(
                 }
 
                 if (compactTabletop) {
-                    Row(
+                    FlowRow(
                         modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        if (nextEpisode != null) {
-                            Button(
-                                onClick = onPlayNow,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color.White,
-                                    contentColor = Color.Black,
-                                ),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.PlayArrow,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Play Now")
-                            }
-                        }
-                        if (!videoEnded) {
-                            OutlinedButton(onClick = onKeepWatching) {
-                                Text("Keep Watching", color = Color.White)
-                            }
-                        }
-                        OutlinedButton(onClick = onBack) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text("Back", color = Color.White)
-                        }
+                        NextUpActionButtons(
+                            hasNextEpisode = nextEpisode != null,
+                            videoEnded = videoEnded,
+                            onPlayNow = onPlayNow,
+                            onKeepWatching = onKeepWatching,
+                            onBack = onBack,
+                        )
                     }
                     if (countdownSeconds != null) {
                         CountdownRing(
@@ -207,44 +186,14 @@ fun PlayerNextUpScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        if (nextEpisode != null) {
-                            Button(
-                                onClick = onPlayNow,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color.White,
-                                    contentColor = Color.Black,
-                                ),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.PlayArrow,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Play Now")
-                            }
-                        }
-                        if (!videoEnded) {
-                            OutlinedButton(
-                                onClick = onKeepWatching,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text("Keep Watching", color = Color.White)
-                            }
-                        }
-                        OutlinedButton(
-                            onClick = onBack,
+                        NextUpActionButtons(
+                            hasNextEpisode = nextEpisode != null,
+                            videoEnded = videoEnded,
+                            onPlayNow = onPlayNow,
+                            onKeepWatching = onKeepWatching,
+                            onBack = onBack,
                             modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text("Back", color = Color.White)
-                        }
+                        )
                         if (countdownSeconds != null) {
                             CountdownRing(
                                 seconds = countdownSeconds,
@@ -288,6 +237,55 @@ fun PlayerNextUpScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NextUpActionButtons(
+    hasNextEpisode: Boolean,
+    videoEnded: Boolean,
+    onPlayNow: () -> Unit,
+    onKeepWatching: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (hasNextEpisode) {
+        Button(
+            onClick = onPlayNow,
+            modifier = modifier,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.White,
+                contentColor = Color.Black,
+            ),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.PlayArrow,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Play Now")
+        }
+    }
+    if (!videoEnded) {
+        OutlinedButton(
+            onClick = onKeepWatching,
+            modifier = modifier,
+        ) {
+            Text("Keep Watching", color = Color.White)
+        }
+    }
+    OutlinedButton(
+        onClick = onBack,
+        modifier = modifier,
+    ) {
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(18.dp),
+        )
+        Text("Back", color = Color.White)
     }
 }
 

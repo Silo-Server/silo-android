@@ -26,7 +26,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,16 +43,14 @@ fun PlaybackStatsSheet(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+    val dismissSheet = { scope.dismissPlayerSheet(sheetState, onDismiss) }
 
     LaunchedEffect(isVisible) {
         if (isVisible) sheetState.show()
     }
 
     PlayerModalBottomSheet(
-        onDismissRequest = {
-            scope.launch { sheetState.hide() }
-            onDismiss()
-        },
+        onDismissRequest = dismissSheet,
         sheetState = sheetState,
         tabletopPaneHeight = tabletopPaneHeight,
     ) {
@@ -82,12 +79,9 @@ fun PlaybackStatsSheet(
                 PlayerSheetHeader(
                     title = "Playback Stats",
                     onBack = onBack?.let { back ->
-                        {
-                            scope.launch { sheetState.hide() }
-                            back()
-                        }
+                        { scope.dismissPlayerSheet(sheetState, back) }
                     },
-                    onDismiss = onDismiss,
+                    onDismiss = dismissSheet,
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(

@@ -282,21 +282,6 @@ private fun ExpandedDetailHero(
 
 @Composable
 private fun ExpandedHeroTitle(detail: ItemDetail) {
-    val logoUrl = detail.logoUrl
-    if (!logoUrl.isNullOrBlank()) {
-        ThumbhashImage(
-            url = logoUrl,
-            thumbhash = null,
-            contentDescription = detail.title,
-            contentScale = ContentScale.Fit,
-            transparent = true,
-            modifier = Modifier
-                .fillMaxWidth(0.72f)
-                .height(112.dp),
-        )
-        return
-    }
-
     val isEpisode = detail.type == "episode"
     val seriesTitle = detail.seriesTitle?.takeIf { it.isNotBlank() }
     if (isEpisode && seriesTitle != null) {
@@ -333,6 +318,21 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
                 )
             }
         }
+        return
+    }
+
+    val logoUrl = detail.logoUrl
+    if (!logoUrl.isNullOrBlank()) {
+        ThumbhashImage(
+            url = logoUrl,
+            thumbhash = null,
+            contentDescription = detail.title,
+            contentScale = ContentScale.Fit,
+            transparent = true,
+            modifier = Modifier
+                .fillMaxWidth(0.72f)
+                .height(112.dp),
+        )
         return
     }
 

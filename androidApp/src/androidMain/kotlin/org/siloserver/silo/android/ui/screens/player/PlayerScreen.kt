@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -31,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -220,6 +222,32 @@ fun PlayerScreen(
     var pictureInPictureSourceRect by remember { mutableStateOf<Rect?>(null) }
     var playerRootBounds by remember { mutableStateOf<Rect?>(null) }
     var fastForwardHoldActive by remember { mutableStateOf(false) }
+    val originalWindowBrightness = remember(activity) {
+        activity?.window?.attributes?.screenBrightness
+    }
+    var playerBrightnessFraction by remember(activity, originalWindowBrightness) {
+        mutableFloatStateOf(
+            (
+                originalWindowBrightness
+                    ?.takeIf { it >= 0f }
+                    ?: runCatching {
+                        Settings.System.getInt(
+                            context.contentResolver,
+                            Settings.System.SCREEN_BRIGHTNESS,
+                        ) / 255f
+                    }.getOrDefault(0.5f)
+                ).coerceIn(0f, 1f),
+        )
+    }
+
+    DisposableEffect(activity, originalWindowBrightness) {
+        onDispose {
+            val window = activity?.window ?: return@onDispose
+            val attributes = window.attributes
+            attributes.screenBrightness = originalWindowBrightness ?: -1f
+            window.attributes = attributes
+        }
+    }
 
     // Google Cast (Chromecast). Distinct from the NSD/mDNS SiloCast device
     // remote. When a Cast session connects, local Media3 is paused and a
@@ -1312,6 +1340,16 @@ fun PlayerScreen(
                         tabletopMode = activeTabletopPaneLayout != null,
                         tabletopPaneHeight = activeTabletopPaneLayout?.let { layout ->
                             with(density) { layout.controlsHeightPx.toDp() }
+                        },
+                        brightnessFraction = playerBrightnessFraction,
+                        onSetBrightness = { fraction ->
+                            val appliedBrightness = fraction.coerceIn(0.02f, 1f)
+                            playerBrightnessFraction = appliedBrightness
+                            activity?.window?.let { window ->
+                                val attributes = window.attributes
+                                attributes.screenBrightness = appliedBrightness
+                                window.attributes = attributes
+                            }
                         },
                         showBufferingIndicator = activeTabletopPaneLayout == null,
                         castSlot = {

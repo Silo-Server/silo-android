@@ -209,7 +209,13 @@ fun SubtitleSearchSheet(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp),
+                    .then(
+                        if (tabletopPaneHeight == null) {
+                            Modifier.heightIn(max = 420.dp)
+                        } else {
+                            Modifier.weight(1f)
+                        },
+                    ),
             ) {
                 items(tools.searchResults, key = { "${it.provider}:${it.id}" }) { result ->
                     val key = "${result.provider}:${result.id}"

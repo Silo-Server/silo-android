@@ -108,7 +108,9 @@ fun ChaptersSheet(
                     columns = GridCells.Fixed(if (tabletopPaneHeight == null) 1 else 2),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .then(
+                            if (tabletopPaneHeight == null) Modifier else Modifier.weight(1f),
+                        ),
                     contentPadding = PaddingValues(
                         start = playerSheetHorizontalPadding(tabletopPaneHeight),
                         end = playerSheetHorizontalPadding(tabletopPaneHeight),

@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -38,6 +37,8 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * Shared behavior for the player's modal bottom sheets.
@@ -72,9 +73,20 @@ internal fun playerSheetMaxHeight(tabletopPaneHeight: Dp? = null): Dp =
 @Composable
 internal fun Modifier.tabletopPlayerSheet(tabletopPaneHeight: Dp?): Modifier {
     if (tabletopPaneHeight == null) return this
-    val paneTop = (LocalConfiguration.current.screenHeightDp.dp - tabletopPaneHeight)
-        .coerceAtLeast(0.dp)
-    return height(tabletopPaneHeight).offset(y = paneTop)
+    return height(tabletopPaneHeight)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+internal fun CoroutineScope.dismissPlayerSheet(
+    sheetState: SheetState,
+    onDismiss: () -> Unit,
+    afterDismiss: (() -> Unit)? = null,
+) {
+    launch {
+        sheetState.hide()
+        onDismiss()
+        afterDismiss?.invoke()
+    }
 }
 
 @Composable

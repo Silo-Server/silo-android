@@ -43,7 +43,6 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
-import kotlinx.coroutines.launch
 
 /**
  * Glass-style bottom sheet for editing the user's [SubtitleAppearance]:
@@ -71,16 +70,14 @@ fun SubtitleStyleSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    val dismissSheet = { scope.dismissPlayerSheet(sheetState, onDismiss) }
 
     LaunchedEffect(isVisible) {
         if (isVisible) sheetState.show()
     }
 
     PlayerModalBottomSheet(
-        onDismissRequest = {
-            scope.launch { sheetState.hide() }
-            onDismiss()
-        },
+        onDismissRequest = dismissSheet,
         sheetState = sheetState,
         tabletopPaneHeight = tabletopPaneHeight,
     ) {
@@ -108,12 +105,9 @@ fun SubtitleStyleSheet(
                 PlayerSheetHeader(
                     title = "Subtitle Style",
                     onBack = onBack?.let { back ->
-                        {
-                            scope.launch { sheetState.hide() }
-                            back()
-                        }
+                        { scope.dismissPlayerSheet(sheetState, back) }
                     },
-                    onDismiss = onDismiss,
+                    onDismiss = dismissSheet,
                 )
 
                 // ---- Text section ------------------------------------------------

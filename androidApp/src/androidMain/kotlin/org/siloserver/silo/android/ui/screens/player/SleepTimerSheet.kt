@@ -30,7 +30,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.player.SleepTimerState
-import kotlinx.coroutines.launch
 
 /**
  * Glass-style bottom sheet for arming the sleep timer. Mirrors iOS
@@ -60,16 +59,14 @@ fun SleepTimerSheet(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+    val dismissSheet = { scope.dismissPlayerSheet(sheetState, onDismiss) }
 
     LaunchedEffect(isVisible) {
         if (isVisible) sheetState.show()
     }
 
     PlayerModalBottomSheet(
-        onDismissRequest = {
-            scope.launch { sheetState.hide() }
-            onDismiss()
-        },
+        onDismissRequest = dismissSheet,
         sheetState = sheetState,
         tabletopPaneHeight = tabletopPaneHeight,
     ) {
@@ -97,12 +94,9 @@ fun SleepTimerSheet(
                 PlayerSheetHeader(
                     title = "Sleep Timer",
                     onBack = onBack?.let { back ->
-                        {
-                            scope.launch { sheetState.hide() }
-                            back()
-                        }
+                        { scope.dismissPlayerSheet(sheetState, back) }
                     },
-                    onDismiss = onDismiss,
+                    onDismiss = dismissSheet,
                 )
 
                 if (activeState is SleepTimerState.Active) {
@@ -122,8 +116,7 @@ fun SleepTimerSheet(
                         isSelected = preset.minutes == defaultMinutes,
                         onClick = {
                             onStart(preset.minutes)
-                            scope.launch { sheetState.hide() }
-                            onDismiss()
+                            dismissSheet()
                         },
                     )
                 }
@@ -136,8 +129,7 @@ fun SleepTimerSheet(
                         isDestructive = true,
                         onClick = {
                             onCancel()
-                            scope.launch { sheetState.hide() }
-                            onDismiss()
+                            dismissSheet()
                         },
                     )
                 }

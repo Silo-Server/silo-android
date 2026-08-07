@@ -1,8 +1,10 @@
 package org.siloserver.silo.android.ui.screens.player
 
-import android.app.Activity
 import android.content.Context
+import android.database.ContentObserver
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -102,6 +104,7 @@ fun PlayerControls(
     tabletopMode: Boolean = false,
     playbackSpeed: Double = 1.0,
     nextEpisode: PlayerViewModel.NextEpisodeInfo? = null,
+    brightnessFraction: Float = 0.5f,
     // Watch Together guest gate: when false the scrubber + skip buttons are
     // inert and dimmed (seek is host-only, so disabled for all guests).
     // Defaults true for solo playback.
@@ -121,6 +124,7 @@ fun PlayerControls(
     onOpenSettings: () -> Unit,
     onSetPlaybackSpeed: (Double) -> Unit = {},
     onPlayNextEpisode: () -> Unit = {},
+    onSetBrightness: (Float) -> Unit = {},
     // Google Cast (Chromecast) button — sits in the top bar alongside the other
     // controls. Provided by PlayerScreen; empty by default so this stateless
     // composable stays test-friendly and decoupled from the Cast SDK.
@@ -208,8 +212,10 @@ fun PlayerControls(
                         playbackSpeed = playbackSpeed,
                         nextEpisode = nextEpisode,
                         compact = !showFullUtilityRow,
+                        brightnessFraction = brightnessFraction,
                         onSetPlaybackSpeed = onSetPlaybackSpeed,
                         onPlayNextEpisode = onPlayNextEpisode,
+                        onSetBrightness = onSetBrightness,
                     )
                 }
             }
@@ -394,50 +400,19 @@ private fun TabletopUtilityRow(
     playbackSpeed: Double,
     nextEpisode: PlayerViewModel.NextEpisodeInfo?,
     compact: Boolean,
+    brightnessFraction: Float,
     onSetPlaybackSpeed: (Double) -> Unit,
     onPlayNextEpisode: () -> Unit,
+    onSetBrightness: (Float) -> Unit,
 ) {
     val context = LocalContext.current
-    val activity = context as? Activity
-    val originalWindowBrightness = remember(activity) {
-        activity?.window?.attributes?.screenBrightness
-    }
-    var brightnessFraction by remember(activity, originalWindowBrightness) {
-        mutableFloatStateOf(
-            originalWindowBrightness
-                ?.takeIf { it >= 0f }
-                ?: runCatching {
-                    Settings.System.getInt(
-                        context.contentResolver,
-                        Settings.System.SCREEN_BRIGHTNESS,
-                    ) / 255f
-                }.getOrDefault(0.5f),
-        )
-    }
-
-    DisposableEffect(activity, originalWindowBrightness) {
-        onDispose {
-            val window = activity?.window ?: return@onDispose
-            val attributes = window.attributes
-            attributes.screenBrightness = originalWindowBrightness ?: -1f
-            window.attributes = attributes
-        }
-    }
 
     val brightnessControl: @Composable (Modifier) -> Unit = { modifier ->
         TabletopSliderControl(
             icon = Icons.Default.Brightness6,
             contentDescription = "Player brightness",
             value = brightnessFraction,
-            onValueChange = { fraction ->
-                val appliedBrightness = fraction.coerceIn(0.02f, 1f)
-                brightnessFraction = appliedBrightness
-                activity?.window?.let { window ->
-                    val attributes = window.attributes
-                    attributes.screenBrightness = appliedBrightness
-                    window.attributes = attributes
-                }
-            },
+            onValueChange = onSetBrightness,
             modifier = modifier,
         )
     }
@@ -457,6 +432,17 @@ private fun TabletopUtilityRow(
         mutableFloatStateOf(
             audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume,
         )
+    }
+    val contentResolver = context.contentResolver
+    DisposableEffect(audioManager, maxVolume, contentResolver) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                volumeFraction =
+                    audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume
+            }
+        }
+        contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, observer)
+        onDispose { contentResolver.unregisterContentObserver(observer) }
     }
 
     Row(

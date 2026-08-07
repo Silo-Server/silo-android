@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.player
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,13 +55,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
 import org.siloserver.silo.common.player.SleepTimerState
 
@@ -111,23 +112,16 @@ fun PlayerSettingsSheet(
     val scope = rememberCoroutineScope()
     var selectedCategoryIndex by rememberSaveable { mutableIntStateOf(0) }
     val selectedCategory = SettingsCategory.entries[selectedCategoryIndex]
-    val useSideRail = tabletopPaneHeight != null ||
-        LocalConfiguration.current.smallestScreenWidthDp >= 600
-    val dismissSheet = {
-        scope.launch { sheetState.hide() }
-        onDismiss()
-    }
+    val useSideRail = LocalConfiguration.current.screenWidthDp >= 600
+    val dismissSheet = { scope.dismissPlayerSheet(sheetState, onDismiss) }
     val openSubtitleStyle = {
-        dismissSheet()
-        onOpenSubtitleStyle()
+        scope.dismissPlayerSheet(sheetState, onDismiss, onOpenSubtitleStyle)
     }
     val openSleepTimer = {
-        dismissSheet()
-        onOpenSleepTimer()
+        scope.dismissPlayerSheet(sheetState, onDismiss, onOpenSleepTimer)
     }
     val openPlaybackStats = {
-        dismissSheet()
-        onOpenPlaybackStats()
+        scope.dismissPlayerSheet(sheetState, onDismiss, onOpenPlaybackStats)
     }
 
     LaunchedEffect(isVisible) {
@@ -633,7 +627,11 @@ private fun ToggleRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
+            .toggleable(
+                value = checked,
+                onValueChange = onCheckedChange,
+                role = Role.Switch,
+            )
             .heightIn(min = 68.dp)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -642,7 +640,7 @@ private fun ToggleRow(
         RowLabel(label = label, subtitle = subtitle, modifier = Modifier.weight(1f))
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = MaterialTheme.colorScheme.primary,

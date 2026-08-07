@@ -42,7 +42,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
@@ -69,10 +68,7 @@ fun TracksSheet(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
-    val dismissSheet = {
-        scope.launch { sheetState.hide() }
-        onDismiss()
-    }
+    val dismissSheet = { scope.dismissPlayerSheet(sheetState, onDismiss) }
     val selectAudioAndDismiss: (Int) -> Unit = { index ->
         onSelectAudio(index)
         dismissSheet()
@@ -82,12 +78,10 @@ fun TracksSheet(
         dismissSheet()
     }
     val openSubtitleSearch = {
-        dismissSheet()
-        onSearchSubtitles()
+        scope.dismissPlayerSheet(sheetState, onDismiss, onSearchSubtitles)
     }
     val openAiTranslate = {
-        dismissSheet()
-        onTranslateWithAi()
+        scope.dismissPlayerSheet(sheetState, onDismiss, onTranslateWithAi)
     }
 
     LaunchedEffect(isVisible) {

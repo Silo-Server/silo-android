@@ -66,11 +66,13 @@ internal fun SeasonEpisodePager(
 
     // A completed finger swipe becomes the shared season selection. Waiting
     // for settledPage avoids loading a season when a partial drag snaps back.
-    LaunchedEffect(pagerState, seasons) {
+    LaunchedEffect(pagerState, seasons, selectedSeasonNumber) {
         snapshotFlow { pagerState.settledPage }
             .distinctUntilChanged()
             .collect { page ->
-                seasons.getOrNull(page)?.let { onSeasonSelected(it.seasonNumber) }
+                seasons.getOrNull(page)
+                    ?.takeIf { it.seasonNumber != selectedSeasonNumber }
+                    ?.let { onSeasonSelected(it.seasonNumber) }
             }
     }
 
