@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -73,7 +74,16 @@ internal fun playerSheetMaxHeight(tabletopPaneHeight: Dp? = null): Dp =
 @Composable
 internal fun Modifier.tabletopPlayerSheet(tabletopPaneHeight: Dp?): Modifier {
     if (tabletopPaneHeight == null) return this
-    return height(tabletopPaneHeight)
+
+    // ModalBottomSheet is hosted at the window level rather than inside the
+    // lower-pane PlayerOverlay. Constraining its height alone leaves that host
+    // at the top of the window on physical foldables, so translate the fixed
+    // height region to the bottom pane explicitly. This placement is verified
+    // on-device; Material's internal sheet anchor only moves content within
+    // the constrained host and does not position the host below the hinge.
+    val paneTop = (LocalConfiguration.current.screenHeightDp.dp - tabletopPaneHeight)
+        .coerceAtLeast(0.dp)
+    return height(tabletopPaneHeight).offset(y = paneTop)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
