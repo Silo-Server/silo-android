@@ -1,23 +1,43 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 
 /**
  * Shared behavior for the player's modal bottom sheets.
@@ -38,7 +58,89 @@ import androidx.compose.ui.unit.sp
  * top) because drag deltas pass through untouched.
  */
 @Composable
-internal fun playerSheetMaxHeight(): Dp = (LocalConfiguration.current.screenHeightDp * 0.8f).dp
+internal fun playerSheetMaxHeight(tabletopPaneHeight: Dp? = null): Dp =
+    tabletopPaneHeight
+        ?.let { (it - 32.dp).coerceAtLeast(160.dp) }
+        ?: (LocalConfiguration.current.screenHeightDp * 0.8f).dp
+
+/**
+ * Material bottom sheets are window-level, so a sheet opened from the
+ * lower-pane player overlay would otherwise expand back across the hinge and
+ * dim the video. Cap the entire sheet to the measured controls pane and leave
+ * the upper video pane visually untouched in tabletop posture.
+ */
+@Composable
+internal fun Modifier.tabletopPlayerSheet(tabletopPaneHeight: Dp?): Modifier {
+    if (tabletopPaneHeight == null) return this
+    val paneTop = (LocalConfiguration.current.screenHeightDp.dp - tabletopPaneHeight)
+        .coerceAtLeast(0.dp)
+    return height(tabletopPaneHeight).offset(y = paneTop)
+}
+
+@Composable
+internal fun Modifier.playerSheetContent(tabletopPaneHeight: Dp?): Modifier =
+    if (tabletopPaneHeight == null) {
+        heightIn(max = playerSheetMaxHeight())
+    } else {
+        fillMaxHeight()
+    }
+
+internal fun playerSheetScrimColor(tabletopPaneHeight: Dp?): Color =
+    if (tabletopPaneHeight == null) Color.Black.copy(alpha = 0.32f) else Color.Transparent
+
+internal val PlayerSheetBackground = Color(0xFF090D12)
+internal val PlayerSheetCardColor = Color(0xFF151B24)
+internal val PlayerSheetSelectedColor = Color(0xFF10333D)
+internal val PlayerSheetDividerColor = Color.White.copy(alpha = 0.08f)
+
+internal fun playerSheetShape(tabletopPaneHeight: Dp?): Shape =
+    if (tabletopPaneHeight == null) {
+        RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    } else {
+        RectangleShape
+    }
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+internal fun playerSheetDragHandle(tabletopPaneHeight: Dp?): (@Composable () -> Unit)? =
+    if (tabletopPaneHeight == null) {
+        {
+            BottomSheetDefaults.DragHandle(
+                color = Color.White.copy(alpha = 0.28f),
+            )
+        }
+    } else {
+        null
+    }
+
+internal fun playerSheetHorizontalPadding(tabletopPaneHeight: Dp?): Dp =
+    if (tabletopPaneHeight == null) 20.dp else 24.dp
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+internal fun PlayerModalBottomSheet(
+    onDismissRequest: () -> Unit,
+    sheetState: SheetState,
+    tabletopPaneHeight: Dp?,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+        sheetState = sheetState,
+        modifier = Modifier.tabletopPlayerSheet(tabletopPaneHeight),
+        shape = playerSheetShape(tabletopPaneHeight),
+        dragHandle = playerSheetDragHandle(tabletopPaneHeight),
+        containerColor = PlayerSheetBackground,
+        contentColor = Color.White,
+        scrimColor = playerSheetScrimColor(tabletopPaneHeight),
+        content = content,
+    )
+}
+
+internal fun formatPlaybackSpeed(speed: Double): String {
+    if (speed % 1.0 == 0.0) return speed.toInt().toString()
+    return String.format(Locale.US, "%.2f", speed).trimEnd('0').trimEnd('.')
+}
 
 internal val PlayerSheetFlingGuard = object : NestedScrollConnection {
     override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
@@ -53,15 +155,20 @@ internal val PlayerSheetFlingGuard = object : NestedScrollConnection {
 internal fun PlayerSheetHeader(
     title: String,
     onBack: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null,
+    subtitle: String? = null,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(
-            start = if (onBack != null) 8.dp else 20.dp,
-            end = 20.dp,
-            top = if (onBack != null) 12.dp else 20.dp,
-            bottom = 8.dp,
-        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .padding(
+                start = if (onBack != null) 4.dp else 20.dp,
+                end = if (onDismiss != null) 4.dp else 20.dp,
+                top = 6.dp,
+                bottom = 6.dp,
+            ),
     ) {
         if (onBack != null) {
             IconButton(onClick = onBack) {
@@ -72,11 +179,71 @@ internal fun PlayerSheetHeader(
                 )
             }
         }
-        Text(
-            text = title,
-            color = Color.White,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Medium,
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    color = Color.White.copy(alpha = 0.56f),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (onDismiss != null) {
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Close menu",
+                    tint = Color.White.copy(alpha = 0.82f),
+                )
+            }
+        }
     }
+}
+
+@Composable
+internal fun PlayerSheetCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(PlayerSheetCardColor),
+        content = content,
+    )
+}
+
+@Composable
+internal fun PlayerSheetSectionLabel(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = text.uppercase(),
+        color = Color.White.copy(alpha = 0.52f),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 0.8.sp,
+        modifier = modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 8.dp),
+    )
+}
+
+@Composable
+internal fun PlayerSheetDivider(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(PlayerSheetDividerColor),
+    )
 }

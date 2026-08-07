@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -22,7 +24,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -37,8 +38,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.util.LanguageNames
@@ -73,6 +76,7 @@ fun AiTranslateSheet(
     // Tracks-submenu back affordance: closes this sheet and reopens the parent
     // TracksSheet (wired in PlayerOverlay). Null falls back to a plain dismiss.
     onBack: (() -> Unit)? = null,
+    tabletopPaneHeight: Dp? = null,
 ) {
     val aiStatus = tools.aiStatus
     val sourceTracks = remember(subtitleTracks) { subtitleTracks.filter(::isTranslatableSource) }
@@ -99,15 +103,16 @@ fun AiTranslateSheet(
         if (tools.jobJustCompleted) (onBack ?: onDismiss)()
     }
 
-    ModalBottomSheet(
+    PlayerModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color.Transparent,
-        contentColor = Color.White,
+        tabletopPaneHeight = tabletopPaneHeight,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .playerSheetContent(tabletopPaneHeight)
+                .nestedScroll(PlayerSheetFlingGuard)
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
@@ -115,11 +120,13 @@ fun AiTranslateSheet(
                             Color.Black.copy(alpha = 0.92f),
                         ),
                     ),
-                ),
+                )
+                .verticalScroll(rememberScrollState()),
         ) {
             PlayerSheetHeader(
                 title = "Translate with AI",
                 onBack = onBack,
+                onDismiss = onDismiss,
             )
 
             val activeJob = tools.activeJob

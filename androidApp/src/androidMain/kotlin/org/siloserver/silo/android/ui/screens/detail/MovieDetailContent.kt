@@ -58,6 +58,10 @@ import org.siloserver.silo.model.catalog.Season
 @Composable
 fun MovieDetailContent(
     detail: ItemDetail,
+    portraitArtwork: DetailPortraitArtwork = DetailPortraitArtwork(
+        url = detail.posterUrl,
+        thumbhash = detail.posterThumbhash,
+    ),
     isFavorite: Boolean,
     isInWatchlist: Boolean,
     selectedVersionIndex: Int,
@@ -85,6 +89,7 @@ fun MovieDetailContent(
     seasons: List<Season> = emptyList(),
     selectedSeasonNumber: Int = 1,
     episodes: List<EpisodeListItem> = emptyList(),
+    episodesBySeason: Map<Int, List<EpisodeListItem>> = emptyMap(),
     isLoadingEpisodes: Boolean = false,
     onSeasonSelected: (Int) -> Unit = {},
     onEpisodePlayClick: (String, Double?) -> Unit = { _, _ -> },
@@ -134,11 +139,12 @@ fun MovieDetailContent(
         verticalArrangement = Arrangement.spacedBy(36.dp),
     ) {
         item(contentType = "detail-hero") {
-            DetailHero(
+            AdaptiveDetailHero(
                 detail = detail,
                 eyebrow = eyebrow,
                 sourceTokens = sourceTokens,
                 factsLine = factsLine,
+                portraitArtwork = portraitArtwork,
                 dominantColor = dominantColor,
                 directorText = movieDirectorCredit(detail),
                 translation = translation,
@@ -297,43 +303,19 @@ fun MovieDetailContent(
                         label = if (selectedSeasonNumber == 0) "Specials" else "Season $selectedSeasonNumber",
                         title = "Episodes",
                     )
-                    if (seasons.size > 1) {
-                        SeasonChips(
-                            seasons = seasons,
-                            selectedSeasonNumber = selectedSeasonNumber,
-                            onSeasonSelected = onSeasonSelected,
-                        )
-                    }
-                    when {
-                        isLoadingEpisodes -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(32.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CircularProgressIndicator()
-                            }
-                        }
-                        episodes.isEmpty() -> {
-                            Text(
-                                text = "No episodes available",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = DetailTertiaryText,
-                                modifier = Modifier.padding(horizontal = SafePadding),
-                            )
-                        }
-                        else -> {
-                            EpisodeList(
-                                episodes = episodes,
-                                onEpisodePlayClick = onEpisodePlayClick,
-                                onEpisodeDetailClick = onEpisodeDetailClick,
-                                onEpisodeDownloadClick = onEpisodeDownloadClick,
-                                episodeDownloadState = episodeDownloadState,
-                                highlightContentId = detail.contentId,
-                            )
-                        }
-                    }
+                    SeasonEpisodePager(
+                        seasons = seasons,
+                        selectedSeasonNumber = selectedSeasonNumber,
+                        episodes = episodes,
+                        episodesBySeason = episodesBySeason,
+                        isLoadingEpisodes = isLoadingEpisodes,
+                        onSeasonSelected = onSeasonSelected,
+                        onEpisodePlayClick = onEpisodePlayClick,
+                        onEpisodeDetailClick = onEpisodeDetailClick,
+                        onEpisodeDownloadClick = onEpisodeDownloadClick,
+                        episodeDownloadState = episodeDownloadState,
+                        highlightContentId = detail.contentId,
+                    )
                 }
             }
         }

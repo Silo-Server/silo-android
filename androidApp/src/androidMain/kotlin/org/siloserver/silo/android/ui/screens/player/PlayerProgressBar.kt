@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -97,8 +98,8 @@ fun PlayerProgressBar(
                         .offset(x = bubbleX - clampPad)
                         .padding(bottom = 4.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color.Black.copy(alpha = 0.6f))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                        .background(Color.Black.copy(alpha = 0.82f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                 ) {
                     Text(
                         text = formatClockTime(seekPosition.toDouble()),
@@ -145,7 +146,7 @@ fun PlayerProgressBar(
             thumb = {
                 Box(
                     modifier = Modifier
-                        .size(if (isSeeking) 16.dp else 11.dp)
+                        .size(if (isSeeking) 20.dp else 14.dp)
                         .background(MaterialTheme.colorScheme.primary, CircleShape),
                 )
             },
@@ -153,9 +154,9 @@ fun PlayerProgressBar(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(4.dp)
+                        .height(6.dp)
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.24f))
+                        .background(Color.White.copy(alpha = 0.16f))
                         .onSizeChanged { barWidthPx = it.width.toFloat() },
                 ) {
                     // Buffered-ahead: downloaded and safe to seek into.
@@ -163,7 +164,7 @@ fun PlayerProgressBar(
                         modifier = Modifier
                             .fillMaxWidth(bufferedFraction)
                             .fillMaxHeight()
-                            .background(Color.White.copy(alpha = 0.45f)),
+                            .background(Color.White.copy(alpha = 0.52f)),
                     )
                     // Intro tint — iOS draws the intro range cyan at 0.4.
                     intro?.let { range ->
@@ -194,7 +195,7 @@ fun PlayerProgressBar(
                                         .offset(x = barWidthDp * fraction - 1.dp)
                                         .width(2.dp)
                                         .fillMaxHeight()
-                                        .background(Color.White.copy(alpha = 0.6f)),
+                                        .background(Color.White.copy(alpha = 0.72f)),
                                 )
                             }
                         }
@@ -208,30 +209,39 @@ fun PlayerProgressBar(
                     )
                 }
             },
-            modifier = Modifier.fillMaxWidth(),
+            // Keep a generous invisible touch target around the visual track.
+            // This makes fine seeking practical on a phone without turning the
+            // timeline itself into a chunky Material slider.
+            modifier = Modifier
+                .fillMaxWidth()
+                .requiredHeight(48.dp),
         )
 
-        // iOS time row: current time left, duration right, `.caption` (~12sp) at
-        // 0.8 white opacity, monospaced digits.
+        // Current + remaining is more useful during playback than current +
+        // total, especially when the controls are separated from the video in
+        // tabletop posture.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
                 text = formatClockTime(displayPosition.toDouble()),
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 fontFamily = FontFamily.Monospace,
-                color = Color.White.copy(alpha = 0.8f),
+                color = Color.White.copy(alpha = 0.86f),
             )
             Text(
-                text = formatClockTime(duration),
-                fontSize = 12.sp,
+                text = remainingTimeLabel(displayPosition.toDouble(), duration),
+                fontSize = 13.sp,
                 fontFamily = FontFamily.Monospace,
-                color = Color.White.copy(alpha = 0.8f),
+                color = Color.White.copy(alpha = 0.86f),
             )
         }
     }
 }
+
+internal fun remainingTimeLabel(position: Double, duration: Double): String =
+    "−${formatClockTime((duration - position).coerceAtLeast(0.0))}"
 
 /** iOS `chapterTitle(at:)`: the last chapter starting at or before [seconds],
  *  falling back to "Chapter N" when the chapter is untitled. */

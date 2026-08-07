@@ -44,6 +44,7 @@ jsoup = "1.22.2"
 # Google Cast (Chromecast, phone app only) + its MediaRouter dependency.
 play-services-cast-framework = "21.5.0"
 androidx-mediarouter = "1.7.0"
+androidx-window = "1.4.0"
 
 [libraries]
 # BouncyCastle — TLS-PSK server for the LAN companion-pairing receiver
@@ -140,6 +141,7 @@ jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 # cast-capability playback session; the raw phone stream is never cast.
 play-services-cast-framework = { module = "com.google.android.gms:play-services-cast-framework", version.ref = "play-services-cast-framework" }
 androidx-mediarouter = { module = "androidx.mediarouter:mediarouter", version.ref = "androidx-mediarouter" }
+androidx-window = { module = "androidx.window:window", version.ref = "androidx-window" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

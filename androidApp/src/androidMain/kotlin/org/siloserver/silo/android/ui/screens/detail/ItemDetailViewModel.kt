@@ -50,6 +50,15 @@ data class ItemDetailUiState(
     val seasons: List<Season> = emptyList(),
     val selectedSeasonNumber: Int = 1,
     val episodes: List<EpisodeListItem> = emptyList(),
+    /** Parent-series portrait art used when an episode's own artwork is a wide still. */
+    val episodeSeriesPosterUrl: String? = null,
+    val episodeSeriesPosterThumbhash: String? = null,
+    /**
+     * Route-scoped episode lists keyed by season. Unlike the repository's
+     * durable network-fallback cache, this map is UI-first: once a season has
+     * loaded, chip taps and pager swipes can reuse it without another request.
+     */
+    val episodesBySeason: Map<Int, List<EpisodeListItem>> = emptyMap(),
     val isLoadingEpisodes: Boolean = false,
     /** First-file ids of EVERY episode across ALL seasons (loaded once for the
      *  series-level downloaded roll-up — the per-season `episodes` only covers
@@ -418,9 +427,19 @@ class ItemDetailViewModel(
             }
         }
         if (current.type == "series") {
-            loadEpisodes(current.contentId, _uiState.value.selectedSeasonNumber)
+            loadEpisodes(
+                current.contentId,
+                _uiState.value.selectedSeasonNumber,
+                forceRefresh = true,
+            )
         } else if (current.type == "episode") {
-            current.seriesId?.let { loadEpisodes(it, _uiState.value.selectedSeasonNumber) }
+            current.seriesId?.let {
+                loadEpisodes(
+                    it,
+                    _uiState.value.selectedSeasonNumber,
+                    forceRefresh = true,
+                )
+            }
         }
     }
 
@@ -535,7 +554,9 @@ class ItemDetailViewModel(
                 if (!routeActive) return@launch
                 when (val r = catalogRepository.getEpisodes(seriesId, season.seasonNumber)) {
                     is ApiResult.Success -> {
-                        accumulator.recordSeason(season.seasonNumber, r.data.episodes)
+                        val episodes = withLocalProgress(r.data.episodes)
+                        cacheEpisodes(season.seasonNumber, episodes)
+                        accumulator.recordSeason(season.seasonNumber, episodes)
                         _uiState.update {
                             it.copy(
                                 allEpisodeFileIds = accumulator.fileIds,
@@ -593,6 +614,21 @@ class ItemDetailViewModel(
                 }
                 else -> { /* Season load failure is non-critical */ }
             }
+
+            // Resolve seasons before the series fallback. Otherwise a cache-fast
+            // series poster can paint for a frame and then be replaced by the
+            // selected season poster when its request completes.
+            when (val result = catalogRepository.getItemDetailForPrefetch(seriesId)) {
+                is ApiResult.Success -> {
+                    _uiState.update {
+                        it.copy(
+                            episodeSeriesPosterUrl = result.data.posterUrl,
+                            episodeSeriesPosterThumbhash = result.data.posterThumbhash,
+                        )
+                    }
+                }
+                else -> { /* Series poster fallback is optional. */ }
+            }
         }
     }
 
@@ -605,7 +641,14 @@ class ItemDetailViewModel(
         // Optimistic write; a failed load reverts to [loadedSeasonNumber] so
         // the new season header can't sit above the old season's still-loaded
         // episodes (see loadEpisodes' error branches).
-        _uiState.update { it.copy(selectedSeasonNumber = seasonNumber) }
+        _uiState.update {
+            val cachedEpisodes = it.episodesBySeason[seasonNumber]
+            it.copy(
+                selectedSeasonNumber = seasonNumber,
+                episodes = cachedEpisodes.orEmpty(),
+                isLoadingEpisodes = cachedEpisodes == null,
+            )
+        }
         val detail = _uiState.value.detail ?: return
         val seriesId = if (detail.type == "series") detail.contentId else detail.seriesId ?: return
         loadEpisodes(seriesId, seasonNumber)
@@ -615,18 +658,50 @@ class ItemDetailViewModel(
         seriesId: String,
         seasonNumber: Int,
         seasonsForDownloadRollup: List<Season>? = null,
+        forceRefresh: Boolean = false,
     ) {
         episodeLoadJob?.cancel()
+        val cachedEpisodes = _uiState.value.episodesBySeason[seasonNumber]
+        if (!forceRefresh && cachedEpisodes != null) {
+            loadedSeasonNumber = seasonNumber
+            _uiState.update {
+                it.copy(
+                    selectedSeasonNumber = seasonNumber,
+                    episodes = cachedEpisodes,
+                    isLoadingEpisodes = false,
+                )
+            }
+            seasonsForDownloadRollup?.let { seasons ->
+                loadAllEpisodeFileIds(
+                    seriesId = seriesId,
+                    seasons = seasons,
+                    seedEpisodes = cachedEpisodes,
+                    skipSeasonNumber = seasonNumber,
+                )
+            }
+            return
+        }
         episodeLoadJob = viewModelScope.launch {
-            _uiState.update { it.copy(isLoadingEpisodes = true) }
+            _uiState.update {
+                it.copy(
+                    isLoadingEpisodes = true,
+                    episodes = if (it.selectedSeasonNumber == seasonNumber) {
+                        cachedEpisodes.orEmpty()
+                    } else {
+                        it.episodes
+                    },
+                )
+            }
             when (val result = catalogRepository.getEpisodes(seriesId, seasonNumber)) {
                 is ApiResult.Success -> {
                     val episodes = withLocalProgress(result.data.episodes)
                     loadedSeasonNumber = seasonNumber
                     _uiState.update {
+                        val cache = it.episodesBySeason + (seasonNumber to episodes)
                         it.copy(
                             isLoadingEpisodes = false,
-                            episodes = episodes,
+                            episodesBySeason = cache,
+                            episodes = if (it.selectedSeasonNumber == seasonNumber) episodes else it.episodes,
                         )
                     }
                     seasonsForDownloadRollup?.let { seasons ->
@@ -641,25 +716,31 @@ class ItemDetailViewModel(
                 // Failed season switch: revert the optimistic selection to the
                 // season whose episodes are actually on screen. A
                 // successful-but-empty season keeps the new selection (empty state).
-                is ApiResult.Error -> {
+                is ApiResult.Error, is ApiResult.NetworkError -> {
                     _uiState.update {
+                        val fallbackSeasonNumber = loadedSeasonNumber ?: it.selectedSeasonNumber
                         it.copy(
                             isLoadingEpisodes = false,
-                            selectedSeasonNumber = loadedSeasonNumber ?: it.selectedSeasonNumber,
-                        )
-                    }
-                    seasonsForDownloadRollup?.let { loadAllEpisodeFileIds(seriesId, it) }
-                }
-                is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoadingEpisodes = false,
-                            selectedSeasonNumber = loadedSeasonNumber ?: it.selectedSeasonNumber,
+                            selectedSeasonNumber = fallbackSeasonNumber,
+                            episodes = it.episodesBySeason[fallbackSeasonNumber].orEmpty(),
                         )
                     }
                     seasonsForDownloadRollup?.let { loadAllEpisodeFileIds(seriesId, it) }
                 }
             }
+        }
+    }
+
+    private fun cacheEpisodes(
+        seasonNumber: Int,
+        episodes: List<EpisodeListItem>,
+    ) {
+        _uiState.update {
+            val cache = it.episodesBySeason + (seasonNumber to episodes)
+            it.copy(
+                episodesBySeason = cache,
+                episodes = if (it.selectedSeasonNumber == seasonNumber) episodes else it.episodes,
+            )
         }
     }
 

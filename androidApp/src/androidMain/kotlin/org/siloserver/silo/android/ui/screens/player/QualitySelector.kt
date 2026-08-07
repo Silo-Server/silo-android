@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,13 +16,14 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.model.catalog.FileVersion
 
@@ -38,28 +38,28 @@ fun QualitySelector(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     onDismiss: () -> Unit,
+    tabletopPaneHeight: Dp? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    PlayerModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+        tabletopPaneHeight = tabletopPaneHeight,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 // Cap below the top edge + keep content flings from
                 // dismissing the sheet — see PlayerSheetSupport.
-                .heightIn(max = playerSheetMaxHeight())
+                .playerSheetContent(tabletopPaneHeight)
                 .nestedScroll(PlayerSheetFlingGuard)
                 .padding(bottom = 32.dp),
         ) {
-            Text(
-                text = "Quality",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+            PlayerSheetHeader(
+                title = "Quality",
+                subtitle = "Choose a source version",
+                onDismiss = onDismiss,
             )
 
             Spacer(modifier = Modifier.height(8.dp))

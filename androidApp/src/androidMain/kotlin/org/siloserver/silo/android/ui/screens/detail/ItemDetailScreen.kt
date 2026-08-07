@@ -559,6 +559,7 @@ fun ItemDetailScreen(
                             seasons = state.seasons,
                             selectedSeasonNumber = state.selectedSeasonNumber,
                             episodes = state.episodes,
+                            episodesBySeason = state.episodesBySeason,
                             isLoadingEpisodes = state.isLoadingEpisodes,
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,
@@ -676,6 +677,28 @@ fun ItemDetailScreen(
                     else -> {
                         val seriesId = detail.seriesId
                         val seasonNumber = detail.seasonNumber
+                        val episodeSeason = if (detail.type == "episode") {
+                            state.seasons.firstOrNull { it.seasonNumber == seasonNumber }
+                        } else {
+                            null
+                        }
+                        val seasonPosterUrl = episodeSeason?.posterUrl?.takeIf { it.isNotBlank() }
+                        val portraitArtwork = if (detail.type == "episode") {
+                            DetailPortraitArtwork(
+                                url = seasonPosterUrl ?: state.episodeSeriesPosterUrl,
+                                thumbhash = if (seasonPosterUrl != null) {
+                                    episodeSeason?.posterThumbhash
+                                } else {
+                                    state.episodeSeriesPosterThumbhash
+                                },
+                                reserveSpace = true,
+                            )
+                        } else {
+                            DetailPortraitArtwork(
+                                url = detail.posterUrl,
+                                thumbhash = detail.posterThumbhash,
+                            )
+                        }
                         // Derive download state for the currently-selected
                         // version. Re-reads on every UI emission so the
                         // worker's upsertLocal progress + status transitions
@@ -731,6 +754,7 @@ fun ItemDetailScreen(
                         MovieDetailContent(
                             translation = translationSlot,
                             detail = detail,
+                            portraitArtwork = portraitArtwork,
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,
                             selectedVersionIndex = videoDisplayVersionIndex,
@@ -786,6 +810,7 @@ fun ItemDetailScreen(
                             seasons = state.seasons,
                             selectedSeasonNumber = state.selectedSeasonNumber,
                             episodes = state.episodes,
+                            episodesBySeason = state.episodesBySeason,
                             isLoadingEpisodes = state.isLoadingEpisodes,
                             onSeasonSelected = { viewModel.selectSeason(it) },
                             onEpisodePlayClick = { contentId, resumePositionSeconds ->

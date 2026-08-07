@@ -6,22 +6,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -29,29 +33,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
-import kotlinx.coroutines.launch
 
-/**
- * Combined audio + subtitle picker bottom sheet. Mirrors iOS phone's
- * `TrackSelectionSheet` phoneList variant
- * (`iosApp/Screens/Player/Sheets/TrackSelectionSheet.swift:145-164`): a single
- * sheet with an "Audio" section and a "Subtitles" section, each rendering
- * compact rows with a trailing checkmark on the active selection.
- *
- * Subtitles always include an "Off" entry (`-1`) per tvOS / iOS contract.
- * Audio section is hidden entirely when there are no audio tracks (the
- * server already filters down to playable ones).
- */
+/** Combined audio and subtitle picker with adaptive phone and foldable layouts. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TracksSheet(
@@ -67,130 +63,261 @@ fun TracksSheet(
     showTranslateAction: Boolean = false,
     onSearchSubtitles: () -> Unit = {},
     onTranslateWithAi: () -> Unit = {},
+    tabletopPaneHeight: Dp? = null,
 ) {
     if (!isVisible) return
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+    val dismissSheet = {
+        scope.launch { sheetState.hide() }
+        onDismiss()
+    }
+    val selectAudioAndDismiss: (Int) -> Unit = { index ->
+        onSelectAudio(index)
+        dismissSheet()
+    }
+    val selectSubtitleAndDismiss: (Int) -> Unit = { index ->
+        onSelectSubtitle(index)
+        dismissSheet()
+    }
+    val openSubtitleSearch = {
+        dismissSheet()
+        onSearchSubtitles()
+    }
+    val openAiTranslate = {
+        dismissSheet()
+        onTranslateWithAi()
+    }
 
     LaunchedEffect(isVisible) {
         if (isVisible) sheetState.show()
     }
 
-    ModalBottomSheet(
-        onDismissRequest = {
-            scope.launch { sheetState.hide() }
-            onDismiss()
-        },
+    PlayerModalBottomSheet(
+        onDismissRequest = dismissSheet,
         sheetState = sheetState,
-        containerColor = Color.Transparent,
-        contentColor = Color.White,
+        tabletopPaneHeight = tabletopPaneHeight,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                // Cap below the top edge + keep content flings from
-                // dismissing the sheet — see PlayerSheetSupport.
-                .heightIn(max = playerSheetMaxHeight())
-                .nestedScroll(PlayerSheetFlingGuard)
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF1F2937).copy(alpha = 0.95f),
-                            Color.Black.copy(alpha = 0.92f),
-                        ),
-                    ),
-                )
-                .verticalScroll(rememberScrollState()),
+                .playerSheetContent(tabletopPaneHeight)
+                .nestedScroll(PlayerSheetFlingGuard),
         ) {
-            Text(
-                text = "Audio and Subtitles",
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
+            PlayerSheetHeader(
+                title = "Audio & Subtitles",
+                subtitle = "Choose language and accessibility tracks",
+                onDismiss = dismissSheet,
             )
 
-            if (audioTracks.isNotEmpty()) {
-                SectionHeader("Audio")
-                audioTracks.forEachIndexed { index, track ->
-                    TrackRow(
-                        label = audioTrackName(track, index),
-                        attributes = audioTrackAttributes(track),
-                        isSelected = index == selectedAudioIndex,
-                        onClick = {
-                            onSelectAudio(index)
-                            scope.launch { sheetState.hide() }
-                            onDismiss()
-                        },
+            if (tabletopPaneHeight != null && audioTracks.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    AudioTrackCard(
+                        audioTracks = audioTracks,
+                        selectedAudioIndex = selectedAudioIndex,
+                        onSelect = selectAudioAndDismiss,
+                        scrollContent = true,
+                        modifier = Modifier
+                            .weight(0.44f)
+                            .fillMaxHeight(),
+                    )
+                    SubtitleTrackCard(
+                        subtitles = subtitles,
+                        selectedSubtitleIndex = selectedSubtitleIndex,
+                        onSelect = selectSubtitleAndDismiss,
+                        showSearchAction = showSearchAction,
+                        showTranslateAction = showTranslateAction,
+                        onSearchSubtitles = openSubtitleSearch,
+                        onTranslateWithAi = openAiTranslate,
+                        scrollContent = true,
+                        modifier = Modifier
+                            .weight(0.56f)
+                            .fillMaxHeight(),
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(
+                            start = playerSheetHorizontalPadding(tabletopPaneHeight),
+                            end = playerSheetHorizontalPadding(tabletopPaneHeight),
+                            top = 8.dp,
+                            bottom = 24.dp,
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    if (audioTracks.isNotEmpty()) {
+                        AudioTrackCard(
+                            audioTracks = audioTracks,
+                            selectedAudioIndex = selectedAudioIndex,
+                            onSelect = selectAudioAndDismiss,
+                            scrollContent = false,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    SubtitleTrackCard(
+                        subtitles = subtitles,
+                        selectedSubtitleIndex = selectedSubtitleIndex,
+                        onSelect = selectSubtitleAndDismiss,
+                        showSearchAction = showSearchAction,
+                        showTranslateAction = showTranslateAction,
+                        onSearchSubtitles = openSubtitleSearch,
+                        onTranslateWithAi = openAiTranslate,
+                        scrollContent = false,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
-
-            SectionHeader("Subtitles")
-            // "Off" is the canonical first entry — iOS / tvOS pattern.
-            TrackRow(
-                label = "Off",
-                isSelected = selectedSubtitleIndex == -1,
-                onClick = {
-                    onSelectSubtitle(-1)
-                    scope.launch { sheetState.hide() }
-                    onDismiss()
-                },
-            )
-            subtitles.forEachIndexed { index, sub ->
-                TrackRow(
-                    label = subtitleTrackLabel(sub, index),
-                    isSelected = index == selectedSubtitleIndex,
-                    onClick = {
-                        onSelectSubtitle(index)
-                        scope.launch { sheetState.hide() }
-                        onDismiss()
-                    },
-                )
-            }
-
-
-            // Non-selecting action rows (web SubtitleMenu parity). Each
-            // dismisses this sheet first — Material 3 sheets can't nest —
-            // then PlayerOverlay opens the target sheet.
-            if (showSearchAction) {
-                ActionRow(
-                    icon = Icons.Filled.Search,
-                    label = "Search subtitles…",
-                    onClick = {
-                        scope.launch { sheetState.hide() }
-                        onDismiss()
-                        onSearchSubtitles()
-                    },
-                )
-            }
-            if (showTranslateAction) {
-                ActionRow(
-                    icon = Icons.Filled.Translate,
-                    label = "Translate with AI…",
-                    onClick = {
-                        scope.launch { sheetState.hide() }
-                        onDismiss()
-                        onTranslateWithAi()
-                    },
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
 
 @Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text = text.uppercase(),
-        color = Color.White.copy(alpha = 0.6f),
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Medium,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
-    )
+private fun AudioTrackCard(
+    audioTracks: List<AudioTrack>,
+    selectedAudioIndex: Int,
+    onSelect: (Int) -> Unit,
+    scrollContent: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    TrackSectionCard(
+        title = "Audio",
+        detail = trackCountLabel(audioTracks.size),
+        icon = Icons.Filled.GraphicEq,
+        scrollContent = scrollContent,
+        modifier = modifier,
+    ) {
+        audioTracks.forEachIndexed { index, track ->
+            TrackRow(
+                label = audioTrackName(track, index),
+                attributes = audioTrackAttributes(track),
+                isSelected = index == selectedAudioIndex,
+                onClick = { onSelect(index) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SubtitleTrackCard(
+    subtitles: List<PlayerSubtitleInfo>,
+    selectedSubtitleIndex: Int,
+    onSelect: (Int) -> Unit,
+    showSearchAction: Boolean,
+    showTranslateAction: Boolean,
+    onSearchSubtitles: () -> Unit,
+    onTranslateWithAi: () -> Unit,
+    scrollContent: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    TrackSectionCard(
+        title = "Subtitles",
+        detail = trackCountLabel(subtitles.size + 1),
+        icon = Icons.Filled.Subtitles,
+        scrollContent = scrollContent,
+        modifier = modifier,
+    ) {
+        TrackRow(
+            label = "Off",
+            attributes = "No subtitles",
+            isSelected = selectedSubtitleIndex == -1,
+            onClick = { onSelect(-1) },
+        )
+        subtitles.forEachIndexed { index, subtitle ->
+            TrackRow(
+                label = subtitleTrackLabel(subtitle, index),
+                isSelected = index == selectedSubtitleIndex,
+                onClick = { onSelect(index) },
+            )
+        }
+        if (showSearchAction || showTranslateAction) {
+            PlayerSheetDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+        }
+        if (showSearchAction) {
+            ActionRow(
+                icon = Icons.Filled.Search,
+                label = "Find subtitles",
+                onClick = onSearchSubtitles,
+            )
+        }
+        if (showTranslateAction) {
+            ActionRow(
+                icon = Icons.Filled.Translate,
+                label = "Translate with AI",
+                onClick = onTranslateWithAi,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TrackSectionCard(
+    title: String,
+    detail: String,
+    icon: ImageVector,
+    scrollContent: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    PlayerSheetCard(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                modifier = Modifier.size(36.dp),
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = detail,
+                    color = Color.White.copy(alpha = 0.48f),
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        PlayerSheetDivider()
+        Column(
+            modifier = if (scrollContent) {
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 6.dp)
+            } else {
+                Modifier.padding(vertical = 6.dp)
+            },
+            content = { content() },
+        )
+    }
 }
 
 @Composable
@@ -199,15 +326,16 @@ private fun TrackRow(
     isSelected: Boolean,
     onClick: () -> Unit,
     attributes: String? = null,
-    enabled: Boolean = true,
 ) {
-    // iOS phone TrackRow: a Button with VStack(name, optional attributes
-    // caption) and a trailing tint checkmark when selected.
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) PlayerSheetSelectedColor else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .heightIn(min = 52.dp)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -215,29 +343,73 @@ private fun TrackRow(
             Text(
                 text = label,
                 color = Color.White,
-                style = MaterialTheme.typography.bodyLarge,
+                fontSize = 15.sp,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (attributes != null && attributes.isNotBlank()) {
+            if (!attributes.isNullOrBlank()) {
                 Text(
                     text = attributes,
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = Color.White.copy(alpha = 0.50f),
                     fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
         if (isSelected) {
-            // iOS uses `.tint` (accent) for the selection checkmark.
-            Icon(
-                imageVector = Icons.Filled.Check,
-                contentDescription = "Selected",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 8.dp),
-            )
-        } else {
-            Box(modifier = Modifier.padding(start = 8.dp))
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(26.dp),
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = "Selected",
+                        tint = Color.Black,
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+            }
         }
     }
 }
+
+@Composable
+private fun ActionRow(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .heightIn(min = 50.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+private fun trackCountLabel(count: Int): String = if (count == 1) "1 option" else "$count options"
 
 private fun audioTrackName(track: AudioTrack, index: Int): String =
     listOfNotNull(
@@ -259,31 +431,3 @@ internal fun subtitleTrackLabel(sub: PlayerSubtitleInfo, index: Int): String =
         isForced = sub.forced == true,
         index = index,
     )
-
-@Composable
-private fun ActionRow(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Text(
-            text = label,
-            color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.bodyLarge,
-        )
-    }
-}

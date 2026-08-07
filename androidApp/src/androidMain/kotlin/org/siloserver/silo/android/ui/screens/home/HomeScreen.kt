@@ -35,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -45,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +61,7 @@ import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingBottomOver
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.pairing.CompanionPairingStatus
 import org.siloserver.silo.common.pairing.CompanionPairingTarget
+import org.siloserver.silo.common.ui.components.LocalImagePresentationDeferral
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.splitFeatured
@@ -116,6 +119,12 @@ fun HomeScreen(
     }
 
     val listState = rememberLazyListState()
+    // Pass the State object down without reading it here, so starting/stopping a
+    // gesture does not recompose the whole Home screen. Individual unloaded
+    // images observe it only to release a decoded result once scrolling stops.
+    val deferNewArtworkPresentation = remember(listState) {
+        derivedStateOf { listState.isScrollInProgress }
+    }
     LaunchedEffect(scrollToTopTick) {
         if (scrollToTopTick > 0) listState.animateScrollToItem(0)
     }
@@ -140,7 +149,7 @@ fun HomeScreen(
     val chromeFadePx = remember(density) {
         with(density) { ChromeFadeDistanceDp.dp.toPx() }
     }
-    val scrollProgress by remember(chromeFadePx) {
+    val scrollProgress = remember(chromeFadePx) {
         derivedStateOf {
             if (listState.firstVisibleItemIndex > 0) {
                 1f
@@ -173,60 +182,64 @@ fun HomeScreen(
                 onRefresh = { viewModel.refresh() },
                 modifier = Modifier.fillMaxSize(),
             ) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    // iOS `sectionSpacing` = SiloTheme.largePadding (24).
-                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                CompositionLocalProvider(
+                    LocalImagePresentationDeferral provides deferNewArtworkPresentation,
                 ) {
-                    // Reserve runway under the floating header so the first row
-                    // doesn't slide under the status-bar chrome. iOS runway =
-                    // topInset + 40 + smallPadding(8) + largePadding(24) +
-                    // smallPadding(8) - headerTopReclaim(16) = topInset + 64.
-                    item(key = "topRunway") {
-                        Spacer(
-                            modifier = Modifier
-                                .windowInsetsPadding(WindowInsets.statusBars)
-                                .height(64.dp),
-                        )
-                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        // iOS `sectionSpacing` = SiloTheme.largePadding (24).
+                        verticalArrangement = Arrangement.spacedBy(24.dp),
+                    ) {
+                        // Reserve runway under the floating header so the first row
+                        // doesn't slide under the status-bar chrome. iOS runway =
+                        // topInset + 40 + smallPadding(8) + largePadding(24) +
+                        // smallPadding(8) - headerTopReclaim(16) = topInset + 64.
+                        item(key = "topRunway") {
+                            Spacer(
+                                modifier = Modifier
+                                    .windowInsetsPadding(WindowInsets.statusBars)
+                                    .height(64.dp),
+                            )
+                        }
 
-                    items(
-                        items = regularSections,
-                        key = { it.id },
-                        contentType = { "section-row" },
-                    ) { section ->
-                        HomeSectionRow(
-                            section = section,
-                            onItemClick = onItemClick,
-                            onItemPlay = { item ->
-                                // Continue Watching can include audiobooks; the play
-                                // glyph must not drop them into the video player. Home
-                                // has no callback reaching Route.AudiobookPlayer (that
-                                // route needs a fileId SectionItem doesn't carry), so
-                                // send audiobooks to their detail page, which dispatches
-                                // audiobook playback correctly.
-                                if (isAudiobookItemType(item.type)) {
-                                    onItemClick(item.contentId)
-                                } else {
-                                    onPlayClick(item.contentId, item.positionSeconds)
-                                }
-                            },
-                            onSetWatched = viewModel::setWatched,
-                            onToggleFavorite = viewModel::toggleFavorite,
-                            onToggleWatchlist = viewModel::toggleWatchlist,
-                            onDismissContinueWatching = { item ->
-                                item.progressUpdatedAt?.let { ts ->
-                                    viewModel.dismissContinueWatching(item.contentId, ts)
-                                }
-                            },
-                        )
-                    }
+                        items(
+                            items = regularSections,
+                            key = { it.id },
+                            contentType = { "section-row" },
+                        ) { section ->
+                            HomeSectionRow(
+                                section = section,
+                                onItemClick = onItemClick,
+                                onItemPlay = { item ->
+                                    // Continue Watching can include audiobooks; the play
+                                    // glyph must not drop them into the video player. Home
+                                    // has no callback reaching Route.AudiobookPlayer (that
+                                    // route needs a fileId SectionItem doesn't carry), so
+                                    // send audiobooks to their detail page, which dispatches
+                                    // audiobook playback correctly.
+                                    if (isAudiobookItemType(item.type)) {
+                                        onItemClick(item.contentId)
+                                    } else {
+                                        onPlayClick(item.contentId, item.positionSeconds)
+                                    }
+                                },
+                                onSetWatched = viewModel::setWatched,
+                                onToggleFavorite = viewModel::toggleFavorite,
+                                onToggleWatchlist = viewModel::toggleWatchlist,
+                                onDismissContinueWatching = { item ->
+                                    item.progressUpdatedAt?.let { ts ->
+                                        viewModel.dismissContinueWatching(item.contentId, ts)
+                                    }
+                                },
+                            )
+                        }
 
-                    // iOS bottom padding = SiloTheme.largePadding (24), plus the
-                    // translucent bottom chrome the content scrolls beneath.
-                    item(key = "bottomPad") {
-                        Spacer(modifier = Modifier.height(24.dp + LocalBottomChromeInset.current))
+                        // iOS bottom padding = SiloTheme.largePadding (24), plus the
+                        // translucent bottom chrome the content scrolls beneath.
+                        item(key = "bottomPad") {
+                            Spacer(modifier = Modifier.height(24.dp + LocalBottomChromeInset.current))
+                        }
                     }
                 }
             }
@@ -292,7 +305,7 @@ private fun HomeLoadingSkeleton() {
 
 @Composable
 private fun HomeFloatingChrome(
-    scrollProgress: Float,
+    scrollProgress: State<Float>,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
     onRemoteControlClick: () -> Unit,
@@ -311,13 +324,16 @@ private fun HomeFloatingChrome(
     // as it fades in (white 0.06 → 0.10, 0.75pt). headerTopReclaim(16) pulls the
     // row up beside the status-bar glyphs; horizontal = SiloTheme.padding(16),
     // bottom = SiloTheme.smallPadding(8).
-    val hairlineAlpha = 0.06f + 0.04f * scrollProgress
+    val chromeSurfaceColor = MaterialTheme.colorScheme.surface
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.32f * scrollProgress),
-            ),
+            .drawBehind {
+                drawRect(
+                    color = chromeSurfaceColor,
+                    alpha = 0.32f * scrollProgress.value,
+                )
+            },
     ) {
         Box(
             modifier = Modifier
@@ -417,7 +433,12 @@ private fun HomeFloatingChrome(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(0.75.dp)
-                .background(Color.White.copy(alpha = hairlineAlpha)),
+                .drawBehind {
+                    drawRect(
+                        color = Color.White,
+                        alpha = 0.06f + 0.04f * scrollProgress.value,
+                    )
+                }
         )
     }
 }

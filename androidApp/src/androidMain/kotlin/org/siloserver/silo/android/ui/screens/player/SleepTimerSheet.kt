@@ -9,12 +9,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -24,7 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.player.SleepTimerState
@@ -52,6 +54,7 @@ fun SleepTimerSheet(
     // Gear-submenu back affordance: dismisses this sheet and reopens the
     // parent settings sheet (wired in PlayerOverlay).
     onBack: (() -> Unit)? = null,
+    tabletopPaneHeight: Dp? = null,
 ) {
     if (!isVisible) return
 
@@ -62,21 +65,21 @@ fun SleepTimerSheet(
         if (isVisible) sheetState.show()
     }
 
-    ModalBottomSheet(
+    PlayerModalBottomSheet(
         onDismissRequest = {
             scope.launch { sheetState.hide() }
             onDismiss()
         },
         sheetState = sheetState,
-        containerColor = Color.Transparent,
-        contentColor = Color.White,
+        tabletopPaneHeight = tabletopPaneHeight,
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 // Keep the sheet handle below the top screen edge — see
                 // PlayerSheetSupport.
-                .heightIn(max = playerSheetMaxHeight())
+                .playerSheetContent(tabletopPaneHeight)
+                .nestedScroll(PlayerSheetFlingGuard)
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
@@ -86,7 +89,11 @@ fun SleepTimerSheet(
                     ),
                 ),
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 PlayerSheetHeader(
                     title = "Sleep Timer",
                     onBack = onBack?.let { back ->
@@ -95,6 +102,7 @@ fun SleepTimerSheet(
                             back()
                         }
                     },
+                    onDismiss = onDismiss,
                 )
 
                 if (activeState is SleepTimerState.Active) {

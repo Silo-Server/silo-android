@@ -2,8 +2,10 @@ package org.siloserver.silo.android.ui.screens.detail
 
 import androidx.lifecycle.SavedStateHandle
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
+import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
+import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.download.DownloadsListResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.CatalogApi
@@ -101,6 +103,34 @@ class MobileDetailActionsSourceTest {
     }
 
     @Test
+    fun cachedSeasonSwitchDoesNotReloadEpisodes() = runItemDetailTest {
+        val catalogRequests = mutableListOf<String>()
+        val catalogRepository = CatalogRepository(
+            CatalogApi(
+                HttpClient(
+                    MockEngine { request ->
+                        catalogRequests += request.url.encodedPath
+                        respond("{}")
+                    },
+                ),
+            ),
+        )
+        val viewModel = itemDetailViewModel(
+            personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = catalogRepository,
+        )
+        viewModel.seedSeriesDetail()
+
+        viewModel.selectSeason(2)
+        viewModel.selectSeason(1)
+        advanceUntilIdle()
+
+        assertEquals(emptyList(), catalogRequests)
+        assertEquals(1, viewModel.uiState.value.selectedSeasonNumber)
+        assertEquals(listOf("season-1-episode-1"), viewModel.uiState.value.episodes.map { it.contentId })
+    }
+
+    @Test
     fun moviePlayPinsDisplayedVersionWhenTrackOverrideIsSelected() {
         assertTrue(itemDetail.contains("val playbackFileId = explicitFileId ?: detail.versions"))
         assertTrue(itemDetail.contains(".getOrNull(effectiveSelectedVersionIndex)"))
@@ -121,9 +151,10 @@ class MobileDetailActionsSourceTest {
 
     private fun itemDetailViewModel(
         personalDataRepository: RecordingPersonalDataRepository,
+        catalogRepository: CatalogRepository = CatalogRepository(CatalogApi(dummyHttpClient())),
     ): ItemDetailViewModel =
         ItemDetailViewModel(
-            catalogRepository = CatalogRepository(CatalogApi(dummyHttpClient())),
+            catalogRepository = catalogRepository,
             personalDataRepository = personalDataRepository,
             downloadsRepository = DownloadsRepository(EmptyDownloadsApi()),
             downloadEnqueuer = unsafeInstance(),
@@ -133,6 +164,45 @@ class MobileDetailActionsSourceTest {
             ),
             savedStateHandle = SavedStateHandle(),
         )
+
+    @Suppress("UNCHECKED_CAST")
+    private fun ItemDetailViewModel.seedSeriesDetail() {
+        val field = ItemDetailViewModel::class.java.getDeclaredField("_uiState")
+        field.isAccessible = true
+        val flow = field.get(this) as MutableStateFlow<ItemDetailUiState>
+        val seasonOneEpisodes = listOf(
+            EpisodeListItem(
+                contentId = "season-1-episode-1",
+                seasonNumber = 1,
+                episodeNumber = 1,
+            ),
+        )
+        val seasonTwoEpisodes = listOf(
+            EpisodeListItem(
+                contentId = "season-2-episode-1",
+                seasonNumber = 2,
+                episodeNumber = 1,
+            ),
+        )
+        flow.value = ItemDetailUiState(
+            isLoading = false,
+            detail = ItemDetail(
+                contentId = "series-1",
+                type = "series",
+                title = "Series",
+            ),
+            seasons = listOf(
+                Season(contentId = "season-1", seasonNumber = 1),
+                Season(contentId = "season-2", seasonNumber = 2),
+            ),
+            selectedSeasonNumber = 1,
+            episodes = seasonOneEpisodes,
+            episodesBySeason = mapOf(
+                1 to seasonOneEpisodes,
+                2 to seasonTwoEpisodes,
+            ),
+        )
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun ItemDetailViewModel.seedDetail(played: Boolean) {

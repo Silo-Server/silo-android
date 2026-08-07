@@ -23,7 +23,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -39,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.util.LanguageNames
@@ -81,6 +81,7 @@ fun SubtitleSearchSheet(
     // Tracks-submenu back affordance: closes this sheet and reopens the parent
     // TracksSheet (wired in PlayerOverlay). Null falls back to a plain dismiss.
     onBack: (() -> Unit)? = null,
+    tabletopPaneHeight: Dp? = null,
 ) {
     var selectedLanguage by remember { mutableStateOf(defaultLanguage) }
     var languageMenuExpanded by remember { mutableStateOf(false) }
@@ -92,18 +93,17 @@ fun SubtitleSearchSheet(
         if (tools.downloadCompleted) (onBack ?: onDismiss)()
     }
 
-    ModalBottomSheet(
+    PlayerModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color.Transparent,
-        contentColor = Color.White,
+        tabletopPaneHeight = tabletopPaneHeight,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 // Cap below the top edge + keep content flings from
                 // dismissing the sheet — see PlayerSheetSupport.
-                .heightIn(max = playerSheetMaxHeight())
+                .playerSheetContent(tabletopPaneHeight)
                 .nestedScroll(PlayerSheetFlingGuard)
                 .background(
                     brush = Brush.verticalGradient(
@@ -117,6 +117,7 @@ fun SubtitleSearchSheet(
             PlayerSheetHeader(
                 title = "Search Subtitles",
                 onBack = onBack,
+                onDismiss = onDismiss,
             )
 
             Row(

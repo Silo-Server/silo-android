@@ -2,7 +2,6 @@ package org.siloserver.silo.android.ui.screens.detail
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,7 +20,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -47,6 +45,7 @@ fun SeriesDetailContent(
     seasons: List<Season>,
     selectedSeasonNumber: Int,
     episodes: List<EpisodeListItem>,
+    episodesBySeason: Map<Int, List<EpisodeListItem>>,
     isLoadingEpisodes: Boolean,
     isFavorite: Boolean,
     isInWatchlist: Boolean,
@@ -101,7 +100,7 @@ fun SeriesDetailContent(
         verticalArrangement = Arrangement.spacedBy(36.dp),
     ) {
         item(contentType = "detail-hero") {
-            DetailHero(
+            AdaptiveDetailHero(
                 detail = detail,
                 eyebrow = eyebrow,
                 sourceTokens = sourceTokens,
@@ -237,42 +236,18 @@ fun SeriesDetailContent(
                         }
                     }
                 }
-                if (seasons.size > 1) {
-                    SeasonChips(
-                        seasons = seasons,
-                        selectedSeasonNumber = selectedSeasonNumber,
-                        onSeasonSelected = onSeasonSelected,
-                    )
-                }
-                when {
-                    isLoadingEpisodes -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(32.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator()
-                        }
-                    }
-                    episodes.isEmpty() -> {
-                        Text(
-                            text = "No episodes available",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = DetailTertiaryText,
-                            modifier = Modifier.padding(horizontal = SafePadding),
-                        )
-                    }
-                    else -> {
-                        EpisodeList(
-                            episodes = episodes,
-                            onEpisodePlayClick = onEpisodePlayClick,
-                            onEpisodeDetailClick = onEpisodeDetailClick,
-                            onEpisodeDownloadClick = onEpisodeDownloadClick,
-                            episodeDownloadState = episodeDownloadState,
-                        )
-                    }
-                }
+                SeasonEpisodePager(
+                    seasons = seasons,
+                    selectedSeasonNumber = selectedSeasonNumber,
+                    episodes = episodes,
+                    episodesBySeason = episodesBySeason,
+                    isLoadingEpisodes = isLoadingEpisodes,
+                    onSeasonSelected = onSeasonSelected,
+                    onEpisodePlayClick = onEpisodePlayClick,
+                    onEpisodeDetailClick = onEpisodeDetailClick,
+                    onEpisodeDownloadClick = onEpisodeDownloadClick,
+                    episodeDownloadState = episodeDownloadState,
+                )
             }
         }
 

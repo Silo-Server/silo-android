@@ -5,21 +5,40 @@ import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import coil3.compose.AsyncImage
+import coil3.decode.DataSource
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 private val DefaultPlaceholderColor = Color(0xFF1A1D27)
+
+/**
+ * Optional feed-scoped gate for presenting newly decoded full-size artwork.
+ * The value is a [State] so a scrolling container can provide one stable object
+ * without recomposing its entire subtree whenever motion starts or stops.
+ */
+val LocalImagePresentationDeferral = staticCompositionLocalOf<State<Boolean>?> { null }
 
 /**
  * Process-wide cache of decoded ThumbHash placeholders, keyed by base64 hash.
@@ -69,6 +88,7 @@ fun ThumbhashImage(
     onSuccess: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val deferPresentationWhile = LocalImagePresentationDeferral.current
 
     // Cached placeholders resolve synchronously (instant on scroll-back); a cold
     // hash decodes off the composition thread and blurs up a frame later, so the
@@ -111,15 +131,77 @@ fun ThumbhashImage(
             .build()
     }
 
-    AsyncImage(
-        model = model,
-        contentDescription = contentDescription,
-        contentScale = contentScale,
-        placeholder = placeholder,
-        onSuccess = { onSuccess?.invoke() },
-        modifier = when {
-            transparent || placeholder != null -> modifier
-            else -> modifier.background(DefaultPlaceholderColor)
-        },
-    )
+    if (deferPresentationWhile == null) {
+        AsyncImage(
+            model = model,
+            contentDescription = contentDescription,
+            contentScale = contentScale,
+            placeholder = placeholder,
+            onSuccess = { onSuccess?.invoke() },
+            modifier = when {
+                transparent || placeholder != null -> modifier
+                else -> modifier.background(DefaultPlaceholderColor)
+            },
+        )
+        return
+    }
+
+    // Keep request/decode/cache work moving during a fling, but do not ask the
+    // renderer to import a newly completed hardware bitmap until the feed is
+    // idle. drawWithContent is important here: merely covering the AsyncImage
+    // with its placeholder would still draw (and upload) the bitmap underneath.
+    // Once committed, the artwork stays committed through later gestures.
+    var fullImageReady by remember(url) { mutableStateOf(false) }
+    var fullImagePresented by remember(url) { mutableStateOf(false) }
+    val currentOnSuccess by rememberUpdatedState(onSuccess)
+    val presentFullImage = {
+        if (!fullImagePresented) {
+            fullImagePresented = true
+            currentOnSuccess?.invoke()
+        }
+    }
+
+    LaunchedEffect(url, deferPresentationWhile, fullImageReady) {
+        if (!fullImageReady || fullImagePresented) return@LaunchedEffect
+        snapshotFlow { deferPresentationWhile.value }.first { isMoving -> !isMoving }
+        presentFullImage()
+    }
+
+    Box(modifier = modifier) {
+        if (!fullImagePresented) {
+            when {
+                placeholder != null -> Image(
+                    painter = placeholder,
+                    contentDescription = null,
+                    contentScale = contentScale,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                !transparent -> Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(DefaultPlaceholderColor),
+                )
+            }
+        }
+
+        AsyncImage(
+            model = model,
+            contentDescription = contentDescription,
+            contentScale = contentScale,
+            onSuccess = { state ->
+                fullImageReady = true
+                if (
+                    state.result.dataSource == DataSource.MEMORY_CACHE ||
+                    !deferPresentationWhile.value
+                ) {
+                    presentFullImage()
+                }
+            },
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    if (fullImagePresented) drawContent()
+                },
+        )
+    }
 }

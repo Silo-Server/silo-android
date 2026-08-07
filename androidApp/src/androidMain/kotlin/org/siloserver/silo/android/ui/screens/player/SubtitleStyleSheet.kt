@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,7 +21,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -38,6 +36,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -65,6 +64,7 @@ fun SubtitleStyleSheet(
     // Gear-submenu back affordance: dismisses this sheet and reopens the
     // parent settings sheet (wired in PlayerOverlay).
     onBack: (() -> Unit)? = null,
+    tabletopPaneHeight: Dp? = null,
 ) {
     if (!isVisible) return
 
@@ -76,21 +76,20 @@ fun SubtitleStyleSheet(
         if (isVisible) sheetState.show()
     }
 
-    ModalBottomSheet(
+    PlayerModalBottomSheet(
         onDismissRequest = {
             scope.launch { sheetState.hide() }
             onDismiss()
         },
         sheetState = sheetState,
-        containerColor = Color.Transparent,
-        contentColor = Color.White,
+        tabletopPaneHeight = tabletopPaneHeight,
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 // Cap below the top edge + keep content flings from
                 // dismissing the sheet — see PlayerSheetSupport.
-                .heightIn(max = playerSheetMaxHeight())
+                .playerSheetContent(tabletopPaneHeight)
                 .nestedScroll(PlayerSheetFlingGuard)
                 .background(
                     brush = Brush.verticalGradient(
@@ -114,6 +113,7 @@ fun SubtitleStyleSheet(
                             back()
                         }
                     },
+                    onDismiss = onDismiss,
                 )
 
                 // ---- Text section ------------------------------------------------
