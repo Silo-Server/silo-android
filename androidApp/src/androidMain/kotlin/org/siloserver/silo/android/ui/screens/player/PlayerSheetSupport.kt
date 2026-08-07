@@ -23,6 +23,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,12 +32,17 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -155,8 +161,33 @@ internal fun PlayerModalBottomSheet(
         containerColor = PlayerSheetBackground,
         contentColor = Color.White,
         scrimColor = playerSheetScrimColor(tabletopPaneHeight),
-        content = content,
-    )
+    ) {
+        KeepPlayerSheetImmersive()
+        content()
+    }
+}
+
+/**
+ * Material hosts [ModalBottomSheet] in its own dialog window. Hiding system
+ * bars on the player activity therefore does not cover the window that owns
+ * an open sheet, which lets Samsung restore the status and navigation bars
+ * while a player menu has focus. Apply the same immersive policy directly to
+ * the sheet window so every shared player menu behaves like the player.
+ */
+@Composable
+private fun KeepPlayerSheetImmersive() {
+    val view = LocalView.current
+    LaunchedEffect(view) {
+        val sheetWindow = (view as? DialogWindowProvider)?.window
+            ?: (view.parent as? DialogWindowProvider)?.window
+            ?: return@LaunchedEffect
+        WindowCompat.setDecorFitsSystemWindows(sheetWindow, false)
+        WindowCompat.getInsetsController(sheetWindow, sheetWindow.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
 }
 
 internal fun formatPlaybackSpeed(speed: Double): String {
