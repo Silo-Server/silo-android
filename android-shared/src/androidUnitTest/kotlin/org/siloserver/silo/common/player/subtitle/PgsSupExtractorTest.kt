@@ -43,6 +43,19 @@ class PgsSupExtractorTest {
     }
 
     @Test
+    fun advertisesASeekableStartForMergedNonZeroResume() {
+        val extractor = PgsSupExtractor(RecordingParserFactory(), { 0L }, pgsFormat())
+        val output = FakeExtractorOutput()
+
+        extractor.init(output)
+
+        assertTrue(output.seekMap.isSeekable)
+        val seekPoints = output.seekMap.getSeekPoints(15_000_000L)
+        assertEquals(0L, seekPoints.first.timeUs)
+        assertEquals(0L, seekPoints.first.position)
+    }
+
+    @Test
     fun eachDisplaySetBecomesOneSampleAtItsOwnPts() {
         val factory = RecordingParserFactory()
         val extractor = PgsSupExtractor(factory, { 0L }, pgsFormat())

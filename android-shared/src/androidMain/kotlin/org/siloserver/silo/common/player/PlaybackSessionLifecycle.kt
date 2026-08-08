@@ -69,8 +69,8 @@ class PlaybackSessionLifecycle(
     private val _notice = MutableStateFlow<PlayerNotice?>(null)
     val notice: StateFlow<PlayerNotice?> = _notice.asStateFlow()
 
-    private val _missingSessionEvents = MutableSharedFlow<Double>(extraBufferCapacity = 1)
-    val missingSessionEvents: SharedFlow<Double> = _missingSessionEvents.asSharedFlow()
+    private val _missingSessionEvents = MutableSharedFlow<MissingSessionRenewal>(extraBufferCapacity = 1)
+    val missingSessionEvents: SharedFlow<MissingSessionRenewal> = _missingSessionEvents.asSharedFlow()
 
     /**
      * Mutex protects the small set of mutable transitions we make from
@@ -727,7 +727,12 @@ class PlaybackSessionLifecycle(
                 position = resumePosition,
                 duration = lastReportedDuration,
             )
-            _missingSessionEvents.emit(resumePosition)
+            _missingSessionEvents.emit(
+                MissingSessionRenewal(
+                    positionSeconds = resumePosition,
+                    startParams = params,
+                ),
+            )
             recoveryJob = null
         }
     }
@@ -906,9 +911,22 @@ data class PlayerNotice(
 )
 
 /**
+ * Durable inputs for renewing a server-side session that disappeared.
+ *
+ * Media3 may publish an empty track snapshot while it is failing, so renewal
+ * must not reconstruct the viewer's audio/subtitle choices from live player
+ * tracks. [PlaybackSessionLifecycle] captures these parameters at adoption and
+ * returns the exact snapshot with the last reported source position.
+ */
+data class MissingSessionRenewal(
+    val positionSeconds: Double,
+    val startParams: StartParams,
+)
+
+/**
  * The shape of the session [PlaybackSessionLifecycle] is presenting. Captured
- * on adoption so a 404-session-missing event can hand its owner back the
- * content id and the position to replan from.
+ * on adoption so a 404-session-missing event can hand its owner back the exact
+ * content, version, route and track intent to renew.
  */
 data class StartParams(
     val contentId: String,

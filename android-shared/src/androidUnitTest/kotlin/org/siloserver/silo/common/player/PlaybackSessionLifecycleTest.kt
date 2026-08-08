@@ -330,12 +330,17 @@ class PlaybackSessionLifecycleTest {
             personalRepo = personalRepo,
             scope = backgroundScope,
         )
-        val renewals = mutableListOf<Double>()
+        val renewals = mutableListOf<MissingSessionRenewal>()
         backgroundScope.launch { lifecycle.missingSessionEvents.collect { renewals += it } }
         advanceUntilIdle()
 
+        val startParams = defaultStartParams(startPosition = 0.0).copy(
+            audioTrackIndex = 2,
+            subtitleTrackIndex = 8,
+            qualityPreference = "original",
+        )
         lifecycle.adoptActiveSession(
-            params = defaultStartParams(startPosition = 0.0),
+            params = startParams,
             session = makeSession("sess-original"),
         )
 
@@ -357,7 +362,9 @@ class PlaybackSessionLifecycleTest {
 
         // The lifecycle hands the resume position to whoever owns planning;
         // it does not start a replacement session itself.
-        assertEquals(listOf(42.5), renewals)
+        assertEquals(1, renewals.size)
+        assertEquals(42.5, renewals.single().positionSeconds, 0.0)
+        assertEquals(startParams, renewals.single().startParams)
 
         lifecycle.stop()
     }
@@ -633,7 +640,7 @@ class PlaybackSessionLifecycleTest {
             })
         }
         val lifecycle = newLifecycle(sessionMgr, scope = backgroundScope)
-        val renewals = mutableListOf<Double>()
+        val renewals = mutableListOf<MissingSessionRenewal>()
         backgroundScope.launch { lifecycle.missingSessionEvents.collect { renewals += it } }
         advanceUntilIdle()
 
@@ -649,7 +656,7 @@ class PlaybackSessionLifecycleTest {
 
         assertEquals(
             listOf(7.0),
-            renewals,
+            renewals.map(MissingSessionRenewal::positionSeconds),
             "expected exactly one renewal regardless of how many 404s arrived",
         )
 

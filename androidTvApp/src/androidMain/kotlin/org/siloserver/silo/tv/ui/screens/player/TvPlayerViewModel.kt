@@ -1361,12 +1361,13 @@ class TvPlayerViewModel(
             }
         }
         viewModelScope.launch {
-            sessionLifecycle.missingSessionEvents.collect { position ->
+            sessionLifecycle.missingSessionEvents.collect { renewal ->
                 val state = _uiState.value
-                if (state.sessionId != null) {
+                if (state.sessionId != null && renewal.startParams.contentId == contentId) {
                     loadContent(
-                        startPositionOverride = position,
-                        preferredFileIdOverride = state.selectedFileId ?: state.mediaFileId,
+                        startPositionOverride = renewal.positionSeconds,
+                        preferredFileIdOverride = renewal.startParams.fileId,
+                        recoveryStartParams = renewal.startParams,
                         suppressResumeRewind = true,
                     )
                 }
@@ -1683,6 +1684,10 @@ class TvPlayerViewModel(
     private fun loadContent(
         startPositionOverride: Double? = null,
         preferredFileIdOverride: Int? = null,
+        // A missing server session is a renewal, not a new route. Use the
+        // lifecycle's adoption-time selection snapshot because Media3 may have
+        // already cleared its live tracks by the time the 404 is observed.
+        recoveryStartParams: StartParams? = null,
         // True for retry: re-load at the current position without nudging back
         // (a normal first resume keeps the default false so it gets the rewind).
         suppressResumeRewind: Boolean = false,
@@ -1696,10 +1701,16 @@ class TvPlayerViewModel(
         // Capture this pipeline's generation; a later loadContent bump makes
         // this one inert before it can touch _uiState.
         val generation = ++contentLoadGeneration
+        if (recoveryStartParams != null) {
+            pendingInitialSubtitleIndex = recoveryStartParams.subtitleTrackIndex
+            pendingInitialSubtitleAttempts = 0
+        }
         val loadOwner = playbackMutationFence.beginLoad(
             contentId = contentId,
             preferredFileId = preferredFileIdOverride ?: preferredFileId,
-            preferredQuality = qualityOverride ?: preferredQuality,
+            preferredQuality = recoveryStartParams?.qualityPreference
+                ?: qualityOverride
+                ?: preferredQuality,
         )
         hasRenderedFirstFrame = false
         resetSeekRecoveryForContentChange()
@@ -1742,9 +1753,18 @@ class TvPlayerViewModel(
                         preferredFileId = preferredFileIdOverride ?: preferredFileId,
                         roomId = roomId,
                         resumePositionOverride = startPositionOverride,
-                        audioTrackIndex = initialAudioTrackIndex,
-                        subtitleTrackIndex = pendingInitialSubtitleIndex,
-                        preferredQualityOverride = preferredQuality,
+                        audioTrackIndex = if (recoveryStartParams != null) {
+                            recoveryStartParams.audioTrackIndex
+                        } else {
+                            initialAudioTrackIndex
+                        },
+                        subtitleTrackIndex = if (recoveryStartParams != null) {
+                            recoveryStartParams.subtitleTrackIndex
+                        } else {
+                            pendingInitialSubtitleIndex
+                        },
+                        preferredQualityOverride = recoveryStartParams?.qualityPreference
+                            ?: preferredQuality,
                         playbackQualityIntent = qualityOverride,
                         suppressResumeRewind = suppressResumeRewind,
                         force = force,
@@ -2340,12 +2360,34 @@ class TvPlayerViewModel(
                         }
                     }
                     is VideoSessionStartV3.Terminal -> {
+                        val failedSessionId = state.sessionId ?: return@launch
+                        val terminalMessage =
+                            "Playback unavailable (${decision.reason}): ${decision.message}"
                         cancelPendingCatalogSubtitle()
+                        // A terminal replan ends this attempt. Stop the shared
+                        // lifecycle reporter before publishing the error, or
+                        // its next progress tick observes the retired server
+                        // session as 404 and immediately starts a fresh attempt.
+                        sessionLifecycle.stop(expectedSessionId = failedSessionId)
+                        coroutineContext.ensureActive()
+                        if (recoveryContentGeneration != contentLoadGeneration ||
+                            _uiState.value.sessionId != failedSessionId
+                        ) {
+                            return@launch
+                        }
+                        lastAdoptedSessionId = null
                         _uiState.update {
                             it.copy(
-                                error = "Playback unavailable (${decision.reason}): ${decision.message}",
+                                error = terminalMessage,
                                 isLoading = false,
                                 isBuffering = false,
+                                isPlaying = false,
+                                isPaused = true,
+                                sessionId = null,
+                                playMethod = null,
+                                playbackPlan = null,
+                                delivery = null,
+                                streamUrl = null,
                             )
                         }
                     }

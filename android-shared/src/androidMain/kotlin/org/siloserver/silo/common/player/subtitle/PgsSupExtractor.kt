@@ -8,8 +8,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.ExtractorInput
 import androidx.media3.extractor.ExtractorOutput
+import androidx.media3.extractor.IndexSeekMap
 import androidx.media3.extractor.PositionHolder
-import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.text.CueEncoder
 import androidx.media3.extractor.text.SubtitleParser
@@ -69,6 +69,18 @@ class PgsSupExtractor(
     private var malformedSets = 0
     private var emittedCues = 0
 
+    // ProgressiveMediaPeriod coerces every seek to zero when an extractor
+    // advertises an unseekable map. In a MergingMediaSource that makes a PGS
+    // child return 0 while the video child accepts the requested resume point,
+    // and Media3 fails the whole selection with "Children enabled at different
+    // positions." A raw SUP stream can always be restarted at byte zero and
+    // scanned forward, so advertise that truthful (if conservative) seek map.
+    private val seekMap = IndexSeekMap(
+        longArrayOf(0L),
+        longArrayOf(0L),
+        C.TIME_UNSET,
+    )
+
     override fun sniff(input: ExtractorInput): Boolean {
         val probe = ByteArray(2)
         return try {
@@ -97,7 +109,7 @@ class PgsSupExtractor(
         output.endTracks()
         // The cues are held in the sample queue once read, so backward seeks are
         // served from memory; a seek before the read completes just restarts it.
-        output.seekMap(SeekMap.Unseekable(C.TIME_UNSET))
+        output.seekMap(seekMap)
     }
 
     override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int {

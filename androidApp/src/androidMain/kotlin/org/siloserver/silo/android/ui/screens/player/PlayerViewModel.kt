@@ -792,15 +792,17 @@ class PlayerViewModel(
             }
         }
         viewModelScope.launch {
-            sessionLifecycle.missingSessionEvents.collect { position ->
+            sessionLifecycle.missingSessionEvents.collect { renewal ->
                 val state = _uiState.value
-                if (state.sessionId != null) {
+                val params = renewal.startParams
+                if (state.sessionId != null && state.contentId == params.contentId) {
                     loadContent(
-                        contentId = state.contentId,
-                        preferredFileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId,
-                        initialAudioTrackIndex = state.selectedAudioIndex,
-                        initialSubtitleTrackIndex = state.selectedSubtitleIndex,
-                        resumePositionOverride = position,
+                        contentId = params.contentId,
+                        preferredFileId = params.fileId,
+                        preferredQuality = params.qualityPreference,
+                        initialAudioTrackIndex = params.audioTrackIndex,
+                        initialSubtitleTrackIndex = params.subtitleTrackIndex,
+                        resumePositionOverride = renewal.positionSeconds,
                         suppressResumeRewind = true,
                         preserveRouteIntent = true,
                     )
@@ -1754,12 +1756,37 @@ class PlayerViewModel(
                         )
                         mobileSubtitleTransactions.restoreCommittedLocalMount()
                     }
-                    is VideoSessionStartV3.Terminal -> _uiState.update {
-                        it.copy(
-                            error = "Playback unavailable (${decision.reason}): ${decision.message}",
-                            isLoading = false,
-                            isBuffering = false,
-                        )
+                    is VideoSessionStartV3.Terminal -> {
+                        val failedSessionId = state.sessionId ?: return@launch
+                        val terminalMessage =
+                            "Playback unavailable (${decision.reason}): ${decision.message}"
+                        // The manager consumes terminal replans and may stop the
+                        // active server session. Retire the lifecycle reporter
+                        // too; otherwise its next progress tick sees that 404
+                        // and turns a terminal outcome into an infinite fresh-
+                        // start loop.
+                        sessionLifecycle.stop(expectedSessionId = failedSessionId)
+                        currentCoroutineContext().ensureActive()
+                        if (recoveryGeneration != playbackRecoveryGeneration ||
+                            _uiState.value.sessionId != failedSessionId
+                        ) {
+                            return@launch
+                        }
+                        retainedOwnedSessionId = null
+                        _uiState.update {
+                            it.copy(
+                                error = terminalMessage,
+                                isLoading = false,
+                                isBuffering = false,
+                                isPlaying = false,
+                                isPaused = true,
+                                sessionId = null,
+                                playMethod = null,
+                                playbackPlan = null,
+                                delivery = null,
+                                streamUrl = null,
+                            )
+                        }
                     }
                     VideoSessionStartV3.ServerUpgradeRequired -> _uiState.update {
                         it.copy(
