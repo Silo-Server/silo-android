@@ -354,7 +354,14 @@ class TvShellFocusState {
             // (onClose) still returns to the bar, which is where that belongs.
             TvShellBackAction.ClosePanel -> closePanel(returnFocusToBar = false)
             TvShellBackAction.CloseProfileMenu -> dismissProfileMenu()
-            TvShellBackAction.MoveFocusToMenu -> requestMenuFocus(menuFocusTarget)
+            // Back from content climbs to the bar, and must NOT pop that tab's
+            // cascade on arrival: the viewer is leaving, not browsing. Without
+            // this the next Back sees an open panel and closes it back to
+            // content, so Back ping-pongs and never reaches MenuBack — Home and
+            // exit become unreachable. Up from content is the browsing case and
+            // stays unsuppressed, which is what makes the cascade openable.
+            TvShellBackAction.MoveFocusToMenu ->
+                requestMenuFocus(menuFocusTarget, suppressDwellPreview = true)
             // Consumed here: the caller performs the focus move, which it owns.
             TvShellBackAction.MoveFocusToContent -> barFocusFromPanelClose = false
             TvShellBackAction.MenuBack,
