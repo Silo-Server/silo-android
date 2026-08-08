@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -21,6 +22,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -36,43 +39,55 @@ fun TvDiagnosticsPromptScreen(
 ) {
     var confirmAlways by remember { mutableStateOf(false) }
     val safeFocus = remember(prompt.reportId, confirmAlways) { FocusRequester() }
-    LaunchedEffect(prompt.reportId, confirmAlways) { runCatching { safeFocus.requestFocus() } }
-    BackHandler(onBack = onDontSend)
-    Surface(Modifier.fillMaxSize()) {
-        Box(
-            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.92f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                Modifier.width(560.dp).padding(28.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+    // This prompt is rendered above the root NavHost. Keeping it in that same
+    // Compose window lets the underlying route reclaim focus as its content
+    // loads, leaving an opaque prompt whose actions cannot receive D-pad input.
+    // A dialog owns a separate TV focus window and keeps the safe default
+    // (Don't send) reachable without changing the consent semantics.
+    Dialog(
+        onDismissRequest = onDontSend,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        LaunchedEffect(prompt.reportId, confirmAlways) {
+            withFrameNanos { }
+            runCatching { safeFocus.requestFocus() }
+        }
+        Surface(Modifier.fillMaxSize()) {
+            Box(
+                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.92f)),
+                contentAlignment = Alignment.Center,
             ) {
-                if (confirmAlways) {
-                    Text("Always send crash reports?", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                    Text("Future eligible reports may upload automatically until you change this setting.")
-                    TvDiagnosticsAction("Always send", onClick = onAlwaysSend)
-                    TvDiagnosticsAction(
-                        "Cancel",
-                        onClick = { confirmAlways = false },
-                        modifier = Modifier.focusRequester(safeFocus),
-                    )
-                } else {
-                    Text("Silo encountered a problem", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (prompt.reportCount == 1) {
-                            "A ${prompt.reportType.tvDisplayName().lowercase()} report is ready. Review it before deciding whether to send it."
-                        } else {
-                            "${prompt.reportCount} diagnostics reports are ready. Review them before deciding whether to send them."
-                        },
-                    )
-                    TvDiagnosticsAction("Review", onClick = onReview)
-                    TvDiagnosticsAction("Send", onClick = onSend)
-                    TvDiagnosticsAction("Always send", onClick = { confirmAlways = true })
-                    TvDiagnosticsAction(
-                        "Don't send",
-                        onClick = onDontSend,
-                        modifier = Modifier.focusRequester(safeFocus),
-                    )
+                Column(
+                    Modifier.width(560.dp).padding(28.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (confirmAlways) {
+                        Text("Always send crash reports?", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+                        Text("Future eligible reports may upload automatically until you change this setting.")
+                        TvDiagnosticsAction("Always send", onClick = onAlwaysSend)
+                        TvDiagnosticsAction(
+                            "Cancel",
+                            onClick = { confirmAlways = false },
+                            modifier = Modifier.focusRequester(safeFocus),
+                        )
+                    } else {
+                        Text("Silo encountered a problem", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (prompt.reportCount == 1) {
+                                "A ${prompt.reportType.tvDisplayName().lowercase()} report is ready. Review it before deciding whether to send it."
+                            } else {
+                                "${prompt.reportCount} diagnostics reports are ready. Review them before deciding whether to send them."
+                            },
+                        )
+                        TvDiagnosticsAction("Review", onClick = onReview)
+                        TvDiagnosticsAction("Send", onClick = onSend)
+                        TvDiagnosticsAction("Always send", onClick = { confirmAlways = true })
+                        TvDiagnosticsAction(
+                            "Don't send",
+                            onClick = onDontSend,
+                            modifier = Modifier.focusRequester(safeFocus),
+                        )
+                    }
                 }
             }
         }
