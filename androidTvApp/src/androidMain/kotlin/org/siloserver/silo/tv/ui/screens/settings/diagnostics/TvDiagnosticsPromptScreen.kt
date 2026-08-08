@@ -17,8 +17,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import kotlinx.coroutines.delay
+import org.siloserver.silo.tv.ui.focus.TvModalRestoreMaxAttempts
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.tvModalFocusBoundary
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,16 +51,55 @@ fun TvDiagnosticsPromptScreen(
     // and a leanback app takes no touch input, so the dialog became completely
     // unreachable: no D-pad path, no tap fallback. Crash reports could not be
     // sent from a TV at all.
+    // The prompt is a sibling overlay after the NavHost, not a modal window, so
+    // the shell underneath stays composed and keeps claiming focus back through
+    // its own effects. A single first-frame claim lost that race silently, and
+    // one retry a frame later still lost it: the buttons rendered focusable and
+    // unfocused while a card behind the dialog held focus. A leanback app takes
+    // no touch, so there was no D-pad path and no tap fallback — the dialog was
+    // unusable, and with it the only route to sending a crash report.
+    //
+    // Retry until focus is *observed* rather than until requestFocus() returns
+    // true; an accepted request is not an acquired one. Paired with
+    // tvModalFocusBoundary() below, which stops the search escaping back out to
+    // the page behind.
+    var modalHasFocus by remember(prompt.reportId, confirmAlways) { mutableStateOf(false) }
     LaunchedEffect(prompt.reportId, confirmAlways) {
-        if (!runCatching { safeFocus.requestFocus() }.getOrDefault(false)) {
-            withFrameNanos { }
-            runCatching { safeFocus.requestFocus() }
-        }
+        requestFocusUntilObserved(
+            maxAttempts = TvModalRestoreMaxAttempts,
+            awaitAttempt = { delay(60L) },
+            requestFocus = { safeFocus.requestFocus(); true },
+            isFocused = { modalHasFocus },
+        )
     }
-    BackHandler(onBack = onDontSend)
+    // Its own window, not an overlay inside the shell.
+    //
+    // Composed as a sibling after the NavHost, this sat inside the shell's
+    // content Box — which carries a focusRestorer. A restorer intercepts focus
+    // *entry* into its subtree and redirects it to the child it remembers, so
+    // every claim the prompt made was rerouted to whatever card the viewer had
+    // last used. That is why a card behind the dialog held focus while every
+    // button in front of it rendered focusable and unfocused, and why neither
+    // retrying nor a focus boundary inside the subtree could win: they govern
+    // movement once focus is in, and it never got in.
+    //
+    // A Dialog gets its own window and its own focus, which is what a modal
+    // asking a yes/no question needs — and on leanback there is no touch to
+    // fall back on when it does not.
+    Dialog(
+        onDismissRequest = onDontSend,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnClickOutside = false,
+        ),
+    ) {
     Surface(Modifier.fillMaxSize()) {
         Box(
-            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.92f)),
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.92f))
+                .onFocusChanged { modalHasFocus = it.hasFocus }
+                .tvModalFocusBoundary(),
             contentAlignment = Alignment.Center,
         ) {
             Column(
@@ -89,6 +135,7 @@ fun TvDiagnosticsPromptScreen(
                 }
             }
         }
+    }
     }
 }
 
