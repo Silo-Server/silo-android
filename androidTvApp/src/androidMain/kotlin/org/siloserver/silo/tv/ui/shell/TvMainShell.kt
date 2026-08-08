@@ -838,6 +838,13 @@ fun TvMainShell(
             // Content on a tab root: onBack() already routed focus to the bar's
             // selected tab -- just consume.
             TvShellBackAction.MoveFocusToMenu -> true
+            // The bar only holds focus because a cascade was just dismissed, so
+            // Back undoes the whole trip into the chrome and returns the viewer
+            // to the rows rather than walking them along the bar to Home.
+            TvShellBackAction.MoveFocusToContent -> {
+                moveFocusToContent(currentRoute)
+                true
+            }
             // Bar focused: Home exits the app (fall through to the activity),
             // any other section goes Home with the bar still focused.
             TvShellBackAction.MenuBack -> {
@@ -874,10 +881,14 @@ fun TvMainShell(
         profileMenuOpen = focusState.profileMenuOpen,
         menuFocused = focusState.isMenuFocused,
         onTabRoot = selectedRoot != null,
+        // Must match what onBack() will decide, or the shell would decline the
+        // press and let navigation take it while handleShellBack expected it.
+        barFromPanelClose = focusState.barFocusFromPanelClose,
     )
     val shellHandlesBack = currentRoute != TvMainRoute.Settings.route && when (pendingShellBackAction) {
         TvShellBackAction.ClosePanel,
         TvShellBackAction.CloseProfileMenu,
+        TvShellBackAction.MoveFocusToContent,
         TvShellBackAction.MoveFocusToMenu -> true
         TvShellBackAction.MenuBack -> selectedRoot != TvRootDestination.Home
         TvShellBackAction.DelegateToNav ->
@@ -1385,6 +1396,7 @@ fun TvMainShell(
                 currentRoute == TvMainRoute.Settings.route,
             focusRequest = focusState.menuFocusRequest,
             focusRequestTarget = focusState.menuFocusTarget,
+            focusRequestSuppressesDwell = focusState.menuFocusSuppressesDwell,
             profileFocusRequest = focusState.profileFocusRequest,
             isSearchActive = currentRoute == TvMainRoute.Search.route,
             visibility = if (currentRoute == TvMainRoute.Settings.route) 0f else menuVisibility.value,

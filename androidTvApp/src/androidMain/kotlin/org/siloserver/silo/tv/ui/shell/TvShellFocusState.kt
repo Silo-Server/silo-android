@@ -54,6 +54,14 @@ sealed interface TvShellBackAction {
     /** Content on a tab root pressed Back: the caller focuses the bar's selected tab. */
     data object MoveFocusToMenu : TvShellBackAction
 
+    /**
+     * The bar holds focus only because a cascade Back-close just put it there.
+     * Back returns the viewer to content rather than walking them along the bar
+     * to Home — dismissing a panel should undo the trip into the chrome, not
+     * strand them one level up in it.
+     */
+    data object MoveFocusToContent : TvShellBackAction
+
     /** Nothing to dismiss; the caller pops the nested NavHost or lets the activity finish. */
     data object DelegateToNav : TvShellBackAction
 }
@@ -88,9 +96,13 @@ internal fun tvShellBackAction(
     profileMenuOpen: Boolean,
     menuFocused: Boolean,
     onTabRoot: Boolean,
+    barFromPanelClose: Boolean = false,
 ): TvShellBackAction = when {
     panelOpen -> TvShellBackAction.ClosePanel
     profileMenuOpen -> TvShellBackAction.CloseProfileMenu
+    // Only when the bar holds focus *because* a cascade was just dismissed.
+    // An ordinary bar Back still follows the QA back-stack model below.
+    menuFocused && barFromPanelClose -> TvShellBackAction.MoveFocusToContent
     // Back-stack model (QA 2026-07-08): content Back on a tab root climbs to
     // the bar; Back on the bar goes Home (or exits from Home). Secondary
     // screens (Settings, Search, …) still pop navigation.
@@ -127,6 +139,27 @@ class TvShellFocusState {
      * selected tab normally.
      */
     var menuFocusTarget by mutableStateOf<TvTopMenuPanel?>(null)
+        private set
+
+    /**
+     * Whether [menuFocusRequest] should also suppress its target's dwell
+     * preview.
+     *
+     * Only a panel Back-close wants that: reopening the panel the user just
+     * dismissed is the thing being prevented. An ordinary content-to-bar Up
+     * carries a target too — it decides which tab to land on — and arming
+     * suppression from that left the tab you came back to unable to reopen its
+     * own cascade at all, which is what testers hit on Movies and TV alike.
+     */
+    var menuFocusSuppressesDwell by mutableStateOf(false)
+        private set
+
+    /**
+     * True while the bar holds focus solely because a cascade Back-close handed
+     * it there. Cleared as soon as focus leaves the bar or a panel opens again,
+     * so it can only ever describe the press immediately after the dismissal.
+     */
+    var barFocusFromPanelClose by mutableStateOf(false)
         private set
 
     /** Nudge the menu bar to return focus to the profile avatar. */
@@ -176,9 +209,10 @@ class TvShellFocusState {
     // --- Menu-bar focus signals -------------------------------------------------
 
     /** Route focus to the bar's selected tab (content → bar Up, or panel close). */
-    fun requestMenuFocus(target: TvTopMenuPanel? = null) {
+    fun requestMenuFocus(target: TvTopMenuPanel? = null, suppressDwellPreview: Boolean = false) {
         DiagnosticsFocusLogger.transition(target?.diagnosticsTarget() ?: "menu", "request")
         menuFocusTarget = target
+        menuFocusSuppressesDwell = suppressDwellPreview
         menuFocusRequest++
     }
 
@@ -203,6 +237,7 @@ class TvShellFocusState {
             DiagnosticsFocusLogger.transition("menu", if (focused) "focused" else "blurred")
         }
         isMenuFocused = focused
+        if (!focused) barFocusFromPanelClose = false
         if (focused) {
             panelEntersFocus = false
             if (profileMenuOpen && !profileMenuEntered) profileMenuOpen = false
@@ -287,7 +322,9 @@ class TvShellFocusState {
         panelEntersFocus = false
         DiagnosticsFocusLogger.transition(closingPanel?.diagnosticsTarget() ?: "panel", "close")
         if (returnFocusToBar && closingPanel != null) {
-            requestMenuFocus(closingPanel)
+            // The only caller that wants the anchor's preview suppressed.
+            requestMenuFocus(closingPanel, suppressDwellPreview = true)
+            barFocusFromPanelClose = true
         }
     }
 
@@ -308,11 +345,14 @@ class TvShellFocusState {
             profileMenuOpen = profileMenuOpen,
             menuFocused = isMenuFocused,
             onTabRoot = onTabRoot,
+            barFromPanelClose = barFocusFromPanelClose,
         )
         when (action) {
             TvShellBackAction.ClosePanel -> closePanel(returnFocusToBar = true)
             TvShellBackAction.CloseProfileMenu -> dismissProfileMenu()
             TvShellBackAction.MoveFocusToMenu -> requestMenuFocus(menuFocusTarget)
+            // Consumed here: the caller performs the focus move, which it owns.
+            TvShellBackAction.MoveFocusToContent -> barFocusFromPanelClose = false
             TvShellBackAction.MenuBack,
             TvShellBackAction.DelegateToNav -> Unit
         }
