@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,7 +37,19 @@ fun TvDiagnosticsPromptScreen(
 ) {
     var confirmAlways by remember { mutableStateOf(false) }
     val safeFocus = remember(prompt.reportId, confirmAlways) { FocusRequester() }
-    LaunchedEffect(prompt.reportId, confirmAlways) { runCatching { safeFocus.requestFocus() } }
+    // One claim is not enough here. This prompt is composed immediately after a
+    // crash, when the tree is the least settled it will ever be, and
+    // requestFocus() throws rather than returning false if its node has not
+    // attached yet. Swallowed, that left every button focusable but unfocused —
+    // and a leanback app takes no touch input, so the dialog became completely
+    // unreachable: no D-pad path, no tap fallback. Crash reports could not be
+    // sent from a TV at all.
+    LaunchedEffect(prompt.reportId, confirmAlways) {
+        if (!runCatching { safeFocus.requestFocus() }.getOrDefault(false)) {
+            withFrameNanos { }
+            runCatching { safeFocus.requestFocus() }
+        }
+    }
     BackHandler(onBack = onDontSend)
     Surface(Modifier.fillMaxSize()) {
         Box(
@@ -88,7 +101,12 @@ internal fun TvDiagnosticsConfirmation(
     onDismiss: () -> Unit,
 ) {
     val cancelFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { cancelFocus.requestFocus() } }
+    LaunchedEffect(Unit) {
+        if (!runCatching { cancelFocus.requestFocus() }.getOrDefault(false)) {
+            withFrameNanos { }
+            runCatching { cancelFocus.requestFocus() }
+        }
+    }
     BackHandler(onBack = onDismiss)
     Surface(Modifier.fillMaxSize()) {
         Box(
