@@ -833,7 +833,12 @@ fun TvMainShell(
             menuFocusTarget = selectedMenuFocusTarget,
         )) {
             // Panel/dropdown already closed by onBack(): just consume.
-            TvShellBackAction.ClosePanel,
+            // onBack() closed the panel without claiming focus; put the viewer
+            // back where they came from in the same press.
+            TvShellBackAction.ClosePanel -> {
+                moveFocusToContent(currentRoute)
+                true
+            }
             TvShellBackAction.CloseProfileMenu -> true
             // Content on a tab root: onBack() already routed focus to the bar's
             // selected tab -- just consume.

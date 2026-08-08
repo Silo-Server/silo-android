@@ -348,7 +348,11 @@ class TvShellFocusState {
             barFromPanelClose = barFocusFromPanelClose,
         )
         when (action) {
-            TvShellBackAction.ClosePanel -> closePanel(returnFocusToBar = true)
+            // Back out of a cascade hands focus to content, not back to the
+            // anchor tab. Parking the viewer one level up in the chrome is what
+            // "back doesn't exit the menus" meant. The panel's own close action
+            // (onClose) still returns to the bar, which is where that belongs.
+            TvShellBackAction.ClosePanel -> closePanel(returnFocusToBar = false)
             TvShellBackAction.CloseProfileMenu -> dismissProfileMenu()
             TvShellBackAction.MoveFocusToMenu -> requestMenuFocus(menuFocusTarget)
             // Consumed here: the caller performs the focus move, which it owns.

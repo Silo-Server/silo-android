@@ -285,13 +285,14 @@ class TvShellFocusStateTest {
     fun onBackAppliesTheStateHalfAndReportsTheAction() {
         val s = TvShellFocusState()
 
-        // Panel open → ClosePanel, panel cleared, bar nudged.
+        // Panel open → ClosePanel, panel cleared, and the bar deliberately NOT
+        // nudged: Back out of a cascade hands focus to content, so the holder
+        // must not claim it for the bar. The caller performs that move.
         s.enterPanel(moviesPanel)
         val menuBefore = s.menuFocusRequest
         assertEquals(TvShellBackAction.ClosePanel, s.onBack(onTabRoot = true))
         assertNull(s.openPanel)
-        assertEquals(menuBefore + 1, s.menuFocusRequest)
-        assertEquals(moviesPanel, s.menuFocusTarget)
+        assertEquals(menuBefore, s.menuFocusRequest)
 
         // Profile open → CloseProfileMenu, dropdown closed and avatar nudged.
         s.previewProfileMenu()
