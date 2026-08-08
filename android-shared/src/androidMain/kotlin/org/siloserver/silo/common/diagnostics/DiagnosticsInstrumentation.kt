@@ -72,13 +72,21 @@ internal fun safeDiagnosticsNetworkPath(rawPath: String): String {
     if ('?' in rawPath || '#' in rawPath) return "/api/${segments[1]}/other"
     val resource = segments[2].lowercase()
     val tail = segments.drop(3)
-    val template = API_ROUTE_TEMPLATES[resource]
+    val known = API_ROUTE_TEMPLATES[resource]
+    val template = known
         ?.firstOrNull { candidate ->
             candidate.size == tail.size && candidate.indices.all { index ->
                 candidate[index] == DYNAMIC_ROUTE_SEGMENT || candidate[index] == tail[index].lowercase()
             }
         }
-        ?: return "/api/${segments[1]}/other"
+        // An allowlisted resource whose tail matches no template still names the
+        // resource: it already appears in every other path logged for it, so
+        // nothing new is disclosed, and a bare "/other" made the largest error
+        // signal on a tester's device unactionable — 52 404s in eight minutes
+        // with no way to tell which endpoint produced them. An UNRECOGNISED
+        // resource stays anonymous, deliberately: that name is not allowlisted
+        // and could itself be sensitive.
+        ?: return if (known != null) "/api/${segments[1]}/$resource/other" else "/api/${segments[1]}/other"
     return (listOf("", "api", segments[1], resource) + template).joinToString("/")
 }
 

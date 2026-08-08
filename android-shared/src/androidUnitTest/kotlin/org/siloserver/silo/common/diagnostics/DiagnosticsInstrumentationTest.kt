@@ -43,7 +43,9 @@ class DiagnosticsInstrumentationTest {
             safeDiagnosticsNetworkPath("/api/v1/playback/sessions/private-session/control/ws#fragment"),
         )
         assertEquals("/api/v1/items/{id}", safeDiagnosticsNetworkPath("/api/v1/items/status"))
-        assertEquals("/api/v1/other", safeDiagnosticsNetworkPath("/api/v1/playback/start/status"))
+        // Allowlisted resource, unmatched tail: names the resource so the
+        // endpoint is actionable. Unknown resources stay anonymous (below).
+        assertEquals("/api/v1/playback/other", safeDiagnosticsNetworkPath("/api/v1/playback/start/status"))
         assertEquals("/api/v1/other", safeDiagnosticsNetworkPath("/api/v1/private/private-id"))
         assertEquals("/other", safeDiagnosticsNetworkPath("/not-api/private-id"))
     }
