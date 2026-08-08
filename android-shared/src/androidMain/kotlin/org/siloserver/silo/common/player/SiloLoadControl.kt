@@ -1,6 +1,8 @@
 package org.siloserver.silo.common.player
 
+import android.util.Log
 import androidx.media3.common.C
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.LoadControl
@@ -43,33 +45,44 @@ class SiloLoadControl(
         parameters: LoadControl.Parameters,
         trackSelections: Array<out ExoTrackSelection?>,
     ): Int {
-        val selectedBitrateBps =
-            selectBufferSizingBitrateBps(
-                trackSelections.mapNotNull { selection ->
-                    selection?.let {
-                        BufferSizingTrackBitrates(
-                            averageBitrateBps = it.selectedFormat.averageBitrate,
-                            peakBitrateBps = it.selectedFormat.peakBitrate,
-                            latestNetworkEstimateBps = it.latestBitrateEstimate,
-                        )
-                    }
-                },
-            )
+        val sizingTracks = trackSelections.mapNotNull { selection ->
+            selection?.let {
+                BufferSizingTrackBitrates(
+                    averageBitrateBps = it.selectedFormat.averageBitrate,
+                    peakBitrateBps = it.selectedFormat.peakBitrate,
+                    latestNetworkEstimateBps = it.latestBitrateEstimate,
+                    isDolbyVision = it.selectedFormat.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION,
+                )
+            }
+        }
+        val selectedBitrateBps = selectBufferSizingBitrateBps(sizingTracks)
+        val hasDolbyVision = sizingTracks.any(BufferSizingTrackBitrates::isDolbyVision)
+        val budgetBytes = playbackBufferBudgetBytes(
+            baseBudgetBytes = policy.targetBufferBytes,
+            hasDolbyVision = hasDolbyVision,
+            minimumBytes = MIN_TARGET_BUFFER_BYTES,
+        )
         val fallback = super.calculateTargetBufferBytes(parameters, trackSelections)
         val result =
             computeBufferSizing(
                 selectedBitrateBps = selectedBitrateBps,
                 desiredDepthMs = policy.minBufferMs,
                 minimumDepthMs = PlaybackBufferPolicy.MIN_DEPTH_MS,
-                budgetBytes = policy.targetBufferBytes,
+                budgetBytes = budgetBytes,
                 minimumBytes = MIN_TARGET_BUFFER_BYTES,
                 unknownBitrateFallbackBytes = fallback,
             )
         depthMs = result.depth.ms
+        Log.i(
+            TAG,
+            "target_bytes=${result.target.bytes} budget_bytes=$budgetBytes " +
+                "depth_ms=${result.depth.ms} dolby_vision=$hasDolbyVision",
+        )
         return result.target.bytes
     }
 
     companion object {
+        private const val TAG = "SiloLoadControl"
         internal const val MIN_TARGET_BUFFER_BYTES = 16 * 1024 * 1024
     }
 }
@@ -78,7 +91,33 @@ internal data class BufferSizingTrackBitrates(
     val averageBitrateBps: Int,
     val peakBitrateBps: Int,
     val latestNetworkEstimateBps: Long,
+    val isDolbyVision: Boolean = false,
 )
+
+/**
+ * Leaves extra Java-heap headroom while decoding Dolby Vision.
+ *
+ * Media3's allocator target is not the process's complete playback cost. The
+ * extractor, codec bridge and OkHttp all need live Java allocations beside
+ * that target. A real Shield with a 192 MiB growth limit reached 192/192 MiB
+ * and crashed while the ordinary half-heap policy allowed a 96 MiB target for
+ * a DV profile-5 stream. Halving only the Dolby Vision target keeps the
+ * established buffer policy for every other route while leaving the decoder
+ * path enough room to keep reading and reporting playback.
+ */
+internal fun playbackBufferBudgetBytes(
+    baseBudgetBytes: Int,
+    hasDolbyVision: Boolean,
+    minimumBytes: Int,
+): Int {
+    require(baseBudgetBytes > 0)
+    require(minimumBytes > 0)
+    if (!hasDolbyVision) return baseBudgetBytes
+    return (baseBudgetBytes / DOLBY_VISION_BUDGET_DIVISOR)
+        .coerceAtLeast(minimumBytes.coerceAtMost(baseBudgetBytes))
+}
+
+private const val DOLBY_VISION_BUDGET_DIVISOR = 2
 
 internal fun selectBufferSizingBitrateBps(
     tracks: List<BufferSizingTrackBitrates>,

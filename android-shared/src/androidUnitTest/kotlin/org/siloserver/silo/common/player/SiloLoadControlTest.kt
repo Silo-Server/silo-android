@@ -7,6 +7,44 @@ import org.junit.Test
 
 class SiloLoadControlTest {
     @Test
+    fun `ordinary playback keeps the device buffer budget`() {
+        assertEquals(
+            96 * 1024 * 1024,
+            playbackBufferBudgetBytes(
+                baseBudgetBytes = 96 * 1024 * 1024,
+                hasDolbyVision = false,
+                minimumBytes = SiloLoadControl.MIN_TARGET_BUFFER_BYTES,
+            ),
+        )
+    }
+
+    @Test
+    fun `Dolby Vision leaves half of the ordinary allocator budget as heap headroom`() {
+        assertEquals(
+            48 * 1024 * 1024,
+            playbackBufferBudgetBytes(
+                baseBudgetBytes = 96 * 1024 * 1024,
+                hasDolbyVision = true,
+                minimumBytes = SiloLoadControl.MIN_TARGET_BUFFER_BYTES,
+            ),
+        )
+    }
+
+    @Test
+    fun `Dolby Vision adjustment never raises or undercuts a constrained budget`() {
+        val constrained = 8 * 1024 * 1024
+
+        assertEquals(
+            constrained,
+            playbackBufferBudgetBytes(
+                baseBudgetBytes = constrained,
+                hasDolbyVision = true,
+                minimumBytes = SiloLoadControl.MIN_TARGET_BUFFER_BYTES,
+            ),
+        )
+    }
+
+    @Test
     fun `average bitrate takes precedence over peak bitrate`() {
         val selected =
             selectBufferSizingBitrateBps(
