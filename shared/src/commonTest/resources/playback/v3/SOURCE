@@ -1,6 +1,6 @@
 repository=https://github.com/Silo-Server/silo-server
 path=internal/playback/testdata/protocol_v3
-commit=81f6dcc257d4f6590e1b62285377e59318ce733f
+commit=63247a36a3dcb4462cd6c6145b090025578dbbf9
 protocol_version=3
 
 Byte-identical copies of the server's golden playback-v3 wire fixtures; do not
