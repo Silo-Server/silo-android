@@ -1781,10 +1781,6 @@ open class PlaybackSessionManager(
             bandwidthEstimateKbps = active.networkEvidence.bandwidthEstimateKbps,
             bandwidthCapKbps = active.bandwidthCapKbps,
             selectedTracks = active.plan.selectedTracks,
-            failure = PlaybackFailureV3(
-                classification = SEEK_REANCHOR_V3_OPERATION,
-                message = "Reanchor the active stream at the requested source position.",
-            ),
             capabilities = active.capabilities,
             clientPlaybackContext = active.context,
         )

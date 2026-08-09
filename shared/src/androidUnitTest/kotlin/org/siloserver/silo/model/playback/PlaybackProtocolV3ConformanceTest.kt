@@ -561,6 +561,32 @@ class PlaybackProtocolV3ConformanceTest {
     }
 
     @Test
+    fun replanMatrixKeepsIntentAndTimelineOperationsFailureFree() {
+        val scenarios = conformanceMatrix().replanScenarios
+
+        assertEquals(
+            setOf(
+                "track_change_replan",
+                "quality_change_replan",
+                "idempotent_replan",
+                "concurrent_replan",
+                "mid_seek_replan",
+            ),
+            scenarios.map { it.category }.toSet(),
+        )
+        assertEquals(
+            setOf(TRACK_CHANGE_V3_OPERATION, QUALITY_CHANGE_V3_OPERATION, SEEK_REANCHOR_V3_OPERATION),
+            scenarios.mapNotNull { it.request.operation }.toSet(),
+        )
+        scenarios.forEach { scenario ->
+            assertNull(
+                scenario.request.failure,
+                "${scenario.name} is an intent/timeline operation, not failure recovery",
+            )
+        }
+    }
+
+    @Test
     fun protocolMatrixCoversRecoveryRestartCapacityAndEventLimits() {
         val scenarios = conformanceMatrix().protocolScenarios.associateBy { it.name }
 

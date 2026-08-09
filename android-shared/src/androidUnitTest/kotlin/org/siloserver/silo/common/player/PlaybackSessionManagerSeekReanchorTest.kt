@@ -60,6 +60,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PlaybackSessionManagerSeekReanchorTest {
@@ -155,6 +156,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         val ready = assertIs<VideoSessionStartV3.Ready>(assertIs<ApiResult.Success<VideoSessionStartV3>>(result).data)
         val request = harness.replanBodies.single()
         assertEquals("seek_reanchor", request.string("operation"))
+        assertNull(request["failure"], "timeline reanchors are not failure recovery")
         assertEquals(90.0, request["position_seconds"]!!.jsonPrimitive.double)
         assertEquals("plan-1", request.string("failed_plan_id"))
         assertEquals("original", request.string("quality_preference"))
