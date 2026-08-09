@@ -138,7 +138,9 @@ private data class ProtocolScenarioInputFixtureV3(
 
 @Serializable
 private data class LegacyStartBodyFixtureV3(
+    @SerialName("protocol_version") val protocolVersion: Int? = null,
     @SerialName("file_id") val fileId: Int,
+    @SerialName("client_capabilities") val clientCapabilities: ClientCodecCapabilities? = null,
 )
 
 @Serializable
@@ -207,6 +209,7 @@ class PlaybackProtocolV3ConformanceTest {
 
         assertEquals(PLAYBACK_PROTOCOL_V3, decoded.protocolVersion)
         assertEquals(PlaybackDecisionOutcome.PLAYABLE, decoded.outcome)
+        assertTrue(NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE in decoded.serverFeatures)
         val plan = assertNotNull(decoded.playbackPlan, "the golden response must decode to a playable plan")
         assertEquals(PlaybackDelivery.ORIGINAL_HTTP, plan.delivery)
         assertEquals(PlaybackStreamProtocol.HTTP_PROGRESSIVE, plan.stream.protocol)
@@ -306,6 +309,7 @@ class PlaybackProtocolV3ConformanceTest {
         assertEquals(42, decoded.fileId)
         assertEquals(QUALITY_ORIGINAL_V3, decoded.qualityPreference)
         assertEquals(SubtitleFidelityPreference.COMPATIBLE, decoded.subtitleFidelityPreference)
+        assertEquals(ProgressPersistenceV3.CLIENT, decoded.progressPersistence)
         assertEquals(CAPABILITY_EVIDENCE_EXACT, decoded.capabilities.videoEvidence)
         assertEquals(CAPABILITY_EVIDENCE_EXACT, decoded.capabilities.audioEvidence)
 
@@ -500,7 +504,7 @@ class PlaybackProtocolV3ConformanceTest {
         assertEquals(1, matrix.schemaVersion)
         assertEquals(17, matrix.plannerScenarios.size)
         assertEquals(9, matrix.replanScenarios.size)
-        assertEquals(7, matrix.protocolScenarios.size)
+        assertEquals(8, matrix.protocolScenarios.size)
         assertClientReadsEveryFieldExcept(
             raw,
             json.encodeToJsonElement(ConformanceMatrixFixtureV3.serializer(), matrix),
@@ -595,6 +599,13 @@ class PlaybackProtocolV3ConformanceTest {
         assertTrue("capacity_matrix" in scenarios.values.map { it.category })
         assertTrue("route_event_limits" in scenarios.values.map { it.category })
 
+        val draftV3 = scenarios.getValue("draft_v3_start_requires_upgrade")
+        assertEquals("draft_v3_426", draftV3.category)
+        assertEquals(PLAYBACK_PROTOCOL_V3, draftV3.input.body?.protocolVersion)
+        assertEquals(listOf("h264"), draftV3.input.body?.clientCapabilities?.codecsVideo)
+        assertEquals(426, draftV3.expected.httpStatus)
+        assertEquals("client_upgrade_required", draftV3.expected.error)
+
         val recovery = scenarios.getValue("failure_recovery_preserves_intent")
         val recoveryRequest = assertNotNull(recovery.input.replanRequest)
         assertEquals(321.25, recoveryRequest.positionSeconds)
@@ -642,6 +653,7 @@ class PlaybackProtocolV3ConformanceTest {
         val features = capability.getValue("features").jsonArray.map { it.jsonPrimitive.content }
         listOf(
             PLAYBACK_PLAN_V3_FEATURE,
+            NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
             LAYOUT_AWARE_PASSTHROUGH_FEATURE,
             DEVICE_QUIRKS_V3_FEATURE,
             SEEK_REANCHOR_V3_FEATURE,
