@@ -2309,9 +2309,6 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                 qualityPreference = request.qualityPreference,
                 capabilities = input.capabilities,
                 clientPlaybackContext = input.clientPlaybackContext,
-                operation = PlaybackSessionManager.replanOperationForClassification(
-                    request.classification,
-                ),
             )
         ) {
             is ApiResult.Success -> {
@@ -2327,8 +2324,11 @@ internal class PlaybackSessionManagerTvSubtitleStagedReplanPort(
                         hasSidecar = ready.plan.subtitle.artifact?.url?.isNotBlank() == true,
                         subtitleTracks = ready.session.subtitleUrls.orEmpty(),
                         qualityPreference = request.qualityPreference,
-                        outputRouteGeneration = handle.outputContextId?.toLongOrNull()
-                            ?: input.outputRouteGeneration,
+                        // This is the local monotonic route generation captured
+                        // by the stage request. The server's output_context_id
+                        // is an opaque equality token and must never be parsed
+                        // or used as a local counter.
+                        outputRouteGeneration = input.outputRouteGeneration,
                         managerHandle = handle,
                     ),
                 )

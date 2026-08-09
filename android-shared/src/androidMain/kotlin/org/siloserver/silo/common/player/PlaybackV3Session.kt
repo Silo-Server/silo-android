@@ -13,9 +13,8 @@ import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTimeline
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SelectedPlaybackTracks
-
-private const val SUBTITLE_DELIVERY_SIDECAR = "sidecar"
-private const val SUBTITLE_DELIVERY_BURN_IN_ONLY = "burn_in_only"
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 
 sealed interface VideoSessionStartV3 {
     data class Ready(
@@ -80,6 +79,10 @@ internal fun PlaybackPlanV3.toSessionResponse(
     // forced sidecar render twice.
     val inventorySubtitles = subtitle.inventory.asSequence()
         .filter { it.combinedIndex >= 0 && it.trackId.isNotBlank() }
+        .filter {
+            it.delivery == SUBTITLE_DELIVERY_SIDECAR ||
+                it.delivery == SUBTITLE_DELIVERY_BURN_IN_ONLY
+        }
         .map { item ->
             PlayerSubtitleInfo(
                 index = item.combinedIndex,

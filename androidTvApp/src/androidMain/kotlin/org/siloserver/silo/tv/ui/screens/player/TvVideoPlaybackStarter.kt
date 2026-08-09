@@ -120,6 +120,7 @@ class TvVideoPlaybackStarter(
                 formFactor = "tv",
                 appVersion = BuildConfig.VERSION_NAME,
                 dolbyVision = dolbyVision,
+                capabilities = capabilities,
             )
             // Skip-back-on-resume — see MobileVideoPlaybackStarter for the rationale.
             // Suppressed for Start Over / retry (request flag) and Watch Together

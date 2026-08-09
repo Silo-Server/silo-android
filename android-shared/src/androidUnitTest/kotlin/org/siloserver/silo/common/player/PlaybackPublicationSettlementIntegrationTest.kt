@@ -24,6 +24,7 @@ import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
+import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
@@ -189,6 +190,7 @@ class PlaybackPublicationSettlementIntegrationTest {
                         planA,
                         features = listOf(
                             PLAYBACK_PLAN_V3_FEATURE,
+                            NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
                             SEEK_REANCHOR_V3_FEATURE,
                         ),
                     ),
@@ -207,6 +209,7 @@ class PlaybackPublicationSettlementIntegrationTest {
                     ),
                     features = listOf(
                         PLAYBACK_PLAN_V3_FEATURE,
+                        NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
                         SEEK_REANCHOR_V3_FEATURE,
                     ),
                 ),
@@ -582,7 +585,10 @@ class PlaybackPublicationSettlementIntegrationTest {
     private companion object {
         fun response(
             plan: PlaybackPlanV3,
-            features: List<String> = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            features: List<String> = listOf(
+                PLAYBACK_PLAN_V3_FEATURE,
+                NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+            ),
         ): PlaybackDecisionResponseV3 =
             PlaybackDecisionResponseV3(
                 protocolVersion = 3,

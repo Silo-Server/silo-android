@@ -1630,6 +1630,7 @@ class PlayerViewModel(
                 formFactor = "mobile",
                 appVersion = BuildConfig.VERSION_NAME,
                 dolbyVision = dolbyVision,
+                capabilities = capabilities,
             )
             val result = playbackSessionManager.replanActiveVideoSession(
                 classification = classification,
@@ -1640,7 +1641,6 @@ class PlayerViewModel(
                 diagnostics = diagnostics,
                 capabilities = capabilities,
                 clientPlaybackContext = playbackContext,
-                operation = PlaybackSessionManager.replanOperationForClassification(classification),
             )
             // Returning on a stale generation is not enough on its own. By the
             // time this call returns, the manager has already committed and
@@ -1760,16 +1760,14 @@ class PlayerViewModel(
                         val failedSessionId = state.sessionId ?: return@launch
                         val terminalMessage =
                             "Playback unavailable (${decision.reason}): ${decision.message}"
-                        // The manager consumes terminal replans and may stop the
-                        // active server session. Retire the lifecycle reporter
-                        // too; otherwise its next progress tick sees that 404
-                        // and turns a terminal outcome into an infinite fresh-
-                        // start loop.
-                        sessionLifecycle.stop(expectedSessionId = failedSessionId)
-                        currentCoroutineContext().ensureActive()
-                        if (recoveryGeneration != playbackRecoveryGeneration ||
-                            _uiState.value.sessionId != failedSessionId
-                        ) {
+                        val terminalStillCurrent = sessionLifecycle.stopTerminalSessionIfCurrent(
+                            expectedSessionId = failedSessionId,
+                            isCurrent = {
+                                recoveryGeneration == playbackRecoveryGeneration &&
+                                    _uiState.value.sessionId == failedSessionId
+                            },
+                        )
+                        if (!terminalStillCurrent) {
                             return@launch
                         }
                         retainedOwnedSessionId = null
@@ -2851,6 +2849,7 @@ class PlayerViewModel(
             formFactor = "mobile",
             appVersion = BuildConfig.VERSION_NAME,
             dolbyVision = dolbyVision,
+            capabilities = capabilities,
         )
         val sourcePosition = ready.plan.timeline.sourceStartSeconds
             .takeIf { it.isFinite() && it >= 0.0 }

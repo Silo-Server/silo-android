@@ -66,6 +66,7 @@ class PlaybackApiTest {
         val captured = Captured()
         api(captured).startPlaybackV3(
             PlaybackStartRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 fileId = 42,
                 profileId = "profile",
                 playbackAttemptId = "attempt",
@@ -94,6 +95,7 @@ class PlaybackApiTest {
         api(captured).replanPlaybackV3(
             "session-1",
             PlaybackReplanRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 playbackAttemptId = "attempt",
                 replanRequestId = "request",
                 failedPlanId = "plan-1",

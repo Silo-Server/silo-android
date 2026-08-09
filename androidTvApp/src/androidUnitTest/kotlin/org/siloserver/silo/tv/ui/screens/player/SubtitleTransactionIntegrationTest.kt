@@ -50,6 +50,7 @@ import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
+import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
@@ -882,7 +883,10 @@ class SubtitleTransactionIntegrationTest {
 
         fun response(plan: PlaybackPlanV3) = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = listOf(
+                PLAYBACK_PLAN_V3_FEATURE,
+                NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+            ),
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             sessionId = plan.sessionId,
             playbackPlan = plan,

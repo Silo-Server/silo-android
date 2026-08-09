@@ -30,7 +30,6 @@ import org.siloserver.silo.model.playback.SubtitleContentReset
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleTransitionEvent
 import org.siloserver.silo.model.playback.SubtitleTransitionState
-import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
 import org.siloserver.silo.model.playback.UpdateAudioPreference
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
@@ -1157,11 +1156,6 @@ internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
             audioTrackIndex = request.audioTrackIndex,
             subtitleTrackIndex = request.subtitleTrackIndex,
             qualityPreference = request.qualityPreference,
-            // Every staged replan on mobile is a track selection — the phone
-            // player has no in-player quality menu — so it is a user intent,
-            // not a failure. The classification stays for the local transition
-            // machinery, but the server is told what actually happened.
-            operation = TRACK_CHANGE_V3_OPERATION,
         )
     ) {
         is ApiResult.Success -> {

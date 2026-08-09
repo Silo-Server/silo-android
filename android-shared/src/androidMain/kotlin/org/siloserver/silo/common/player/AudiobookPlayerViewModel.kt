@@ -14,6 +14,7 @@ import org.siloserver.silo.common.downloads.OfflineMediaResolver
 import org.siloserver.silo.model.audiobook.AudiobookBookmark
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.QUALITY_ORIGINAL_V3
+import org.siloserver.silo.model.playback.ProgressPersistenceV3
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.network.ApiResult
@@ -392,6 +393,7 @@ class AudiobookPlayerViewModel(
                             fileId = selectedVersion.fileId,
                             profileId = profileId,
                             startGlobal = startGlobal,
+                            generation = generation,
                         )
                         return@launch
                     }
@@ -507,10 +509,17 @@ class AudiobookPlayerViewModel(
         fileId: Int,
         profileId: String,
         startGlobal: Double,
+        generation: Int,
     ) {
         when (val playback = startPartSession(fileId, profileId, startGlobal)) {
             is ApiResult.Success -> {
                 val start = playback.data
+                if (generation != startGeneration || isClosing) {
+                    if (start is VideoSessionStartV3.Ready) {
+                        runCatching { playbackSessionManager.stopSession(start.session.sessionId) }
+                    }
+                    return
+                }
                 if (start is VideoSessionStartV3.Ready) {
                     applyStartedSession(
                         ready = start,
@@ -523,12 +532,12 @@ class AudiobookPlayerViewModel(
                     applyFailedSessionStart(start.failureMessage())
                 }
             }
-            is ApiResult.Error -> applyFailedSessionStart(
-                playback.message.ifBlank { "Audiobook playback failed" },
-            )
-            is ApiResult.NetworkError -> applyFailedSessionStart(
-                playback.exception.message ?: "Network error",
-            )
+            is ApiResult.Error -> if (generation == startGeneration && !isClosing) {
+                applyFailedSessionStart(playback.message.ifBlank { "Audiobook playback failed" })
+            }
+            is ApiResult.NetworkError -> if (generation == startGeneration && !isClosing) {
+                applyFailedSessionStart(playback.exception.message ?: "Network error")
+            }
         }
     }
 
@@ -557,17 +566,20 @@ class AudiobookPlayerViewModel(
         fileId: Int,
         profileId: String,
         startPosition: Double,
-    ): ApiResult<VideoSessionStartV3> =
-        playbackSessionManager.startVideoSessionV3(
+    ): ApiResult<VideoSessionStartV3> {
+        val capabilities = capabilityDetector.detect()
+        return playbackSessionManager.startVideoSessionV3(
             fileId = fileId,
             profileId = profileId,
-            capabilities = capabilityDetector.detect(),
-            clientPlaybackContext = capabilityDetector.detectPlaybackContext(),
+            capabilities = capabilities,
+            clientPlaybackContext = capabilityDetector.detectPlaybackContext(capabilities = capabilities),
             audioTrackIndex = null,
             subtitleTrackIndex = null,
             qualityPreference = QUALITY_ORIGINAL_V3,
             startPosition = startPosition,
+            progressPersistence = ProgressPersistenceV3.CLIENT,
         )
+    }
 
     /**
      * Retire the currently-loaded part's session before crossing a part
@@ -1112,6 +1124,7 @@ class AudiobookPlayerViewModel(
         // Invalidate any in-flight cross-part load so it can't resurrect a
         // session after we clear state here (Apple close() bumps loadGeneration).
         loadGeneration++
+        startGeneration++
         pendingTrackLoadLocalStart = null
         val state = _uiState.value
         val sessionId = state.sessionId
@@ -1215,6 +1228,7 @@ class AudiobookPlayerViewModel(
         // session during teardown (Apple close(): isClosing + loadGeneration).
         isClosing = true
         loadGeneration++
+        startGeneration++
         pendingTrackLoadLocalStart = null
         sleepTimerJob?.cancel()
         positionSaveJob?.cancel()

@@ -12,6 +12,10 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class PlaybackProtocolV3Test {
+    private val neutralServerFeatures = listOf(
+        PLAYBACK_PLAN_V3_FEATURE,
+        NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+    )
     private val plan = PlaybackPlanV3(
         planId = "plan-1",
         planAttemptKey = "v3:0000000000000001",
@@ -109,6 +113,17 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
+    fun preNeutralV3ServerRequiresUpgradeInsteadOfEnteringAnIncompatibleSession() {
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = PLAYBACK_PROTOCOL_V3,
+            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            sessionId = "draft-v3-session",
+        ).validateForMedia3()
+
+        assertEquals(PlaybackV3Validation.Incompatible("draft-v3-session"), result)
+    }
+
+    @Test
     fun legacyPlanShapeDecodesTolerantlyBeforeCompatibilityGate() {
         val decoded = SiloJson.decodeFromString<PlaybackDecisionResponseV3>(
             """{"session_id":"legacy-session","playback_plan":{"plan_id":"old","delivery":"original_http","engine":"media3_direct"}}""",
@@ -125,7 +140,7 @@ class PlaybackProtocolV3Test {
         // about here: a well-formed plan on any delivery is playable.
         val playable = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan,
         ).validateForMedia3()
@@ -133,7 +148,7 @@ class PlaybackProtocolV3Test {
 
         val hls = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan.copy(
                 delivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
@@ -147,7 +162,7 @@ class PlaybackProtocolV3Test {
     fun playablePlanRequiresAServerMintedAttemptKey() {
         val result = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan.copy(planAttemptKey = ""),
         ).validateForMedia3()
@@ -162,7 +177,7 @@ class PlaybackProtocolV3Test {
     fun playablePlanRejectsAGappedOrUndeliverableSubtitleInventory() {
         val result = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan.copy(
                 subtitle = PlaybackSubtitleDecisionV3(
@@ -181,6 +196,57 @@ class PlaybackProtocolV3Test {
         assertEquals(
             "invalid_playback_plan",
             assertIs<PlaybackV3Validation.Terminal>(result).reason,
+        )
+    }
+
+    @Test
+    fun unknownUnselectedSubtitleDeliveryDoesNotRejectThePlayableVideoRoute() {
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = PLAYBACK_PROTOCOL_V3,
+            serverFeatures = neutralServerFeatures,
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(
+                subtitle = PlaybackSubtitleDecisionV3(
+                    inventory = listOf(
+                        PlaybackSubtitleInventoryItemV3(
+                            trackId = "future-track",
+                            combinedIndex = 0,
+                            source = "external",
+                            delivery = "future_delivery",
+                        ),
+                    ),
+                ),
+            ),
+        ).validateForMedia3()
+
+        assertIs<PlaybackV3Validation.Playable>(result)
+    }
+
+    @Test
+    fun unknownSelectedSubtitleDeliveryRequestsASelectionPreservingReplan() {
+        val selected = PlaybackTrackIdentityV3("future-track", 0)
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = PLAYBACK_PROTOCOL_V3,
+            serverFeatures = neutralServerFeatures,
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(
+                selectedTracks = SelectedPlaybackTracksV3(subtitle = selected),
+                subtitle = PlaybackSubtitleDecisionV3(
+                    inventory = listOf(
+                        PlaybackSubtitleInventoryItemV3(
+                            trackId = selected.id,
+                            combinedIndex = selected.index ?: 0,
+                            source = "external",
+                            delivery = "future_delivery",
+                        ),
+                    ),
+                ),
+            ),
+        ).validateForMedia3()
+
+        assertEquals(
+            "unsupported_subtitle_delivery:future_delivery",
+            assertIs<PlaybackV3Validation.ReplanRequired>(result).reason,
         )
     }
 
@@ -207,7 +273,7 @@ class PlaybackProtocolV3Test {
     fun adaptationUnavailableIsTerminal() {
         val result = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.ADAPTATION_UNAVAILABLE,
             terminal = PlaybackTerminalV3("transcoding_disabled", "No compatible direct route.", false),
         ).validateForMedia3()
@@ -221,7 +287,7 @@ class PlaybackProtocolV3Test {
     fun unsupportedHeaderRefreshFailsClosed() {
         val result = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan.copy(
                 stream = plan.stream.copy(
@@ -240,7 +306,7 @@ class PlaybackProtocolV3Test {
     fun unknownClientTransformationRequestsAReplan() {
         val result = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan.copy(
                 transformations = listOf(
@@ -267,7 +333,7 @@ class PlaybackProtocolV3Test {
         // the dynamic-range decision.
         val result = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan.copy(
                 delivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
@@ -302,7 +368,7 @@ class PlaybackProtocolV3Test {
 
         val conflicting = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan.copy(
                 transformations = listOf(
@@ -339,6 +405,7 @@ class PlaybackProtocolV3Test {
 
         val echoed = SiloJson.encodeToString(
             PlaybackReplanRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 playbackAttemptId = "attempt",
                 replanRequestId = "request",
                 failedPlanId = "p",
@@ -362,7 +429,7 @@ class PlaybackProtocolV3Test {
     fun unknownRuntimeCorrectionRequestsReplan() {
         val response = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = neutralServerFeatures,
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             playbackPlan = plan.copy(runtimeCorrections = listOf("future_runtime_fix")),
         ).validateForMedia3()
@@ -377,6 +444,7 @@ class PlaybackProtocolV3Test {
     fun startRequestNeverForcesAPlayMethodOrNamesAnEngine() {
         val encoded = SiloJson.encodeToString(
             PlaybackStartRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 fileId = 12,
                 profileId = "profile",
                 playbackAttemptId = "attempt",
@@ -398,9 +466,30 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
+    fun clientOwnedProgressSerializesAnExplicitZeroFileLocalStart() {
+        val encoded = SiloJson.encodeToString(
+            PlaybackStartRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
+                fileId = 12,
+                profileId = "profile",
+                playbackAttemptId = "audiobook-attempt",
+                subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
+                startPosition = 0.0,
+                progressPersistence = ProgressPersistenceV3.CLIENT,
+                capabilities = ClientCodecCapabilities(),
+                clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
+            ),
+        )
+
+        assertTrue(encoded.contains("\"start_position\":0.0"))
+        assertTrue(encoded.contains("\"progress_persistence\":\"client\""))
+    }
+
+    @Test
     fun startAndReplanRequestsCarryCurrentNetworkEvidence() {
         val start = SiloJson.encodeToString(
             PlaybackStartRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 fileId = 12,
                 profileId = "profile",
                 playbackAttemptId = "attempt",
@@ -414,6 +503,7 @@ class PlaybackProtocolV3Test {
         )
         val replan = SiloJson.encodeToString(
             PlaybackReplanRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 playbackAttemptId = "attempt",
                 replanRequestId = "request",
                 failedPlanId = "plan",
@@ -443,6 +533,7 @@ class PlaybackProtocolV3Test {
     fun seekReanchorOperationIsExplicitAndNegotiated() {
         val start = SiloJson.encodeToString(
             PlaybackStartRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 fileId = 12,
                 profileId = "profile",
                 playbackAttemptId = "attempt",
@@ -453,6 +544,7 @@ class PlaybackProtocolV3Test {
         )
         val reanchor = SiloJson.encodeToString(
             PlaybackReplanRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 operation = SEEK_REANCHOR_V3_OPERATION,
                 playbackAttemptId = "attempt",
                 replanRequestId = "request",
@@ -482,6 +574,7 @@ class PlaybackProtocolV3Test {
         for (operation in INTENT_V3_OPERATIONS) {
             val encoded = SiloJson.encodeToString(
                 PlaybackReplanRequestV3(
+                    clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                     operation = operation,
                     playbackAttemptId = "attempt",
                     replanRequestId = "request",

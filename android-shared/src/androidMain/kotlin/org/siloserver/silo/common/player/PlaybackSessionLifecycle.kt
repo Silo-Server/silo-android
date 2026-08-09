@@ -550,6 +550,21 @@ class PlaybackSessionLifecycle(
     }
 
     /**
+     * Retires a terminal playback attempt and rechecks screen ownership only
+     * after the lifecycle reporter is fully stopped. Phone and TV must share
+     * this ordering: publishing the terminal first lets the next progress tick
+     * observe the retired server session as a 404 and start a fresh attempt.
+     */
+    suspend fun stopTerminalSessionIfCurrent(
+        expectedSessionId: String,
+        isCurrent: () -> Boolean,
+    ): Boolean {
+        stop(expectedSessionId = expectedSessionId)
+        currentCoroutineContext().ensureActive()
+        return isCurrent()
+    }
+
+    /**
      * Fire-and-forget [stop] for teardown paths that must not block. [stop]
      * performs up to two HTTP round-trips (final progress sync + stopSession),
      * so awaiting it with `runBlocking` from `ViewModel.onCleared` freezes the

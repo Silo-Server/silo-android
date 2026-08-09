@@ -32,6 +32,7 @@ import kotlinx.serialization.json.jsonObject
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
+import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
@@ -1553,7 +1554,10 @@ class PlaybackSessionManagerStagedReplanTest {
         fun response(plan: PlaybackPlanV3): PlaybackDecisionResponseV3 =
             PlaybackDecisionResponseV3(
                 protocolVersion = 3,
-                serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+                serverFeatures = listOf(
+                    PLAYBACK_PLAN_V3_FEATURE,
+                    NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                ),
                 outcome = PlaybackDecisionOutcome.PLAYABLE,
                 sessionId = plan.sessionId,
                 playbackPlan = plan,
@@ -1565,7 +1569,10 @@ class PlaybackSessionManagerStagedReplanTest {
             message: String,
         ): PlaybackDecisionResponseV3 = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = listOf(
+                PLAYBACK_PLAN_V3_FEATURE,
+                NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+            ),
             outcome = PlaybackDecisionOutcome.ADAPTATION_UNAVAILABLE,
             sessionId = sessionId,
             terminal = PlaybackTerminalV3(

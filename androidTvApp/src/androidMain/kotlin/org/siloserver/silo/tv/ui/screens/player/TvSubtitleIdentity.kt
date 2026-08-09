@@ -6,6 +6,8 @@ import org.siloserver.silo.common.player.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.playback.canonicalSubtitleCodecFamily
 import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
@@ -33,8 +35,8 @@ internal fun tvSubtitleIdentity(subtitle: PlayerSubtitleInfo): SubtitleIdentity 
         ).takeIf { it },
     )
     when (subtitle.serverDelivery) {
-        "burn_in_only" -> return SubtitleIdentity.ServerBurnIn(subtitle.index, media)
-        "sidecar" -> return SubtitleIdentity.ServerSidecar(subtitle.index, media)
+        SUBTITLE_DELIVERY_BURN_IN_ONLY -> return SubtitleIdentity.ServerBurnIn(subtitle.index, media)
+        SUBTITLE_DELIVERY_SIDECAR -> return SubtitleIdentity.ServerSidecar(subtitle.index, media)
     }
     if (downloaded) {
         val downloadedMedia = media.copy(

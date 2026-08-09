@@ -176,6 +176,15 @@ val playerInfraModule = module {
             playbackSessions = get<DiagnosticsPlaybackSessionTracker>(),
         )
     }
+    single(AUDIOBOOK_PLAYBACK_SESSION_LIFECYCLE_QUALIFIER) {
+        PlaybackSessionLifecycle(
+            sessionManager = get(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER),
+            healthApi = get(),
+            personalDataRepository = get(),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            playbackSessions = get<DiagnosticsPlaybackSessionTracker>(),
+        )
+    }
 
     // Phase 2 sleep timer. Pinned to Main.immediate so the on-fire callback
     // (typically `_uiState.update { isPaused = true }`) lands on the same

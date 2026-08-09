@@ -659,6 +659,7 @@ class PlaybackProtocolV3ConformanceTest {
         planAttemptKey: String,
         localMutations: List<String> = emptyList(),
     ): PlaybackReplanRequestV3 = PlaybackReplanRequestV3(
+        clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
         playbackAttemptId = "attempt-golden-0001",
         replanRequestId = "replan-golden-0001",
         failedPlanId = "plan:golden-0001",

@@ -1476,6 +1476,7 @@ class TvPlayerViewModel(
             dolbyVisionEnabled = dolbyVisionEnabled.value,
             preferProfile7HDR10Fallback = dvProfile7Hdr10Fallback.value,
         )
+        val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
         return TvSubtitlePlaybackContext(
             contentId = contentId,
             mediaFileId = fileId,
@@ -1489,13 +1490,12 @@ class TvPlayerViewModel(
             subtitleTracks = state.subtitleUrls,
             audioTracks = version?.audioTracks.orEmpty(),
             outputRouteGeneration = capabilityDetector.outputRouteGeneration.value,
-            capabilities = capabilityDetector.detect(
-                dolbyVision = dolbyVision,
-            ),
+            capabilities = capabilities,
             clientPlaybackContext = capabilityDetector.detectPlaybackContext(
                 formFactor = "tv",
                 appVersion = BuildConfig.VERSION_NAME,
                 dolbyVision = dolbyVision,
+                capabilities = capabilities,
             ),
             writeScope = finalPositionScope,
         )
@@ -2228,6 +2228,7 @@ class TvPlayerViewModel(
                 formFactor = "tv",
                 appVersion = BuildConfig.VERSION_NAME,
                 dolbyVision = dolbyVision,
+                capabilities = capabilities,
             )
             val result = playbackSessionManager.replanActiveVideoSession(
                 classification = classification,
@@ -2240,7 +2241,6 @@ class TvPlayerViewModel(
                 qualityPreference = qualityPreference,
                 capabilities = capabilities,
                 clientPlaybackContext = playbackContext,
-                operation = PlaybackSessionManager.replanOperationForClassification(classification),
             )
             // PlaybackRepository's safe-call layer may translate cancellation to an ApiResult.
             // Re-check both coroutine and content generations before any response can adopt.
@@ -2364,15 +2364,14 @@ class TvPlayerViewModel(
                         val terminalMessage =
                             "Playback unavailable (${decision.reason}): ${decision.message}"
                         cancelPendingCatalogSubtitle()
-                        // A terminal replan ends this attempt. Stop the shared
-                        // lifecycle reporter before publishing the error, or
-                        // its next progress tick observes the retired server
-                        // session as 404 and immediately starts a fresh attempt.
-                        sessionLifecycle.stop(expectedSessionId = failedSessionId)
-                        coroutineContext.ensureActive()
-                        if (recoveryContentGeneration != contentLoadGeneration ||
-                            _uiState.value.sessionId != failedSessionId
-                        ) {
+                        val terminalStillCurrent = sessionLifecycle.stopTerminalSessionIfCurrent(
+                            expectedSessionId = failedSessionId,
+                            isCurrent = {
+                                recoveryContentGeneration == contentLoadGeneration &&
+                                    _uiState.value.sessionId == failedSessionId
+                            },
+                        )
+                        if (!terminalStillCurrent) {
                             return@launch
                         }
                         lastAdoptedSessionId = null

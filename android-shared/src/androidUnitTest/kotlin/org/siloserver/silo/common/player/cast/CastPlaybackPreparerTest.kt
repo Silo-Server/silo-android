@@ -1,7 +1,16 @@
 package org.siloserver.silo.common.player.cast
 
+import org.siloserver.silo.model.playback.PlaybackDelivery
+import org.siloserver.silo.model.playback.PlaybackPlanV3
+import org.siloserver.silo.model.playback.PlaybackStreamProtocol
+import org.siloserver.silo.model.playback.PlaybackStreamV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleSidecarV3
+import org.siloserver.silo.model.playback.PlaybackTimelineV3
 import org.siloserver.silo.model.playback.playbackClientFeaturesV3
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
 class CastPlaybackPreparerTest {
@@ -12,4 +21,66 @@ class CastPlaybackPreparerTest {
                 playbackClientFeaturesV3(chromecastPlaybackContext("test")),
         )
     }
+
+    @Test
+    fun castUsesPlayerLocalStartInsteadOfSourceTimelinePosition() {
+        val plan = plan(
+            timeline = PlaybackTimelineV3(
+                sourceStartSeconds = 90.0,
+                playerStartSeconds = 0.0,
+            ),
+        )
+
+        assertEquals(0.0, castPlayerStartPosition(plan, requested = 90.0))
+    }
+
+    @Test
+    fun transitionalSidecarsPopulateCastInventoryOnlyWhenAuthoritativeInventoryIsEmpty() {
+        val sidecar = PlaybackSubtitleSidecarV3(
+            trackId = "file:7:subtitle:2",
+            index = 2,
+            url = "/subtitles/2.ass",
+            mimeType = "text/x-ssa",
+            format = "ass",
+        )
+
+        val fallback = castSubtitleInventory(
+            plan(subtitle = PlaybackSubtitleDecisionV3(sidecars = listOf(sidecar))),
+        )
+        assertEquals(listOf("file:7:subtitle:2"), fallback.map { it.trackId })
+        assertEquals(listOf(2), fallback.map { it.combinedIndex })
+
+        val authoritative = PlaybackSubtitleInventoryItemV3(
+            trackId = "file:7:subtitle:0",
+            combinedIndex = 0,
+            source = "embedded",
+            codec = "ass",
+            delivery = "sidecar",
+            url = "/subtitles/0.ass",
+        )
+        assertEquals(
+            listOf(authoritative),
+            castSubtitleInventory(
+                plan(
+                    subtitle = PlaybackSubtitleDecisionV3(
+                        sidecars = listOf(sidecar),
+                        inventory = listOf(authoritative),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    private fun plan(
+        timeline: PlaybackTimelineV3 = PlaybackTimelineV3(),
+        subtitle: PlaybackSubtitleDecisionV3 = PlaybackSubtitleDecisionV3(),
+    ) = PlaybackPlanV3(
+        planId = "plan",
+        planAttemptKey = "opaque",
+        delivery = PlaybackDelivery.SERVER_REMUX_HLS,
+        stream = PlaybackStreamV3("/stream.m3u8", PlaybackStreamProtocol.HLS),
+        timeline = timeline,
+        subtitle = subtitle,
+        decisionReason = "test",
+    )
 }

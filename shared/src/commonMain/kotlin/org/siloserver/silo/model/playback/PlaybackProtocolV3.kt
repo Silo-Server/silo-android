@@ -14,6 +14,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 
 const val PLAYBACK_PROTOCOL_V3 = 3
 const val PLAYBACK_PLAN_V3_FEATURE = "playback_plan_v3"
+const val NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE = "neutral_playback_v3_contract_v1"
 const val LAYOUT_AWARE_PASSTHROUGH_FEATURE = "layout_aware_passthrough"
 const val CLIENT_VIDEO_TRANSFORMATIONS_FEATURE = "client_video_transformations_v1"
 const val DEVICE_QUIRKS_V3_FEATURE = "device_quirks_v1"
@@ -34,6 +35,10 @@ const val CAPABILITY_EVIDENCE_DECLARED = "declared"
 const val DELIVERY_CLASS_ORIGINAL_HTTP = "original_http"
 const val DELIVERY_CLASS_PROGRESSIVE = "progressive"
 const val DELIVERY_CLASS_HLS = "hls"
+
+/** Subtitle delivery values understood by this client. */
+const val SUBTITLE_DELIVERY_SIDECAR = "sidecar"
+const val SUBTITLE_DELIVERY_BURN_IN_ONLY = "burn_in_only"
 
 /** Replan operations. Omitted means [FAILURE_RECOVERY_V3_OPERATION]. */
 const val FAILURE_RECOVERY_V3_OPERATION = "failure_recovery"
@@ -116,6 +121,12 @@ enum class PlaybackSubtitleModeV3 {
 enum class SubtitleFidelityPreference {
     @SerialName("preserve") PRESERVE,
     @SerialName("compatible") COMPATIBLE,
+}
+
+@Serializable
+enum class ProgressPersistenceV3 {
+    @SerialName("server") SERVER,
+    @SerialName("client") CLIENT,
 }
 
 @Serializable
@@ -367,13 +378,14 @@ data class PlaybackTerminalV3(
 @Serializable
 data class PlaybackStartRequestV3(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
-    @SerialName("client_features") val clientFeatures: List<String> = PLAYBACK_START_CLIENT_FEATURES_V3,
+    @SerialName("client_features") val clientFeatures: List<String>,
     @SerialName("file_id") val fileId: Int,
     @SerialName("profile_id") val profileId: String,
     @SerialName("playback_attempt_id") val playbackAttemptId: String,
     @SerialName("quality_preference") val qualityPreference: String = "auto",
     @SerialName("subtitle_fidelity_preference") val subtitleFidelityPreference: SubtitleFidelityPreference,
     @SerialName("start_position") val startPosition: Double? = null,
+    @SerialName("progress_persistence") val progressPersistence: ProgressPersistenceV3 = ProgressPersistenceV3.SERVER,
     @SerialName("audio_track_id") val audioTrackId: String? = null,
     @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
     @SerialName("subtitle_track_id") val subtitleTrackId: String? = null,
@@ -395,7 +407,7 @@ data class PlaybackFailureV3(
 @Serializable
 data class PlaybackReplanRequestV3(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
-    @SerialName("client_features") val clientFeatures: List<String> = PLAYBACK_START_CLIENT_FEATURES_V3,
+    @SerialName("client_features") val clientFeatures: List<String>,
     /** Omitted means [FAILURE_RECOVERY_V3_OPERATION]. */
     val operation: String? = null,
     @SerialName("playback_attempt_id") val playbackAttemptId: String,
@@ -452,7 +464,10 @@ sealed interface PlaybackV3Validation {
 }
 
 fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
-    if (protocolVersion != PLAYBACK_PROTOCOL_V3 || PLAYBACK_PLAN_V3_FEATURE !in serverFeatures) {
+    if (protocolVersion != PLAYBACK_PROTOCOL_V3 ||
+        PLAYBACK_PLAN_V3_FEATURE !in serverFeatures ||
+        NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE !in serverFeatures
+    ) {
         return PlaybackV3Validation.Incompatible(sessionId)
     }
     if (outcome == PlaybackDecisionOutcome.ADAPTATION_UNAVAILABLE) {
@@ -489,6 +504,23 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
             "invalid_playback_plan",
             "The server returned an invalid subtitle inventory.",
             false,
+        )
+    }
+    val selectedSubtitle = plan.selectedTracks.subtitle?.let { selected ->
+        plan.subtitle.inventory.firstOrNull {
+            it.combinedIndex == selected.index && it.trackId == selected.id
+        }
+    }
+    if (selectedSubtitle != null &&
+        selectedSubtitle.delivery !in setOf(
+            SUBTITLE_DELIVERY_SIDECAR,
+            SUBTITLE_DELIVERY_BURN_IN_ONLY,
+        )
+    ) {
+        return PlaybackV3Validation.ReplanRequired(
+            "unsupported_subtitle_delivery:${selectedSubtitle.delivery}",
+            plan,
+            resolvedSessionId,
         )
     }
     if (plan.stream.url.isBlank()) {
@@ -571,9 +603,13 @@ private fun PlaybackPlanV3.hasValidSubtitleInventory(): Boolean {
     }
     if (subtitle.inventory.any { item ->
             when (item.delivery) {
-                "sidecar" -> item.url.isNullOrBlank()
-                "burn_in_only" -> !item.url.isNullOrBlank()
-                else -> true
+                SUBTITLE_DELIVERY_SIDECAR -> item.url.isNullOrBlank()
+                SUBTITLE_DELIVERY_BURN_IN_ONLY -> !item.url.isNullOrBlank()
+                // Unknown delivery values are forward-compatible. They remain
+                // unavailable in the local picker; if one is selected, the
+                // caller requests a server replan instead of rejecting every
+                // otherwise-playable route that happens to list it.
+                else -> false
             }
         }
     ) {

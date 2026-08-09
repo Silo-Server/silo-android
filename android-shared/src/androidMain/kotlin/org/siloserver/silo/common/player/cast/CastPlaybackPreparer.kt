@@ -19,6 +19,7 @@ import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.model.playback.VideoDecodeCapability
 import org.siloserver.silo.network.ApiResult
@@ -147,9 +148,7 @@ class CastPlaybackPreparer(
             mimeType = mimeType,
             title = request.title,
             posterUrl = request.posterUrl,
-            positionSeconds = plan.timeline.sourceStartSeconds
-                .takeIf { it.isFinite() && it >= 0.0 }
-                ?: request.startPositionSeconds,
+            positionSeconds = castPlayerStartPosition(plan, request.startPositionSeconds),
             durationSeconds = plan.source.durationSeconds ?: 0.0,
             subtitles = castSubtitleTracks(request, plan, serverUrl, token, castUrl),
         )
@@ -176,7 +175,7 @@ class CastPlaybackPreparer(
         // the stream URL only, and the subtitle route rejects anything else
         // (observed: all subtitle fetches 401'd with the access token).
         val streamToken = STREAM_TOKEN_VALUE_REGEX.find(castUrl)?.groupValues?.get(1)
-        val usable = plan.subtitle.inventory.filter { it.isCastableAsVtt() }
+        val usable = castSubtitleInventory(plan).filter { it.isCastableAsVtt() }
         val labels = castSubtitleLabels(usable)
         return usable.mapIndexed { index, item ->
             val base = forceVttExtension(resolvePlaybackStreamUrl(serverUrl, item.url.orEmpty()))
@@ -283,9 +282,6 @@ class CastPlaybackPreparer(
         private const val TAG = "CastPlaybackPreparer"
         private const val VTT_EXTENSION = ".vtt"
 
-        /** Inventory `delivery` value for a track the stream handler can serve. */
-        private const val SUBTITLE_DELIVERY_SIDECAR = "sidecar"
-
         private val STREAM_TOKEN_REGEX = Regex("[?&]st=")
         private val STREAM_TOKEN_VALUE_REGEX = Regex("[?&]st=([^&]+)")
 
@@ -302,6 +298,30 @@ class CastPlaybackPreparer(
             }
     }
 }
+
+/** Cast receiver seeks use stream-local player time, never source time. */
+internal fun castPlayerStartPosition(plan: PlaybackPlanV3, requested: Double): Double =
+    plan.timeline.playerStartSeconds
+        .takeIf { it.isFinite() && it >= 0.0 }
+        ?: requested
+
+/**
+ * Use the authoritative inventory when present, with the transitional sidecar
+ * set only as a compatibility fallback for servers that have not populated it.
+ */
+internal fun castSubtitleInventory(plan: PlaybackPlanV3): List<PlaybackSubtitleInventoryItemV3> =
+    plan.subtitle.inventory.ifEmpty {
+        plan.subtitle.sidecars.map { sidecar ->
+            PlaybackSubtitleInventoryItemV3(
+                trackId = sidecar.trackId,
+                combinedIndex = sidecar.index,
+                source = "sidecar",
+                codec = sidecar.format,
+                delivery = SUBTITLE_DELIVERY_SIDECAR,
+                url = sidecar.url,
+            )
+        }
+    }
 
 /** Inputs captured from the live player state when the user starts casting. */
 data class CastPrepareRequest(

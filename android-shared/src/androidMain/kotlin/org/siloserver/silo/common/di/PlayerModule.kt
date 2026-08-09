@@ -28,6 +28,8 @@ import org.koin.dsl.module
 val PLAYER_OKHTTP_QUALIFIER = named("player-okhttp")
 val PLAYER_TRANSPORT_OKHTTP_QUALIFIER = named("player-transport-okhttp")
 val PLAYER_HTTP_DATA_SOURCE_FACTORY_QUALIFIER = named("player-http-data-source-factory")
+val AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER = named("audiobook-playback-session-manager")
+val AUDIOBOOK_PLAYBACK_SESSION_LIFECYCLE_QUALIFIER = named("audiobook-playback-session-lifecycle")
 
 val playerModule = module {
     // Lightweight bootstrap client for the refresh RPC — no interceptors so a

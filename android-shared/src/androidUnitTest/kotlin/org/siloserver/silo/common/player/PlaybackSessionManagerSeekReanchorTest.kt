@@ -31,6 +31,7 @@ import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
 import org.siloserver.silo.model.playback.DeliveryCapability
 import org.siloserver.silo.model.playback.DeliverySubtitleCapabilities
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
+import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
@@ -49,7 +50,6 @@ import org.siloserver.silo.model.playback.SEEK_FAILURE_RECOVERY_V3_OPERATION
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
-import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
@@ -103,7 +103,13 @@ class PlaybackSessionManagerSeekReanchorTest {
     @Test
     fun reanchorRequiresNegotiatedServerFeature() = runTest {
         val harness = Harness(
-            startResponse = response(plan(), features = listOf(PLAYBACK_PLAN_V3_FEATURE)),
+            startResponse = response(
+                plan(),
+                features = listOf(
+                    PLAYBACK_PLAN_V3_FEATURE,
+                    NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                ),
+            ),
         ) { _, _ -> error("A feature-gated reanchor must not reach the server") }
         harness.manager.start()
 
@@ -516,7 +522,6 @@ class PlaybackSessionManagerSeekReanchorTest {
             positionSeconds = 15.0,
             audioTrackIndex = 2,
             subtitleTrackIndex = 3,
-            operation = TRACK_CHANGE_V3_OPERATION,
         )
 
         assertIs<VideoSessionStartV3.Ready>(
@@ -653,7 +658,11 @@ class PlaybackSessionManagerSeekReanchorTest {
     private fun response(
         plan: PlaybackPlanV3,
         sessionId: String = "session-1",
-        features: List<String> = listOf(PLAYBACK_PLAN_V3_FEATURE, SEEK_REANCHOR_V3_FEATURE),
+        features: List<String> = listOf(
+            PLAYBACK_PLAN_V3_FEATURE,
+            NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+            SEEK_REANCHOR_V3_FEATURE,
+        ),
     ): PlaybackDecisionResponseV3 = PlaybackDecisionResponseV3(
         protocolVersion = 3,
         serverFeatures = features,

@@ -138,6 +138,7 @@ internal class MobileVideoPlaybackStarter(
                 formFactor = "mobile",
                 appVersion = BuildConfig.VERSION_NAME,
                 dolbyVision = dolbyVision,
+                capabilities = capabilities,
             )
             // Skip-back-on-resume: nudge a genuine resume back a few seconds.
             // Suppressed for Start Over / retry (request flag) and Watch Together

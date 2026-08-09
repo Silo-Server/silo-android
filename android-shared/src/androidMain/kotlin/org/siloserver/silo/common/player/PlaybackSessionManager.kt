@@ -12,6 +12,7 @@ import org.siloserver.silo.model.playback.validateForMedia3
 import org.siloserver.silo.model.playback.PlaybackFailureV3
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
+import org.siloserver.silo.model.playback.ProgressPersistenceV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
@@ -277,6 +278,7 @@ open class PlaybackSessionManager(
          */
         maxBitrateKbps: Int? = null,
         subtitleFidelityPreference: SubtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
+        progressPersistence: ProgressPersistenceV3 = ProgressPersistenceV3.SERVER,
         deferPublication: Boolean = false,
     ): ApiResult<VideoSessionStartV3> = contentStartMutex.withLock {
         /**
@@ -308,6 +310,13 @@ open class PlaybackSessionManager(
          */
         var leasedSessionId: String? = null
         try {
+            if (progressPersistence == ProgressPersistenceV3.CLIENT && startPosition == null) {
+                return@withLock ApiResult.Error(
+                    code = 400,
+                    error = "client_progress_requires_start_position",
+                    message = "Client-owned progress requires an explicit file-local start position.",
+                )
+            }
             beginContentReset()
             val predecessorForPublication = videoAttemptMutex.withLock {
                 activeVideoAttempt.get()
@@ -321,6 +330,7 @@ open class PlaybackSessionManager(
                 qualityPreference = qualityPreference?.lowercase() ?: "auto",
                 subtitleFidelityPreference = subtitleFidelityPreference,
                 startPosition = startPosition,
+                progressPersistence = progressPersistence,
                 audioTrackId = audioTrackIndex?.let { stableTrackId(fileId, "audio", it) },
                 audioTrackIndex = audioTrackIndex,
                 subtitleTrackId = subtitleTrackIndex?.takeIf { it >= 0 }
@@ -687,7 +697,6 @@ open class PlaybackSessionManager(
         qualityPreference: String? = null,
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
-        operation: String = FAILURE_RECOVERY_V3_OPERATION,
     ): ApiResult<VideoSessionStartV3> = immediateVideoReplanMutex.withLock {
         when (
             val prepared = prepareActiveVideoSessionReplan(
@@ -701,7 +710,7 @@ open class PlaybackSessionManager(
                 qualityPreference = qualityPreference,
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
-                operation = operation,
+                operation = replanOperationForClassification(classification),
                 preserveImmediateOutcomes = true,
             )
         ) {
@@ -725,7 +734,6 @@ open class PlaybackSessionManager(
         qualityPreference: String? = null,
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
-        operation: String = FAILURE_RECOVERY_V3_OPERATION,
     ): ApiResult<StagedVideoReplan> = when (
         val prepared = prepareActiveVideoSessionReplan(
             classification = classification,
@@ -738,7 +746,7 @@ open class PlaybackSessionManager(
             qualityPreference = qualityPreference,
             capabilities = capabilities,
             clientPlaybackContext = clientPlaybackContext,
-            operation = operation,
+            operation = replanOperationForClassification(classification),
             preserveImmediateOutcomes = false,
         )
     ) {
@@ -765,7 +773,7 @@ open class PlaybackSessionManager(
         qualityPreference: String? = null,
         capabilities: ClientCodecCapabilities? = null,
         clientPlaybackContext: ClientPlaybackContext? = null,
-        operation: String = FAILURE_RECOVERY_V3_OPERATION,
+        operation: String,
         preserveImmediateOutcomes: Boolean,
     ): ApiResult<PreparedVideoReplan> = withSettledVideoAttempt {
         if (contentResetInProgress) {
@@ -2412,7 +2420,7 @@ open class PlaybackSessionManager(
          * failure recovery: the route the client was using genuinely stopped
          * working, and the server should exclude it.
          */
-        fun replanOperationForClassification(classification: String): String = when (classification) {
+        private fun replanOperationForClassification(classification: String): String = when (classification) {
             "audio_track_changed", "subtitle_track_changed" -> TRACK_CHANGE_V3_OPERATION
             "quality_changed" -> QUALITY_CHANGE_V3_OPERATION
             else -> FAILURE_RECOVERY_V3_OPERATION

@@ -54,8 +54,7 @@ class PlaybackCapabilityDetector(
 ) {
     val outputRouteGeneration: StateFlow<Long> = audioCapabilityManager.outputRouteGeneration
     // Platform software-audio decoders are static for the process; cache the
-    // MediaCodecList enumeration so back-to-back detect()/detectPlaybackContext()
-    // calls per playback start don't re-run it.
+    // MediaCodecList enumeration for callers that need a fresh snapshot later.
     @Volatile
     private var cachedPlatformSoftwareAudioCodecs: List<String>? = null
     /**
@@ -223,8 +222,9 @@ class PlaybackCapabilityDetector(
         appVersion: String = detectedAppVersion(),
         ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
         dolbyVision: DolbyVisionPolicy.Snapshot = DolbyVisionPolicy.Snapshot(),
+        capabilities: ClientCodecCapabilities? = null,
     ): ClientPlaybackContext {
-        val caps = detect(ffmpegAvailable, dolbyVision)
+        val caps = capabilities ?: detect(ffmpegAvailable, dolbyVision)
         val passthrough = caps.audioPassthrough
         val decodeAudio = caps.codecsAudio
         val libassRendering = libassBridge.isRenderingSupported

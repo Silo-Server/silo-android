@@ -72,6 +72,26 @@ class PlaybackV3SessionTest {
     }
 
     @Test
+    fun unknownSubtitleDeliveriesStayOutOfTheNativePicker() {
+        val response = plan(
+            mode = PlaybackSubtitleModeV3.OFF,
+            format = "",
+            url = "",
+            inventory = listOf(
+                PlaybackSubtitleInventoryItemV3(
+                    trackId = "future",
+                    combinedIndex = 0,
+                    source = "embedded",
+                    codec = "future_codec",
+                    delivery = "future_delivery",
+                ),
+            ),
+        ).toSessionResponse("session", "profile", 482)
+
+        assertTrue(response.subtitleUrls.orEmpty().isEmpty())
+    }
+
+    @Test
     fun burnInPlanKeepsInventorySelectableButDoesNotMountAlternatives() {
         val response = plan(
             mode = PlaybackSubtitleModeV3.BURN_IN,
