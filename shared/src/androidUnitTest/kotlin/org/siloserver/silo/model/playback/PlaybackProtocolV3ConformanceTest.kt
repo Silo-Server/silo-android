@@ -1,5 +1,7 @@
 package org.siloserver.silo.model.playback
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -8,12 +10,152 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.siloserver.silo.network.ApiErrorBody
 import org.siloserver.silo.network.SiloJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+
+@Serializable
+private data class AttemptKeyFixtureV3(
+    val name: String,
+    @SerialName("server_plan_attempt_key") val serverPlanAttemptKey: String,
+    @SerialName("replan_echo") val replanEcho: String,
+    @SerialName("attempted_plan_keys") val attemptedPlanKeys: List<String>,
+    @SerialName("expected_server_action") val expectedServerAction: String,
+)
+
+@Serializable
+private data class ConformanceMatrixFixtureV3(
+    @SerialName("schema_version") val schemaVersion: Int,
+    @SerialName("planner_scenarios") val plannerScenarios: List<PlannerScenarioFixtureV3>,
+    @SerialName("replan_scenarios") val replanScenarios: List<ReplanScenarioFixtureV3>,
+    @SerialName("protocol_scenarios") val protocolScenarios: List<ProtocolScenarioFixtureV3>,
+)
+
+@Serializable
+private data class PlannerScenarioFixtureV3(
+    val name: String,
+    val category: String,
+    val request: PlaybackStartRequestV3,
+    val source: SourceDescriptorFixtureV3,
+    @SerialName("attempted_plan_keys") val attemptedPlanKeys: List<String> = emptyList(),
+    val expected: PlannerExpectationFixtureV3,
+)
+
+@Serializable
+private data class PlannerExpectationFixtureV3(
+    val outcome: PlaybackDecisionOutcome,
+    val delivery: PlaybackDelivery? = null,
+    @SerialName("decision_reason") val decisionReason: String? = null,
+    @SerialName("plan_id") val planId: String? = null,
+    @SerialName("plan_attempt_key") val planAttemptKey: String? = null,
+    @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracksV3? = null,
+    val subtitle: PlaybackSubtitleDecisionV3? = null,
+    val claims: PlaybackValidationClaims? = null,
+    val transformations: List<PlaybackTransformationV3> = emptyList(),
+    @SerialName("available_qualities") val availableQualities: List<PlaybackAvailableQualityV3> = emptyList(),
+    @SerialName("terminal_reason") val terminalReason: String? = null,
+)
+
+@Serializable
+private data class SourceDescriptorFixtureV3(
+    @SerialName("media_file_id") val mediaFileId: Int,
+    @SerialName("duration_seconds") val durationSeconds: Double? = null,
+    val container: String? = null,
+    @SerialName("video_codec") val videoCodec: String? = null,
+    @SerialName("video_profile") val videoProfile: String? = null,
+    @SerialName("video_level") val videoLevel: Int = 0,
+    @SerialName("bit_depth") val bitDepth: Int = 0,
+    @SerialName("color_range") val colorRange: String? = null,
+    val width: Int = 0,
+    val height: Int = 0,
+    @SerialName("frame_rate") val frameRate: Double = 0.0,
+    @SerialName("bitrate_kbps") val bitrateKbps: Int = 0,
+    @SerialName("dynamic_range") val dynamicRange: String? = null,
+    @SerialName("hdr10_plus") val hdr10Plus: Boolean = false,
+    @SerialName("dolby_vision_profile") val dolbyVisionProfile: Int = 0,
+    @SerialName("dv_bl_compat_id") val dolbyVisionBaseLayerCompatibilityId: Int = 0,
+    @SerialName("dv_enhancement_layer") val dolbyVisionEnhancementLayer: String,
+    @SerialName("audio_codec") val audioCodec: String? = null,
+    @SerialName("audio_channels") val audioChannels: Int = 0,
+    @SerialName("audio_layout") val audioLayout: String? = null,
+    @SerialName("video_copy_unsafe") val videoCopyUnsafe: Boolean = false,
+)
+
+@Serializable
+private data class ReplanScenarioFixtureV3(
+    val name: String,
+    val category: String,
+    val request: PlaybackReplanRequestV3,
+    val expected: ReplanExpectationFixtureV3,
+)
+
+@Serializable
+private data class ReplanExpectationFixtureV3(
+    @SerialName("http_status") val httpStatus: Int? = null,
+    @SerialName("position_seconds") val positionSeconds: Double? = null,
+    @SerialName("position_preserved") val positionPreserved: Boolean? = null,
+    @SerialName("preserve_unmodified_tracks") val preserveUnmodifiedTracks: Boolean? = null,
+    @SerialName("selected_quality") val selectedQuality: String? = null,
+    @SerialName("same_request_and_body_status") val sameRequestAndBodyStatus: Int? = null,
+    @SerialName("response_replayed_verbatim") val responseReplayedVerbatim: Boolean? = null,
+    @SerialName("changed_body_status") val changedBodyStatus: Int? = null,
+    @SerialName("changed_body_error") val changedBodyError: String? = null,
+    @SerialName("while_first_lease_active_status") val whileFirstLeaseActiveStatus: Int? = null,
+    @SerialName("concurrent_error") val concurrentError: String? = null,
+    @SerialName("after_completion_status") val afterCompletionStatus: Int? = null,
+)
+
+@Serializable
+private data class ProtocolScenarioFixtureV3(
+    val name: String,
+    val category: String,
+    val input: ProtocolScenarioInputFixtureV3,
+    val expected: ProtocolExpectationFixtureV3,
+)
+
+@Serializable
+private data class ProtocolScenarioInputFixtureV3(
+    @SerialName("start_request") val startRequest: PlaybackStartRequestV3? = null,
+    @SerialName("replan_request") val replanRequest: PlaybackReplanRequestV3? = null,
+    @SerialName("route_event") val routeEvent: PlaybackRouteEventV3? = null,
+    @SerialName("persisted_decision") val persistedDecision: PlaybackDecisionResponseV3? = null,
+    val body: LegacyStartBodyFixtureV3? = null,
+    @SerialName("plan_id") val planId: String? = null,
+    @SerialName("first_output_context_id") val firstOutputContextId: String? = null,
+    @SerialName("second_output_context_id") val secondOutputContextId: String? = null,
+    @SerialName("first_plan_attempt_key") val firstPlanAttemptKey: String? = null,
+    @SerialName("second_plan_attempt_key") val secondPlanAttemptKey: String? = null,
+    @SerialName("server_plan_attempt_key") val serverPlanAttemptKey: String? = null,
+    @SerialName("replan_echo") val replanEcho: String? = null,
+    @SerialName("attempted_plan_keys") val attemptedPlanKeys: List<String> = emptyList(),
+    val restarted: Boolean = false,
+    @SerialName("capacity_available") val capacityAvailable: Boolean? = null,
+)
+
+@Serializable
+private data class LegacyStartBodyFixtureV3(
+    @SerialName("file_id") val fileId: Int,
+)
+
+@Serializable
+private data class ProtocolExpectationFixtureV3(
+    @SerialName("http_status") val httpStatus: Int? = null,
+    val error: String? = null,
+    val outcome: PlaybackDecisionOutcome? = null,
+    @SerialName("terminal_reason") val terminalReason: String? = null,
+    @SerialName("plan_id_unchanged") val planIdUnchanged: Boolean? = null,
+    @SerialName("plan_attempt_key_changed") val planAttemptKeyChanged: Boolean? = null,
+    @SerialName("selection_preserved") val selectionPreserved: Boolean? = null,
+    @SerialName("position_preserved") val positionPreserved: Boolean? = null,
+    @SerialName("response_replayed_verbatim") val responseReplayedVerbatim: Boolean? = null,
+    @SerialName("capacity_delta") val capacityDelta: Int? = null,
+    @SerialName("cleanup_complete") val cleanupComplete: Boolean? = null,
+    val action: String? = null,
+)
 
 /**
  * The Kotlin runner for the server's golden playback-v3 wire fixtures — this
@@ -178,8 +320,16 @@ class PlaybackProtocolV3ConformanceTest {
         val raw = fixture("replan_request.json")
 
         val decoded = json.decodeFromString(PlaybackReplanRequestV3.serializer(), raw)
+        val decisionPlan = assertNotNull(
+            json.decodeFromString(
+                PlaybackDecisionResponseV3.serializer(),
+                fixture("decision_response.json"),
+            ).playbackPlan,
+        )
 
         assertEquals(FAILURE_RECOVERY_V3_OPERATION, decoded.operation)
+        assertEquals(decisionPlan.planId, decoded.failedPlanId)
+        assertEquals(decisionPlan.planAttemptKey, decoded.planAttemptKey)
         assertEquals(listOf(decoded.planAttemptKey), decoded.attemptedPlanKeys)
         assertNotNull(decoded.failure, "a recovery replan states what went wrong")
 
@@ -260,52 +410,52 @@ class PlaybackProtocolV3ConformanceTest {
      */
     @Test
     fun serverMintedAttemptKeysAreOpaqueDistinctAndEchoedVerbatim() {
-        val cases = SiloJson.parseToJsonElement(fixture("attempt_keys.json")).jsonArray.map { it.jsonObject }
+        val cases = json.decodeFromString<List<AttemptKeyFixtureV3>>(fixture("attempt_keys.json"))
         assertTrue(cases.size >= 3, "the fixture must keep covering several distinct routes")
 
-        val keys = cases.map { it.getValue("expected").jsonPrimitive.content }
+        val keys = cases.map { it.serverPlanAttemptKey }
         keys.forEach { key ->
             assertTrue(key.startsWith("v3:"), "attempt keys are v3-prefixed opaque tokens: $key")
             assertTrue(key.length > "v3:".length, "an attempt key must carry a digest: $key")
         }
         assertEquals(keys.size, keys.toSet().size, "plans differing in delivery or route must not share a key")
 
-        keys.forEach { key ->
+        cases.forEach { case ->
+            assertEquals(case.serverPlanAttemptKey, case.replanEcho)
+            assertEquals(listOf(case.serverPlanAttemptKey), case.attemptedPlanKeys)
+            assertEquals("reject_already_attempted_plan", case.expectedServerAction)
+
             val encoded = SiloJson.encodeToJsonElement(
                 PlaybackReplanRequestV3.serializer(),
-                replanRequestEchoing(key),
+                replanRequestEchoing(case.serverPlanAttemptKey),
             ).jsonObject
-            assertEquals(key, encoded.getValue("plan_attempt_key").jsonPrimitive.content)
+            assertEquals(case.serverPlanAttemptKey, encoded.getValue("plan_attempt_key").jsonPrimitive.content)
             assertEquals(
-                listOf(key),
+                case.attemptedPlanKeys,
                 encoded.getValue("attempted_plan_keys").jsonArray.map { it.jsonPrimitive.content },
             )
         }
     }
 
     /**
-     * The client reports its local mutations and the server folds them into the
-     * next key. The fixture's tokens are the vocabulary both sides agreed on, so
-     * renaming one has to be a coordinated change.
+     * Attempt-key fixtures intentionally contain no route recipe or hash input.
+     * If either reappears, the neutral corpus has regressed toward teaching the
+     * client how the server derives its private identity.
      */
     @Test
-    fun localMutationsAreReportedNotHashedByTheClient() {
-        val withMutations = SiloJson.parseToJsonElement(fixture("attempt_keys.json")).jsonArray
-            .map { it.jsonObject }
-            .first { it.getValue("local_mutations").jsonArray.isNotEmpty() }
-        val mutations = withMutations.getValue("local_mutations").jsonArray.map { it.jsonPrimitive.content }
-
-        assertTrue("transport_reopen" in mutations, "a reopened transport is reported, not hashed locally")
-        assertTrue(mutations.any { it.startsWith("pcm:") }, "PCM retries report as pcm:<codec>:<channels>")
-
-        val encoded = SiloJson.encodeToJsonElement(
-            PlaybackReplanRequestV3.serializer(),
-            replanRequestEchoing(
-                withMutations.getValue("expected").jsonPrimitive.content,
-                localMutations = mutations,
-            ),
-        ).jsonObject
-        assertEquals(mutations, encoded.getValue("local_mutations").jsonArray.map { it.jsonPrimitive.content })
+    fun attemptKeyCorpusContainsOnlyOpaqueEchoContractFields() {
+        SiloJson.parseToJsonElement(fixture("attempt_keys.json")).jsonArray.forEach { element ->
+            assertEquals(
+                setOf(
+                    "name",
+                    "server_plan_attempt_key",
+                    "replan_echo",
+                    "attempted_plan_keys",
+                    "expected_server_action",
+                ),
+                element.jsonObject.keys,
+            )
+        }
     }
 
     @Test
@@ -313,8 +463,16 @@ class PlaybackProtocolV3ConformanceTest {
         val raw = fixture("route_event.json")
 
         val decoded = json.decodeFromString(PlaybackRouteEventV3.serializer(), raw)
+        val decisionPlan = assertNotNull(
+            json.decodeFromString(
+                PlaybackDecisionResponseV3.serializer(),
+                fixture("decision_response.json"),
+            ).playbackPlan,
+        )
 
         assertEquals("first_frame", decoded.event)
+        assertEquals(decisionPlan.planId, decoded.planId)
+        assertEquals(decisionPlan.planAttemptKey, decoded.planAttemptKey)
         assertEquals("7", decoded.outputContextId)
         assertTrue(decoded.diagnostics.isNotEmpty(), "route diagnostics travel as opaque string pairs")
 
@@ -322,6 +480,120 @@ class PlaybackProtocolV3ConformanceTest {
             raw,
             json.encodeToJsonElement(PlaybackRouteEventV3.serializer(), decoded),
         )
+    }
+
+    @Test
+    fun protocolErrorEnvelopeDecodesThroughTheProductionApiErrorType() {
+        val raw = fixture("error_response.json")
+        val decoded = json.decodeFromString(ApiErrorBody.serializer(), raw)
+
+        assertEquals("client_upgrade_required", decoded.error)
+        assertTrue(decoded.message.isNotBlank())
+        assertClientReadsEveryFieldExcept(raw, json.encodeToJsonElement(ApiErrorBody.serializer(), decoded))
+    }
+
+    @Test
+    fun conformanceMatrixDecodesAndRoundTripsEveryGeneratedScenario() {
+        val raw = fixture("conformance_matrix.json")
+        val matrix = json.decodeFromString(ConformanceMatrixFixtureV3.serializer(), raw)
+
+        assertEquals(1, matrix.schemaVersion)
+        assertEquals(17, matrix.plannerScenarios.size)
+        assertEquals(9, matrix.replanScenarios.size)
+        assertEquals(7, matrix.protocolScenarios.size)
+        assertClientReadsEveryFieldExcept(
+            raw,
+            json.encodeToJsonElement(ConformanceMatrixFixtureV3.serializer(), matrix),
+        )
+    }
+
+    @Test
+    fun plannerMatrixCoversHdrAudioAndSubtitleContractCategories() {
+        val scenarios = conformanceMatrix().plannerScenarios.associateBy { it.name }
+
+        assertEquals(
+            setOf(
+                "evidence_tier_gating",
+                "deliveries_negotiation",
+                "audio_only_planning",
+                "hdr_dv_matrix",
+                "audio_matrix",
+                "subtitle_matrix",
+                "available_qualities",
+            ),
+            scenarios.values.map { it.category }.toSet(),
+        )
+
+        val hdr10 = scenarios.getValue("hdr10_exact_direct")
+        assertEquals("hdr10", hdr10.source.dynamicRange)
+        assertEquals(PlaybackDelivery.ORIGINAL_HTTP, hdr10.expected.delivery)
+
+        val dolbyVision8 = scenarios.getValue("dolby_vision_8_exact_direct")
+        assertEquals(8, dolbyVision8.source.dolbyVisionProfile)
+        assertEquals(PlaybackDelivery.ORIGINAL_HTTP, dolbyVision8.expected.delivery)
+
+        val dolbyVision7 = scenarios.getValue("dolby_vision_7_hdr10_fallback")
+        assertEquals(7, dolbyVision7.source.dolbyVisionProfile)
+        assertEquals(PlaybackDelivery.SERVER_REMUX_PROGRESSIVE, dolbyVision7.expected.delivery)
+        assertEquals(listOf("server_dv7_to_hdr10"), dolbyVision7.expected.transformations.map { it.name })
+
+        val trueHdConversion = scenarios.getValue("truehd_audio_conversion")
+        assertEquals("truehd", trueHdConversion.source.audioCodec)
+        assertEquals(PlaybackDelivery.SERVER_REMUX_PROGRESSIVE, trueHdConversion.expected.delivery)
+        assertEquals(listOf("audio_to_aac"), trueHdConversion.expected.transformations.map { it.name })
+
+        val trueHdPassthrough = scenarios.getValue("truehd_exact_layout_passthrough")
+        assertEquals(PlaybackDelivery.ORIGINAL_HTTP, trueHdPassthrough.expected.delivery)
+        assertTrue(trueHdPassthrough.expected.claims?.audio?.passthrough == true)
+
+        val pgs = scenarios.getValue("embedded_pgs_sidecar")
+        assertEquals(PlaybackSubtitleModeV3.RENDER, pgs.expected.subtitle?.mode)
+        assertEquals(pgs.request.subtitleTrackId, pgs.expected.selectedTracks?.subtitle?.id)
+
+        val ass = scenarios.getValue("embedded_ass_authored_render")
+        assertEquals(PlaybackSubtitleModeV3.RENDER, ass.expected.subtitle?.mode)
+        assertEquals(ass.request.subtitleTrackId, ass.expected.selectedTracks?.subtitle?.id)
+
+        val dvd = scenarios.getValue("embedded_dvd_burn_in")
+        assertEquals(PlaybackSubtitleModeV3.BURN_IN, dvd.expected.subtitle?.mode)
+        assertEquals(PlaybackDelivery.SERVER_TRANSCODE_HLS, dvd.expected.delivery)
+        assertEquals(dvd.request.subtitleTrackId, dvd.expected.selectedTracks?.subtitle?.id)
+    }
+
+    @Test
+    fun protocolMatrixCoversRecoveryRestartCapacityAndEventLimits() {
+        val scenarios = conformanceMatrix().protocolScenarios.associateBy { it.name }
+
+        assertTrue("recovery_matrix" in scenarios.values.map { it.category })
+        assertTrue("restart_matrix" in scenarios.values.map { it.category })
+        assertTrue("capacity_matrix" in scenarios.values.map { it.category })
+        assertTrue("route_event_limits" in scenarios.values.map { it.category })
+
+        val recovery = scenarios.getValue("failure_recovery_preserves_intent")
+        val recoveryRequest = assertNotNull(recovery.input.replanRequest)
+        assertEquals(321.25, recoveryRequest.positionSeconds)
+        assertNotNull(recoveryRequest.selectedTracks.subtitle)
+        assertEquals(true, recovery.expected.selectionPreserved)
+        assertEquals(true, recovery.expected.positionPreserved)
+
+        val restart = scenarios.getValue("restart_replays_terminal_attempt")
+        assertTrue(restart.input.restarted)
+        assertEquals(PlaybackDecisionOutcome.ADAPTATION_UNAVAILABLE, restart.input.persistedDecision?.outcome)
+        assertEquals("transcode_start_failed", restart.input.persistedDecision?.terminal?.reason)
+        assertEquals(true, restart.expected.responseReplayedVerbatim)
+        assertEquals(0, restart.expected.capacityDelta)
+
+        val capacity = scenarios.getValue("capacity_unavailable_cleans_up")
+        assertEquals(false, capacity.input.capacityAvailable)
+        assertEquals("capacity_unavailable", capacity.expected.terminalReason)
+        assertEquals(true, capacity.expected.cleanupComplete)
+        assertEquals(0, capacity.expected.capacityDelta)
+
+        val routeLimit = scenarios.getValue("route_event_diagnostic_limit")
+        assertEquals(33, routeLimit.input.routeEvent?.diagnostics?.size)
+        assertEquals(400, routeLimit.expected.httpStatus)
+        assertEquals("bad_request", routeLimit.expected.error)
+        assertEquals("reject_without_persisting", routeLimit.expected.action)
     }
 
     /**
@@ -455,6 +727,9 @@ class PlaybackProtocolV3ConformanceTest {
         checkNotNull(javaClass.classLoader?.getResource("playback/v3/$name")) {
             "Missing vendored playback fixture playback/v3/$name"
         }.readText()
+
+    private fun conformanceMatrix(): ConformanceMatrixFixtureV3 =
+        json.decodeFromString(ConformanceMatrixFixtureV3.serializer(), fixture("conformance_matrix.json"))
 
     private companion object {
         val DELIVERY_CLASSES = setOf(
