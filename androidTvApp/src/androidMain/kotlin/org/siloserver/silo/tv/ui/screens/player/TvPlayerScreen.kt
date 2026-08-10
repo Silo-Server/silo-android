@@ -15,16 +15,15 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,82 +33,95 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.zIndex
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Text
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bedtime
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
-import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import org.siloserver.silo.common.player.ActivePlayerHolder
-import org.siloserver.silo.common.player.AudioCapabilityManager
-import org.siloserver.silo.common.player.SiloPlaybackService
-import org.siloserver.silo.common.player.DisplayHdrProbe
-import org.siloserver.silo.common.player.HdrDisplayController
-import org.siloserver.silo.common.player.PlaybackCapabilityDetector
-import org.siloserver.silo.common.player.PlayerNotice
-import org.siloserver.silo.common.player.PlaybackPreflightListener
-import org.siloserver.silo.common.player.LetterboxInsets
-import org.siloserver.silo.common.player.SessionState
-import org.siloserver.silo.common.player.SleepTimerState
-import org.siloserver.silo.common.player.SubtitleManager
-import org.siloserver.silo.common.player.VideoPlayerMediaSpec
-import org.siloserver.silo.common.player.validatedColorRangeFallback
-import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
-import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
-import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
-import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
-import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
-import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
-import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
-import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
-import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
+import com.google.common.util.concurrent.MoreExecutors
+import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import org.koin.compose.koinInject
+import org.koin.compose.viewmodel.koinViewModel
+import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.cast.SiloCastPlaybackState
 import org.siloserver.silo.cast.SiloCastQualityOption
 import org.siloserver.silo.cast.SiloCastTrack
+import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
+import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
+import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
+import org.siloserver.silo.common.player.ActivePlayerHolder
+import org.siloserver.silo.common.player.AudioCapabilityManager
+import org.siloserver.silo.common.player.DisplayHdrProbe
+import org.siloserver.silo.common.player.HdrDisplayController
+import org.siloserver.silo.common.player.LetterboxInsets
+import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
+import org.siloserver.silo.common.player.PlaybackCapabilityDetector
+import org.siloserver.silo.common.player.PlaybackPreflightListener
+import org.siloserver.silo.common.player.PlayerNotice
+import org.siloserver.silo.common.player.SessionState
+import org.siloserver.silo.common.player.SiloPlaybackService
+import org.siloserver.silo.common.player.SleepTimerState
+import org.siloserver.silo.common.player.SubtitleManager
+import org.siloserver.silo.common.player.VideoPlayerMediaSpec
+import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
+import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
+import org.siloserver.silo.common.player.validatedColorRangeFallback
+import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
+import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
+import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
+import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackSourceMetadata
@@ -120,7 +132,6 @@ import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.model.settings.legacyPosition
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
-import org.siloserver.silo.watchtogether.shouldNavigateToLocalNext
 import org.siloserver.silo.player.DolbyVisionDetection
 import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
 import org.siloserver.silo.tv.R
@@ -129,17 +140,10 @@ import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
-import com.google.common.util.concurrent.MoreExecutors
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
-import org.koin.compose.koinInject
-import org.koin.compose.viewmodel.koinViewModel
-import org.koin.core.parameter.parametersOf
-import kotlin.math.roundToInt
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.watchtogether.shouldNavigateToLocalNext
 
 private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 // slow) under NonCancellable while holding engineSwitchMutex, so this must be
@@ -316,6 +320,7 @@ fun TvPlayerScreen(
     val displayHdr = remember { DisplayHdrProbe.probe(context) }
     val audioCaps by audioCapabilityManager.capabilities.collectAsState()
     val rootFocus = remember { FocusRequester() }
+    var playerRootHasFocus by remember { mutableStateOf(false) }
     var exitRequested by remember { mutableStateOf(false) }
     var requestedHudTab by remember { mutableStateOf(HudTab.Info) }
     var showQuickSubtitlePicker by remember { mutableStateOf(false) }
@@ -1769,7 +1774,15 @@ fun TvPlayerScreen(
     // remote key press can reach onPreviewKeyEvent.
     LaunchedEffect(state.showControls) {
         if (!state.showControls) {
-            runCatching { rootFocus.requestFocus() }
+            // The outer Box must own focus while the overlay is hidden or the
+            // first remote press never reaches onPreviewKeyEvent — the viewer
+            // presses once, nothing happens, and presses again.
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = rootFocus::requestFocus,
+                isFocused = { playerRootHasFocus },
+            )
         }
     }
     // Auto-hide the Compose overlay after CONTROLS_AUTO_HIDE_MS.
@@ -1804,6 +1817,7 @@ fun TvPlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
             .focusRequester(rootFocus)
+            .onFocusChanged { playerRootHasFocus = it.isFocused }
             .focusable()
             .onPreviewKeyEvent { event ->
                 // Hidden Left/Right is classified from the complete Android
@@ -2264,18 +2278,24 @@ private fun TvPlayerIdleOverlay(
 ) {
     val scrubberFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
+    var idleOverlayHasFocus by remember { mutableStateOf(false) }
     var currentRate by remember { mutableStateOf(0) }
     LaunchedEffect(focusRequest.nonce) {
-        runCatching {
-            when (focusRequest.target) {
-                TvIdleOverlayFocusTarget.Scrubber -> scrubberFocus.requestFocus()
-                TvIdleOverlayFocusTarget.Transport -> playPauseFocus.requestFocus()
-            }
+        val overlayTarget = when (focusRequest.target) {
+            TvIdleOverlayFocusTarget.Scrubber -> scrubberFocus
+            TvIdleOverlayFocusTarget.Transport -> playPauseFocus
         }
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = overlayTarget::requestFocus,
+            isFocused = { idleOverlayHasFocus },
+        )
     }
 
     Box(
         modifier = Modifier
+            .onFocusChanged { idleOverlayHasFocus = it.hasFocus }
             .fillMaxSize()
             .onPreviewKeyEvent { event ->
                 when (
@@ -2290,7 +2310,10 @@ private fun TvPlayerIdleOverlay(
                         true
                     }
                     TvPlayerRemoteKeyAction.FocusTransport -> {
-                        runCatching { playPauseFocus.requestFocus() }
+                        playPauseFocus.claimFocusOrReport(
+                            target = "player_transport",
+                            action = "remote_focus_transport",
+                        )
                         true
                     }
                     TvPlayerRemoteKeyAction.SkipBack -> {
@@ -2359,7 +2382,10 @@ private fun TvPlayerIdleOverlay(
                 onCancelScrub = onCancelScrub,
                 onRequestFocus = scrubberFocus,
                 onMoveDownToTransport = {
-                    runCatching { playPauseFocus.requestFocus() }
+                    playPauseFocus.claimFocusOrReport(
+                        target = "player_transport",
+                        action = "scrubber_move_down",
+                    )
                 },
                 onExitWhenIdle = onClose,
                 onRateChanged = { currentRate = it },
@@ -2378,7 +2404,10 @@ private fun TvPlayerIdleOverlay(
                 onClose = onClose,
                 playPauseFocus = playPauseFocus,
                 onMoveUpToScrubber = {
-                    runCatching { scrubberFocus.requestFocus() }
+                    scrubberFocus.claimFocusOrReport(
+                        target = "player_scrubber",
+                        action = "transport_move_up",
+                    )
                 },
             )
         }
@@ -2625,12 +2654,19 @@ private fun TvPlayerNextUpOverlay(
     onBack: () -> Unit,
 ) {
     val primaryFocus = remember { FocusRequester() }
+    var upNextHasFocus by remember { mutableStateOf(false) }
     LaunchedEffect(nextEpisode?.contentId, videoEnded) {
-        runCatching { primaryFocus.requestFocus() }
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = primaryFocus::requestFocus,
+            isFocused = { upNextHasFocus },
+        )
     }
 
     Box(
         modifier = Modifier
+            .onFocusChanged { upNextHasFocus = it.hasFocus }
             .fillMaxSize()
             .background(
                 Brush.horizontalGradient(

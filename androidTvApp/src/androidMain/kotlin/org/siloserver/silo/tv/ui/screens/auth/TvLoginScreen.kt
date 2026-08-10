@@ -35,10 +35,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -113,17 +117,26 @@ fun TvLoginScreen(
     // Default focus follows the active surface: the password form focuses the
     // username field; the phone-first surface focuses the "Use a password
     // instead" affordance so the remote never lands on a non-actionable QR.
+    var loginSurfaceHasFocus by remember { mutableStateOf(false) }
     LaunchedEffect(showPasswordForm) {
-        if (showPasswordForm) {
-            runCatching { usernameFocus.requestFocus() }
-        } else {
-            runCatching { usePasswordFocus.requestFocus() }
-        }
+        // Acquisition on both branches: the surface has just swapped, so
+        // nothing on it holds focus yet. A dropped claim on the phone-first
+        // branch strands the remote on a QR code that cannot be actioned.
+        val target = if (showPasswordForm) usernameFocus else usePasswordFocus
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = target::requestFocus,
+            isFocused = { loginSurfaceHasFocus },
+        )
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // Either branch's target lives under this root, so "focus is on the
+            // login surface" is the criterion both claims are protecting.
+            .onFocusChanged { loginSurfaceHasFocus = it.hasFocus }
             .imePadding(),
     ) {
         TvAuroraBackdrop(variant = TvAuroraVariant.SignIn)

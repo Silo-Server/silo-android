@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,12 +17,13 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChildCare
@@ -73,6 +73,7 @@ import org.siloserver.silo.tv.ui.components.TvAuroraVariant
 import org.siloserver.silo.tv.ui.components.TvHeroActionPill
 import org.siloserver.silo.tv.ui.components.TvPillVariant
 import org.siloserver.silo.tv.ui.components.TvTextInputDialog
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 
 private val ProfileEditorHeaderPadding = 80.dp
 private val ProfileEditorContentPadding = 80.dp
@@ -284,7 +285,7 @@ fun TvProfileForm(
                                                         event.type == KeyEventType.KeyDown &&
                                                         event.key == Key.DirectionDown
                                                     ) {
-                                                        runCatching { nameFocusRequester.requestFocus() }
+                                                        nameFocusRequester.claimFocusOrReport(target = "profile_name", action = "dpad_down")
                                                         true
                                                     } else {
                                                         false
@@ -319,7 +320,7 @@ fun TvProfileForm(
                                             event.type == KeyEventType.KeyDown &&
                                             event.key == Key.DirectionDown
                                         ) {
-                                            runCatching { pinFocusRequester.requestFocus() }
+                                            pinFocusRequester.claimFocusOrReport(target = "profile_pin", action = "dpad_down")
                                             true
                                         } else {
                                             false
@@ -362,7 +363,7 @@ fun TvProfileForm(
                                             event.type == KeyEventType.KeyDown &&
                                             event.key == Key.DirectionDown
                                         ) {
-                                            runCatching { childFocusRequester.requestFocus() }
+                                            childFocusRequester.claimFocusOrReport(target = "profile_child", action = "dpad_down")
                                             true
                                         } else {
                                             false

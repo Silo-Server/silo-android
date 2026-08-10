@@ -36,11 +36,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -49,6 +51,7 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.RequestAvailability
 import org.siloserver.silo.model.request.RequestDiscoverySection
@@ -58,16 +61,18 @@ import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvFilterChip
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.screens.search.TV_SEARCH_QUERY_MAX_LENGTH
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
-import org.siloserver.silo.tv.ui.theme.SiloBlue
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
+import org.siloserver.silo.tv.ui.theme.SiloBlue
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.sectionEyebrow
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
 import org.siloserver.silo.viewmodel.RequestsViewModel
-import org.koin.compose.viewmodel.koinViewModel
 
 private val requestMediaFilters = listOf(
     RequestMediaType.All to "All",
@@ -92,6 +97,7 @@ fun TvRequestsScreen(
     val visibleSearchResults = searchState.results.filterTvRequestResults()
     val visibleDiscoverSections = state.sections.filterTvRequestSections()
     val searchFieldFocusRequester = remember { FocusRequester() }
+    var requestsScreenHasFocus by remember { mutableStateOf(false) }
     val firstFilterChipFocusRequester = remember { FocusRequester() }
     val firstResultFocusRequester = remember { FocusRequester() }
     val hasSubmittedQuery = searchState.hasSubmittedQuery
@@ -128,18 +134,31 @@ fun TvRequestsScreen(
 
     LaunchedEffect(searchFieldFocusRequester) {
         if (initialFocusRequested) return@LaunchedEffect
-        runCatching { searchFieldFocusRequester.requestFocus() }
-        onInitialContentFocus()
+        // Seventh false handover: onInitialContentFocus() told the shell content
+        // had focus regardless of whether the claim landed.
+        val landed = requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = searchFieldFocusRequester::requestFocus,
+            isFocused = { requestsScreenHasFocus },
+        )
+        if (landed == TvObservedFocusResult.Focused) onInitialContentFocus()
         initialFocusRequested = true
     }
 
     LaunchedEffect(focusResultsAfterSearch, searchState.isLoading, hasSearchResults) {
         if (focusResultsAfterSearch && !searchState.isLoading) {
-            if (hasSearchResults) {
-                runCatching { firstResultFocusRequester.requestFocus() }
+            val target = if (hasSearchResults) {
+                firstResultFocusRequester
             } else {
-                runCatching { firstFilterChipFocusRequester.requestFocus() }
+                firstFilterChipFocusRequester
             }
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = target::requestFocus,
+                isFocused = { requestsScreenHasFocus },
+            )
             focusResultsAfterSearch = false
         }
     }
@@ -194,6 +213,7 @@ fun TvRequestsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onFocusChanged { requestsScreenHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {

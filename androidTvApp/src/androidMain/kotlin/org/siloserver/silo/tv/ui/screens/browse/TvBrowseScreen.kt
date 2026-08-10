@@ -25,8 +25,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -89,6 +94,7 @@ fun TvBrowseScreen(
     )
 
     val firstItemFocusRequester = remember { FocusRequester() }
+    var browseGridHasFocus by remember { mutableStateOf(false) }
     var initialFocusRequested by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.items.isNotEmpty()) {
@@ -97,7 +103,12 @@ fun TvBrowseScreen(
         // a slow first load (empty here) would permanently skip grid focus.
         if (initialFocusRequested || state.items.isEmpty()) return@LaunchedEffect
         kotlinx.coroutines.delay(120)
-        runCatching { firstItemFocusRequester.requestFocus() }
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = firstItemFocusRequester::requestFocus,
+            isFocused = { browseGridHasFocus },
+        )
         initialFocusRequested = true
     }
 
@@ -106,6 +117,7 @@ fun TvBrowseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onFocusChanged { browseGridHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
