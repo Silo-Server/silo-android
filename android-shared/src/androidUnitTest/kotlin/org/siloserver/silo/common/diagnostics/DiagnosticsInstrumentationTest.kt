@@ -46,6 +46,11 @@ class DiagnosticsInstrumentationTest {
         // Allowlisted resource, unmatched tail: names the resource so the
         // endpoint is actionable. Unknown resources stay anonymous (below).
         assertEquals("/api/v1/playback/other", safeDiagnosticsNetworkPath("/api/v1/playback/start/status"))
+        // The per-item favorite/watchlist probes answer "not a favourite" with a
+        // 404, so they are the loudest 4xx the client emits. A template resolves
+        // them exactly; without one they were only ever "/api/v1/favorites/other".
+        assertEquals("/api/v1/favorites/{id}", safeDiagnosticsNetworkPath("/api/v1/favorites/episode-tvdb-1-1-1"))
+        assertEquals("/api/v1/watchlist/{id}", safeDiagnosticsNetworkPath("/api/v1/watchlist/series-tvdb-1"))
         assertEquals("/api/v1/other", safeDiagnosticsNetworkPath("/api/v1/private/private-id"))
         assertEquals("/other", safeDiagnosticsNetworkPath("/not-api/private-id"))
     }
