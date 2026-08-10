@@ -66,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
@@ -1003,7 +1004,13 @@ private fun CalendarList(
                     true
                 }
                 CalendarUpFallbackAction.FocusFilter -> {
-                    runCatching { activeFilterFocusRequester.requestFocus() }.getOrDefault(false)
+                    // Key handlers answer synchronously whether they consumed
+                    // the press, so this cannot await arrival — but a claim that
+                    // is refused must not vanish silently either.
+                    activeFilterFocusRequester.claimFocusOrReport(
+                        target = "calendar_filter",
+                        action = "up_fallback",
+                    )
                 }
                 CalendarUpFallbackAction.ReturnToControls -> {
                     onMoveUpToControls()

@@ -43,6 +43,7 @@ import androidx.compose.ui.focus.FocusRequester
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.rememberTvFlatReturnRestoration
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -423,7 +424,14 @@ private fun TvExpandablePersonBio(
         // Dismissing the focusable Popup drops window focus back on the page
         // with no saved target; put it back on the bio the user launched from.
         DisposableEffect(Unit) {
-            onDispose { runCatching { focusRequester.requestFocus() } }
+            onDispose {
+                // Teardown: no scope left to retry in, but a dropped claim here
+                // leaves the page with nothing focused after the popup closes.
+                focusRequester.claimFocusOrReport(
+                    target = "person_bio",
+                    action = "popup_dismissed",
+                )
+            }
         }
     }
 }

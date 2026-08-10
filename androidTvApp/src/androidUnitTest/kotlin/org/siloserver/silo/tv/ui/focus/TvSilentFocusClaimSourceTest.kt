@@ -77,8 +77,12 @@ class TvSilentFocusClaimSourceTest {
          * There is no longer a category of site that cannot be migrated: a
          * caller without a coroutine still gets a reported failure instead of a
          * swallowed one, so this baseline's floor is zero.
+         *
+         * 2026-08-10: 49 — person detail's onDispose restore and calendar's
+         * Up-fallback branch (both via claimFocusOrReport), plus library's
+         * clear-filters pill, sort panel and facet panel.
          */
-        const val BASELINE = 54
+        const val BASELINE = 49
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
