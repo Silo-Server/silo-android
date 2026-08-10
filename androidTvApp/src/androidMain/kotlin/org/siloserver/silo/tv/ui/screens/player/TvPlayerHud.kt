@@ -6,12 +6,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -21,12 +18,13 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -35,8 +33,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
@@ -50,6 +50,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -78,6 +79,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import kotlinx.coroutines.launch
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.catalog.VersionChapter
@@ -87,8 +89,11 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
+import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
-import kotlinx.coroutines.launch
 
 private val HudMaxWidth = 680.dp
 private val HudMinHeight = 290.dp
@@ -234,9 +239,18 @@ internal fun TvPlayerHud(
         lastInitialTab = initialTab
     }
 
+    var hudHasFocus by remember { mutableStateOf(false) }
+
     // Seed focus on the active tab pill when the HUD first appears.
     LaunchedEffect(Unit) {
-        tabFocusRequesters[selectedTab]?.let { runCatching { it.requestFocus() } }
+        tabFocusRequesters[selectedTab]?.let { requester ->
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = requester::requestFocus,
+                isFocused = { hudHasFocus },
+            )
+        }
     }
 
     // When a picker closes, return focus to the setting row that opened it rather
@@ -247,7 +261,14 @@ internal fun TvPlayerHud(
             val target = pickerReturnFocus.value
             if (target != null) {
                 pickerReturnFocus.value = null
-                runCatching { target.requestFocus() }
+                // Relocation: the picker has closed and focus is coming back to
+                // the row that opened it, which is being recomposed underneath.
+                requestFocusUntilObserved(
+                    maxAttempts = TvFrameRelocationMaxAttempts,
+                    awaitAttempt = { withFrameNanos { } },
+                    requestFocus = target::requestFocus,
+                    isFocused = { hudHasFocus },
+                )
             }
         }
     }
@@ -285,6 +306,7 @@ internal fun TvPlayerHud(
     // Top-center card. No full-screen scrim — the video stays visible behind it.
     Box(
         modifier = modifier
+            .onFocusChanged { hudHasFocus = it.hasFocus }
             .widthIn(max = HudMaxWidth)
             .fillMaxWidth(0.72f)
             .heightIn(min = HudMinHeight, max = HudMaxHeight)
@@ -2150,12 +2172,14 @@ internal fun HudPickerDialog(
 
     // Auto-focus the selected option on appear. Because every option is in the
     // focus graph, Compose's scroll container brings that focused row onscreen.
-    LaunchedEffect(presentation.title) {
-        runCatching { focusRequester.requestFocus() }
-    }
+    val optionFocusModifier = rememberTvContentInitialFocus(
+        target = focusRequester,
+        contentKey = presentation.title,
+    )
 
     Box(
         modifier = modifier
+            .then(optionFocusModifier)
             .width(360.dp)
             .heightIn(max = 220.dp)
             .clip(RoundedCornerShape(14.dp))

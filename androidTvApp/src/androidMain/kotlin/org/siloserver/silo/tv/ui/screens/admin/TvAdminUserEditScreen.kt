@@ -19,11 +19,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -36,12 +40,16 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.tv.ui.components.TvFilterChip
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.viewmodel.ADMIN_USER_ROLES
 import org.siloserver.silo.viewmodel.AdminUserEditViewModel
 import org.siloserver.silo.viewmodel.roleDisplayName
-import org.koin.compose.viewmodel.koinViewModel
 
 /**
  * TV admin user create (userId == null) / edit form over the shared
@@ -62,6 +70,7 @@ fun TvAdminUserEditScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val firstFieldFocus = remember { FocusRequester() }
+    var editFormHasFocus by remember { mutableStateOf(false) }
 
     BackHandler(enabled = true) { onBack() }
 
@@ -79,12 +88,20 @@ fun TvAdminUserEditScreen(
     // Focus the first EDITABLE control once content is ready: password in edit
     // (username/email are read-only there), username in create.
     LaunchedEffect(state.isLoading, isEdit) {
-        if (!state.isLoading) runCatching { firstFieldFocus.requestFocus() }
+        if (!state.isLoading) {
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = firstFieldFocus::requestFocus,
+                isFocused = { editFormHasFocus },
+            )
+        }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .onFocusChanged { editFormHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background),
     ) {
         Text(

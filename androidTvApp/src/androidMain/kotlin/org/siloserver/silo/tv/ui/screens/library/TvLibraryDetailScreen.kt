@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import org.siloserver.silo.tv.ui.focus.rememberTvFlatReturnRestoration
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -50,6 +51,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -636,6 +640,7 @@ private fun AudiobookGroupsTab(
 ) {
     val gridState: LazyGridState = rememberLazyGridState()
     val firstGroupFocusRequester = remember { FocusRequester() }
+    var groupGridHasFocus by remember { mutableStateOf(false) }
     var initialFocusRequested by remember { mutableStateOf(false) }
 
     val nearEnd by remember(
@@ -665,8 +670,17 @@ private fun AudiobookGroupsTab(
     LaunchedEffect(state.selectedTab, state.audiobookGroups.isNotEmpty()) {
         if (initialFocusRequested || state.audiobookGroups.isEmpty()) return@LaunchedEffect
         kotlinx.coroutines.delay(120)
-        runCatching { firstGroupFocusRequester.requestFocus() }
-        onInitialContentFocus()
+        // onInitialContentFocus() hands content focus over to the shell. Firing
+        // it after an unobserved claim tells the shell focus landed when it may
+        // not have, which is how a screen ends up with no focus owner at all —
+        // so it now fires only on observed acquisition.
+        val landed = requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = firstGroupFocusRequester::requestFocus,
+            isFocused = { groupGridHasFocus },
+        )
+        if (landed == TvObservedFocusResult.Focused) onInitialContentFocus()
         initialFocusRequested = true
     }
 
@@ -674,7 +688,9 @@ private fun AudiobookGroupsTab(
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(LibraryGridColumns),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .onFocusChanged { groupGridHasFocus = it.hasFocus },
             horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
             verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
             contentPadding = PaddingValues(
@@ -883,6 +899,7 @@ private fun CollectionsTab(
     onInitialContentFocus: () -> Unit,
 ) {
     val firstCollectionFocusRequester = remember { FocusRequester() }
+    var collectionGridHasFocus by remember { mutableStateOf(false) }
     var initialFocusRequested by remember { mutableStateOf(false) }
 
     // First collection of the first non-empty group claims initial focus.
@@ -893,15 +910,22 @@ private fun CollectionsTab(
     LaunchedEffect(firstCollectionId) {
         if (initialFocusRequested || firstCollectionId == null) return@LaunchedEffect
         kotlinx.coroutines.delay(120)
-        runCatching { firstCollectionFocusRequester.requestFocus() }
-        onInitialContentFocus()
+        val landed = requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = firstCollectionFocusRequester::requestFocus,
+            isFocused = { collectionGridHasFocus },
+        )
+        if (landed == TvObservedFocusResult.Focused) onInitialContentFocus()
         initialFocusRequested = true
     }
 
     CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(LibraryGridColumns),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .onFocusChanged { collectionGridHasFocus = it.hasFocus },
             horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
             verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
             contentPadding = PaddingValues(

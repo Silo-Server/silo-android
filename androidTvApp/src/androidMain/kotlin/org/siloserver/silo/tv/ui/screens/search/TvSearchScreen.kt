@@ -47,8 +47,13 @@ import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -173,8 +178,15 @@ fun TvSearchScreen(
     BackHandler(enabled = isKeyboardOpen) {
         isKeyboardOpen = false
         keyboardController?.hide()
-        runCatching { activeSearchFieldFocusRequester.requestFocus() }
+        // Back from a raised keyboard must answer synchronously, so this is the
+        // single-shot claim; losing it silently would strand the viewer with
+        // the keyboard gone and nothing focused.
+        activeSearchFieldFocusRequester.claimFocusOrReport(
+            target = "search_field",
+            action = "keyboard_dismissed",
+        )
     }
+    var searchScreenHasFocus by remember { mutableStateOf(false) }
     val requestMediaType = state.mediaType.toRequestMediaType()
     val visibleRequestResults = requestState.results
         .filterTvRequestResults()
@@ -230,7 +242,12 @@ fun TvSearchScreen(
     LaunchedEffect(activeSearchFieldFocusRequester) {
         val hasResults = state.items.isNotEmpty() || visibleRequestResults.isNotEmpty()
         if (shouldFocusSearchField(hasEnteredSearch, hasResults, explicitFieldRequest = false)) {
-            runCatching { activeSearchFieldFocusRequester.requestFocus() }
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = activeSearchFieldFocusRequester::requestFocus,
+                isFocused = { searchScreenHasFocus },
+            )
         }
         hasEnteredSearch = true
     }
@@ -356,13 +373,21 @@ fun TvSearchScreen(
             TvSearchCatalogSectionId -> {
                 restoreCatalogIndex = located.itemIndex
                 searchGridState.scrollToItem(located.itemIndex)
-                androidx.compose.runtime.withFrameNanos { }
-                runCatching { restoreCatalogFocusRequester.requestFocus() }
+                requestFocusUntilObserved(
+                    maxAttempts = TvFrameRelocationMaxAttempts,
+                    awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
+                    requestFocus = restoreCatalogFocusRequester::requestFocus,
+                    isFocused = { searchScreenHasFocus },
+                )
             }
             TvSearchRequestSectionId -> {
                 restoreRequestIndex = located.itemIndex
-                androidx.compose.runtime.withFrameNanos { }
-                runCatching { restoreRequestFocusRequester.requestFocus() }
+                requestFocusUntilObserved(
+                    maxAttempts = TvFrameRelocationMaxAttempts,
+                    awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
+                    requestFocus = restoreRequestFocusRequester::requestFocus,
+                    isFocused = { searchScreenHasFocus },
+                )
             }
         }
 
@@ -391,8 +416,12 @@ fun TvSearchScreen(
     LaunchedEffect(backToSearchFieldRequest) {
         if (backToSearchFieldRequest <= 0) return@LaunchedEffect
         searchGridState.animateScrollToItem(0)
-        androidx.compose.runtime.withFrameNanos { }
-        runCatching { activeSearchFieldFocusRequester.requestFocus() }
+        requestFocusUntilObserved(
+            maxAttempts = TvFrameRelocationMaxAttempts,
+            awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
+            requestFocus = activeSearchFieldFocusRequester::requestFocus,
+            isFocused = { searchScreenHasFocus },
+        )
     }
     LaunchedEffect(
         pendingSearchFocus,
@@ -410,17 +439,18 @@ fun TvSearchScreen(
         // at the first result.
         if (returnPending) return@LaunchedEffect
         pendingSearchFocus = false
-        runCatching {
-            if (state.items.isNotEmpty()) {
-                firstResultFocusRequester.requestFocus()
-            } else if (visibleRequestResults.isNotEmpty()) {
-                firstRequestResultFocusRequester.requestFocus()
-            } else if (state.error != null) {
-                feedbackActionFocusRequester.requestFocus()
-            } else {
-                firstFilterChipFocusRequester.requestFocus()
-            }
+        val postSearchTarget = when {
+            state.items.isNotEmpty() -> firstResultFocusRequester
+            visibleRequestResults.isNotEmpty() -> firstRequestResultFocusRequester
+            state.error != null -> feedbackActionFocusRequester
+            else -> firstFilterChipFocusRequester
         }
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = postSearchTarget::requestFocus,
+            isFocused = { searchScreenHasFocus },
+        )
     }
     // Note: we deliberately do NOT auto-jump focus to the first result when
     // it appears. Doing so during the debounced as-you-type search yanks
@@ -434,6 +464,10 @@ fun TvSearchScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // Every focus target on this screen — field, chips, results,
+            // request rows, feedback action — lives under here, so "focus is on
+            // the search screen" is the arrival each claim below waits on.
+            .onFocusChanged { searchScreenHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background),
     ) {
         TvCatalogGrid(
