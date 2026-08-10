@@ -68,8 +68,17 @@ class TvSilentFocusClaimSourceTest {
          *
          * 2026-08-10: 60 — calendar's shelf request (same false handover) and
          * its hand-rolled six-attempt day claim, replaced by the shared policy.
+         *
+         * 2026-08-10: 54 — settings: the four-attempt entry loop and its
+         * unconditional handover, the detail request, the picker dialog, the
+         * destructive-confirm Cancel, and the Back-to-category claim, which
+         * uses claimFocusOrReport because a BackHandler has no suspend point.
+         *
+         * There is no longer a category of site that cannot be migrated: a
+         * caller without a coroutine still gets a reported failure instead of a
+         * swallowed one, so this baseline's floor is zero.
          */
-        const val BASELINE = 60
+        const val BASELINE = 54
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
