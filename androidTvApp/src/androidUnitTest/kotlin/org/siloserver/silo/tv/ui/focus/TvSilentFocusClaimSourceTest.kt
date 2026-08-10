@@ -65,8 +65,11 @@ class TvSilentFocusClaimSourceTest {
          * 2026-08-10: 63 — the two library grids and collection detail. The
          * library grids also stopped reporting a handover that had not
          * happened; see that commit.
+         *
+         * 2026-08-10: 60 — calendar's shelf request (same false handover) and
+         * its hand-rolled six-attempt day claim, replaced by the shared policy.
          */
-        const val BASELINE = 63
+        const val BASELINE = 60
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 

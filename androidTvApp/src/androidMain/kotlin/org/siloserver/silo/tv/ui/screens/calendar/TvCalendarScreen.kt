@@ -63,8 +63,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -940,6 +944,7 @@ private fun CalendarList(
 ) {
     val snapScope = rememberCoroutineScope()
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    var selectedDayHasFocus by remember { mutableStateOf(false) }
     var isReturningToControls by remember { mutableStateOf(false) }
     var focusedControlZone by remember { mutableStateOf<CalendarControlFocusZone?>(null) }
     val clearControlFocusZone: () -> Unit = { focusedControlZone = null }
@@ -958,15 +963,15 @@ private fun CalendarList(
                 // animation. Keeping one scroll authority avoids the small
                 // hitch caused by focus bring-into-view and two list animations
                 // all racing toward item zero.
-                var claimed = runCatching {
-                    selectedDayFocusRequester.requestFocus()
-                }.getOrDefault(false)
-                repeat(6) {
-                    if (claimed) return@repeat
-                    androidx.compose.runtime.withFrameNanos { }
-                    claimed = runCatching { selectedDayFocusRequester.requestFocus() }.getOrDefault(false)
-                    if (!claimed) kotlinx.coroutines.delay(40)
-                }
+                // Was a hand-rolled six-attempt loop keyed on requestFocus()
+                // returning true — acceptance, not arrival. The shared policy
+                // does the same pacing and judges it on observed focus.
+                requestFocusUntilObserved(
+                    maxAttempts = TvContentInitialFocusMaxAttempts,
+                    awaitAttempt = { withFrameNanos { } },
+                    requestFocus = selectedDayFocusRequester::requestFocus,
+                    isFocused = { selectedDayHasFocus },
+                )
                 kotlinx.coroutines.delay(80)
                 isReturningToControls = false
             }
@@ -1033,6 +1038,9 @@ private fun CalendarList(
         modifier = Modifier
             .fillMaxSize()
             .padding(top = TvTopMenuLayout.contentTopInset)
+            // The day claim above lands on a row inside this list, so "focus is
+            // in the list" is the arrival it is waiting on.
+            .onFocusChanged { selectedDayHasFocus = it.hasFocus }
             .focusGroup(),
         contentPadding = PaddingValues(
             top = Spacing.sm,
@@ -1144,15 +1152,24 @@ private fun DayShelf(
     // — otherwise, after the shelf has been scrolled horizontally, the first
     // card may be off-screen and the request is dropped.
     val targetCardIndex = focusItemIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+    var shelfHasFocus by remember { mutableStateOf(false) }
+
     LaunchedEffect(focusRequest) {
         if (focusRequest > 0 && items.isNotEmpty()) {
             rowState.scrollToItem(targetCardIndex)
-            runCatching { targetCardFocusRequester.requestFocus() }
-            onFocusApplied()
+            // onFocusApplied() retires the pending request. Retiring it after a
+            // claim that was dropped loses the request entirely — nothing
+            // focused and nothing left to retry it — so it now fires only on
+            // observed acquisition. The shelf already reports its own focus.
+            val landed = requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = targetCardFocusRequester::requestFocus,
+                isFocused = { shelfHasFocus },
+            )
+            if (landed == TvObservedFocusResult.Focused) onFocusApplied()
         }
     }
-
-    var shelfHasFocus by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
