@@ -35,12 +35,17 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.rememberTvFlatReturnRestoration
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -136,6 +141,7 @@ private fun TvPersonDetailContent(
     onOpenItemDetail: (contentId: String) -> Unit,
 ) {
     val selectedFilterFocusRequester = remember { FocusRequester() }
+    var filterRowHasFocus by remember { mutableStateOf(false) }
     var lastRefocusedFilter by remember { mutableStateOf(state.selectedFilter) }
     val bioFocusRequester = remember { FocusRequester() }
     val gridState = rememberLazyGridState()
@@ -183,7 +189,12 @@ private fun TvPersonDetailContent(
         if (initialFocusRequested || state.availableFilters.isEmpty()) return@LaunchedEffect
         if (restoration.isReturning) return@LaunchedEffect
         kotlinx.coroutines.delay(120)
-        runCatching { selectedFilterFocusRequester.requestFocus() }
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = selectedFilterFocusRequester::requestFocus,
+            isFocused = { filterRowHasFocus },
+        )
         initialFocusRequested = true
     }
 
@@ -203,7 +214,15 @@ private fun TvPersonDetailContent(
     LaunchedEffect(state.selectedFilter) {
         if (state.selectedFilter == lastRefocusedFilter) return@LaunchedEffect
         lastRefocusedFilter = state.selectedFilter
-        runCatching { selectedFilterFocusRequester.requestFocus() }
+        // key() disposes the whole grid on a filter change, including the chip
+        // the viewer just pressed, so this is a relocation onto a node being
+        // recreated — short budget, and observed rather than assumed.
+        requestFocusUntilObserved(
+            maxAttempts = TvFrameRelocationMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = selectedFilterFocusRequester::requestFocus,
+            isFocused = { filterRowHasFocus },
+        )
     }
 
     // The surface key includes the filter, and the helper requires item
@@ -250,7 +269,13 @@ private fun TvPersonDetailContent(
             verticalSpacing = Spacing.sectionSpacing,
             artworkAspectRatioForItem = ::personWorkCardAspectRatio,
             header = {
-                Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                // The chips live in this header and the flag belongs to the
+                // screen, so observe here: "focus is in the header" is the
+                // criterion the retries above are actually protecting.
+                Column(
+                    modifier = Modifier.onFocusChanged { filterRowHasFocus = it.hasFocus },
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                ) {
                     PersonHeader(person = person, bioFocusRequester = bioFocusRequester)
                     FilmographyHeader(
                         selected = state.selectedFilter,
@@ -414,11 +439,17 @@ private fun TvPersonBioDialog(
     onDismiss: () -> Unit,
 ) {
     val focus = remember { FocusRequester() }
+    var bioModalHasFocus by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val scrollScope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(50)
-        runCatching { focus.requestFocus() }
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = focus::requestFocus,
+            isFocused = { bioModalHasFocus },
+        )
     }
     Popup(
         alignment = Alignment.Center,
@@ -469,6 +500,7 @@ private fun TvPersonBioDialog(
                         .fillMaxSize()
                         .verticalScroll(scrollState)
                         .focusRequester(focus)
+                        .onFocusChanged { bioModalHasFocus = it.hasFocus }
                         .focusable()
                         .padding(horizontal = 32.dp, vertical = 28.dp),
                 ) {

@@ -48,8 +48,18 @@ class TvSilentFocusClaimSourceTest {
          *
          * 2026-08-10: 73 — the card-overlay preview relocation and both inbox
          * claims migrated to requestFocusUntilObserved.
+         *
+         * 2026-08-10: 70 — person detail's filter-chip acquisition, its
+         * post-filter-change relocation, and the full-bio modal.
+         *
+         * NOTE: not every remaining site can adopt the policy. Person detail's
+         * popup-dismiss restore runs in `DisposableEffect { onDispose { … } }`,
+         * which is not a suspend context, so a retry loop cannot run there at
+         * all. Sites like that need a different answer than migration, and
+         * counting them here is a known limitation of this ratchet rather than
+         * a debt that can be paid down to zero.
          */
-        const val BASELINE = 73
+        const val BASELINE = 70
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
