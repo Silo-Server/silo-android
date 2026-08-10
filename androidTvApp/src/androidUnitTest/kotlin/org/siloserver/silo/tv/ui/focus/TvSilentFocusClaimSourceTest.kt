@@ -91,8 +91,12 @@ class TvSilentFocusClaimSourceTest {
          *
          * 2026-08-10: 31 — admin hub and user edit, browse, the audiobook
          * bookmark delete, and home — home being the sixth false handover.
+         *
+         * 2026-08-10: 25 — profile form's three D-pad-down key handlers, and
+         * requests' entry claim (seventh false handover) plus its post-search
+         * target.
          */
-        const val BASELINE = 31
+        const val BASELINE = 25
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
