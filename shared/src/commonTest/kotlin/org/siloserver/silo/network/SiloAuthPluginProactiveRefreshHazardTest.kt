@@ -194,6 +194,74 @@ class SiloAuthPluginProactiveRefreshHazardTest {
         )
     }
 
+    /**
+     * Suppressing the second refresh must not suppress RECOVERY. If another
+     * request installs a working token while this one is in flight, this one
+     * should retry with it — that costs no network call, and returning a stale
+     * 401 while usable credentials are sitting there is just a lost request.
+     */
+    @Test
+    fun aConcurrentlyRotatedTokenStillRecoversAfterATransientFailure() = runTest {
+        val tokenManager = TokenManagerImpl().apply {
+            setServerUrl("https://silo.example")
+            saveTokens("stale-access", "refresh-token", expiresIn = 0)
+        }
+        val sent = mutableListOf<Pair<String, String?>>()
+        var rotated = false
+        val client = HttpClient(
+            MockEngine { request ->
+                sent += request.url.encodedPath to request.headers[HttpHeaders.Authorization]
+                when {
+                    request.url.encodedPath.endsWith("/auth/refresh") -> respond(
+                        content = """{"error":"bad_gateway"}""",
+                        status = HttpStatusCode.BadGateway,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+
+                    request.headers[HttpHeaders.Authorization] == "Bearer stale-access" -> {
+                        if (!rotated) {
+                            rotated = true
+                            // Stand in for a concurrent request whose refresh
+                            // succeeded and installed a working token.
+                            tokenManager.saveTokens("rotated-access", "rotated-refresh", 3600)
+                        }
+                        respond(
+                            content = """{"error":"unauthorized"}""",
+                            status = HttpStatusCode.Unauthorized,
+                            headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                        )
+                    }
+
+                    else -> respond(
+                        content = """{"sections":[]}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                }
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { this.tokenManager = tokenManager }
+        }
+
+        val response = client.get("/api/v1/home/sections")
+
+        assertEquals(
+            HttpStatusCode.OK,
+            response.status,
+            "a usable token was already installed; the request should have retried with it",
+        )
+        assertEquals(
+            "Bearer rotated-access",
+            sent.last { it.first == "/api/v1/home/sections" }.second,
+        )
+        assertEquals(
+            1,
+            sent.count { it.first.endsWith("/auth/refresh") },
+            "recovery must not cost a second refresh call",
+        )
+    }
+
     private suspend fun repudiatedTokenManager(): TokenManagerImpl =
         TokenManagerImpl().apply {
             setServerUrl("https://silo.example")

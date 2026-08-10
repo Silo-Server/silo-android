@@ -115,6 +115,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
         activeServerIdBeforeRequest: String?,
         authorizationBeforeRequest: String?,
         temporaryGeneration: String?,
+        allowNetworkRefresh: Boolean = true,
     ): RefreshOutcome = refreshMutex.withLock {
         // If the user switched servers between request-send and 401-retry,
         // we are now operating against a different server. Don't try to
@@ -156,6 +157,15 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
         val refreshToken = tokenManager.getRefreshTokenForScope(refreshScope)
         if (refreshToken.isNullOrBlank()) {
             return@withLock RefreshOutcome.NotAttempted
+        }
+
+        // A proactive attempt for this same request already failed for a
+        // transient reason. Everything above still had to run — most
+        // importantly the double-check, because a CONCURRENT request may have
+        // installed a working token while this one was in flight, and that
+        // recovery costs no network call. Only the request below is suppressed.
+        if (!allowNetworkRefresh) {
+            return@withLock RefreshOutcome.FailedTransient
         }
 
         try {
@@ -591,14 +601,6 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             return@on originalCall
         }
 
-        // A proactive refresh already failed for this very request, and failed
-        // for a reason unrelated to the credentials. Asking again right now
-        // just doubles the load on a refresh service that is already
-        // struggling; the next request will try again.
-        if (proactiveRefreshFailedTransiently) {
-            return@on originalCall
-        }
-
         // Capture the server id as well so we can detect a mid-refresh server
         // switch — without this, a 401-refresh kicked off against server A
         // could land after the user has switched to server B and write A's
@@ -616,6 +618,10 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             activeServerIdBeforeRequest = activeServerIdBeforeRequest,
             authorizationBeforeRequest = authorizationBeforeRequest,
             temporaryGeneration = temporaryGeneration,
+            // A proactive attempt for this request already failed transiently.
+            // Do not ask the network again — but do still let the double-check
+            // above pick up a token a concurrent request installed meanwhile.
+            allowNetworkRefresh = !proactiveRefreshFailedTransiently,
         ) == RefreshOutcome.Refreshed
 
         if (refreshed) {
@@ -763,4 +769,3 @@ private fun URLBuilder.restoreWebSocketProtocol(originalProtocol: URLProtocol) {
     if (originalProtocol != URLProtocol.WS && originalProtocol != URLProtocol.WSS) return
     protocol = if (protocol.isSecure()) URLProtocol.WSS else URLProtocol.WS
 }
-
