@@ -51,6 +51,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 data class TvItemDetailUiState(
     val isLoading: Boolean = true,
@@ -218,6 +220,17 @@ internal fun shouldApplyNextUpTrackRestore(
  * Receives `contentId` via Koin `parametersOf()` (see
  * [org.siloserver.silo.tv.di.androidTvModule]).
  */
+/**
+ * How many `GET /favorites/{id}` probes may be in flight at once.
+ *
+ * A season is commonly 10-25 episodes and every one needs its own probe, so
+ * unbounded parallelism put a whole season on the wire in one burst — measured
+ * at 150-520 ms each, with the slowest arriving well after the rail had been
+ * drawn. A small window keeps the first rows filling promptly without the
+ * burst.
+ */
+private const val EPISODE_FAVORITE_PROBE_CONCURRENCY = 6
+
 class TvItemDetailViewModel(
     private val catalogRepository: CatalogRepository,
     private val personalDataRepository: PersonalDataRepository,
@@ -824,27 +837,55 @@ class TvItemDetailViewModel(
         }
     }
 
+    /**
+     * Fills in the favourite flag for episodes whose state this screen does not
+     * already know.
+     *
+     * There is no favourite field on an episode payload, so each one has to be
+     * asked for individually — `GET /favorites/{id}`, answering 404 for "not a
+     * favourite". Two things made that expensive enough to see in the field:
+     * every episode was asked on every season load even when the answer was
+     * already on screen, and all of them were asked at once. One series on a
+     * tester's Fire TV produced 116 such 404s at 150-520 ms each.
+     *
+     * So: ask only about episodes with no answer yet, and ask a few at a time.
+     * The map accumulates for the life of this view model, which is one visit
+     * to one item — leaving the screen and coming back still re-reads, so a
+     * favourite toggled on another device is picked up on the next visit
+     * rather than being cached indefinitely.
+     */
     private suspend fun refreshEpisodeFavoriteStates(episodes: List<EpisodeListItem>) {
         if (episodes.isEmpty()) {
             _uiState.update { it.copy(episodeFavoriteStates = emptyMap()) }
             return
         }
         val knownStates = _uiState.value.episodeFavoriteStates
-        val states = coroutineScope {
-            episodes.map { episode ->
+        val unknown = episodes.filterNot { knownStates.containsKey(it.contentId) }
+        if (unknown.isEmpty()) return
+
+        val gate = Semaphore(EPISODE_FAVORITE_PROBE_CONCURRENCY)
+        val probed = coroutineScope {
+            unknown.map { episode ->
                 async {
-                    val favorite = personalDataRepository.isFavorite(episode.contentId)
+                    val favorite = gate.withPermit {
+                        personalDataRepository.isFavorite(episode.contentId)
+                    }
                     episode.contentId to when (favorite) {
                         is ApiResult.Success -> favorite.data
-                        else -> knownStates[episode.contentId] ?: false
+                        // A failed probe is left UNRECORDED rather than stored
+                        // as false, so a transient error does not stick as a
+                        // cached "not a favourite" for the rest of the visit.
+                        else -> null
                     }
                 }
-            }.awaitAll().toMap()
+            }.awaitAll()
         }
+
         val currentIds = _uiState.value.episodes.mapTo(mutableSetOf()) { it.contentId }
-        if (currentIds == episodes.mapTo(mutableSetOf()) { it.contentId }) {
-            _uiState.update { it.copy(episodeFavoriteStates = states) }
-        }
+        if (currentIds != episodes.mapTo(mutableSetOf()) { it.contentId }) return
+        val resolved = probed.mapNotNull { (id, value) -> value?.let { id to it } }
+        if (resolved.isEmpty()) return
+        _uiState.update { it.copy(episodeFavoriteStates = it.episodeFavoriteStates + resolved) }
     }
 
     fun onSetEpisodeWatched(episodeContentId: String, watched: Boolean) {
