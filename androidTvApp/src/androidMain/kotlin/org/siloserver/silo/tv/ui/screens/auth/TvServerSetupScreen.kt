@@ -1,19 +1,23 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
+import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -22,30 +26,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.animation.core.EaseOut
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.StartOffset
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import kotlinx.coroutines.delay
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -59,40 +63,39 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.AlertDialog
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
-import org.siloserver.silo.tv.R
+import kotlinx.coroutines.delay
+import org.koin.compose.koinInject
+import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
+import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.AuroraAccent
 import org.siloserver.silo.tv.ui.components.AuroraEyebrow
-import org.siloserver.silo.tv.ui.components.AuroraInk
-import org.siloserver.silo.tv.ui.components.auroraGlass
-import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
-import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
 import org.siloserver.silo.tv.ui.components.AuroraGhostButton
+import org.siloserver.silo.tv.ui.components.AuroraInk
 import org.siloserver.silo.tv.ui.components.AuroraJourneyProgress
 import org.siloserver.silo.tv.ui.components.AuroraPrimaryButton
 import org.siloserver.silo.tv.ui.components.TvAuroraBackdrop
 import org.siloserver.silo.tv.ui.components.TvAuroraVariant
+import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
+import org.siloserver.silo.tv.ui.components.auroraGlass
+import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
+import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.Spacing
-import org.koin.compose.koinInject
-import org.koin.compose.viewmodel.koinViewModel
 
 /**
  * Server setup — connects the app to a Silo server.
@@ -120,6 +123,7 @@ fun TvServerSetupScreen(
     val state by viewModel.uiState.collectAsState()
     val pairingStatus by pairingReceiver.status.collectAsState()
     val focusRequester = remember { FocusRequester() }
+    var hostFieldHasFocus by remember { mutableStateOf(false) }
     val phoneSetupFocus = remember { FocusRequester() }
     val formScrollState = rememberTvImeAwareFormScrollState()
     val isActivePairing = pairingStatus.isActivePairing
@@ -139,7 +143,12 @@ fun TvServerSetupScreen(
             // up with phone" by navigating to it — we don't pre-select it for
             // them (Jim TV QA 2026-07-10). Returning users keep the pre-filled
             // field focused too.
-            runCatching { focusRequester.requestFocus() }
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = focusRequester::requestFocus,
+                isFocused = { hostFieldHasFocus },
+            )
         }
     }
     LaunchedEffect(pairingStatus) {
@@ -299,6 +308,7 @@ fun TvServerSetupScreen(
                             onConnectClick = viewModel::onConnectClick,
                             focusRequester = focusRequester,
                             modifier = Modifier
+                                .onFocusChanged { hostFieldHasFocus = it.hasFocus }
                                 .weight(1f)
                                 .fillMaxHeight(),
                         )
@@ -630,15 +640,24 @@ private fun ActivePairingPanel(
     modifier: Modifier = Modifier,
 ) {
     val allowFocusRequester = remember { FocusRequester() }
+    var consentHasFocus by remember { mutableStateOf(false) }
     LaunchedEffect(status) {
         if (status is PairingReceiverStatus.ConsentRequested) {
-            runCatching { allowFocusRequester.requestFocus() }
+            // A consent prompt whose Allow button never takes focus cannot be
+            // answered from a remote at all.
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = allowFocusRequester::requestFocus,
+                isFocused = { consentHasFocus },
+            )
         }
     }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
         modifier = modifier
+            .onFocusChanged { consentHasFocus = it.hasFocus }
             .fillMaxWidth(),
     ) {
         when (status) {

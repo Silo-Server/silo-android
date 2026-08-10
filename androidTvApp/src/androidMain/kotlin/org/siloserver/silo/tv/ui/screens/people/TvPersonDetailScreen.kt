@@ -158,7 +158,7 @@ private fun TvPersonDetailContent(
     // otherwise it just re-anchors the header like before.
     val hasBio = remember(person.bio) { cleanPersonBio(person.bio) != null }
     val focusBio = {
-        runCatching { bioFocusRequester.requestFocus() }
+        bioFocusRequester.claimFocusOrReport(target = "person_bio", action = "focus_bio")
         scope.launch { gridState.animateScrollToItem(0) }
         Unit
     }
