@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -103,6 +104,48 @@ class SiloAuthPluginProactiveRefreshHazardTest {
             sent.none { it.first == "/api/v1/watch/history" },
             "the repudiated write reached the server as ${sent.map { it.first }}",
         )
+    }
+
+    /**
+     * The mirror of the test above. A same-origin GET that never needed the
+     * bearer (health, setup status - they do not opt out of auth, the header is
+     * just attached globally) must not be punished for a credential death
+     * elsewhere. Credentials still come off; the request still goes.
+     */
+    @Test
+    fun aPublicReadStillGoesOutAfterTheSessionIsRepudiated() = runTest {
+        val tokenManager = TokenManagerImpl().apply {
+            setServerUrl("https://silo.example")
+            saveTokens("live-access", "revoked-refresh", expiresIn = 0)
+        }
+        val sent = mutableListOf<Pair<String, String?>>()
+        val client = HttpClient(
+            MockEngine { request ->
+                sent += request.url.encodedPath to request.headers[HttpHeaders.Authorization]
+                if (request.url.encodedPath.endsWith("/auth/refresh")) {
+                    respond(
+                        content = """{"error":"invalid_grant","message":"revoked"}""",
+                        status = HttpStatusCode.Unauthorized,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                } else {
+                    respond(
+                        content = """{"status":"ok"}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                }
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { this.tokenManager = tokenManager }
+        }
+
+        val response = client.get("/api/v1/health")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val health = sent.single { it.first == "/api/v1/health" }
+        assertNull(health.second, "the repudiated bearer should not have been sent")
     }
 
     private fun client(

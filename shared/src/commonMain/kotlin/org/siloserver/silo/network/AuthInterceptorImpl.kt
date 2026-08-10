@@ -305,7 +305,9 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             val scopedAccessToken = tokenManager.getAccessTokenForScope(pinned)
             if (requireAuth && scopedAccessToken.isNullOrBlank()) {
                 request.removeSiloCredentialHeaders()
-                throw IllegalStateException("required_silo_auth_unavailable")
+                throw SiloAuthUnavailableException(
+                    SiloAuthUnavailableException.REQUIRED_AUTH_UNAVAILABLE,
+                )
             }
             scopedAccessToken?.let { token ->
                 request.header(HttpHeaders.Authorization, "Bearer $token")
@@ -522,15 +524,27 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                     }
 
                 // The refresh token was rejected, so the session is already
-                // torn down. This request must not go out at all: stripping
-                // only the bearer would send an ANONYMOUS version of it, and an
-                // optionally-authenticated endpoint may happily accept that —
-                // turning a repudiated write into a successful anonymous one.
-                // Drop every credential header and fail the call instead, the
+                // torn down. The repudiated credentials come off either way —
+                // what differs is whether the request may still go out without
+                // them.
+                //
+                // A WRITE must not: an optionally-authenticated endpoint would
+                // accept the anonymous remainder, turning a repudiated write
+                // into a successful anonymous one. It fails here instead, the
                 // same way a pinned request with no usable token does.
+                //
+                // A READ may: plenty of same-origin GETs (health, setup status)
+                // never needed the bearer that got attached globally, and
+                // failing those punishes them for an unrelated credential
+                // death. One that did need it simply 401s, exactly as it would
+                // have before any of this existed.
                 RefreshOutcome.CredentialsDead -> {
                     request.removeSiloCredentialHeaders()
-                    throw IllegalStateException("silo_auth_credentials_repudiated")
+                    if (!request.method.isSafeToSendUnauthenticated()) {
+                        throw SiloAuthUnavailableException(
+                            SiloAuthUnavailableException.CREDENTIALS_REPUDIATED,
+                        )
+                    }
                 }
 
                 RefreshOutcome.NotAttempted -> Unit
@@ -735,3 +749,12 @@ private fun URLBuilder.restoreWebSocketProtocol(originalProtocol: URLProtocol) {
     if (originalProtocol != URLProtocol.WS && originalProtocol != URLProtocol.WSS) return
     protocol = if (protocol.isSecure()) URLProtocol.WSS else URLProtocol.WS
 }
+
+/**
+ * Whether dropping credentials and sending anyway is harmless.
+ *
+ * Safe methods do not change server state, so the worst an anonymous one can
+ * do is get a 401. Anything else could be accepted as an anonymous write.
+ */
+private fun HttpMethod.isSafeToSendUnauthenticated(): Boolean =
+    this == HttpMethod.Get || this == HttpMethod.Head || this == HttpMethod.Options
