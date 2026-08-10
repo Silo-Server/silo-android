@@ -91,10 +91,10 @@ class SiloAuthPluginProactiveRefreshHazardTest {
             install(SiloAuthPlugin) { this.tokenManager = tokenManager }
         }
 
-        val failure = assertFailsWith<IllegalStateException> {
+        val failure = assertFailsWith<SiloAuthUnavailableException> {
             client.post("/api/v1/watch/history")
         }
-        assertEquals("silo_auth_credentials_repudiated", failure.message)
+        assertEquals(SiloAuthUnavailableException.CREDENTIALS_REPUDIATED, failure.reason)
 
         assertTrue(
             sent.any { it.first.endsWith("/auth/refresh") },
@@ -107,16 +107,59 @@ class SiloAuthPluginProactiveRefreshHazardTest {
     }
 
     /**
-     * The mirror of the test above. A same-origin GET that never needed the
-     * bearer (health, setup status - they do not opt out of auth, the header is
-     * just attached globally) must not be punished for a credential death
-     * elsewhere. Credentials still come off; the request still goes.
+     * A read is NOT given an anonymous second chance. "Safe methods don't
+     * change state" is false here — GET /downloads/{id}/file completes the
+     * download server-side — and an optionally-authenticated read would hand
+     * back GUEST data with a 200 that callers cache while the user is being
+     * signed out. Genuinely public calls opt out with skipSiloAuth() and never
+     * reach this path at all.
      */
     @Test
-    fun aPublicReadStillGoesOutAfterTheSessionIsRepudiated() = runTest {
+    fun anAuthenticatedReadIsNotRetriedAnonymouslyAfterRepudiation() = runTest {
+        val tokenManager = repudiatedTokenManager()
+        val sent = mutableListOf<Pair<String, String?>>()
+        val client = repudiatingClient(tokenManager, sent)
+
+        assertFailsWith<SiloAuthUnavailableException> {
+            client.get("/api/v1/home/sections")
+        }
+        assertTrue(
+            sent.none { it.first == "/api/v1/home/sections" },
+            "an authenticated read was resent anonymously: ${sent.map { it.first }}",
+        )
+    }
+
+    /**
+     * The public escape hatch: a call that opted out never receives a bearer,
+     * so it never enters the proactive path and a dead session elsewhere cannot
+     * fail it.
+     */
+    @Test
+    fun aPublicOptedOutReadIsUnaffectedByARepudiatedSession() = runTest {
+        val tokenManager = repudiatedTokenManager()
+        val sent = mutableListOf<Pair<String, String?>>()
+        val client = repudiatingClient(tokenManager, sent)
+
+        val response = client.get("/api/v1/health") { skipSiloAuth() }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertNull(sent.single { it.first == "/api/v1/health" }.second)
+        assertTrue(
+            sent.none { it.first.endsWith("/auth/refresh") },
+            "an opted-out call should not have triggered a refresh at all",
+        )
+    }
+
+    /**
+     * A refresh service returning 5xx must not be asked twice for one request:
+     * the proactive attempt fails, the request goes out and 401s, and the
+     * reactive path must NOT immediately ask again.
+     */
+    @Test
+    fun aTransientRefreshFailureIsNotImmediatelyRetriedByTheReactivePath() = runTest {
         val tokenManager = TokenManagerImpl().apply {
             setServerUrl("https://silo.example")
-            saveTokens("live-access", "revoked-refresh", expiresIn = 0)
+            saveTokens("live-access", "refresh-token", expiresIn = 0)
         }
         val sent = mutableListOf<Pair<String, String?>>()
         val client = HttpClient(
@@ -124,14 +167,14 @@ class SiloAuthPluginProactiveRefreshHazardTest {
                 sent += request.url.encodedPath to request.headers[HttpHeaders.Authorization]
                 if (request.url.encodedPath.endsWith("/auth/refresh")) {
                     respond(
-                        content = """{"error":"invalid_grant","message":"revoked"}""",
-                        status = HttpStatusCode.Unauthorized,
+                        content = """{"error":"bad_gateway"}""",
+                        status = HttpStatusCode.BadGateway,
                         headers = headersOf(HttpHeaders.ContentType, "application/json"),
                     )
                 } else {
                     respond(
-                        content = """{"status":"ok"}""",
-                        status = HttpStatusCode.OK,
+                        content = """{"error":"unauthorized"}""",
+                        status = HttpStatusCode.Unauthorized,
                         headers = headersOf(HttpHeaders.ContentType, "application/json"),
                     )
                 }
@@ -141,12 +184,48 @@ class SiloAuthPluginProactiveRefreshHazardTest {
             install(SiloAuthPlugin) { this.tokenManager = tokenManager }
         }
 
-        val response = client.get("/api/v1/health")
+        client.get("/api/v1/home/sections")
 
-        assertEquals(HttpStatusCode.OK, response.status)
-        val health = sent.single { it.first == "/api/v1/health" }
-        assertNull(health.second, "the repudiated bearer should not have been sent")
+        val refreshes = sent.count { it.first.endsWith("/auth/refresh") }
+        assertEquals(
+            1,
+            refreshes,
+            "one request produced $refreshes refresh attempts against a failing refresh service",
+        )
     }
+
+    private suspend fun repudiatedTokenManager(): TokenManagerImpl =
+        TokenManagerImpl().apply {
+            setServerUrl("https://silo.example")
+            saveTokens("live-access", "revoked-refresh", expiresIn = 0)
+        }
+
+    private fun repudiatingClient(
+        tokenManager: TokenManager,
+        sent: MutableList<Pair<String, String?>>,
+    ): HttpClient =
+        HttpClient(
+            MockEngine { request ->
+                sent += request.url.encodedPath to request.headers[HttpHeaders.Authorization]
+                if (request.url.encodedPath.endsWith("/auth/refresh")) {
+                    respond(
+                        content = """{"error":"invalid_grant"}""",
+                        status = HttpStatusCode.Unauthorized,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                } else {
+                    // Deliberately generous: would accept an anonymous request.
+                    respond(
+                        content = """{"ok":true}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                }
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { this.tokenManager = tokenManager }
+        }
 
     private fun client(
         tokenManager: TokenManager,

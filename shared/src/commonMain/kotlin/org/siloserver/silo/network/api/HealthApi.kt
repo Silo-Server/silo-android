@@ -6,6 +6,7 @@ import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.network.skipSiloAuth
 
 @Serializable
 data class HealthStatus(
@@ -20,6 +21,10 @@ open class HealthApi(private val client: HttpClient) {
 
     open suspend fun checkHealth(): ApiResult<HealthStatus> = safeApiCall {
         client.get("/api/v1/health") {
+            // Public: never send credentials, so a dead session cannot make a
+            // reachability check fail. Matches the explicit-server variants of
+            // the other public endpoints.
+            skipSiloAuth()
             timeout {
                 connectTimeoutMillis = HEALTH_TIMEOUT_MS
                 requestTimeoutMillis = HEALTH_TIMEOUT_MS

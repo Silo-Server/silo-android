@@ -41,6 +41,15 @@ internal enum class RefreshOutcome {
 
     /** The server rejected the refresh token; these credentials are finished. */
     CredentialsDead,
+
+    /**
+     * The refresh could not be completed for a reason that says nothing about
+     * the credentials — a 5xx, a gateway, a dropped connection. They may still
+     * be perfectly good, so the caller spends them as before; but it must not
+     * immediately ask again, or one request becomes two refresh attempts and
+     * concurrent traffic amplifies the outage it is already suffering.
+     */
+    FailedTransient,
 }
 
 /**
@@ -207,7 +216,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                 if (!refreshResponse.status.shouldInvalidateSessionAfterRefreshFailure()) {
                     // Gateway/proxy/server failure: the credentials may well
                     // still be good, so the caller may spend them as before.
-                    return@withLock RefreshOutcome.NotAttempted
+                    return@withLock RefreshOutcome.FailedTransient
                 }
                 run {
                     val generationNow = tokenManager.temporaryGenerationId()
@@ -246,7 +255,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             }
         } catch (e: Throwable) {
             diagnosticsObserver.safeAuthRefresh("failed")
-            RefreshOutcome.NotAttempted
+            RefreshOutcome.FailedTransient
         }
     }
 
@@ -498,6 +507,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
         // those are two different identities and a rejection of one would be
         // charged against the other. Requiring them to match means the pair is
         // only ever evaluated for a single identity.
+        var proactiveRefreshFailedTransiently = false
         val proactiveGeneration = tokenManager.temporaryGenerationId()
         if (
             authorizationBeforeRequest != null &&
@@ -523,32 +533,28 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                         request.header(HttpHeaders.Authorization, "Bearer $token")
                     }
 
-                // The refresh token was rejected, so the session is already
-                // torn down. The repudiated credentials come off either way —
-                // what differs is whether the request may still go out without
-                // them.
+                // The refresh token was rejected, so the session is torn
+                // down. This request does not go out at all.
                 //
-                // A WRITE must not: an optionally-authenticated endpoint would
-                // accept the anonymous remainder, turning a repudiated write
-                // into a successful anonymous one. It fails here instead, the
-                // same way a pinned request with no usable token does.
-                //
-                // A READ may: plenty of same-origin GETs (health, setup status)
-                // never needed the bearer that got attached globally, and
-                // failing those punishes them for an unrelated credential
-                // death. One that did need it simply 401s, exactly as it would
-                // have before any of this existed.
+                // Not even as an anonymous GET: "safe methods don't change
+                // state" is not true here — GET /downloads/{id}/file moves the
+                // download to completed server-side, GET /admin/stats?refresh
+                // forces a recompute — and an optionally-authenticated read
+                // would return GUEST data with a 200 that callers cache while
+                // sessionExpired is signing the user out. A 401 is the honest
+                // answer. Genuinely public calls opt out with skipSiloAuth(),
+                // never receive a bearer, and so never reach this branch.
                 RefreshOutcome.CredentialsDead -> {
                     request.removeSiloCredentialHeaders()
-                    if (!request.method.isSafeToSendUnauthenticated()) {
-                        throw SiloAuthUnavailableException(
-                            SiloAuthUnavailableException.CREDENTIALS_REPUDIATED,
-                        )
-                    }
+                    throw SiloAuthUnavailableException(
+                        SiloAuthUnavailableException.CREDENTIALS_REPUDIATED,
+                    )
                 }
 
-                RefreshOutcome.NotAttempted -> Unit
+                RefreshOutcome.NotAttempted, RefreshOutcome.FailedTransient -> Unit
             }
+            proactiveRefreshFailedTransiently =
+                earlyOutcome == RefreshOutcome.FailedTransient
         }
 
         val originalCall = proceed(request)
@@ -582,6 +588,14 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             // The server already rejected these credentials. Refreshing again would
             // storm it once per request for the rest of the handoff; the overlay stays
             // installed so the guest cannot fall back onto the owner's account.
+            return@on originalCall
+        }
+
+        // A proactive refresh already failed for this very request, and failed
+        // for a reason unrelated to the credentials. Asking again right now
+        // just doubles the load on a refresh service that is already
+        // struggling; the next request will try again.
+        if (proactiveRefreshFailedTransiently) {
             return@on originalCall
         }
 
@@ -750,11 +764,3 @@ private fun URLBuilder.restoreWebSocketProtocol(originalProtocol: URLProtocol) {
     protocol = if (protocol.isSecure()) URLProtocol.WSS else URLProtocol.WS
 }
 
-/**
- * Whether dropping credentials and sending anyway is harmless.
- *
- * Safe methods do not change server state, so the worst an anonymous one can
- * do is get a 401. Anything else could be accepted as an anonymous write.
- */
-private fun HttpMethod.isSafeToSendUnauthenticated(): Boolean =
-    this == HttpMethod.Get || this == HttpMethod.Head || this == HttpMethod.Options
