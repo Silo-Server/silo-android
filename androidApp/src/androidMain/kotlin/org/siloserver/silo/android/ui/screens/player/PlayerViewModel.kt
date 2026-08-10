@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
+import org.siloserver.silo.common.player.failureDiagnostics
 
 import android.os.SystemClock
 import android.util.Log
@@ -37,6 +38,7 @@ import org.siloserver.silo.common.player.seek.SeekPositionDecision
 import org.siloserver.silo.common.player.seek.decideSeek
 import org.siloserver.silo.common.player.seek.isSameRouteSeekReanchorCandidate
 import org.siloserver.silo.common.player.seek.playerPositionForSource
+import org.siloserver.silo.common.player.seek.replanMountPositionForSource
 import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
@@ -1426,7 +1428,12 @@ class PlayerViewModel(
             return
         }
 
-        startProtocolV3Replan(reason.failureClassification(), notice, state)
+        startProtocolV3Replan(
+            classification = reason.failureClassification(),
+            notice = notice,
+            state = state,
+            diagnostics = reason.failureDiagnostics(),
+        )
     }
 
     /**
@@ -1666,6 +1673,8 @@ class PlayerViewModel(
             when (result) {
                 is ApiResult.Success -> when (val decision = result.data) {
                     is VideoSessionStartV3.Ready -> {
+                        val remountPosition = decision.plan.timeline
+                            .replanMountPositionForSource(state.position)
                         // Conditional adoption, evaluated inside the lifecycle
                         // lock: an unconditional adopt can hand the lifecycle a
                         // session this screen has already stopped owning, and
@@ -1742,14 +1751,17 @@ class PlayerViewModel(
                                 streamUrl = decision.plan.stream.url,
                                 requestHeaders = decision.plan.stream.headers,
                                 container = decision.plan.stream.container ?: current.container,
-                                startPosition = decision.plan.timeline.playerStartSeconds,
+                                startPosition = remountPosition.playerPositionSeconds,
                                 mediaMountGeneration = mountGeneration,
                                 subtitleTracks = recoveredSubtitles,
-                                position = decision.plan.timeline.sourceStartSeconds
-                                    .takeIf { it.isFinite() && it >= 0.0 }
-                                ?: current.position,
+                                position = remountPosition.sourcePositionSeconds,
                             )
                         }
+                        Log.i(
+                            TAG,
+                            "replan_mount restored_source_seconds=${remountPosition.sourcePositionSeconds} " +
+                                "player_seconds=${remountPosition.playerPositionSeconds}",
+                        )
                         val recoveredState = _uiState.value
                         mobileSubtitleTransactions.updatePlaybackContext(
                             mobileSubtitleContext(recoveredState),
@@ -2851,9 +2863,10 @@ class PlayerViewModel(
             dolbyVision = dolbyVision,
             capabilities = capabilities,
         )
-        val sourcePosition = ready.plan.timeline.sourceStartSeconds
-            .takeIf { it.isFinite() && it >= 0.0 }
-            ?: before.position
+        val remountPosition = ready.plan.timeline.replanMountPositionForSource(
+            adoption.requestedSourcePositionSeconds,
+        )
+        val sourcePosition = remountPosition.sourcePositionSeconds
         if (!adoption.isCurrent()) return MobileSubtitleAdoptionResult.Superseded
         val lifecycleAdopted = sessionLifecycle.adoptActiveSessionIfCurrent(
             params = StartParams(
@@ -2895,7 +2908,7 @@ class PlayerViewModel(
                 streamUrl = ready.plan.stream.url,
                 requestHeaders = ready.plan.stream.headers,
                 container = ready.plan.stream.container ?: current.container,
-                startPosition = ready.plan.timeline.playerStartSeconds,
+                startPosition = remountPosition.playerPositionSeconds,
                 mediaMountGeneration = mountGeneration,
                 position = sourcePosition,
                 subtitleTracks = playback.subtitleTracks,
@@ -2913,6 +2926,11 @@ class PlayerViewModel(
                 subtitleRefreshNonce = 0,
             )
         }
+        Log.i(
+            TAG,
+            "subtitle_replan_mount restored_source_seconds=$sourcePosition " +
+                "player_seconds=${remountPosition.playerPositionSeconds}",
+        )
         return MobileSubtitleAdoptionResult.Adopted
     }
 

@@ -225,6 +225,7 @@ internal enum class TvSubtitleAdoptionResult {
 internal class TvSubtitlePlaybackAdoption internal constructor(
     val playback: TvSubtitleCommittedPlayback,
     val committed: CommittedSubtitle,
+    val requestedSourcePositionSeconds: Double,
     private val currentOwner: () -> Boolean,
     private val currentPendingIdentity: () -> SubtitleIdentity?,
 ) {
@@ -1287,6 +1288,7 @@ internal class TvSubtitleTransactionAdapter(
                 val adoption = TvSubtitlePlaybackAdoption(
                     playback = playback,
                     committed = validated.state.committed,
+                    requestedSourcePositionSeconds = adoptionContext.positionSeconds,
                     currentOwner = {
                         ownerGeneration == adoptionGeneration &&
                             !resetDuringCommit

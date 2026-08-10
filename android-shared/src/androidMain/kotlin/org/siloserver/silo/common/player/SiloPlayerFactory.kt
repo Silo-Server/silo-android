@@ -45,6 +45,7 @@ import org.siloserver.silo.common.player.audio.PassthroughSuppressingAudioSink
 import org.siloserver.silo.common.player.subtitle.OffsetSubtitleParserFactory
 import org.siloserver.silo.common.player.subtitle.PgsSupExtractor
 import org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder
+import org.siloserver.silo.common.player.subtitle.StreamingWebvttExtractor
 import org.siloserver.silo.common.player.video.SiloMediaCodecVideoRenderer
 import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionState
 import org.siloserver.silo.libass.LibassBridge
@@ -641,8 +642,8 @@ class SiloPlayerFactory(
                     subtitleParserFactory.getCueReplacementBehavior(baseFormat),
                 )
                 .build()
-            val extractorsFactory = if (configuration.mimeType == MimeTypes.APPLICATION_PGS) {
-                ExtractorsFactory {
+            val extractorsFactory = when (configuration.mimeType) {
+                MimeTypes.APPLICATION_PGS -> ExtractorsFactory {
                     arrayOf(
                         PgsSupExtractor(
                             subtitleParserFactory,
@@ -651,8 +652,16 @@ class SiloPlayerFactory(
                         ),
                     )
                 }
-            } else {
-                ExtractorsFactory {
+                MimeTypes.TEXT_VTT -> ExtractorsFactory {
+                    arrayOf(
+                        StreamingWebvttExtractor(
+                            subtitleParserFactory.create(outputFormat),
+                            outputFormat,
+                            MAX_SUBTITLE_BYTES,
+                        ),
+                    )
+                }
+                else -> ExtractorsFactory {
                     arrayOf(
                         SubtitleExtractor(
                             subtitleParserFactory.create(outputFormat),
@@ -661,7 +670,12 @@ class SiloPlayerFactory(
                     )
                 }
             }
-            return ProgressiveMediaSource.Factory(dataSourceFactory, extractorsFactory)
+            val subtitleDataSourceFactory = if (configuration.mimeType in replayableTextSubtitleMimeTypes) {
+                ReplayableSubtitleDataSourceFactory(dataSourceFactory)
+            } else {
+                dataSourceFactory
+            }
+            return ProgressiveMediaSource.Factory(subtitleDataSourceFactory, extractorsFactory)
                 .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
                 .createMediaSource(
                     MediaItem.Builder()
@@ -670,6 +684,14 @@ class SiloPlayerFactory(
                         .build(),
                 )
         }
+    }
+
+    private companion object {
+        val replayableTextSubtitleMimeTypes = setOf(
+            MimeTypes.TEXT_SSA,
+            MimeTypes.APPLICATION_SUBRIP,
+            MimeTypes.APPLICATION_TTML,
+        )
     }
 }
 

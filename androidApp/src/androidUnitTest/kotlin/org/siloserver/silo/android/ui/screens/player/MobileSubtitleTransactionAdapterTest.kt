@@ -63,7 +63,8 @@ class MobileSubtitleTransactionAdapterTest {
 
     @Test
     fun `A remains committed while B stages and commits`() = runTest {
-        val harness = harness(backgroundScope)
+        val adoption = AdoptionControl()
+        val harness = harness(backgroundScope, adoption = adoption)
 
         harness.adapter.select(sidecar(4))
         runCurrent()
@@ -80,6 +81,7 @@ class MobileSubtitleTransactionAdapterTest {
         assertNull(harness.adapter.snapshot.pendingIdentity)
         assertEquals(listOf("b"), harness.port.committed)
         assertEquals(listOf(sidecar(4)), harness.persistence.persisted.map { it.identity })
+        assertEquals(listOf(42.0), adoption.requestedSourcePositions)
     }
 
     @Test
@@ -1413,6 +1415,7 @@ class MobileSubtitleTransactionAdapterTest {
             durablePersistenceScope = durablePersistenceScope,
             onCommittedPlayback = { adoptionRequest ->
                 adoption.started += 1
+                adoption.requestedSourcePositions += adoptionRequest.requestedSourcePositionSeconds
                 if (adoption.suspendAdoption) adoption.completions.receive()
                 adoption.failure?.let { throw it }
                 if (!adoptionRequest.isCurrent()) {
@@ -1491,6 +1494,7 @@ class MobileSubtitleTransactionAdapterTest {
         val failure: Throwable? = null,
     ) {
         var started: Int = 0
+        val requestedSourcePositions = mutableListOf<Double>()
         val completions = Channel<Unit>(Channel.UNLIMITED)
 
         suspend fun complete() {

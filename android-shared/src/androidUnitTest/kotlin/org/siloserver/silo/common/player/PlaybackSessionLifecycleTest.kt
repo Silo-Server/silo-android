@@ -83,6 +83,59 @@ class PlaybackSessionLifecycleTest {
     }
 
     @Test
+    fun `same-session replan preserves an in-flight progress report`() = runTest {
+        val reportEntered = CompletableDeferred<Unit>()
+        val releaseReport = CompletableDeferred<Unit>()
+        var reportWasCancelled = false
+        val sessionMgr = object : FakeSessionManager() {
+            override suspend fun reportProgress(
+                sessionId: String,
+                position: Double,
+                isPaused: Boolean,
+            ): ApiResult<Unit> {
+                progressCallCount++
+                reportEntered.complete(Unit)
+                return try {
+                    releaseReport.await()
+                    ApiResult.Success(Unit)
+                } catch (cancellation: kotlinx.coroutines.CancellationException) {
+                    reportWasCancelled = true
+                    // Matches safeApiCall, which currently wraps cancellation
+                    // as a network result instead of rethrowing it.
+                    ApiResult.NetworkError(cancellation)
+                }
+            }
+        }
+        val healthApi = FakeHealthApi()
+        val lifecycle = newLifecycle(
+            sessionMgr = sessionMgr,
+            healthApi = healthApi,
+            scope = backgroundScope,
+        )
+
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-replan"))
+        lifecycle.reportOwnedPosition(42.0, 100.0, isPaused = false)
+        advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
+        reportEntered.await()
+
+        lifecycle.adoptActiveSession(
+            params = defaultStartParams(startPosition = 42.0).copy(subtitleTrackIndex = 7),
+            session = makeSession("sess-replan"),
+            deferPublication = true,
+        )
+        yield()
+
+        assertFalse(reportWasCancelled)
+        assertTrue(lifecycle.state.value is SessionState.Active)
+        assertEquals(0, healthApi.callCount)
+
+        releaseReport.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(reportWasCancelled)
+        assertEquals(0, healthApi.callCount)
+    }
+
+    @Test
     fun `adoptActiveSession can leave progress and stop owned by caller`() = runTest {
         val sessionMgr = FakeSessionManager()
         val personalRepo = RecordingPersonalDataRepository()

@@ -17,17 +17,23 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.android.BuildConfig
 import org.siloserver.silo.model.catalog.WatchDetail
+import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
+import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
 import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
+import org.siloserver.silo.playback.resolveAudioTrackOrdinal
+import org.siloserver.silo.playback.resolveCatalogSubtitlePreferenceOrdinal
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ProfileRepository
+import org.siloserver.silo.repository.port.LocalTrackSelection
+import org.siloserver.silo.repository.port.UserItemStatePort
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
@@ -54,6 +60,52 @@ internal fun interface MobileVideoSessionAdopter {
     suspend fun adopt(params: StartParams, session: PlaybackSessionResponse)
 }
 
+internal data class MobileInitialTrackSelection(
+    val audioTrackIndex: Int?,
+    val subtitleTrackIndex: Int?,
+)
+
+/**
+ * Resolves durable per-file choices before neutral-v3 allocates its first plan.
+ *
+ * Explicit request indexes are already playback-v3 indexes and must pass
+ * through unchanged, including internal recovery starts. Persisted subtitle
+ * choices are stable catalog identities, so resolve only those onto the
+ * server's combined external-then-embedded index space. This lets restore
+ * happen in the first plan without reinterpreting a recovery index twice.
+ * Local/downloaded subtitle identities deliberately resolve to null and stay
+ * on the Media3-only restore path after the server plan is mounted.
+ */
+internal fun resolveMobileInitialTrackSelection(
+    explicitAudioTrackIndex: Int?,
+    explicitSubtitleTrackIndex: Int?,
+    audioTracks: List<org.siloserver.silo.model.catalog.AudioTrack>,
+    subtitleTracks: List<SubtitleTrack>,
+    persisted: LocalTrackSelection?,
+): MobileInitialTrackSelection {
+    val audioTrackIndex = explicitAudioTrackIndex
+        ?: resolveAudioTrackOrdinal(audioTracks, persisted?.audioFingerprint)
+    val persistedSubtitleOrdinal = if (explicitSubtitleTrackIndex == null) {
+        resolveCatalogSubtitlePreferenceOrdinal(
+            subtitleTracks,
+            persisted?.subtitleFingerprint,
+        )
+    } else {
+        null
+    }
+    val subtitleTrackIndex = when {
+        explicitSubtitleTrackIndex != null -> explicitSubtitleTrackIndex
+        persistedSubtitleOrdinal == null -> null
+        persistedSubtitleOrdinal == -1 -> -1
+        else -> combinedSubtitleSelectionIndexes(subtitleTracks)
+            .getOrNull(persistedSubtitleOrdinal)
+    }
+    return MobileInitialTrackSelection(
+        audioTrackIndex = audioTrackIndex,
+        subtitleTrackIndex = subtitleTrackIndex,
+    )
+}
+
 internal class MobileVideoPlaybackStarter(
     private val catalogRepository: CatalogRepository,
     private val playbackSessionManager: PlaybackSessionManager,
@@ -62,6 +114,7 @@ internal class MobileVideoPlaybackStarter(
     private val playerSettingsStore: PlayerSettingsStore,
     private val sessionLifecycle: PlaybackSessionLifecycle,
     private val reachabilityMonitor: ServerReachabilityMonitor,
+    private val userItemStatePort: UserItemStatePort? = null,
     private val sessionAllocator: MobileVideoSessionAllocator? = null,
     private val sessionAdopter: MobileVideoSessionAdopter? = null,
 ) : VideoPlaybackStarter {
@@ -118,6 +171,21 @@ internal class MobileVideoPlaybackStarter(
                     watchDetail.userData?.lastFileId,
                     preferredQuality,
                 )
+            val persistedTrackSelection = if (
+                userItemStatePort != null &&
+                (request.audioTrackIndex == null || request.subtitleTrackIndex == null)
+            ) {
+                userItemStatePort.localTrackSelection(request.contentId, version.fileId)
+            } else {
+                null
+            }
+            val initialTracks = resolveMobileInitialTrackSelection(
+                explicitAudioTrackIndex = request.audioTrackIndex,
+                explicitSubtitleTrackIndex = request.subtitleTrackIndex,
+                audioTracks = version.audioTracks.orEmpty(),
+                subtitleTracks = version.subtitleTracks.orEmpty(),
+                persisted = persistedTrackSelection,
+            )
 
             val activeProfile = profileRepository.getActiveProfile()
             val profileId = activeProfile?.id ?: profileRepository.getActiveProfileId()
@@ -170,8 +238,8 @@ internal class MobileVideoPlaybackStarter(
                         profileId = profileId,
                         capabilities = capabilities,
                         clientPlaybackContext = playbackContext,
-                        audioTrackIndex = request.audioTrackIndex,
-                        subtitleTrackIndex = request.subtitleTrackIndex,
+                        audioTrackIndex = initialTracks.audioTrackIndex,
+                        subtitleTrackIndex = initialTracks.subtitleTrackIndex,
                         qualityPreference = playbackQualityIntent,
                         startPosition = startRequestPosition,
                         maxBitrateKbps = maxBitrateKbps,
@@ -181,8 +249,8 @@ internal class MobileVideoPlaybackStarter(
                     profileId = profileId,
                     capabilities = capabilities,
                     clientPlaybackContext = playbackContext,
-                    audioTrackIndex = request.audioTrackIndex,
-                    subtitleTrackIndex = request.subtitleTrackIndex,
+                    audioTrackIndex = initialTracks.audioTrackIndex,
+                    subtitleTrackIndex = initialTracks.subtitleTrackIndex,
                     qualityPreference = playbackQualityIntent,
                     startPosition = startRequestPosition,
                     maxBitrateKbps = maxBitrateKbps,
@@ -242,8 +310,8 @@ internal class MobileVideoPlaybackStarter(
                 contentId = request.contentId,
                 fileId = effectiveFileId,
                 capabilities = capabilities,
-                audioTrackIndex = request.audioTrackIndex ?: resolved.audioTrackIndex,
-                subtitleTrackIndex = request.subtitleTrackIndex,
+                audioTrackIndex = initialTracks.audioTrackIndex ?: resolved.audioTrackIndex,
+                subtitleTrackIndex = initialTracks.subtitleTrackIndex,
                 qualityPreference = playbackQualityIntent,
                 startPosition = sourceStartPos,
                 clientPlaybackContext = playbackContext,

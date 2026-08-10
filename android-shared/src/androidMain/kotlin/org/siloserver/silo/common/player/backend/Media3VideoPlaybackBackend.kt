@@ -50,13 +50,15 @@ class Media3VideoPlaybackBackend(
         )
     }
 
-    override fun selectSubtitle(track: VideoPlayerTrackEntry?): Boolean =
-        trackSelectionCoordinator.selectSubtitle(
+    override fun selectSubtitle(track: VideoPlayerTrackEntry?): Boolean {
+        if (track?.subtitle != null && mountedSpec == null) return false
+        return trackSelectionCoordinator.selectSubtitle(
             player = player,
             playerFactory = playerFactory,
-            mediaSpec = requireMediaSpecForExternalSubtitle(track),
+            mediaSpec = mountedSpec,
             selectedTrack = track,
         )
+    }
 
     override fun selectMountedSubtitle(
         identity: SubtitleIdentity,
@@ -102,16 +104,4 @@ class Media3VideoPlaybackBackend(
         playerFactory.releasePlayer(player)
     }
 
-    private fun requireMediaSpecForExternalSubtitle(track: VideoPlayerTrackEntry?): VideoPlayerMediaSpec {
-        val spec = mountedSpec
-        if (spec != null) return spec
-        if (track?.subtitle == null) {
-            return VideoPlayerMediaSpec(
-                streamUrl = "",
-                playMethod = org.siloserver.silo.model.playback.PlayMethod.DIRECT,
-                serverUrl = "",
-            )
-        }
-        error("Cannot select an external subtitle before video media has been mounted.")
-    }
 }

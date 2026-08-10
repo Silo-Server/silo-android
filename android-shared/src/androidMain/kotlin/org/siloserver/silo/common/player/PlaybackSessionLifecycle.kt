@@ -213,9 +213,20 @@ class PlaybackSessionLifecycle(
             } else {
                 null
             }
+            // A protocol-v3 replan keeps the same server session id. Keep its
+            // reporter alive as well: cancelling an in-flight Ktor POST can
+            // leave the server with a truncated JSON body, and the network
+            // wrapper turns that local cancellation into a NetworkError. That
+            // briefly pushed a healthy subtitle replan through outage recovery.
+            val reuseProgressReporter =
+                manageProgress &&
+                    lastAdoptedSessionId == session.sessionId &&
+                    reporterJob?.isActive == true
             cancelRecoveryJobs()
-            reporterJob?.cancel()
-            reporterJob = null
+            if (!reuseProgressReporter) {
+                reporterJob?.cancel()
+                reporterJob = null
+            }
             _notice.value = null
             lastStartParams = params
             lastReportedPosition = params.startPosition ?: session.position
@@ -228,7 +239,7 @@ class PlaybackSessionLifecycle(
             diagnosticsRecording.record(session.sessionId)
             lastAdoptedSessionId = session.sessionId
             _state.value = SessionState.Active(session)
-            if (manageProgress) {
+            if (manageProgress && !reuseProgressReporter) {
                 startProgressReporter()
             }
             pendingActiveSessionPublication = predecessor?.let {
@@ -674,6 +685,10 @@ class PlaybackSessionLifecycle(
                     position = pos,
                     isPaused = lastIsPaused,
                 )
+                // The API wrapper represents CancellationException as a
+                // NetworkError. Never interpret cancellation of this reporter
+                // itself as evidence that the server is offline.
+                if (!currentCoroutineContext().isActive) continue
                 // Re-check ownership AFTER the call. Cancelling this job is not
                 // enough to stop what follows: the network wrapper catches
                 // cancellation and hands back a NetworkError, so a reporter

@@ -47,12 +47,18 @@ class SiloLoadControl(
     ): Int {
         val sizingTracks = trackSelections.mapNotNull { selection ->
             selection?.let {
-                BufferSizingTrackBitrates(
-                    averageBitrateBps = it.selectedFormat.averageBitrate,
-                    peakBitrateBps = it.selectedFormat.peakBitrate,
-                    latestNetworkEstimateBps = it.latestBitrateEstimate,
-                    isDolbyVision = it.selectedFormat.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION,
-                )
+                val format = it.selectedFormat
+                val trackType = MimeTypes.getTrackType(format.sampleMimeType)
+                if (trackType == C.TRACK_TYPE_VIDEO || trackType == C.TRACK_TYPE_AUDIO) {
+                    BufferSizingTrackBitrates(
+                        averageBitrateBps = format.averageBitrate,
+                        peakBitrateBps = format.peakBitrate,
+                        latestNetworkEstimateBps = it.latestBitrateEstimate,
+                        isDolbyVision = format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION,
+                    )
+                } else {
+                    null
+                }
             }
         }
         val selectedBitrateBps = selectBufferSizingBitrateBps(sizingTracks)
@@ -122,20 +128,33 @@ private const val DOLBY_VISION_BUDGET_DIVISOR = 2
 internal fun selectBufferSizingBitrateBps(
     tracks: List<BufferSizingTrackBitrates>,
 ): Long? {
-    val mediaBitrateBps =
-        tracks.mapNotNull { track ->
-            track.averageBitrateBps.takeIf { it > 0 }?.toLong()
-                ?: track.peakBitrateBps.takeIf { it > 0 }?.toLong()
-        }
-
-    if (mediaBitrateBps.isNotEmpty()) {
-        return mediaBitrateBps.sum()
+    if (tracks.isEmpty()) return null
+    val mediaBitrates = tracks.map { track ->
+        track.averageBitrateBps.takeIf { it > 0 }?.toLong()
+            ?: track.peakBitrateBps.takeIf { it > 0 }?.toLong()
     }
+    val knownMediaBitrate = mediaBitrates.filterNotNull().sum()
+    if (mediaBitrates.all { it != null }) return knownMediaBitrate
 
-    return tracks
+    // A partial sum is not the stream bitrate. Single-rendition HLS commonly
+    // carries no video BANDWIDTH metadata while its AAC track does expose a
+    // bitrate. Treating that audio-only number as the complete route sized an
+    // 84 Mbps 4K stream to the 16 MiB floor: one segment filled the allocator,
+    // DefaultLoadControl stopped loading, and playback remained buffering at
+    // two seconds even though the server had produced the following segments.
+    // Use one live estimate for the unknown media portion; when it is not yet
+    // available, keep the result unknown so Media3's renderer-aware fallback
+    // controls the target instead of an incomplete sum.
+    val unknownMediaEstimate = tracks
+        .filterIndexed { index, _ -> mediaBitrates[index] == null }
         .maxOfOrNull { it.latestNetworkEstimateBps }
         ?.takeIf { it > 0L }
+        ?: return null
+    return saturatingAdd(knownMediaBitrate, unknownMediaEstimate)
 }
+
+private fun saturatingAdd(left: Long, right: Long): Long =
+    if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
 
 /**
  * The forward buffer this device can actually hold at this bitrate.

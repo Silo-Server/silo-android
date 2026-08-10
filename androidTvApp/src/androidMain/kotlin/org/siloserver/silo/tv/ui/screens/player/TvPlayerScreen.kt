@@ -97,6 +97,7 @@ import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
+import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
@@ -408,21 +409,9 @@ fun TvPlayerScreen(
     val playWhenReadyReconciliationGate = remember(mediaController, roomId) {
         PlayWhenReadyReconciliationGate()
     }
-    val videoBackend = remember(
-        sessionPlayer,
-        mediaController,
-        backendFactory,
-        contentId,
-        preferredFileId,
-        state.playMethod,
-        state.playbackPlan,
-        state.delivery,
-        state.container,
-        state.streamUrl,
-    ) {
-        val plan = state.playbackPlan
-        val delivery = plan?.delivery ?: state.delivery
-        (sessionPlayer ?: mediaController)?.let { player ->
+    val backendPlayer = sessionPlayer ?: mediaController
+    val videoBackend = remember(backendPlayer, backendFactory) {
+        backendPlayer?.let { player ->
             backendFactory.create(
                 player = player,
                 request = VideoPlaybackBackendRequest(),
@@ -1577,7 +1566,12 @@ fun TvPlayerScreen(
             delivery = delivery,
             serverUrl = state.serverUrl,
             container = state.container,
-            subtitles = state.subtitleUrls,
+            subtitles = subtitlesForVideoMediaMount(
+                subtitles = state.subtitleUrls,
+                playbackPlan = plan,
+                subtitleIdentity = state.pendingSubtitleIdentity
+                    ?: state.committedSubtitleIdentity,
+            ),
             title = state.title.ifBlank { null },
             artworkUrl = state.artworkUrl,
             startPositionSeconds = state.startPosition,
@@ -1603,6 +1597,7 @@ fun TvPlayerScreen(
                 playMethod = method,
                 startPositionMs = mediaSpec.startPositionMs,
                 nowMs = SystemClock.elapsedRealtime(),
+                clientTransformations = mediaSpec.transformations,
             )
             postResumeStallDetector.onMounted(
                 "$sessionId:$url:${plan?.planId.orEmpty()}:" +
@@ -1633,7 +1628,12 @@ fun TvPlayerScreen(
             delivery = delivery,
             serverUrl = state.serverUrl,
             container = state.container,
-            subtitles = state.subtitleUrls,
+            subtitles = subtitlesForVideoMediaMount(
+                subtitles = state.subtitleUrls,
+                playbackPlan = plan,
+                subtitleIdentity = state.pendingSubtitleIdentity
+                    ?: state.committedSubtitleIdentity,
+            ),
             title = state.title.ifBlank { null },
             artworkUrl = state.artworkUrl,
             startPositionSeconds = state.startPosition,

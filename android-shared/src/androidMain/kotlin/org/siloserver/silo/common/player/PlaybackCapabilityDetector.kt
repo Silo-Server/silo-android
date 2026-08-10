@@ -230,36 +230,10 @@ class PlaybackCapabilityDetector(
         val libassRendering = libassBridge.isRenderingSupported
         val libassEmbeddedFonts = libassBridge.isEmbeddedFontsSupported
         val libassDirectFidelity = libassRendering && libassEmbeddedFonts
-        val clientVideoTransformations = buildList {
-            if (8 in caps.hdrDetails?.dolbyVisionProfiles.orEmpty() && NativeDolbyVisionRpuConverter.isAvailable) {
-                add(
-                    PlaybackTransformationV3(
-                        name = CLIENT_DV7_TO_DV81,
-                        executor = PlaybackTransformationExecutor.CLIENT,
-                        recipeVersion = CLIENT_DV_TRANSFORM_RECIPE_VERSION,
-                        validatedClaims = listOf(
-                            "profile7_rpu_converted_to_profile81",
-                            "hdr10_base_layer_preserved",
-                            "enhancement_layer_discarded",
-                        ),
-                    ),
-                )
-            }
-            if (caps.hdrDetails?.hdr10 == true) {
-                add(
-                    PlaybackTransformationV3(
-                        name = CLIENT_DV7_TO_HDR10,
-                        executor = PlaybackTransformationExecutor.CLIENT,
-                        recipeVersion = CLIENT_DV_TRANSFORM_RECIPE_VERSION,
-                        validatedClaims = listOf(
-                            "dolby_vision_metadata_removed",
-                            "hdr10_base_layer_preserved",
-                            "enhancement_layer_discarded",
-                        ),
-                    ),
-                )
-            }
-        }
+        val clientVideoTransformations = advertisedClientDolbyVisionTransformations(
+            hdrDetails = caps.hdrDetails,
+            nativeRpuConverterAvailable = NativeDolbyVisionRpuConverter.isAvailable,
+        )
         return ClientPlaybackContext(
             formFactor = formFactor,
             appVersion = appVersion,
@@ -469,6 +443,62 @@ internal fun advertisedAudioDecodeCodecs(
         emptyList()
     }
     return (platformCodecs + ffmpegCodecs).distinct()
+}
+
+/**
+ * Client-side Dolby Vision transformations safe to expose to the v3 planner.
+ *
+ * A packaged converter and a compatible output range are prerequisites, not
+ * end-to-end evidence. In particular, the SM-F976U1 can decode HDR10 and run
+ * the packaged RPU bridge, yet a transformed Profile 7 stream renders one
+ * frame and then makes no forward progress. Advertising the transformation in
+ * that state makes every fresh session select the same unusable route before
+ * runtime recovery can ask the server for its validated transformation.
+ *
+ * Keep the default evidence set empty. A transformation may be added only
+ * after the playback fixture matrix validates the complete extractor,
+ * transformation, decoder, and display path for the Android device class.
+ */
+internal fun advertisedClientDolbyVisionTransformations(
+    hdrDetails: org.siloserver.silo.model.playback.HdrCapabilities?,
+    nativeRpuConverterAvailable: Boolean,
+    fixtureValidatedTransformations: Set<String> = emptySet(),
+): List<PlaybackTransformationV3> = buildList {
+    if (
+        CLIENT_DV7_TO_DV81 in fixtureValidatedTransformations &&
+        8 in hdrDetails?.dolbyVisionProfiles.orEmpty() &&
+        nativeRpuConverterAvailable
+    ) {
+        add(
+            PlaybackTransformationV3(
+                name = CLIENT_DV7_TO_DV81,
+                executor = PlaybackTransformationExecutor.CLIENT,
+                recipeVersion = CLIENT_DV_TRANSFORM_RECIPE_VERSION,
+                validatedClaims = listOf(
+                    "profile7_rpu_converted_to_profile81",
+                    "hdr10_base_layer_preserved",
+                    "enhancement_layer_discarded",
+                ),
+            ),
+        )
+    }
+    if (
+        CLIENT_DV7_TO_HDR10 in fixtureValidatedTransformations &&
+        hdrDetails?.hdr10 == true
+    ) {
+        add(
+            PlaybackTransformationV3(
+                name = CLIENT_DV7_TO_HDR10,
+                executor = PlaybackTransformationExecutor.CLIENT,
+                recipeVersion = CLIENT_DV_TRANSFORM_RECIPE_VERSION,
+                validatedClaims = listOf(
+                    "dolby_vision_metadata_removed",
+                    "hdr10_base_layer_preserved",
+                    "enhancement_layer_discarded",
+                ),
+            ),
+        )
+    }
 }
 
 private fun Tracks.Group.selectedFormat() =

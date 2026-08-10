@@ -71,12 +71,12 @@ internal fun PlaybackPlanV3.toSessionResponse(
         )
     }
     // Neutral v3 publishes the complete subtitle inventory on every plan,
-    // including plans with subtitles off. Project it directly into the native
-    // phone/TV session so Media3 can mount every deliverable representation and
-    // both menus retain burn-in-only ordinals. During a burn-in plan the
-    // inventory stays visible but its URLs are deliberately blanked: mounting
-    // alternatives alongside captions already baked into the video can make a
-    // forced sidecar render twice.
+    // including plans with subtitles off. Project it into native phone/TV UI
+    // state so both menus retain every authoritative ordinal. The player mount
+    // separately filters this inventory to the artifact selected by the active
+    // plan; inventory URLs are choices, not a preload list. During a burn-in
+    // plan the URLs are still deliberately blanked so no caller can mount a
+    // sidecar over captions already baked into the video.
     val inventorySubtitles = subtitle.inventory.asSequence()
         .filter { it.combinedIndex >= 0 && it.trackId.isNotBlank() }
         .filter {

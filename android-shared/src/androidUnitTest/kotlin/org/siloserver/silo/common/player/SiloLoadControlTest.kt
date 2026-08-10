@@ -90,16 +90,29 @@ class SiloLoadControlTest {
     }
 
     @Test
-    fun `one known media rate suppresses network fallback from metadata-poor tracks`() {
+    fun `known audio cannot hide an unknown high bitrate video track`() {
         val selected =
             selectBufferSizingBitrateBps(
                 listOf(
-                    BufferSizingTrackBitrates(4_000_000, 8_000_000, 100_000_000L),
+                    BufferSizingTrackBitrates(384_000, 384_000, 100_000_000L),
                     BufferSizingTrackBitrates(-1, -1, 100_000_000L),
                 ),
             )
 
-        assertEquals(4_000_000L, selected)
+        assertEquals(100_384_000L, selected)
+    }
+
+    @Test
+    fun `partial media metadata stays unknown until a network estimate exists`() {
+        val selected =
+            selectBufferSizingBitrateBps(
+                listOf(
+                    BufferSizingTrackBitrates(384_000, 384_000, 100_000_000L),
+                    BufferSizingTrackBitrates(-1, -1, -1L),
+                ),
+            )
+
+        assertNull(selected)
     }
 
     @Test

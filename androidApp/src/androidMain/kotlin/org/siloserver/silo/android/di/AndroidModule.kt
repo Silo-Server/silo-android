@@ -283,6 +283,7 @@ val androidModule = module {
             playerSettingsStore = get(),
             sessionLifecycle = get(),
             reachabilityMonitor = get(),
+            userItemStatePort = get(),
         )
     }
     factory {

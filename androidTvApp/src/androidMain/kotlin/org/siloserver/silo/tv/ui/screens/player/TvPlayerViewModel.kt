@@ -3,6 +3,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
+import org.siloserver.silo.common.player.failureDiagnostics
 
 import org.siloserver.silo.tv.BuildConfig
 
@@ -45,6 +46,7 @@ import org.siloserver.silo.common.player.seek.SeekPositionDecision
 import org.siloserver.silo.common.player.seek.decideSeek
 import org.siloserver.silo.common.player.seek.isSameRouteSeekReanchorCandidate
 import org.siloserver.silo.common.player.seek.playerPositionForSource
+import org.siloserver.silo.common.player.seek.replanMountPositionForSource
 import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
@@ -1552,6 +1554,9 @@ class TvPlayerViewModel(
         val duration = ready.session.durationSeconds
             ?: version?.duration?.takeIf { it > 0.0 }
             ?: before.duration
+        val remountPosition = ready.plan.timeline.replanMountPositionForSource(
+            adoption.requestedSourcePositionSeconds,
+        )
         val mountNonce = nextTypedSubtitleMountNonce(adoption.committed.identity)
         _uiState.update { state ->
             state.copy(
@@ -1572,12 +1577,15 @@ class TvPlayerViewModel(
                 serverDuration = duration,
                 subtitleUrls = subtitleUrls,
                 chapters = version?.chapters.orEmpty(),
-                startPosition = ready.plan.timeline.playerStartSeconds,
-                position = ready.plan.timeline.sourceStartSeconds
-                    .takeIf { it.isFinite() && it >= 0.0 }
-                    ?: state.position,
+                startPosition = remountPosition.playerPositionSeconds,
+                position = remountPosition.sourcePositionSeconds,
             )
         }
+        Log.i(
+            TAG,
+            "subtitle_replan_mount restored_source_seconds=${remountPosition.sourcePositionSeconds} " +
+                "player_seconds=${remountPosition.playerPositionSeconds}",
+        )
         return TvSubtitleAdoptionResult.Adopted
     }
 
@@ -2183,7 +2191,12 @@ class TvPlayerViewModel(
             return
         }
 
-        startProtocolV3Replan(reason.failureClassification(), notice, state)
+        startProtocolV3Replan(
+            classification = reason.failureClassification(),
+            notice = notice,
+            state = state,
+            diagnostics = reason.failureDiagnostics(),
+        )
     }
 
     private fun startProtocolV3Replan(
@@ -2267,6 +2280,8 @@ class TvPlayerViewModel(
             when (result) {
                 is ApiResult.Success -> when (val decision = result.data) {
                     is VideoSessionStartV3.Ready -> {
+                        val remountPosition = decision.plan.timeline
+                            .replanMountPositionForSource(state.position)
                         val effectiveFileId = decision.session.mediaFileId.takeIf { it > 0 }
                             ?: decision.plan.effectiveMediaFileId
                             ?: fileId
@@ -2352,12 +2367,15 @@ class TvPlayerViewModel(
                                 chapters = effectiveVersion?.chapters.orEmpty().ifEmpty {
                                     if (effectiveFileId == fileId) state.chapters else emptyList()
                                 },
-                                startPosition = decision.plan.timeline.playerStartSeconds,
-                                position = decision.plan.timeline.sourceStartSeconds
-                                    .takeIf { it.isFinite() && it >= 0.0 }
-                                    ?: it.position,
+                                startPosition = remountPosition.playerPositionSeconds,
+                                position = remountPosition.sourcePositionSeconds,
                             )
                         }
+                        Log.i(
+                            TAG,
+                            "replan_mount restored_source_seconds=${remountPosition.sourcePositionSeconds} " +
+                                "player_seconds=${remountPosition.playerPositionSeconds}",
+                        )
                     }
                     is VideoSessionStartV3.Terminal -> {
                         val failedSessionId = state.sessionId ?: return@launch

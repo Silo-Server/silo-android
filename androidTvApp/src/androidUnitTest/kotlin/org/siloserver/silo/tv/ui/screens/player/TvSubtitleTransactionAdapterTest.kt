@@ -115,7 +115,12 @@ class TvSubtitleTransactionAdapterTest {
 
     @Test
     fun `old server catalog-only sidecar performs one staged replan at current position`() = runTest {
-        val harness = harness(backgroundScope, isLocallyMountable = { false })
+        val adoption = AdoptionControl()
+        val harness = harness(
+            backgroundScope,
+            adoption = adoption,
+            isLocallyMountable = { false },
+        )
 
         harness.adapter.select(sidecar(4))
         runCurrent()
@@ -138,6 +143,7 @@ class TvSubtitleTransactionAdapterTest {
 
         assertEquals(listOf("old-server-sidecar"), harness.port.committed)
         assertEquals(sidecar(4), harness.adapter.snapshot.committedIdentity)
+        assertEquals(listOf(42.0), adoption.requestedSourcePositions)
     }
 
     @Test
@@ -2163,6 +2169,7 @@ class TvSubtitleTransactionAdapterTest {
             persistenceCoordinator = persistenceCoordinator,
             onCommittedPlayback = { adoptionRequest ->
                 adoption.started += 1
+                adoption.requestedSourcePositions += adoptionRequest.requestedSourcePositionSeconds
                 if (adoption.suspendAdoption) adoption.completions.receive()
                 adoption.failure?.let { throw it }
                 if (adoption.forceSuperseded || !adoptionRequest.isCurrent()) {
@@ -2243,6 +2250,7 @@ class TvSubtitleTransactionAdapterTest {
         var forceSuperseded: Boolean = false,
     ) {
         var started: Int = 0
+        val requestedSourcePositions = mutableListOf<Double>()
         val completions = Channel<Unit>(Channel.UNLIMITED)
 
         suspend fun complete() {

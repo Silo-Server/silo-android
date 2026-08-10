@@ -74,6 +74,8 @@ import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.libass.LibassBridge
+import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackPlanV3
@@ -98,7 +100,11 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SubtitlesRepository
+import org.siloserver.silo.repository.port.LocalTrackSelection
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
+import org.siloserver.silo.repository.port.UserItemStatePort
+import org.siloserver.silo.playback.audioTrackFingerprint
+import org.siloserver.silo.playback.encodeCatalogSubtitlePreference
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -536,11 +542,78 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             assertFalse(ready.showForcedSubtitles)
         }
 
+    @Test
+    fun persistedPerFileTracksAreIncludedInTheInitialV3Allocation() = runTest(dispatcher) {
+        val audioTracks = listOf(
+            AudioTrack(codec = "aac", language = "en", title = "Stereo"),
+            AudioTrack(codec = "truehd", language = "en", title = "Atmos"),
+        )
+        // Catalog order intentionally differs from the server's combined
+        // external-then-embedded subtitle index space. English is catalog
+        // ordinal 0 but combined index 1.
+        val subtitleTracks = listOf(
+            SubtitleTrack(index = 12, codec = "subrip", language = "en", title = "English"),
+            SubtitleTrack(index = 0, codec = "srt", language = "fr", title = "French", external = true),
+        )
+        val persisted = LocalTrackSelection(
+            audioFingerprint = audioTrackFingerprint(audioTracks[1]),
+            subtitleFingerprint = encodeCatalogSubtitlePreference(subtitleTracks, 0),
+        )
+        val localState = object : UserItemStatePort by NoOpUserItemStatePort {
+            override suspend fun localTrackSelection(contentId: String, fileId: Int) = persisted
+        }
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            versionFields = """
+                "audio_tracks": [
+                  {"codec":"aac","language":"en","title":"Stereo"},
+                  {"codec":"truehd","language":"en","title":"Atmos"}
+                ],
+                "subtitle_tracks": [
+                  {"index":12,"codec":"subrip","language":"en","title":"English","external":false},
+                  {"index":0,"codec":"srt","language":"fr","title":"French","external":true}
+                ]
+            """.trimIndent(),
+            userItemStatePort = localState,
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals(1, allocation?.audioTrackIndex)
+        assertEquals(1, allocation?.subtitleTrackIndex)
+    }
+
+    @Test
+    fun explicitPlaybackSubtitleIndexWinsAndPassesThroughUnchanged() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            versionFields = """
+                "subtitle_tracks": [
+                  {"index":12,"codec":"subrip","language":"en","title":"English","external":false},
+                  {"index":0,"codec":"srt","language":"fr","title":"French","external":true}
+                ]
+            """.trimIndent(),
+            explicitSubtitleTrackIndex = 1,
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals(1, allocation?.subtitleTrackIndex)
+    }
+
     private suspend fun TestScope.start(
         effective: String,
         profile: Profile,
+        versionFields: String = "",
+        explicitSubtitleTrackIndex: Int? = null,
+        userItemStatePort: UserItemStatePort = NoOpUserItemStatePort,
+        onAllocation: (MobileVideoSessionAllocation) -> Unit = {},
     ): VideoPlaybackStartResult.Ready {
-        val client = catalogClient(effective)
+        val client = catalogClient(effective, versionFields)
         val tokenManager = FakeTokenManager()
         val profileRepository = FakeProfileRepository(client, tokenManager, profile)
         val manager = RecordingPlaybackSessionManager(client, tokenManager)
@@ -562,7 +635,11 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 backgroundScope,
             ),
             reachabilityMonitor = ServerReachabilityMonitor(HealthApi(client), backgroundScope),
-            sessionAllocator = { ApiResult.Success(allocatedReady("subtitle-session")) },
+            userItemStatePort = userItemStatePort,
+            sessionAllocator = {
+                onAllocation(it)
+                ApiResult.Success(allocatedReady("subtitle-session"))
+            },
             sessionAdopter = { _, _ -> },
         )
 
@@ -572,14 +649,20 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 preferredFileId = 41,
                 roomId = null,
                 resumePositionOverride = null,
+                subtitleTrackIndex = explicitSubtitleTrackIndex,
             ),
         )
         assertTrue(result is VideoPlaybackStartResult.Ready, "expected a ready start, got $result")
         return result
     }
 
-    private fun catalogClient(effective: String): HttpClient =
-        HttpClient(
+    private fun catalogClient(effective: String, versionFields: String): HttpClient {
+        val extraVersionFields = versionFields
+            .trim()
+            .takeIf(String::isNotEmpty)
+            ?.let { ",\n$it" }
+            .orEmpty()
+        return HttpClient(
             MockEngine { request ->
                 if (request.url.encodedPath == "/api/v1/watch/starter") {
                     respond(
@@ -594,6 +677,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                                   "file_id": 41,
                                   "container": "mkv",
                                   "duration": 120.0
+                                  $extraVersionFields
                                 }
                               ]
                             }
@@ -612,6 +696,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
+    }
 }
 
 private class DeferredNonCooperativeStarter : VideoPlaybackStarter {
