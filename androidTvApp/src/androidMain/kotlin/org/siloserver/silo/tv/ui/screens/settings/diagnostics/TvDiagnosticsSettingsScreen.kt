@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -48,6 +49,8 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode
 import org.siloserver.silo.common.diagnostics.TimedCaptureStatus
 import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
 
@@ -69,25 +72,25 @@ fun TvDiagnosticsSettingsScreen(
     val crashFocusRequesters = remember {
         TvDiagnosticsCrashFocus.entries.associateWith { FocusRequester() }
     }
+    var crashRowHasFocus by remember { mutableStateOf(false) }
     LaunchedEffect(state.consent) {
         val target = initialTvDiagnosticsCrashFocus(state.consent)
         // Relocation, not acquisition: the page is already focusable, so a
         // miss just leaves focus wherever the route transition put it.
-        repeat(TvFrameRelocationMaxAttempts) {
-            withFrameNanos { }
-            when (
-                tvDiagnosticsCrashFocusRequestResult(
-                    runCatching { crashFocusRequesters.getValue(target).requestFocus() },
-                )
-            ) {
-                TvDiagnosticsCrashFocusRequestResult.FOCUSED -> return@LaunchedEffect
-                TvDiagnosticsCrashFocusRequestResult.RETRY -> Unit
-            }
-        }
+        // tvDiagnosticsCrashFocusRequestResult mapped a Result, so "did not
+        // throw" counted as FOCUSED and the loop stopped on acceptance rather
+        // than on arrival.
+        requestFocusUntilObserved(
+            maxAttempts = TvFrameRelocationMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = crashFocusRequesters.getValue(target)::requestFocus,
+            isFocused = { crashRowHasFocus },
+        )
     }
     val model = tvDiagnosticsScreenModel(state)
     fun Modifier.crashFocusControl(current: TvDiagnosticsCrashFocus): Modifier =
         focusRequester(crashFocusRequesters.getValue(current))
+            .onFocusChanged { crashRowHasFocus = it.isFocused || crashRowHasFocus }
             .onPreviewKeyEvent { event ->
                 val direction = when {
                     event.type != KeyEventType.KeyDown -> null
@@ -107,7 +110,10 @@ fun TvDiagnosticsSettingsScreen(
                     false
                 } else {
                     keyResult.target?.let { target ->
-                        runCatching { crashFocusRequesters.getValue(target).requestFocus() }
+                        crashFocusRequesters.getValue(target).claimFocusOrReport(
+                            target = "diagnostics_row",
+                            action = "dpad_${'$'}{direction?.name?.lowercase()}",
+                        )
                     }
                     true
                 }

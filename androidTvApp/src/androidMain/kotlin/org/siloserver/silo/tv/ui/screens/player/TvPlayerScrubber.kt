@@ -452,7 +452,9 @@ fun TvPlayerScrubber(
                     if (frac > 0.001f) {
                         Box(
                             modifier = Modifier
-                                .align(Alignment.Center)
+                                // CenterStart, not Center: `offset` is anchor-relative,
+                                // so Center adds half the bar width to every tick.
+                                .align(Alignment.CenterStart)
                                 .offset(x = barWidthDp * frac - 1.5.dp)
                                 .width(if (isTimelineScrubbing) 3.dp else 2.dp)
                                 .height(trackHeight + 8.dp)

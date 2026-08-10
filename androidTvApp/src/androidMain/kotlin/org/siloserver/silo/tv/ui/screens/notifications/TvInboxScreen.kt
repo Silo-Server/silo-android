@@ -30,10 +30,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -137,20 +142,41 @@ fun TvInboxScreen(
     // hasUnread true→false transition — so an incoming notification being read
     // elsewhere can't yank focus mid-browse.
     var pendingMarkAllRefocus by remember { mutableStateOf(false) }
+    var firstRowHasFocus by remember { mutableStateOf(false) }
+
+    // Both claims are observed rather than fire-and-forget. The first is
+    // acquisition — the inbox has just populated and nothing is focused yet, so
+    // dropping it leaves a dead D-pad on a full screen of notifications. The
+    // second is a relocation after Mark-all removed the focused card from
+    // composition, where focus is already gone and a short budget is right.
     LaunchedEffect(cards.isNotEmpty(), hasUnread) {
         if (cards.isNotEmpty() && !initialFocusRequested) {
-            runCatching { firstRowFocusRequester.requestFocus() }
             initialFocusRequested = true
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = firstRowFocusRequester::requestFocus,
+                isFocused = { firstRowHasFocus },
+            )
         }
         if (pendingMarkAllRefocus && !hasUnread && cards.isNotEmpty()) {
             pendingMarkAllRefocus = false
-            runCatching { firstRowFocusRequester.requestFocus() }
+            requestFocusUntilObserved(
+                maxAttempts = TvFrameRelocationMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = firstRowFocusRequester::requestFocus,
+                isFocused = { firstRowHasFocus },
+            )
         }
     }
 
     Column(
         modifier = modifier
             .fillMaxSize()
+            // Success is "focus is inside the inbox", not "the first row
+            // specifically" — a claim that lands anywhere in the list leaves a
+            // working D-pad, which is what the retry is protecting.
+            .onFocusChanged { firstRowHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background),
     ) {
         Column(
