@@ -115,6 +115,11 @@ class RemotePlaybackIdentityManager(
                                     refreshToken = refreshToken,
                                     profileId = profileId,
                                     profileToken = profileToken,
+                                    // The SESSION deadline. The access token's
+                                    // own expiry is not in this payload, so it
+                                    // stays null until a refresh reports one —
+                                    // proactive refresh must not read a
+                                    // four-hour session as a four-hour token.
                                     expiresAtEpochMs = expiresAtMs,
                                 ),
                             )

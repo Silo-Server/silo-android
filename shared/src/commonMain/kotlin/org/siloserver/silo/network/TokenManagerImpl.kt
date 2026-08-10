@@ -32,6 +32,9 @@ class TokenManagerImpl(
     private var refreshToken: String? = null
     private var tokenExpiry: TimeSource.Monotonic.ValueTimeMark? = null
 
+    /** Lifetime the server gave the current access token, for the half-life clamp. */
+    private var tokenLifetimeMs: Long? = null
+
     private var profileId: String? = null
     private var profileToken: String? = null
 
@@ -84,6 +87,7 @@ class TokenManagerImpl(
             this.accessToken = accessToken
             this.refreshToken = refreshToken
             this.tokenExpiry = timeSource.markNow() + expiresIn.seconds
+            this.tokenLifetimeMs = expiresIn.seconds.inWholeMilliseconds
         }
     }
 
@@ -118,7 +122,11 @@ class TokenManagerImpl(
         if (temporaryScope != null) return@withLock false
         if (accessToken == null) return@withLock false
         val expiry = tokenExpiry ?: return@withLock false
-        expiry - timeSource.markNow() <= marginMs.coerceAtLeast(0).milliseconds
+        shouldRefreshProactively(
+            remainingMs = (expiry - timeSource.markNow()).inWholeMilliseconds,
+            lifetimeMs = tokenLifetimeMs,
+            marginMs = marginMs,
+        )
     }
 
     override suspend fun getProfileId(): String? = mutex.withLock {
@@ -219,6 +227,7 @@ class TokenManagerImpl(
         accessToken = null
         refreshToken = null
         tokenExpiry = null
+        tokenLifetimeMs = null
         profileId = null
         profileToken = null
     }

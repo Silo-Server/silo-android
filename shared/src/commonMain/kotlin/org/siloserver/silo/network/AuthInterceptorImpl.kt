@@ -23,6 +23,27 @@ import org.siloserver.silo.model.auth.RefreshResponse
 private const val PROACTIVE_REFRESH_MARGIN_MS = 60_000L
 
 /**
+ * What a refresh attempt settled.
+ *
+ * [CredentialsDead] is the one the proactive path must not ignore: the server
+ * repudiated the refresh token, so the session has been torn down or the
+ * overlay generation flagged. Sending the original request anyway would spend a
+ * bearer the client has just declared invalid — and if the access token has not
+ * expired yet the server may well honour it, completing a write for a session
+ * the app has already ended.
+ */
+internal enum class RefreshOutcome {
+    /** New credentials are installed; retry with them. */
+    Refreshed,
+
+    /** Nothing changed and the credentials are still usable as-is. */
+    NotAttempted,
+
+    /** The server rejected the refresh token; these credentials are finished. */
+    CredentialsDead,
+}
+
+/**
  * Configuration for the [SiloAuthPlugin].
  */
 class SiloAuthConfig {
@@ -85,7 +106,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
         activeServerIdBeforeRequest: String?,
         authorizationBeforeRequest: String?,
         temporaryGeneration: String?,
-    ): Boolean = refreshMutex.withLock {
+    ): RefreshOutcome = refreshMutex.withLock {
         // If the user switched servers between request-send and 401-retry,
         // we are now operating against a different server. Don't try to
         // "refresh" — the refresh token wouldn't be valid for the new
@@ -96,7 +117,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             serverIdNow != activeServerIdBeforeRequest ||
             !isSameHttpOrigin(trustedServerUrl, serverUrlNow)
         ) {
-            return@withLock false
+            return@withLock RefreshOutcome.NotAttempted
         }
 
         val tokenNow = tokenManager.getAccessTokenForScope(refreshScope)
@@ -104,12 +125,12 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             tokenManager.getCurrentServerId() != activeServerIdBeforeRequest ||
             !isSameHttpOrigin(trustedServerUrl, tokenManager.getServerUrl())
         ) {
-            return@withLock false
+            return@withLock RefreshOutcome.NotAttempted
         }
         if (tokenNow != null && "Bearer $tokenNow" != authorizationBeforeRequest) {
             // Another coroutine already refreshed while we were waiting —
             // just retry the original request with the new token.
-            return@withLock true
+            return@withLock RefreshOutcome.Refreshed
         }
 
         if (temporaryGeneration != null &&
@@ -118,20 +139,20 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             // A 401 that won the race already proved these temporary credentials
             // are dead; the token is unchanged, so without this every waiter would
             // repeat the same doomed refresh.
-            return@withLock false
+            return@withLock RefreshOutcome.CredentialsDead
         }
 
         // Scope-bound, not global: a refresh must spend the token belonging to
         // the scope this request ran under.
         val refreshToken = tokenManager.getRefreshTokenForScope(refreshScope)
         if (refreshToken.isNullOrBlank()) {
-            return@withLock false
+            return@withLock RefreshOutcome.NotAttempted
         }
 
         try {
             diagnosticsObserver.safeAuthRefresh("started")
             if (trustedServerUrl.isBlank()) {
-                return@withLock false
+                return@withLock RefreshOutcome.NotAttempted
             }
 
             val refreshResponse = client.post("$trustedServerUrl/api/v1/auth/refresh") {
@@ -150,7 +171,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                 serverIdAfterCall != activeServerIdBeforeRequest ||
                 !isSameHttpOrigin(trustedServerUrl, serverUrlAfterCall)
             ) {
-                return@withLock false
+                return@withLock RefreshOutcome.NotAttempted
             }
 
             // Re-check sign-out state AFTER the network call too. Logout
@@ -160,7 +181,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             // this guard the refresh response lands after clearTokens()
             // and saveTokens() silently signs the user back in.
             if (tokenManager.getRefreshTokenForScope(refreshScope).isNullOrBlank()) {
-                return@withLock false
+                return@withLock RefreshOutcome.NotAttempted
             }
 
             if (refreshResponse.status.isSuccess()) {
@@ -173,13 +194,22 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                     expiresIn = tokens.expiresIn,
                 )
                 val after = tokenManager.getAccessTokenForScope(refreshScope)
-                after != null && "Bearer $after" != authorizationBeforeRequest
+                if (after != null && "Bearer $after" != authorizationBeforeRequest) {
+                    RefreshOutcome.Refreshed
+                } else {
+                    RefreshOutcome.NotAttempted
+                }
             } else {
                 diagnosticsObserver.safeAuthRefresh("failed")
                 // Only auth rejection proves the refresh token is bad.
                 // Gateway/proxy/server failures should keep the session so
                 // a temporary outage does not sign the user out.
-                if (refreshResponse.status.shouldInvalidateSessionAfterRefreshFailure()) {
+                if (!refreshResponse.status.shouldInvalidateSessionAfterRefreshFailure()) {
+                    // Gateway/proxy/server failure: the credentials may well
+                    // still be good, so the caller may spend them as before.
+                    return@withLock RefreshOutcome.NotAttempted
+                }
+                run {
                     val generationNow = tokenManager.temporaryGenerationId()
                     when {
                         // The identity changed while the refresh was in flight
@@ -195,8 +225,10 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                         // and writing history as the owner. Flag the generation
                         // dead and leave the overlay installed instead; the cast
                         // teardown path is what removes it.
-                        temporaryGeneration != null ->
+                        temporaryGeneration != null -> {
                             deadCredentialGenerations.update { it + temporaryGeneration }
+                            return@withLock RefreshOutcome.CredentialsDead
+                        }
 
                         // The [TokenManager.sessionExpired] event emitted by
                         // this call is what the root NavHost observer uses to
@@ -204,14 +236,17 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                         // the UI would stay on Home and keep rendering
                         // "Failed to load..." for every subsequent API call
                         // that now has no credentials.
-                        else -> tokenManager.invalidateSessionForScope(refreshScope)
+                        else -> {
+                            tokenManager.invalidateSessionForScope(refreshScope)
+                            return@withLock RefreshOutcome.CredentialsDead
+                        }
                     }
                 }
-                false
+                RefreshOutcome.NotAttempted
             }
         } catch (e: Throwable) {
             diagnosticsObserver.safeAuthRefresh("failed")
-            false
+            RefreshOutcome.NotAttempted
         }
     }
 
@@ -454,28 +489,46 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
         // manager that cannot answer the expiry question keeps today's
         // behaviour exactly.
         val proactivePath = request.url.encodedPath
+        // Read the installed generation BEFORE asking about expiry. The expiry
+        // question is answered by whatever identity is installed right now,
+        // while the refresh spends the token belonging to the scope this
+        // request captured earlier; if an overlay began or ended in between,
+        // those are two different identities and a rejection of one would be
+        // charged against the other. Requiring them to match means the pair is
+        // only ever evaluated for a single identity.
+        val proactiveGeneration = tokenManager.temporaryGenerationId()
         if (
             authorizationBeforeRequest != null &&
             !proactivePath.endsWith("/auth/refresh") &&
             !proactivePath.endsWith("/auth/login") &&
-            tokenManager.accessTokenExpiresWithin(PROACTIVE_REFRESH_MARGIN_MS)
+            proactiveGeneration == refreshScope.credentialGenerationId &&
+            proactiveGeneration !in deadCredentialGenerations.value &&
+            tokenManager.accessTokenExpiresWithin(PROACTIVE_REFRESH_MARGIN_MS) &&
+            tokenManager.temporaryGenerationId() == proactiveGeneration
         ) {
-            val generationNow = tokenManager.temporaryGenerationId()
-            if (generationNow == null || generationNow !in deadCredentialGenerations.value) {
-                diagnosticsObserver.safeAuthRefresh("required")
-                val refreshedEarly = refreshScopeOnce(
-                    refreshScope = refreshScope,
-                    trustedServerUrl = trustedServerUrl,
-                    activeServerIdBeforeRequest = activeServerIdBeforeRequest,
-                    authorizationBeforeRequest = authorizationBeforeRequest,
-                    temporaryGeneration = generationNow,
-                )
-                if (refreshedEarly) {
+            diagnosticsObserver.safeAuthRefresh("required")
+            val earlyOutcome = refreshScopeOnce(
+                refreshScope = refreshScope,
+                trustedServerUrl = trustedServerUrl,
+                activeServerIdBeforeRequest = activeServerIdBeforeRequest,
+                authorizationBeforeRequest = authorizationBeforeRequest,
+                temporaryGeneration = proactiveGeneration,
+            )
+            when (earlyOutcome) {
+                RefreshOutcome.Refreshed ->
                     tokenManager.getAccessTokenForScope(refreshScope)?.let { token ->
                         request.headers.remove(HttpHeaders.Authorization)
                         request.header(HttpHeaders.Authorization, "Bearer $token")
                     }
-                }
+
+                // The refresh token was rejected, so the session is already
+                // torn down. Strip the repudiated bearer rather than spend it:
+                // the request then fails cleanly as unauthenticated instead of
+                // possibly succeeding under an identity the app has ended.
+                RefreshOutcome.CredentialsDead ->
+                    request.headers.remove(HttpHeaders.Authorization)
+
+                RefreshOutcome.NotAttempted -> Unit
             }
         }
 
@@ -530,7 +583,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             activeServerIdBeforeRequest = activeServerIdBeforeRequest,
             authorizationBeforeRequest = authorizationBeforeRequest,
             temporaryGeneration = temporaryGeneration,
-        )
+        ) == RefreshOutcome.Refreshed
 
         if (refreshed) {
             // Explicitly replace the Authorization header on the request builder

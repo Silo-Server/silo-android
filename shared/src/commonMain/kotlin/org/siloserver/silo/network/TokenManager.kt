@@ -10,7 +10,20 @@ data class TemporaryAuthScope(
     val refreshToken: String,
     val profileId: String,
     val profileToken: String,
+    /**
+     * When the temporary SESSION ends — the deadline the cast UI counts down
+     * to. Not the access token's deadline: the session outlives many access
+     * tokens, so this must never be used to decide whether to refresh.
+     */
     val expiresAtEpochMs: Long,
+    /**
+     * When this overlay's ACCESS TOKEN expires, or null before the first
+     * refresh has told us. Null means "unknown", which keeps the reactive
+     * 401 path rather than guessing off the session deadline.
+     */
+    val accessTokenExpiresAtEpochMs: Long? = null,
+    /** Lifetime the server gave that access token, for the half-life clamp. */
+    val accessTokenLifetimeMs: Long? = null,
 ) {
     override fun toString(): String =
         "TemporaryAuthScope(" +
@@ -165,6 +178,11 @@ interface TokenManager {
      * Default false — an implementation that cannot answer must keep today's
      * reactive behaviour rather than guess, since a wrong "yes" spends a
      * refresh token on every request.
+     *
+     * Implementations must clamp [marginMs] to half the token's own lifetime
+     * (see [shouldRefreshProactively]). Without that, a server issuing tokens
+     * shorter than the margin is inside the window from the moment it issues
+     * one, and every single request refreshes.
      */
     suspend fun accessTokenExpiresWithin(marginMs: Long): Boolean = false
 
