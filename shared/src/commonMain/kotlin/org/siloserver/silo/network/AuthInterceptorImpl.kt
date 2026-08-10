@@ -106,8 +106,15 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
      * exists because it was needed once; a second copy would be a second place
      * to forget one.
      *
-     * @return true when the caller should retry with a token that now differs
-     * from [authorizationBeforeRequest].
+     * Set [allowNetworkRefresh] to false when a proactive attempt for this same
+     * request already failed transiently: every check still runs — including
+     * the one that spots a token a concurrent request installed, which needs no
+     * network call — but the refresh POST itself is skipped rather than piling
+     * onto a service that is already failing.
+     *
+     * @return [RefreshOutcome.Refreshed] when the caller should retry with a
+     * token that now differs from [authorizationBeforeRequest]; otherwise the
+     * outcome describing why not.
      */
     suspend fun refreshScopeOnce(
         refreshScope: AuthScopeSnapshot,
@@ -551,8 +558,9 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                 // download to completed server-side, GET /admin/stats?refresh
                 // forces a recompute — and an optionally-authenticated read
                 // would return GUEST data with a 200 that callers cache while
-                // sessionExpired is signing the user out. A 401 is the honest
-                // answer. Genuinely public calls opt out with skipSiloAuth(),
+                // sessionExpired is signing the user out. Failing the call is
+                // the honest answer, so this throws rather than sending
+                // anything. Genuinely public calls opt out with skipSiloAuth(),
                 // never receive a bearer, and so never reach this branch.
                 RefreshOutcome.CredentialsDead -> {
                     request.removeSiloCredentialHeaders()
