@@ -34,9 +34,8 @@ The following terms are distinct throughout these specifications:
 - **Playback attempt**: the complete user start action across any replans,
   identified before `/start` by `playback_attempt_id`.
 - **Plan attempt**: one execution of a plan, identified by `plan_attempt_id` and
-  an idempotent `plan_attempt_key`. Android derives the key deterministically
-  from `plan_id`, delivery, normalized effective recipe,
-  `output_route_generation`, and local recovery mutations.
+  an idempotent, opaque `plan_attempt_key` minted by the server. Android stores
+  and echoes that key unchanged; it never derives or interprets one locally.
 - **Replan**: a new server decision after a classified failure, capability
   change, track change, or quality change.
 

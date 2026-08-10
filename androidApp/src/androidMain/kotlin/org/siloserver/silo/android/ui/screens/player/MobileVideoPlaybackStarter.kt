@@ -22,6 +22,7 @@ import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
+import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
 import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
@@ -201,13 +202,15 @@ internal class MobileVideoPlaybackStarter(
                     diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED,
                 )
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
-            val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
-            val playbackContext = capabilityDetector.detectPlaybackContext(
-                formFactor = "mobile",
-                appVersion = BuildConfig.VERSION_NAME,
-                dolbyVision = dolbyVision,
-                capabilities = capabilities,
-            )
+            val capabilities = request.recoveryStartParams?.capabilities
+                ?: capabilityDetector.detect(dolbyVision = dolbyVision)
+            val playbackContext = request.recoveryStartParams?.clientPlaybackContext
+                ?: capabilityDetector.detectPlaybackContext(
+                    formFactor = "mobile",
+                    appVersion = BuildConfig.VERSION_NAME,
+                    dolbyVision = dolbyVision,
+                    capabilities = capabilities,
+                )
             // Skip-back-on-resume: nudge a genuine resume back a few seconds.
             // Suppressed for Start Over / retry (request flag) and Watch Together
             // (roomId — all participants must land on the synced anchor). The same
@@ -309,12 +312,12 @@ internal class MobileVideoPlaybackStarter(
             val startParams = StartParams(
                 contentId = request.contentId,
                 fileId = effectiveFileId,
-                capabilities = capabilities,
+                capabilities = readyV3.capabilities,
                 audioTrackIndex = initialTracks.audioTrackIndex ?: resolved.audioTrackIndex,
                 subtitleTrackIndex = initialTracks.subtitleTrackIndex,
                 qualityPreference = playbackQualityIntent,
                 startPosition = sourceStartPos,
-                clientPlaybackContext = playbackContext,
+                clientPlaybackContext = readyV3.clientPlaybackContext,
             )
             val adopted = if (sessionAdopter != null) {
                 sessionAdopter.adopt(startParams, resolved)
@@ -366,8 +369,10 @@ internal class MobileVideoPlaybackStarter(
                 accessToken = accessToken,
                 mediaFileId = effectiveFileId,
                 audioTrackIndex = resolved.audioTrackIndex,
-                durationSeconds = resolved.durationSeconds ?: effectiveVersion?.duration ?: 0.0,
-                subtitleUrls = buildPlaybackSubtitleChoices(
+                // Protocol v3 source duration is authoritative. Unknown stays
+                // unknown; catalog/player runtimes must not fill this field.
+                durationSeconds = resolved.durationSeconds ?: 0.0,
+                subtitleUrls = enrichAuthoritativePlaybackSubtitleChoices(
                     catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
                 ),

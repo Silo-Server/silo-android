@@ -46,4 +46,19 @@ class TvPlaybackExitSnapshotTest {
 
         assertEquals(TvPlaybackExitSnapshot(3_005.0, 3_600.0), snapshot)
     }
+
+    @Test
+    fun protocolV3DoesNotSubstitutePlayerDurationWhenSourceDurationIsUnknown() {
+        val snapshot = resolveTvPlaybackExitSnapshot(
+            currentPositionSeconds = 3_001.0,
+            currentDurationSeconds = 0.0,
+            positionMs = 5_000,
+            durationMs = 600_000,
+            timeline = PlaybackTimeline(timelineOffsetSeconds = 3_000.0),
+            serverDurationSeconds = 0.0,
+            allowPlayerDuration = false,
+        )
+
+        assertEquals(TvPlaybackExitSnapshot(3_005.0, 0.0), snapshot)
+    }
 }

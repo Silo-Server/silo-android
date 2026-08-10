@@ -151,6 +151,30 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `adapted edition commits returned audio and subtitle identities`() = runTest {
+        val harness = harness(backgroundScope)
+
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        val adapted = candidate(
+            id = "adapted",
+            selectedIndex = 1,
+            selectedAudioIndex = 5,
+            effectiveMediaFileId = 22,
+            selectedSubtitleIdentity = sidecar(1),
+        )
+        assertEquals(sidecar(1), adapted.selectedSubtitleIdentity)
+        harness.port.completeStage(adapted)
+        runCurrent()
+
+        assertEquals(listOf("adapted"), harness.port.committed)
+        assertEquals(1, harness.committedPlaybacks.size)
+        assertEquals(sidecar(1), harness.adapter.snapshot.committedIdentity)
+        assertEquals(5, harness.adapter.snapshot.transition.committed.audioTrackIndex)
+        assertEquals(22, harness.committedPlaybacks.single().effectiveMediaFileId)
+    }
+
+    @Test
     fun `local then audio before mount keeps one client-owned transaction`() = runTest {
         val downloaded = downloadedIdentity()
         val row = downloadedTrack(
@@ -1534,6 +1558,8 @@ class MobileSubtitleTransactionAdapterTest {
             mode == PlaybackSubtitleModeV3.CONVERT,
         sessionId: String = "s-$id",
         tracks: List<PlayerSubtitleInfo> = emptyList(),
+        effectiveMediaFileId: Int? = null,
+        selectedSubtitleIdentity: SubtitleIdentity? = null,
     ): MobileStagedSubtitleCandidate = MobileStagedSubtitleCandidate(
         id = id,
         sessionId = sessionId,
@@ -1542,6 +1568,8 @@ class MobileSubtitleTransactionAdapterTest {
         subtitleMode = mode,
         hasSidecar = hasSidecar,
         subtitleTracks = tracks,
+        effectiveMediaFileId = effectiveMediaFileId,
+        selectedSubtitleIdentity = selectedSubtitleIdentity,
     )
 
     private fun clientOwnedCandidate(
@@ -1659,6 +1687,7 @@ class MobileSubtitleTransactionAdapterTest {
                 MobileSubtitleCommittedPlayback(
                     sessionId = candidate.sessionId,
                     subtitleTracks = candidate.subtitleTracks,
+                    effectiveMediaFileId = candidate.effectiveMediaFileId,
                 ),
             )
         }

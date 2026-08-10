@@ -56,6 +56,19 @@ class PgsSupExtractorTest {
     }
 
     @Test
+    fun indexesParsedDisplaySetsByTimestampAndBytePosition() {
+        val extractor = PgsSupExtractor(RecordingParserFactory(), { 0L }, pgsFormat())
+        val output = FakeExtractorOutput()
+        extractor.init(output)
+
+        drain(extractor, FakeExtractorInput.Builder().setData(supStream()).build())
+
+        val seekPoints = output.seekMap.getSeekPoints(3_500_000L)
+        assertEquals(3_000_000L, seekPoints.first.timeUs)
+        assertTrue(seekPoints.first.position > 0L)
+    }
+
+    @Test
     fun eachDisplaySetBecomesOneSampleAtItsOwnPts() {
         val factory = RecordingParserFactory()
         val extractor = PgsSupExtractor(factory, { 0L }, pgsFormat())

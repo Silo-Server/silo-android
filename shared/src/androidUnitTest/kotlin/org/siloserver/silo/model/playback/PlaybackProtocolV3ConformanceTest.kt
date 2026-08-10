@@ -214,7 +214,7 @@ class PlaybackProtocolV3ConformanceTest {
         assertEquals(PlaybackDelivery.ORIGINAL_HTTP, plan.delivery)
         assertEquals(PlaybackStreamProtocol.HTTP_PROGRESSIVE, plan.stream.protocol)
         assertEquals("validated_original_playback", plan.decisionReason)
-        assertEquals(7265.5, plan.source.durationSeconds)
+        assertEquals(7200.0, plan.source.durationSeconds)
         assertTrue(plan.planAttemptKey.startsWith("v3:"), "plan_attempt_key must arrive server-minted")
 
         assertClientReadsEveryFieldExcept(
@@ -263,7 +263,7 @@ class PlaybackProtocolV3ConformanceTest {
         )
 
         assertEquals(
-            listOf("original", "720p", "480p"),
+            listOf("original"),
             plan.availableQualities.map { it.label },
             "the quality menu keeps the server's order",
         )

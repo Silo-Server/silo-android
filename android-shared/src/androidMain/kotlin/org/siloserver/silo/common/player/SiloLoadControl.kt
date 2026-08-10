@@ -8,6 +8,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.trackselection.ExoTrackSelection
 import androidx.media3.exoplayer.upstream.DefaultAllocator
+import org.siloserver.silo.player.DolbyVisionDetection
 
 /**
  * Media3 load control with a bitrate-scaled, heap-bounded allocation target.
@@ -54,7 +55,10 @@ class SiloLoadControl(
                         averageBitrateBps = format.averageBitrate,
                         peakBitrateBps = format.peakBitrate,
                         latestNetworkEstimateBps = it.latestBitrateEstimate,
-                        isDolbyVision = format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION,
+                        isDolbyVision = isDolbyVisionBufferTrack(
+                            sampleMimeType = format.sampleMimeType,
+                            codecs = format.codecs,
+                        ),
                     )
                 } else {
                     null
@@ -79,7 +83,7 @@ class SiloLoadControl(
                 unknownBitrateFallbackBytes = fallback,
             )
         depthMs = result.depth.ms
-        Log.i(
+        Log.d(
             TAG,
             "target_bytes=${result.target.bytes} budget_bytes=$budgetBytes " +
                 "depth_ms=${result.depth.ms} dolby_vision=$hasDolbyVision",
@@ -92,6 +96,12 @@ class SiloLoadControl(
         internal const val MIN_TARGET_BUFFER_BYTES = 16 * 1024 * 1024
     }
 }
+
+internal fun isDolbyVisionBufferTrack(
+    sampleMimeType: String?,
+    codecs: String?,
+): Boolean = sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION ||
+    DolbyVisionDetection.isDolbyVision(videoCodec = codecs)
 
 internal data class BufferSizingTrackBitrates(
     val averageBitrateBps: Int,

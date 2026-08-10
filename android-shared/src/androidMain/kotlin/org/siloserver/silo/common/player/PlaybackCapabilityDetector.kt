@@ -15,6 +15,7 @@ import org.siloserver.silo.common.player.video.media3OriginalPlaybackContainers
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.CAPABILITY_EVIDENCE_EXACT
+import org.siloserver.silo.model.playback.CAPABILITY_EVIDENCE_PLATFORM_ATTESTED
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_HLS
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_PROGRESSIVE
@@ -53,10 +54,13 @@ class PlaybackCapabilityDetector(
     private val libassBridge: LibassBridge,
 ) {
     val outputRouteGeneration: StateFlow<Long> = audioCapabilityManager.outputRouteGeneration
+    private val planningSnapshots = PlaybackPlanningSnapshotRegistry(
+        maxSize = MAX_RETAINED_PLANNING_SNAPSHOTS,
+    )
     // Platform software-audio decoders are static for the process; cache the
     // MediaCodecList enumeration for callers that need a fresh snapshot later.
     @Volatile
-    private var cachedPlatformSoftwareAudioCodecs: List<String>? = null
+    private var cachedPlatformSoftwareAudioProbe: PlatformSoftwareAudioProbe? = null
     /**
      * Inspect the resolved [Tracks] object (emitted by `Player.Listener.onTracksChanged`)
      * and declare whether direct play can proceed. Looks at the selected video
@@ -152,6 +156,7 @@ class PlaybackCapabilityDetector(
         ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
         dolbyVision: DolbyVisionPolicy.Snapshot = DolbyVisionPolicy.Snapshot(),
     ): ClientCodecCapabilities {
+        val audioRoute = audioCapabilityManager.playbackRouteSnapshot()
         val codecProbe = MediaCodecCapabilitiesProbe.probe()
         val displayHdr = DisplayHdrProbe.probe(context)
         // With Dolby Vision off, stop advertising DV profiles (except 5,
@@ -170,18 +175,19 @@ class PlaybackCapabilityDetector(
             )
         }
 
+        val platformAudio = detectPlatformSoftwareAudioCodecs()
         val softwareAudio = advertisedAudioDecodeCodecs(
-            platformCodecs = detectPlatformSoftwareAudioCodecs(),
+            platformCodecs = platformAudio.codecs,
             ffmpegAvailable = ffmpegAvailable,
             isTv = TvModeDetector.isTv(context),
         )
-        val passthrough = audioCapabilityManager.capabilities.value
+        val passthrough = audioRoute.capabilities
         val hasAnyHdr = intersectedHdr.hdr10 ||
             intersectedHdr.hdr10Plus ||
             intersectedHdr.hlg ||
             intersectedHdr.dolbyVisionProfiles.isNotEmpty()
 
-        return ClientCodecCapabilities(
+        val detected = ClientCodecCapabilities(
             // Stated rather than defaulted: both lists below come from a
             // MediaCodecList probe of the concrete profile/level/bit-depth
             // tuples this device reports, which is what "exact" claims. If a
@@ -189,7 +195,11 @@ class PlaybackCapabilityDetector(
             // here — the server strictly validates plans against exact
             // evidence, and only exact evidence earns audio passthrough.
             videoEvidence = CAPABILITY_EVIDENCE_EXACT,
-            audioEvidence = CAPABILITY_EVIDENCE_EXACT,
+            audioEvidence = if (platformAudio.exact) {
+                CAPABILITY_EVIDENCE_EXACT
+            } else {
+                CAPABILITY_EVIDENCE_PLATFORM_ATTESTED
+            },
             codecsVideo = codecProbe.videoCodecs.toList(),
             codecsVideoHardware = codecProbe.videoCodecs.toList(),
             // This list is decode-only. Encoded formats accepted by the
@@ -203,6 +213,8 @@ class PlaybackCapabilityDetector(
             audioPassthrough = passthrough,
             videoDecode = codecProbe.videoDecodeCapabilities,
         )
+        planningSnapshots.remember(detected, audioRoute)
+        return detected
     }
 
     /**
@@ -225,6 +237,10 @@ class PlaybackCapabilityDetector(
         capabilities: ClientCodecCapabilities? = null,
     ): ClientPlaybackContext {
         val caps = capabilities ?: detect(ffmpegAvailable, dolbyVision)
+        val audioRoute = planningSnapshots.resolve(
+            capabilities = caps,
+            currentRoute = audioCapabilityManager.playbackRouteSnapshot(),
+        )
         val passthrough = caps.audioPassthrough
         val decodeAudio = caps.codecsAudio
         val libassRendering = libassBridge.isRenderingSupported
@@ -252,11 +268,11 @@ class PlaybackCapabilityDetector(
                 hdrDetails = caps.hdrDetails,
                 audioPassthrough = passthrough,
                 currentSink = if (passthrough?.passthroughCodecs?.isNotEmpty() == true) "passthrough_sink" else "local_output",
-                sinkType = audioCapabilityManager.currentSinkType(),
+                sinkType = audioRoute.sinkType,
                 // Opaque to the server, which only ever compares it for
                 // equality. Android's route generation counter is exactly that:
                 // it changes when the audio route changes and nothing else.
-                outputContextId = audioCapabilityManager.outputRouteGeneration.value.toString(),
+                outputContextId = audioRoute.routeGeneration.toString(),
             ),
             deliveries = mapOf(
                 DELIVERY_CLASS_ORIGINAL_HTTP to DeliveryCapability(
@@ -359,19 +375,23 @@ class PlaybackCapabilityDetector(
      * characters, so keep it to the fields device quirks actually match on.
      */
     private fun androidPlatformDetails(): Map<String, String> = buildMap {
-        Build.BRAND?.let { put("brand", it) }
-        Build.DEVICE?.let { put("device", it) }
-        Build.PRODUCT?.let { put("product", it) }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Build.SOC_MANUFACTURER?.let { put("soc_manufacturer", it) }
-            Build.SOC_MODEL?.let { put("soc_model", it) }
+        fun putBounded(key: String, value: String) {
+            put(key, value.take(MAX_PLATFORM_DETAIL_CHARS))
         }
-        Build.ID?.let { put("build_id", it) }
-        Build.DISPLAY?.let { put("build_display", it) }
-        Build.VERSION.SECURITY_PATCH?.let { put("security_patch", it) }
-        put("sdk_int", Build.VERSION.SDK_INT.toString())
+
+        Build.BRAND?.let { putBounded("brand", it) }
+        Build.DEVICE?.let { putBounded("device", it) }
+        Build.PRODUCT?.let { putBounded("product", it) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Build.SOC_MANUFACTURER?.let { putBounded("soc_manufacturer", it) }
+            Build.SOC_MODEL?.let { putBounded("soc_model", it) }
+        }
+        Build.ID?.let { putBounded("build_id", it) }
+        Build.DISPLAY?.let { putBounded("build_display", it) }
+        Build.VERSION.SECURITY_PATCH?.let { putBounded("security_patch", it) }
+        putBounded("sdk_int", Build.VERSION.SDK_INT.toString())
         Build.SUPPORTED_ABIS?.toList()?.takeIf { it.isNotEmpty() }
-            ?.let { put("abis", it.joinToString(",")) }
+            ?.let { putBounded("abis", it.joinToString(",")) }
     }
 
     /**
@@ -397,28 +417,76 @@ class PlaybackCapabilityDetector(
             ?: "unknown"
 
     /** Returns codecs backed by an Android platform [MediaCodec] decoder. */
-    private fun detectPlatformSoftwareAudioCodecs(): List<String> {
-        cachedPlatformSoftwareAudioCodecs?.let { return it }
-        val result = mutableSetOf<String>()
-        val list = runCatching { MediaCodecList(MediaCodecList.REGULAR_CODECS) }.getOrNull()
-            ?: return listOf("aac", "mp3")
-        for (info in list.codecInfos) {
-            if (info.isEncoder) continue
-            for (type in info.supportedTypes) {
-                when {
-                    type.equals(MediaFormat.MIMETYPE_AUDIO_AAC, ignoreCase = true) -> result += "aac"
-                    type.equals(MediaFormat.MIMETYPE_AUDIO_AC3, ignoreCase = true) -> result += "ac3"
-                    type.equals(MediaFormat.MIMETYPE_AUDIO_EAC3, ignoreCase = true) -> result += "eac3"
-                    type.equals(MediaFormat.MIMETYPE_AUDIO_EAC3_JOC, ignoreCase = true) -> result += "eac3_joc"
-                    type.equals(MediaFormat.MIMETYPE_AUDIO_FLAC, ignoreCase = true) -> result += "flac"
-                    type.equals(MediaFormat.MIMETYPE_AUDIO_OPUS, ignoreCase = true) -> result += "opus"
-                    type.equals(MediaFormat.MIMETYPE_AUDIO_VORBIS, ignoreCase = true) -> result += "vorbis"
-                    type.equals(MediaFormat.MIMETYPE_AUDIO_MPEG, ignoreCase = true) -> result += "mp3"
+    private fun detectPlatformSoftwareAudioCodecs(): PlatformSoftwareAudioProbe {
+        cachedPlatformSoftwareAudioProbe?.let { return it }
+        val probe = runCatching {
+            val result = mutableSetOf<String>()
+            for (info in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
+                if (info.isEncoder) continue
+                for (type in info.supportedTypes) {
+                    when {
+                        type.equals(MediaFormat.MIMETYPE_AUDIO_AAC, ignoreCase = true) -> result += "aac"
+                        type.equals(MediaFormat.MIMETYPE_AUDIO_AC3, ignoreCase = true) -> result += "ac3"
+                        type.equals(MediaFormat.MIMETYPE_AUDIO_EAC3, ignoreCase = true) -> result += "eac3"
+                        type.equals(MediaFormat.MIMETYPE_AUDIO_EAC3_JOC, ignoreCase = true) -> result += "eac3_joc"
+                        type.equals(MediaFormat.MIMETYPE_AUDIO_FLAC, ignoreCase = true) -> result += "flac"
+                        type.equals(MediaFormat.MIMETYPE_AUDIO_OPUS, ignoreCase = true) -> result += "opus"
+                        type.equals(MediaFormat.MIMETYPE_AUDIO_VORBIS, ignoreCase = true) -> result += "vorbis"
+                        type.equals(MediaFormat.MIMETYPE_AUDIO_MPEG, ignoreCase = true) -> result += "mp3"
+                    }
                 }
             }
+            PlatformSoftwareAudioProbe(codecs = result.toList(), exact = true)
+        }.getOrElse {
+            PlatformSoftwareAudioProbe(codecs = listOf("aac", "mp3"), exact = false)
         }
-        return result.toList().also { cachedPlatformSoftwareAudioCodecs = it }
+        cachedPlatformSoftwareAudioProbe = probe
+        return probe
     }
+
+    private data class PlatformSoftwareAudioProbe(
+        val codecs: List<String>,
+        val exact: Boolean,
+    )
+
+    private companion object {
+        const val MAX_PLATFORM_DETAIL_CHARS = 128
+        const val MAX_RETAINED_PLANNING_SNAPSHOTS = 32
+    }
+}
+
+/**
+ * Retains the route evidence captured with a capability object so planning
+ * context cannot combine that object with a route change that happened later.
+ * Capability equality is intentionally insufficient: two routes may expose
+ * identical codecs while still requiring distinct output context identities.
+ */
+internal class PlaybackPlanningSnapshotRegistry(
+    private val maxSize: Int,
+) {
+    private val snapshots = ArrayDeque<Pair<ClientCodecCapabilities, AudioPlaybackRouteSnapshot>>()
+
+    init {
+        require(maxSize > 0)
+    }
+
+    @Synchronized
+    fun remember(
+        capabilities: ClientCodecCapabilities,
+        route: AudioPlaybackRouteSnapshot,
+    ) {
+        snapshots.addLast(capabilities to route)
+        while (snapshots.size > maxSize) {
+            snapshots.removeFirst()
+        }
+    }
+
+    @Synchronized
+    fun resolve(
+        capabilities: ClientCodecCapabilities,
+        currentRoute: AudioPlaybackRouteSnapshot,
+    ): AudioPlaybackRouteSnapshot =
+        snapshots.lastOrNull { (planned, _) -> planned === capabilities }?.second ?: currentRoute
 }
 
 /**
@@ -501,6 +569,7 @@ internal fun advertisedClientDolbyVisionTransformations(
     }
 }
 
+@UnstableApi
 private fun Tracks.Group.selectedFormat() =
     (0 until length)
         .firstOrNull { isTrackSelected(it) }

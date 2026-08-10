@@ -30,6 +30,7 @@ class PlaybackStartupStallDetector(
     private var clientDolbyVisionTransform = false
     private var clientTransformEvidenceAtMs: Long? = null
     private var clientTransformPositionMs: Long = 0L
+    private var clientTransformDecoderOutputCount: Int = 0
     private var clientTransformProgressAtMs: Long = 0L
     private var paused = false
     // Last time playback made forward progress (or the mount time before it
@@ -69,6 +70,7 @@ class PlaybackStartupStallDetector(
         }
         this.clientTransformEvidenceAtMs = null
         this.clientTransformPositionMs = this.startPositionMs
+        this.clientTransformDecoderOutputCount = 0
         this.clientTransformProgressAtMs = nowMs
         this.paused = false
         this.lastProgressPositionMs = this.startPositionMs
@@ -144,15 +146,26 @@ class PlaybackStartupStallDetector(
         if (hasClientTransformDecodeEvidence && clientTransformEvidenceAtMs == null) {
             clientTransformEvidenceAtMs = nowMs
             clientTransformPositionMs = currentPositionMs
+            clientTransformDecoderOutputCount = decoderOutputCount
             clientTransformProgressAtMs = nowMs
         }
-        if (currentPositionMs < clientTransformPositionMs) {
+        val clientTransformSeekedBackward = currentPositionMs < clientTransformPositionMs
+        clientTransformPositionMs = currentPositionMs
+        if (clientTransformSeekedBackward) {
             // A seek or timeline replacement starts a fresh local-transform
             // deadline just as it does for the transport progress clock.
-            clientTransformPositionMs = currentPositionMs
+            clientTransformDecoderOutputCount = decoderOutputCount
             clientTransformProgressAtMs = nowMs
-        } else if (currentPositionMs - clientTransformPositionMs >= startedProgressMs) {
-            clientTransformPositionMs = currentPositionMs
+        } else if (
+            hasClientTransformDecodeEvidence &&
+            decoderOutputCount != clientTransformDecoderOutputCount
+        ) {
+            // Playback position can advance on audio alone while the video
+            // transform is wedged. Only decoded video output proves this local
+            // recipe is still making progress. A counter reset also starts a
+            // fresh deadline because Media3 may replace DecoderCounters with a
+            // new renderer instance during a timeline replacement.
+            clientTransformDecoderOutputCount = decoderOutputCount
             clientTransformProgressAtMs = nowMs
         }
 

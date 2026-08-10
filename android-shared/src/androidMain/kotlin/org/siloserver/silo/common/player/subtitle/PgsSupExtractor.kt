@@ -62,12 +62,15 @@ class PgsSupExtractor(
     /** Segments of the display set being accumulated, already prefix-stripped. */
     private var displaySet = ByteArrayBuilder()
     private var displaySetTimeUs = C.TIME_UNSET
+    private var displaySetPosition: Long = C.POSITION_UNSET.toLong()
     private var displaySetSegmentCount = 0
     private var failedClosed = false
     private var emittedSets = 0
     /** Display sets dropped because the parser could not survive them. */
     private var malformedSets = 0
     private var emittedCues = 0
+    private var lastIndexedTimeUs = 0L
+    private var lastIndexedPosition = 0L
 
     // ProgressiveMediaPeriod coerces every seek to zero when an extractor
     // advertises an unseekable map. In a MergingMediaSource that makes a PGS
@@ -115,6 +118,7 @@ class PgsSupExtractor(
     override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int {
         if (failedClosed) return Extractor.RESULT_END_OF_INPUT
         val output = trackOutput ?: return Extractor.RESULT_END_OF_INPUT
+        val segmentPosition = input.position
         try {
             input.readFully(headerScratch, 0, SEGMENT_HEADER_SIZE)
         } catch (_: EOFException) {
@@ -179,6 +183,7 @@ class PgsSupExtractor(
         // First segment of a set carries the time the whole set is shown at.
         if (displaySet.isEmpty()) {
             displaySetTimeUs = pts90kHz * C.MICROS_PER_SECOND / PTS_CLOCK_HZ
+            displaySetPosition = segmentPosition
         }
         appendSegment(segmentType, segmentLength, payload)
         return Extractor.RESULT_CONTINUE
@@ -201,6 +206,7 @@ class PgsSupExtractor(
     private fun discardPendingDisplaySet() {
         displaySet = ByteArrayBuilder()
         displaySetTimeUs = C.TIME_UNSET
+        displaySetPosition = C.POSITION_UNSET.toLong()
         displaySetSegmentCount = 0
     }
 
@@ -213,8 +219,10 @@ class PgsSupExtractor(
         if (displaySet.isEmpty()) return
         val bytes = displaySet.toByteArray()
         val timeUs = displaySetTimeUs
+        val position = displaySetPosition
         displaySet = ByteArrayBuilder()
         displaySetTimeUs = C.TIME_UNSET
+        displaySetPosition = C.POSITION_UNSET.toLong()
         displaySetSegmentCount = 0
         val activeParser = parser ?: return
         val output = trackOutput ?: return
@@ -260,7 +268,18 @@ class PgsSupExtractor(
             )
             null
         }
-        decoded?.let { publishDisplaySet(output, it, timeUs) }
+        decoded?.let {
+            publishDisplaySet(output, it, timeUs)
+            val indexedTimeUs = (timeUs + offsetUsProvider()).coerceAtLeast(0L)
+            if (
+                position > lastIndexedPosition &&
+                indexedTimeUs > lastIndexedTimeUs
+            ) {
+                seekMap.addSeekPoint(indexedTimeUs, position)
+                lastIndexedTimeUs = indexedTimeUs
+                lastIndexedPosition = position
+            }
+        }
     }
 
     /**
@@ -318,6 +337,7 @@ class PgsSupExtractor(
     override fun seek(position: Long, timeUs: Long) {
         displaySet = ByteArrayBuilder()
         displaySetTimeUs = C.TIME_UNSET
+        displaySetPosition = C.POSITION_UNSET.toLong()
         displaySetSegmentCount = 0
         failedClosed = false
         parser?.reset()

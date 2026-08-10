@@ -3,6 +3,7 @@ package org.siloserver.silo.common.player
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackSessionRecorder
 import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
+import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.network.ApiResult
@@ -416,6 +417,7 @@ class PlaybackSessionLifecycleTest {
         // The lifecycle hands the resume position to whoever owns planning;
         // it does not start a replacement session itself.
         assertEquals(1, renewals.size)
+        assertEquals("sess-original", renewals.single().staleSessionId)
         assertEquals(42.5, renewals.single().positionSeconds, 0.0)
         assertEquals(startParams, renewals.single().startParams)
 
@@ -901,6 +903,7 @@ class PlaybackSessionLifecycleTest {
         contentId = "content-1",
         fileId = 42,
         capabilities = ClientCodecCapabilities(),
+        clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
         audioTrackIndex = null,
         qualityPreference = null,
         startPosition = startPosition,

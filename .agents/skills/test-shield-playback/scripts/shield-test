@@ -387,7 +387,7 @@ WHERE a.normalized_request#>>'{client_playback_context,device,manufacturer}' =
         convert_from(decode('$manufacturer_hex', 'hex'), 'UTF8')
   AND a.normalized_request#>>'{client_playback_context,device,model}' =
         convert_from(decode('$model_hex', 'hex'), 'UTF8')
-  AND COALESCE(a.normalized_request#>>'{client_playback_context,device,device}', '') IN (
+  AND COALESCE(a.normalized_request#>>'{client_playback_context,device,platform_details,device}', '') IN (
         '', convert_from(decode('$codename_hex', 'hex'), 'UTF8')
       )
   $content_clause
@@ -420,7 +420,7 @@ WHERE a.normalized_request#>>'{client_playback_context,device,manufacturer}' =
         convert_from(decode('$manufacturer_hex', 'hex'), 'UTF8')
   AND a.normalized_request#>>'{client_playback_context,device,model}' =
         convert_from(decode('$model_hex', 'hex'), 'UTF8')
-  AND COALESCE(a.normalized_request#>>'{client_playback_context,device,device}', '') IN (
+  AND COALESCE(a.normalized_request#>>'{client_playback_context,device,platform_details,device}', '') IN (
         '', convert_from(decode('$codename_hex', 'hex'), 'UTF8')
       )
 ORDER BY a.created_at DESC

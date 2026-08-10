@@ -24,24 +24,23 @@ class AudiobookPlayerTeardownSourceTest {
         .substringBefore("private suspend fun retireActiveSession(")
 
     @Test
-    fun `onCleared captures and submits external session finalization without blocking`() {
+    fun `onCleared reports both timelines through the retained lifecycle without blocking`() {
         assertFalse(onClearedSource.contains("runBlocking"))
         assertTrue(onClearedSource.contains("val state = _uiState.value"))
         assertTrue(onClearedSource.contains("val sessionId = state.sessionId"))
         assertTrue(
             onClearedSource.contains(
-                "val positionSeconds = sessionLocalPosition(state)",
+                "positionSec = sessionLocalPosition(state)",
             ),
         )
-        assertTrue(onClearedSource.contains("val isPaused = true"))
         assertTrue(
             onClearedSource.contains(
-                "playbackSessionLifecycle.reportAndStopExternalSessionAsync(",
+                "playbackSessionLifecycle.reportPosition(",
             ),
         )
-        assertTrue(onClearedSource.contains("sessionId = sessionId"))
-        assertTrue(onClearedSource.contains("positionSeconds = positionSeconds"))
-        assertTrue(onClearedSource.contains("isPaused = isPaused"))
+        assertTrue(onClearedSource.contains("persistencePositionSec = state.positionSeconds"))
+        assertTrue(onClearedSource.contains("expectedSessionId = sessionId"))
+        assertTrue(onClearedSource.contains("playbackSessionLifecycle.stopAsync("))
     }
 
     @Test

@@ -6,7 +6,6 @@ import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
-import org.siloserver.silo.model.playback.PlaybackSubtitleSidecarV3
 import org.siloserver.silo.model.playback.PlaybackTimelineV3
 import org.siloserver.silo.model.playback.playbackClientFeaturesV3
 import kotlin.test.Test
@@ -35,21 +34,8 @@ class CastPlaybackPreparerTest {
     }
 
     @Test
-    fun transitionalSidecarsPopulateCastInventoryOnlyWhenAuthoritativeInventoryIsEmpty() {
-        val sidecar = PlaybackSubtitleSidecarV3(
-            trackId = "file:7:subtitle:2",
-            index = 2,
-            url = "/subtitles/2.ass",
-            mimeType = "text/x-ssa",
-            format = "ass",
-        )
-
-        val fallback = castSubtitleInventory(
-            plan(subtitle = PlaybackSubtitleDecisionV3(sidecars = listOf(sidecar))),
-        )
-        assertEquals(listOf("file:7:subtitle:2"), fallback.map { it.trackId })
-        assertEquals(listOf(2), fallback.map { it.combinedIndex })
-
+    fun castUsesAuthoritativeInventoryAndPreservesAnAuthoritativeEmptyList() {
+        assertEquals(emptyList(), castSubtitleInventory(plan()))
         val authoritative = PlaybackSubtitleInventoryItemV3(
             trackId = "file:7:subtitle:0",
             combinedIndex = 0,
@@ -63,7 +49,6 @@ class CastPlaybackPreparerTest {
             castSubtitleInventory(
                 plan(
                     subtitle = PlaybackSubtitleDecisionV3(
-                        sidecars = listOf(sidecar),
                         inventory = listOf(authoritative),
                     ),
                 ),

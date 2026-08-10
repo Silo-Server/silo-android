@@ -824,7 +824,7 @@ fun PlayerScreen(
     }
 
     // Player event listener to feed state back to ViewModel + track video size for PiP
-    DisposableEffect(mediaController, playWhenReadyReconciliationGate) {
+    DisposableEffect(mediaController, videoBackend, playWhenReadyReconciliationGate) {
         val controller = mediaController
         if (controller == null) {
             onDispose { }

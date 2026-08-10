@@ -237,6 +237,16 @@ class PlaybackSessionManagerSeekReanchorTest {
     }
 
     @Test
+    fun transportReopenDoesNotResetTheSinglePcmRetry() = runTest {
+        val harness = Harness(response(plan())) { _, _ -> success(response(plan())) }
+        harness.manager.start()
+
+        assertTrue(harness.manager.trySingleLocalPcmRetry("audio/eac3", 8))
+        assertTrue(harness.manager.recordTransportReopen())
+        assertFalse(harness.manager.trySingleLocalPcmRetry("audio/eac3", 8))
+    }
+
+    @Test
     fun reanchorRejectsIdentityDriftAndKeepsTheActiveAttemptRetryable() = runTest {
         val initial = plan()
         val cases = listOf<Pair<String, PlaybackDecisionResponseV3>>(
@@ -512,6 +522,7 @@ class PlaybackSessionManagerSeekReanchorTest {
                     mimeType = "text/vtt",
                     format = "webvtt",
                 ),
+                inventory = initial.subtitle.inventory,
             ),
         )
         val harness = Harness(response(initial)) { _, _ -> success(response(replanned)) }

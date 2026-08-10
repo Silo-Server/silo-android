@@ -76,6 +76,8 @@ import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.libass.LibassBridge
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.playback.ClientCodecCapabilities
+import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackPlanV3
@@ -905,6 +907,8 @@ private fun allocatedReady(sessionId: String): VideoSessionStartV3.Ready {
         playbackAttemptId = "playback-attempt",
         planAttemptId = "plan-attempt",
         planAttemptKey = "plan-key",
+        capabilities = ClientCodecCapabilities(),
+        clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
     )
 }
 

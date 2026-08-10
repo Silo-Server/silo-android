@@ -138,16 +138,11 @@ open class PlaybackSessionManager(
         val serverPlanCursor: ServerPlanCursor? = null,
     )
 
-    /**
-     * The plan the server currently holds, falling back to the rendered plan.
-     *
-     * Every replan/recovery request must address the server by THIS, not by
-     * `plan`: after a rollback the two differ, and sending the rendered plan
-     * retires a planId the server has already superseded — after which every
-     * later request is rejected 409 for the rest of the session.
-     */
-    private val ActiveVideoAttempt.serverPlanId: String
-        get() = serverPlanCursor?.planId ?: plan.planId
+    /** Atomic identity tuple used by control requests after a local rollback. */
+    private val ActiveVideoAttempt.serverControlIdentity: Triple<String, String, String>
+        get() = serverPlanCursor?.let { cursor ->
+            Triple(cursor.planId, cursor.planAttemptId, cursor.planAttemptKey)
+        } ?: Triple(plan.planId, planAttemptId, planAttemptKey)
 
     /** Identity of the plan the server last acknowledged for a session. */
     private data class ServerPlanCursor(
@@ -383,6 +378,8 @@ open class PlaybackSessionManager(
                                 playbackAttemptId = playbackAttemptId,
                                 planAttemptId = planAttemptId,
                                 planAttemptKey = active.planAttemptKey,
+                                capabilities = request.capabilities,
+                                clientPlaybackContext = request.clientPlaybackContext,
                             ),
                         )
                     }
@@ -819,7 +816,13 @@ open class PlaybackSessionManager(
         val currentCapabilities = capabilities ?: active.capabilities
         val currentContext = clientPlaybackContext ?: active.context
         val network = networkEvidenceProvider.snapshot()
-        val failedKey = active.planAttemptKey
+        // A rollback can leave the player rendering its predecessor after the
+        // server has committed the candidate. In that state the cursor is one
+        // atomic server-facing identity tuple; mixing its plan id with the
+        // rendered plan's key/history produces a request that never existed.
+        val cursor = active.serverPlanCursor
+        val (serverPlanId, serverPlanAttemptId, failedKey) = active.serverControlIdentity
+        val priorAttemptedKeys = cursor?.attemptedPlanKeys ?: active.attemptedPlanKeys
         // An intent operation is a user's choice, not a failure: the previous
         // route stays eligible, so no attempt history is sent and the attempt
         // counter restarts. `output_route_changed` is still failure-shaped —
@@ -829,16 +832,21 @@ open class PlaybackSessionManager(
         val attemptedKeys = if (invalidation) {
             emptyList()
         } else {
-            (active.attemptedPlanKeys + failedKey).distinct()
+            (priorAttemptedKeys + failedKey).distinct()
         }
-        val requestAttemptCount = if (invalidation) 1 else active.attemptCount
+        val requestAttemptCount = if (invalidation) {
+            1
+        } else {
+            cursor?.attemptCount ?: active.attemptCount
+        }
+        val candidateAttemptCount = if (invalidation) 1 else requestAttemptCount + 1
         emitRouteEvent(
             PlaybackRouteEventV3(
                 playbackAttemptId = active.playbackAttemptId,
                 sessionId = active.sessionId,
                 planId = active.plan.planId,
                 planAttemptId = active.planAttemptId,
-                planAttemptKey = failedKey,
+                planAttemptKey = active.planAttemptKey,
                 event = if (invalidation) "plan_invalidated" else "plan_failed",
                 failureClassification = classification.takeIf { it.isNotBlank() },
                 appliedQuirkIds = active.plan.appliedQuirks.map { it.id },
@@ -851,14 +859,13 @@ open class PlaybackSessionManager(
         // Address the server by the plan IT holds, not the one we are rendering.
         // After a rollback those differ, and using the rendered plan sends a
         // retired failedPlanId that the server rejects with 409.
-        val cursor = active.serverPlanCursor
         val request = PlaybackReplanRequestV3(
             clientFeatures = playbackClientFeaturesV3(currentContext),
             operation = operation,
             playbackAttemptId = active.playbackAttemptId,
             replanRequestId = UUID.randomUUID().toString(),
-            failedPlanId = active.serverPlanId,
-            planAttemptId = cursor?.planAttemptId ?: active.planAttemptId,
+            failedPlanId = serverPlanId,
+            planAttemptId = serverPlanAttemptId,
             planAttemptKey = failedKey,
             attemptedPlanKeys = attemptedKeys,
             // Route changes the client made to the server's recipe on its own.
@@ -886,6 +893,7 @@ open class PlaybackSessionManager(
             clientPlaybackContext = currentContext,
         )
         val result = playbackRepository.replanPlaybackV3(active.sessionId, request)
+        var committedPlanAttemptId: String? = null
         if (result is ApiResult.Success) {
             // The server has committed this plan. Record it before any
             // validation branch: several of those return early (loop detected,
@@ -893,6 +901,8 @@ open class PlaybackSessionManager(
             // leave the cursor addressing a plan the server has already retired.
             result.data.playbackPlan?.let { committedPlan ->
                 val committedKey = committedPlan.planAttemptKey
+                val nextAttemptId = UUID.randomUUID().toString()
+                committedPlanAttemptId = nextAttemptId
                 // Compare-and-set: a supersession may already have swapped the
                 // attempt while this response was in flight, and a plain
                 // get()/set() would silently restore the superseded one.
@@ -904,13 +914,12 @@ open class PlaybackSessionManager(
                             live.copy(
                                 serverPlanCursor = ServerPlanCursor(
                                     planId = committedPlan.planId,
-                                    // planAttemptId is client-generated per
-                                    // attempt; the server keys currency off
-                                    // planId, so carry ours forward unchanged.
-                                    planAttemptId = live.planAttemptId,
+                                    planAttemptId = nextAttemptId,
                                     planAttemptKey = committedKey,
-                                    attemptedPlanKeys = (attemptedKeys + committedKey).distinct(),
-                                    attemptCount = requestAttemptCount,
+                                    attemptedPlanKeys = (
+                                        attemptedKeys + listOfNotNull(committedKey.takeIf(String::isNotBlank))
+                                    ).distinct(),
+                                    attemptCount = candidateAttemptCount,
                                 ),
                             ),
                         )
@@ -944,6 +953,7 @@ open class PlaybackSessionManager(
                     val subtitleMismatch = subtitleCandidateMismatch(
                         requested = request.selectedTracks.subtitle,
                         candidate = validated.plan,
+                        currentEffectiveFileId = active.plan.effectiveMediaFileId ?: active.fileId,
                     )
                     if (subtitleMismatch != null) {
                         stopCandidateSessionIfUnowned(active.sessionId, validated.sessionId)
@@ -953,7 +963,7 @@ open class PlaybackSessionManager(
                             message = subtitleMismatch,
                         )
                     }
-                    val nextAttemptId = UUID.randomUUID().toString()
+                    val nextAttemptId = checkNotNull(committedPlanAttemptId)
                     val next = active.copy(
                         sessionId = validated.sessionId,
                         plan = validated.plan,
@@ -971,7 +981,7 @@ open class PlaybackSessionManager(
                         planAttemptKey = nextKey,
                         localMutations = emptyList(),
                         attemptedPlanKeys = attemptedKeys + nextKey,
-                        attemptCount = if (invalidation) 1 else active.attemptCount + 1,
+                        attemptCount = candidateAttemptCount,
                         qualityPreference = request.qualityPreference,
                         networkEvidence = network,
                         capabilities = currentCapabilities,
@@ -989,6 +999,8 @@ open class PlaybackSessionManager(
                         playbackAttemptId = active.playbackAttemptId,
                         planAttemptId = nextAttemptId,
                         planAttemptKey = nextKey,
+                        capabilities = currentCapabilities,
+                        clientPlaybackContext = currentContext,
                     )
                     val staged = StagedVideoReplan(
                         basePlaybackAttemptId = active.playbackAttemptId,
@@ -1261,6 +1273,26 @@ open class PlaybackSessionManager(
             val active = activeVideoAttempt.get()
             if (active?.sessionId != sessionId) {
                 rememberOrphanedSessionLocked(sessionId)
+                false
+            } else {
+                activeVideoAttempt.compareAndSet(active, null)
+            }
+        }
+        if (!disowned) return false
+        stopSession(sessionId)
+        return true
+    }
+
+    /**
+     * Drops an unpublished candidate only while the manager still owns that
+     * exact server plan. This is stricter than session-id ownership because an
+     * in-place replan legitimately reuses the same session id; a late UI
+     * transaction must never tear down the newer plan that superseded it.
+     */
+    suspend fun abandonActiveVideoPlanIfCurrent(sessionId: String, planId: String): Boolean {
+        val disowned = videoAttemptMutex.withLock {
+            val active = activeVideoAttempt.get()
+            if (active?.sessionId != sessionId || active.plan.planId != planId) {
                 false
             } else {
                 activeVideoAttempt.compareAndSet(active, null)
@@ -1685,6 +1717,7 @@ open class PlaybackSessionManager(
     private fun subtitleCandidateMismatch(
         requested: PlaybackTrackIdentityV3?,
         candidate: PlaybackPlanV3,
+        currentEffectiveFileId: Int,
     ): String? {
         val selected = candidate.selectedTracks.subtitle
         val subtitle = candidate.subtitle
@@ -1699,11 +1732,21 @@ open class PlaybackSessionManager(
                 "The candidate did not keep subtitles off."
             }
         }
-        if (selected?.id != requested.id ||
-            selected?.index != requested.index ||
-            subtitle.trackId != requested.id
-        ) {
-            return "The candidate did not select the exact requested subtitle track."
+        val candidateEffectiveFileId = candidate.effectiveMediaFileId
+            ?: candidate.requestedMediaFileId
+            ?: currentEffectiveFileId
+        if (candidateEffectiveFileId == currentEffectiveFileId) {
+            if (selected?.id != requested.id ||
+                (selected.index != null && selected.index != requested.index) ||
+                subtitle.trackId != requested.id
+            ) {
+                return "The candidate did not select the exact requested subtitle track."
+            }
+        } else if (selected == null || subtitle.trackId != selected.id) {
+            // Edition adaptation may remap both the stable id and ordinal. The
+            // candidate inventory has already been validated, so require only
+            // that its own selected identity and subtitle decision agree.
+            return "The adapted candidate did not preserve a selected subtitle identity."
         }
         return when (subtitle.mode) {
             PlaybackSubtitleModeV3.BURN_IN -> null
@@ -1865,6 +1908,8 @@ open class PlaybackSessionManager(
                                 playbackAttemptId = next.playbackAttemptId,
                                 planAttemptId = next.planAttemptId,
                                 planAttemptKey = next.planAttemptKey,
+                                capabilities = next.capabilities,
+                                clientPlaybackContext = next.context,
                             ),
                         )
                     }
@@ -2039,18 +2084,25 @@ open class PlaybackSessionManager(
         }
 
         val network = networkEvidenceProvider.snapshot()
-        val attemptedKeys = (active.attemptedPlanKeys + active.planAttemptKey).distinct()
+        val cursor = active.serverPlanCursor
+        val (serverPlanId, serverPlanAttemptId, failedKey) = active.serverControlIdentity
+        val requestAttemptCount = cursor?.attemptCount ?: active.attemptCount
+        val attemptedKeys = (
+            (cursor?.attemptedPlanKeys ?: active.attemptedPlanKeys) + failedKey
+        ).distinct()
+        val nextAttemptCount = requestAttemptCount + 1
+        val nextAttemptId = UUID.randomUUID().toString()
         val request = PlaybackReplanRequestV3(
             clientFeatures = playbackClientFeaturesV3(active.context),
             operation = SEEK_FAILURE_RECOVERY_V3_OPERATION,
             playbackAttemptId = active.playbackAttemptId,
             replanRequestId = UUID.randomUUID().toString(),
-            failedPlanId = active.serverPlanId,
-            planAttemptId = active.planAttemptId,
-            planAttemptKey = active.planAttemptKey,
+            failedPlanId = serverPlanId,
+            planAttemptId = serverPlanAttemptId,
+            planAttemptKey = failedKey,
             attemptedPlanKeys = attemptedKeys,
             localMutations = active.localMutations,
-            attemptCount = active.attemptCount,
+            attemptCount = requestAttemptCount,
             qualityPreference = active.qualityPreference,
             positionSeconds = positionSeconds,
             // Fresh snapshot, matching replanActiveVideoSession: this path lets
@@ -2088,6 +2140,28 @@ open class PlaybackSessionManager(
 
         when (val result = playbackRepository.replanPlaybackV3(active.sessionId, request)) {
             is ApiResult.Success -> {
+                result.data.playbackPlan?.let { committedPlan ->
+                    val committedKey = committedPlan.planAttemptKey
+                    activeVideoAttempt.get()
+                        ?.takeIf { it.sessionId == active.sessionId }
+                        ?.let { live ->
+                            activeVideoAttempt.compareAndSet(
+                                live,
+                                live.copy(
+                                    serverPlanCursor = ServerPlanCursor(
+                                        planId = committedPlan.planId,
+                                        planAttemptId = nextAttemptId,
+                                        planAttemptKey = committedKey,
+                                        attemptedPlanKeys = (
+                                            attemptedKeys +
+                                                listOfNotNull(committedKey.takeIf(String::isNotBlank))
+                                        ).distinct(),
+                                        attemptCount = nextAttemptCount,
+                                    ),
+                                ),
+                            )
+                        }
+                }
                 if (SEEK_REANCHOR_V3_FEATURE !in result.data.serverFeatures) {
                     return@withSettledVideoAttempt invalidSeekRecoveryResponse(
                         "The server omitted the negotiated seek recovery feature from its response.",
@@ -2114,7 +2188,6 @@ open class PlaybackSessionManager(
                                 ),
                             )
                         }
-                        val nextAttemptId = UUID.randomUUID().toString()
                         val next = adoptSeekRecoveryPlan(
                             expected = active,
                             plan = validated.plan,
@@ -2122,6 +2195,7 @@ open class PlaybackSessionManager(
                             planAttemptId = nextAttemptId,
                             planAttemptKey = nextKey,
                             attemptedPlanKeys = attemptedKeys,
+                            attemptCount = nextAttemptCount,
                         )
                         if (next == null) {
                             return@withSettledVideoAttempt ApiResult.Error(
@@ -2152,6 +2226,8 @@ open class PlaybackSessionManager(
                                 playbackAttemptId = next.playbackAttemptId,
                                 planAttemptId = next.planAttemptId,
                                 planAttemptKey = next.planAttemptKey,
+                                capabilities = next.capabilities,
+                                clientPlaybackContext = next.context,
                             ),
                         )
                     }
@@ -2215,6 +2291,7 @@ open class PlaybackSessionManager(
         planAttemptId: String,
         planAttemptKey: String,
         attemptedPlanKeys: List<String>,
+        attemptCount: Int,
     ): ActiveVideoAttempt? {
         val current = activeVideoAttempt.get() ?: return null
         if (current.playbackAttemptId != expected.playbackAttemptId ||
@@ -2233,8 +2310,8 @@ open class PlaybackSessionManager(
             planAttemptId = planAttemptId,
             planAttemptKey = planAttemptKey,
             localMutations = emptyList(),
-            attemptedPlanKeys = (current.attemptedPlanKeys + attemptedPlanKeys + planAttemptKey).distinct(),
-            attemptCount = current.attemptCount + 1,
+            attemptedPlanKeys = (attemptedPlanKeys + planAttemptKey).distinct(),
+            attemptCount = attemptCount,
             startedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
             firstFrameReported = false,
         )
@@ -2341,6 +2418,7 @@ open class PlaybackSessionManager(
      */
     private fun recordLocalMutation(
         mutation: String,
+        refreshPassthroughSuppression: Boolean,
         alreadyRecorded: (List<String>) -> Boolean,
     ): ActiveVideoAttempt? {
         val active = activeVideoAttempt.get() ?: return null
@@ -2351,21 +2429,27 @@ open class PlaybackSessionManager(
         // so a locally-derived one is sufficient — and necessary, because the
         // server-minted key does not change when the client mutates its own
         // route.
-        passthroughSuppression.beginAttempt(
-            "${next.planAttemptKey}#${next.localMutations.joinToString("|")}",
-        )
+        if (refreshPassthroughSuppression) {
+            passthroughSuppression.beginAttempt(
+                "${next.planAttemptKey}#${next.localMutations.joinToString("|")}",
+            )
+        }
         return next
     }
 
     fun trySingleLocalPcmRetry(mime: String, channels: Int): Boolean {
         val mutation = "pcm:${mime.lowercase()}:${channels.coerceAtLeast(0)}"
-        recordLocalMutation(mutation) { mutations -> mutations.any { it.startsWith("pcm:") } }
+        recordLocalMutation(mutation, refreshPassthroughSuppression = true) { mutations ->
+            mutations.any { it.startsWith("pcm:") }
+        }
             ?: return false
         return passthroughSuppression.suppressForSinglePcmRetry(mime, channels)
     }
 
     fun recordTransportReopen(): Boolean =
-        recordLocalMutation("transport_reopen") { mutations -> "transport_reopen" in mutations } != null
+        recordLocalMutation("transport_reopen", refreshPassthroughSuppression = false) { mutations ->
+            "transport_reopen" in mutations
+        } != null
 
     companion object {
         private const val TAG = "PlaybackSessionMgr"
@@ -2408,6 +2492,7 @@ open class PlaybackSessionManager(
             "subtitle_track_changed",
             "quality_changed",
             "output_route_changed",
+            "subtitle_inventory_changed",
         )
 
         /**
@@ -2421,7 +2506,8 @@ open class PlaybackSessionManager(
          * working, and the server should exclude it.
          */
         private fun replanOperationForClassification(classification: String): String = when (classification) {
-            "audio_track_changed", "subtitle_track_changed" -> TRACK_CHANGE_V3_OPERATION
+            "audio_track_changed", "subtitle_track_changed", "subtitle_inventory_changed" ->
+                TRACK_CHANGE_V3_OPERATION
             "quality_changed" -> QUALITY_CHANGE_V3_OPERATION
             else -> FAILURE_RECOVERY_V3_OPERATION
         }

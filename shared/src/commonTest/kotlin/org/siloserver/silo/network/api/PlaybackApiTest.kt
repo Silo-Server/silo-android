@@ -74,7 +74,7 @@ class PlaybackApiTest {
                 audioTrackId = "file:42:audio:2",
                 audioTrackIndex = 2,
                 capabilities = ClientCodecCapabilities(),
-                clientPlaybackContext = context(outputContextId = "7"),
+                clientPlaybackContext = context(outputContextId = "tv:hdmi:primary"),
             ),
         )
 
@@ -86,6 +86,12 @@ class PlaybackApiTest {
         assertEquals(
             PLAYBACK_START_CLIENT_FEATURES_V3,
             body["client_features"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals(
+            "tv:hdmi:primary",
+            body["client_playback_context"]!!.jsonObject["output"]!!.jsonObject[
+                "output_context_id"
+            ]!!.jsonPrimitive.content,
         )
     }
 
@@ -133,7 +139,7 @@ class PlaybackApiTest {
                 playbackAttemptId = "attempt",
                 sessionId = "session",
                 event = "plan_failed",
-                outputContextId = "9",
+                outputContextId = "tv:hdmi:primary",
             ),
         )
 
@@ -142,6 +148,6 @@ class PlaybackApiTest {
         val body = SiloJson.parseToJsonElement(captured.body).jsonObject
         assertEquals("attempt", body["playback_attempt_id"]!!.jsonPrimitive.content)
         assertEquals("plan_failed", body["event"]!!.jsonPrimitive.content)
-        assertEquals("9", body["output_context_id"]!!.jsonPrimitive.content)
+        assertEquals("tv:hdmi:primary", body["output_context_id"]!!.jsonPrimitive.content)
     }
 }

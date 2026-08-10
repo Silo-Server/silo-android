@@ -629,7 +629,8 @@ fun TvPlayerScreen(
         ) {
             return true
         }
-        val duration = playerState.duration.takeIf { it > 0.0 } ?: (controller.duration / 1000.0)
+        val duration = playerState.duration.takeIf { it > 0.0 }
+            ?: if (playerState.playbackPlan == null) controller.duration / 1000.0 else 0.0
         val targetSec = if (roomController == null) {
             viewModel.onSkipBy(deltaMs / 1000.0)
         } else {
@@ -1577,9 +1578,13 @@ fun TvPlayerScreen(
             startPositionSeconds = state.startPosition,
             timelineOffsetSeconds = plan?.timeline?.timelineOffsetSeconds ?: 0.0,
             durationSeconds = viewModel.uiState.value.duration.takeIf { it > 0.0 }
-                ?: mediaController?.duration
-                    ?.takeIf { it > 0L }
-                    ?.div(1000.0)
+                ?: if (plan == null) {
+                    mediaController?.duration
+                        ?.takeIf { it > 0L }
+                        ?.div(1000.0)
+                } else {
+                    null
+                }
                 ?: 0.0,
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,
@@ -1639,9 +1644,13 @@ fun TvPlayerScreen(
             startPositionSeconds = state.startPosition,
             timelineOffsetSeconds = plan?.timeline?.timelineOffsetSeconds ?: 0.0,
             durationSeconds = viewModel.uiState.value.duration.takeIf { it > 0.0 }
-                ?: mediaController?.duration
-                    ?.takeIf { it > 0L }
-                    ?.div(1000.0)
+                ?: if (plan == null) {
+                    mediaController?.duration
+                        ?.takeIf { it > 0L }
+                        ?.div(1000.0)
+                } else {
+                    null
+                }
                 ?: 0.0,
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,

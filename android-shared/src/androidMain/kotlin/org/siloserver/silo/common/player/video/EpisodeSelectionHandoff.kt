@@ -5,11 +5,11 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.common.player.normalizedSubtitleCodecFamily
-import org.siloserver.silo.common.player.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.player.DolbyVisionDetection
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
 /**
  * Session-only, cross-episode playback intent. It deliberately carries no

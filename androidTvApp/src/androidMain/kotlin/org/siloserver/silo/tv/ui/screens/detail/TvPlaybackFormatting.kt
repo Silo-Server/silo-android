@@ -640,7 +640,7 @@ object TvPlaybackFormatting {
     }
 
     /**
-     * Mirrors `isBitmapSubtitleCodecOrMime` (PGS / VobSub / DVB / HDMV).
+     * Mirrors `isBitmapSubtitleCodecFamily` (PGS / VobSub / DVB / HDMV).
      * Normalization strips ALL non-alphanumerics so ffprobe names
      * ("dvb_subtitle", "hdmv_pgs_subtitle"), short names ("dvbsub"/"dvbsubs")
      * and Media3 mimes classify identically — Apple parity with

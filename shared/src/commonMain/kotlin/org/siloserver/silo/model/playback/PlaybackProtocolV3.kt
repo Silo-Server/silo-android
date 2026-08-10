@@ -310,22 +310,10 @@ data class PlaybackSubtitleArtifactV3(
 )
 
 @Serializable
-data class PlaybackSubtitleSidecarV3(
-    @SerialName("track_id") val trackId: String,
-    val index: Int,
-    val url: String,
-    @SerialName("mime_type") val mimeType: String,
-    val format: String,
-    @SerialName("timing_origin_seconds") val timingOriginSeconds: Double = 0.0,
-)
-
-@Serializable
 data class PlaybackSubtitleDecisionV3(
     val mode: PlaybackSubtitleModeV3 = PlaybackSubtitleModeV3.OFF,
     @SerialName("track_id") val trackId: String? = null,
     val artifact: PlaybackSubtitleArtifactV3? = null,
-    /** Transitional sidecar set used by current mainline servers. */
-    val sidecars: List<PlaybackSubtitleSidecarV3> = emptyList(),
     /**
      * The complete, gap-free combined-ordinal subtitle list for the effective
      * source. Authoritative: select a track by echoing an entry's
@@ -353,6 +341,14 @@ data class PlaybackSubtitleInventoryItemV3(
     val url: String? = null,
     @SerialName("font_bundle_url") val fontBundleUrl: String? = null,
 )
+
+/** Resolves the optional ordinal from the stable server track identity. */
+fun PlaybackPlanV3.resolvedSelectedSubtitleIndex(): Int? =
+    selectedTracks.subtitle?.let { selected ->
+        selected.index ?: subtitle.inventory
+            .firstOrNull { it.trackId == selected.id }
+            ?.combinedIndex
+    }
 
 @Serializable
 data class PlaybackTransformationV3(
@@ -431,8 +427,9 @@ data class PlaybackReplanRequestV3(
     @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
     @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracksV3,
     /**
-     * Absent for the intent operations ([INTENT_V3_OPERATIONS]), which describe
-     * a user's choice rather than something that went wrong.
+     * Absent for intent operations ([INTENT_V3_OPERATIONS]), which describe a
+     * user's choice, and for [SEEK_REANCHOR_V3_OPERATION], which requests a
+     * different transport anchor rather than reporting a route failure.
      */
     val failure: PlaybackFailureV3? = null,
     @SerialName("client_capabilities") val capabilities: ClientCodecCapabilities,
@@ -508,7 +505,8 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
     }
     val selectedSubtitle = plan.selectedTracks.subtitle?.let { selected ->
         plan.subtitle.inventory.firstOrNull {
-            it.combinedIndex == selected.index && it.trackId == selected.id
+            it.trackId == selected.id &&
+                (selected.index == null || it.combinedIndex == selected.index)
         }
     }
     if (selectedSubtitle != null &&
@@ -592,7 +590,6 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
 }
 
 private fun PlaybackPlanV3.hasValidSubtitleInventory(): Boolean {
-    if (subtitle.inventory.isEmpty()) return true
     if (subtitle.inventory.map { it.combinedIndex }.sorted() != subtitle.inventory.indices.toList()) {
         return false
     }
@@ -605,11 +602,7 @@ private fun PlaybackPlanV3.hasValidSubtitleInventory(): Boolean {
             when (item.delivery) {
                 SUBTITLE_DELIVERY_SIDECAR -> item.url.isNullOrBlank()
                 SUBTITLE_DELIVERY_BURN_IN_ONLY -> !item.url.isNullOrBlank()
-                // Unknown delivery values are forward-compatible. They remain
-                // unavailable in the local picker; if one is selected, the
-                // caller requests a server replan instead of rejecting every
-                // otherwise-playable route that happens to list it.
-                else -> false
+                else -> true
             }
         }
     ) {
@@ -617,7 +610,8 @@ private fun PlaybackPlanV3.hasValidSubtitleInventory(): Boolean {
     }
     val selected = selectedTracks.subtitle ?: return true
     return subtitle.inventory.any {
-        it.combinedIndex == selected.index && it.trackId == selected.id
+        it.trackId == selected.id &&
+            (selected.index == null || it.combinedIndex == selected.index)
     }
 }
 

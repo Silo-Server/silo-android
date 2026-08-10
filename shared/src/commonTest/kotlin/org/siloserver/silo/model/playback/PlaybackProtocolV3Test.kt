@@ -41,7 +41,7 @@ class PlaybackProtocolV3Test {
     )
 
     @Test
-    fun oldServerSingularSubtitleArtifactDecodesWithNoSidecarSet() {
+    fun removedDraftSidecarsAreIgnored() {
         val decoded = SiloJson.decodeFromString<PlaybackPlanV3>(
             """
             {
@@ -52,6 +52,13 @@ class PlaybackProtocolV3Test {
               "subtitle": {
                 "mode": "convert",
                 "track_id": "file:42:subtitle:0",
+                "sidecars": [{
+                  "track_id": "removed",
+                  "index": 1,
+                  "url": "/removed.srt",
+                  "mime_type": "application/x-subrip",
+                  "format": "srt"
+                }],
                 "artifact": {
                   "url": "/stream/session/subtitles/0.vtt",
                   "mime_type": "text/vtt",
@@ -64,46 +71,8 @@ class PlaybackProtocolV3Test {
             """.trimIndent(),
         )
 
-        assertTrue(decoded.subtitle.sidecars.isEmpty())
+        assertTrue(decoded.subtitle.inventory.isEmpty())
         assertEquals("/stream/session/subtitles/0.vtt", decoded.subtitle.artifact?.url)
-    }
-
-    @Test
-    fun newServerExternalTextSidecarSetDecodesEveryIdentityField() {
-        val decoded = SiloJson.decodeFromString<PlaybackPlanV3>(
-            """
-            {
-              "plan_id": "plan",
-              "delivery": "original_http",
-              "engine": "media3_direct",
-              "stream": {"url": "/stream/session", "protocol": "http_progressive"},
-              "subtitle": {
-                "mode": "off",
-                "sidecars": [{
-                  "track_id": "file:42:subtitle:1",
-                  "index": 1,
-                  "url": "/stream/session/subtitles/1.srt?file_id=42",
-                  "mime_type": "application/x-subrip",
-                  "format": "srt",
-                  "timing_origin_seconds": 12.5
-                }]
-              },
-              "decision_reason": "test"
-            }
-            """.trimIndent(),
-        )
-
-        assertEquals(
-            PlaybackSubtitleSidecarV3(
-                trackId = "file:42:subtitle:1",
-                index = 1,
-                url = "/stream/session/subtitles/1.srt?file_id=42",
-                mimeType = "application/x-subrip",
-                format = "srt",
-                timingOriginSeconds = 12.5,
-            ),
-            decoded.subtitle.sidecars.single(),
-        )
     }
 
     @Test
@@ -200,7 +169,27 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
-    fun unknownUnselectedSubtitleDeliveryDoesNotRejectThePlayableVideoRoute() {
+    fun selectedSubtitleMustResolveAgainstAnEmptyAuthoritativeInventory() {
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = PLAYBACK_PROTOCOL_V3,
+            serverFeatures = neutralServerFeatures,
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(
+                selectedTracks = SelectedPlaybackTracksV3(
+                    subtitle = PlaybackTrackIdentityV3("missing-track", 0),
+                ),
+                subtitle = PlaybackSubtitleDecisionV3(inventory = emptyList()),
+            ),
+        ).validateForMedia3()
+
+        assertEquals(
+            "invalid_playback_plan",
+            assertIs<PlaybackV3Validation.Terminal>(result).reason,
+        )
+    }
+
+    @Test
+    fun unknownUnselectedSubtitleDeliveryRejectsThePlan() {
         val result = PlaybackDecisionResponseV3(
             protocolVersion = PLAYBACK_PROTOCOL_V3,
             serverFeatures = neutralServerFeatures,
@@ -219,11 +208,14 @@ class PlaybackProtocolV3Test {
             ),
         ).validateForMedia3()
 
-        assertIs<PlaybackV3Validation.Playable>(result)
+        assertEquals(
+            "invalid_playback_plan",
+            assertIs<PlaybackV3Validation.Terminal>(result).reason,
+        )
     }
 
     @Test
-    fun unknownSelectedSubtitleDeliveryRequestsASelectionPreservingReplan() {
+    fun unknownSelectedSubtitleDeliveryRejectsThePlan() {
         val selected = PlaybackTrackIdentityV3("future-track", 0)
         val result = PlaybackDecisionResponseV3(
             protocolVersion = PLAYBACK_PROTOCOL_V3,
@@ -245,9 +237,38 @@ class PlaybackProtocolV3Test {
         ).validateForMedia3()
 
         assertEquals(
-            "unsupported_subtitle_delivery:future_delivery",
-            assertIs<PlaybackV3Validation.ReplanRequired>(result).reason,
+            "invalid_playback_plan",
+            assertIs<PlaybackV3Validation.Terminal>(result).reason,
         )
+    }
+
+    @Test
+    fun subtitleSelectedByTrackIdAloneStaysPlayable() {
+        val trackId = "file:42:subtitle:0"
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = PLAYBACK_PROTOCOL_V3,
+            serverFeatures = neutralServerFeatures,
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(
+                selectedTracks = SelectedPlaybackTracksV3(
+                    subtitle = PlaybackTrackIdentityV3(trackId, index = null),
+                ),
+                subtitle = PlaybackSubtitleDecisionV3(
+                    inventory = listOf(
+                        PlaybackSubtitleInventoryItemV3(
+                            trackId = trackId,
+                            combinedIndex = 0,
+                            source = "external",
+                            delivery = SUBTITLE_DELIVERY_SIDECAR,
+                            url = "/stream/session-1/subtitles/0.vtt",
+                        ),
+                    ),
+                ),
+            ),
+        ).validateForMedia3()
+
+        val playable = assertIs<PlaybackV3Validation.Playable>(result)
+        assertEquals(0, playable.plan.resolvedSelectedSubtitleIndex())
     }
 
     @Test
@@ -396,7 +417,8 @@ class PlaybackProtocolV3Test {
         // did locally is reported as `local_mutations` for the server to fold
         // into the next key, rather than hashed here.
         val decoded = SiloJson.decodeFromString<PlaybackDecisionResponseV3>(
-            """{"protocol_version":3,"server_features":["$PLAYBACK_PLAN_V3_FEATURE"],"outcome":"playable",""" +
+            """{"protocol_version":3,"server_features":["$PLAYBACK_PLAN_V3_FEATURE",""" +
+                """"$NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE"],"outcome":"playable",""" +
                 """"playback_plan":{"plan_id":"p","session_id":"s","plan_attempt_key":"v3:server-minted",""" +
                 """"delivery":"original_http","stream":{"url":"/s","protocol":"http_progressive"},""" +
                 """"decision_reason":"validated_original_playback"}}""",
@@ -555,7 +577,6 @@ class PlaybackProtocolV3Test {
                 attemptCount = 1,
                 positionSeconds = 10.0,
                 selectedTracks = SelectedPlaybackTracksV3(),
-                failure = PlaybackFailureV3(SEEK_REANCHOR_V3_OPERATION),
                 capabilities = ClientCodecCapabilities(),
                 clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
             ),
@@ -563,6 +584,7 @@ class PlaybackProtocolV3Test {
 
         assertTrue(start.contains(SEEK_REANCHOR_V3_FEATURE))
         assertTrue(reanchor.contains("\"operation\":\"seek_reanchor\""))
+        assertFalse(reanchor.contains("\"failure\""))
     }
 
     @Test

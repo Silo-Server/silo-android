@@ -9,6 +9,7 @@ import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.playback.canonicalSubtitleCodecFamily
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
 /**
  * Subtitle artifacts attached to one Media3 media mount.
@@ -98,6 +99,7 @@ private fun PlayerSubtitleInfo.matchesLocalMediaIdentity(
 private fun subtitleCodecFromUrl(url: String): String? = url
     .substringBefore('?')
     .substringBefore('#')
+    .substringAfterLast('/')
     .substringAfterLast('.', "")
     .takeIf(String::isNotBlank)
 

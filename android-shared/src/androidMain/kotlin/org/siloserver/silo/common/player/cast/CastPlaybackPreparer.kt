@@ -2,12 +2,22 @@ package org.siloserver.silo.common.player.cast
 
 import android.util.Log
 import java.net.URLEncoder
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackSessionManager
+import org.siloserver.silo.common.player.StagedVideoReplan
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.audio.PassthroughSuppressionScope
-import org.siloserver.silo.common.player.isBitmapSubtitleCodecOrMime
 import org.siloserver.silo.common.player.resolvePlaybackStreamUrl
+import org.siloserver.silo.common.player.seek.PlaybackSeekDecision
+import org.siloserver.silo.common.player.seek.decideSeek
+import org.siloserver.silo.common.player.seek.playerPositionForSource
+import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.model.playback.CAPABILITY_EVIDENCE_DECLARED
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -19,9 +29,12 @@ import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
+import org.siloserver.silo.model.playback.PlaybackTimeline
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
+import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.model.playback.VideoDecodeCapability
+import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.PlaybackRepository
@@ -112,19 +125,32 @@ class CastPlaybackPreparer(
         // session — otherwise it lingers, counts against the account's
         // concurrent-stream cap, and every later cast start 429s.
         val sessionId = ready.session.sessionId
+        val handle = CastPlaybackSessionHandle(
+            sessionManager = castSession,
+            request = request,
+            initialReady = ready,
+            specFactory = { replacement, owner ->
+                buildCastMediaSpec(request, replacement, owner)
+            },
+        )
+        var handedOff = false
         try {
-            return buildCastMediaSpec(request, ready)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                castSession.stopSession(sessionId)
+            val spec = buildCastMediaSpec(request, ready, handle)
+            handedOff = true
+            return spec
+        } finally {
+            if (!handedOff) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    castSession.stopSession(sessionId)
+                }
             }
-            throw e
         }
     }
 
     private suspend fun buildCastMediaSpec(
         request: CastPrepareRequest,
         ready: VideoSessionStartV3.Ready,
+        handle: CastPlaybackSessionHandle,
     ): CastMediaSpec {
         val plan = ready.plan
         val serverUrl = tokenManager.getServerUrl()
@@ -150,7 +176,8 @@ class CastPlaybackPreparer(
             posterUrl = request.posterUrl,
             positionSeconds = castPlayerStartPosition(plan, request.startPositionSeconds),
             durationSeconds = plan.source.durationSeconds ?: 0.0,
-            subtitles = castSubtitleTracks(request, plan, serverUrl, token, castUrl),
+            subtitles = castSubtitleTracks(plan, serverUrl, token, castUrl),
+            playbackSession = handle,
         )
     }
 
@@ -164,7 +191,6 @@ class CastPlaybackPreparer(
      * empty or single-entry CC menu.
      */
     private fun castSubtitleTracks(
-        request: CastPrepareRequest,
         plan: PlaybackPlanV3,
         serverUrl: String,
         token: String?,
@@ -175,25 +201,29 @@ class CastPlaybackPreparer(
         // the stream URL only, and the subtitle route rejects anything else
         // (observed: all subtitle fetches 401'd with the access token).
         val streamToken = STREAM_TOKEN_VALUE_REGEX.find(castUrl)?.groupValues?.get(1)
-        val usable = castSubtitleInventory(plan).filter { it.isCastableAsVtt() }
-        val labels = castSubtitleLabels(usable)
-        return usable.mapIndexed { index, item ->
-            val base = forceVttExtension(resolvePlaybackStreamUrl(serverUrl, item.url.orEmpty()))
+        val inventory = castSubtitleInventory(plan)
+        val labels = castSubtitleLabels(inventory)
+        val selectedIndex = plan.resolvedSelectedSubtitleIndex()
+        return inventory.mapIndexed { index, item ->
+            val receiverUrl = item.takeIf { it.isCastableAsVtt() }?.let {
+                forceVttExtension(resolvePlaybackStreamUrl(serverUrl, it.url.orEmpty()))
+            }
             CastSubtitleTrack(
-                url = if (streamToken != null && !STREAM_TOKEN_REGEX.containsMatchIn(base)) {
-                    val sep = if (base.contains('?')) '&' else '?'
-                    "$base${sep}st=$streamToken"
-                } else {
-                    signStreamUrl(base, token)
+                trackId = item.trackId,
+                combinedIndex = item.combinedIndex,
+                receiverUrl = receiverUrl?.let { base ->
+                    if (streamToken != null && !STREAM_TOKEN_REGEX.containsMatchIn(base)) {
+                        val sep = if (base.contains('?')) '&' else '?'
+                        "$base${sep}st=$streamToken"
+                    } else {
+                        signStreamUrl(base, token)
+                    }
                 },
                 language = item.language,
                 label = labels[index],
-                // Activate the track the user selected on the phone. Selection
-                // is by combined ordinal, the contract's own track identity —
-                // never by position in this filtered list.
-                selected = request.subtitleTrackIndex != null &&
-                    request.subtitleTrackIndex >= 0 &&
-                    item.combinedIndex == request.subtitleTrackIndex,
+                // The returned plan owns selection. The original request's
+                // ordinal belongs to another file when the server adapts.
+                selected = item.combinedIndex == selectedIndex,
             )
         }
     }
@@ -210,7 +240,7 @@ class CastPlaybackPreparer(
     private fun PlaybackSubtitleInventoryItemV3.isCastableAsVtt(): Boolean =
         delivery == SUBTITLE_DELIVERY_SIDECAR &&
             !url.isNullOrBlank() &&
-            !isBitmapSubtitleCodecOrMime(codec)
+            !isBitmapSubtitleCodecFamily(codec)
 
     /**
      * Makes a stream URL self-contained for a Cast receiver by carrying the
@@ -305,23 +335,12 @@ internal fun castPlayerStartPosition(plan: PlaybackPlanV3, requested: Double): D
         .takeIf { it.isFinite() && it >= 0.0 }
         ?: requested
 
-/**
- * Use the authoritative inventory when present, with the transitional sidecar
- * set only as a compatibility fallback for servers that have not populated it.
- */
+/** Uses the authoritative inventory exactly; an empty inventory means no tracks. */
 internal fun castSubtitleInventory(plan: PlaybackPlanV3): List<PlaybackSubtitleInventoryItemV3> =
-    plan.subtitle.inventory.ifEmpty {
-        plan.subtitle.sidecars.map { sidecar ->
-            PlaybackSubtitleInventoryItemV3(
-                trackId = sidecar.trackId,
-                combinedIndex = sidecar.index,
-                source = "sidecar",
-                codec = sidecar.format,
-                delivery = SUBTITLE_DELIVERY_SIDECAR,
-                url = sidecar.url,
-            )
-        }
-    }
+    plan.subtitle.inventory
+
+/** Stable phone/receiver id for an authoritative combined subtitle ordinal. */
+fun castReceiverTrackId(combinedIndex: Int): Long = combinedIndex.toLong() + 1L
 
 /** Inputs captured from the live player state when the user starts casting. */
 data class CastPrepareRequest(
@@ -345,10 +364,300 @@ data class CastMediaSpec(
     val positionSeconds: Double,
     val durationSeconds: Double,
     val subtitles: List<CastSubtitleTrack>,
+    /** Retained protocol-v3 owner for Cast progress, recovery and teardown. */
+    val playbackSession: CastPlaybackSessionHandle,
 )
 
+/** Result of translating a source-time Cast seek against the active plan. */
+sealed interface CastSeekResult {
+    data class Native(val playerPositionSeconds: Double) : CastSeekResult
+    data class Replanned(val spec: CastMediaSpec) : CastSeekResult
+    data object Failed : CastSeekResult
+}
+
+sealed interface CastSubtitleChangeResult {
+    data class Staged(val change: CastStagedSubtitleChange) : CastSubtitleChangeResult
+    data object Failed : CastSubtitleChangeResult
+}
+
+/**
+ * A subtitle plan that the receiver may try without replacing the rendered
+ * server plan. The Cast owner commits it only after the receiver accepts the
+ * media load; a failed or stale load discards it and keeps the predecessor.
+ */
+class CastStagedSubtitleChange internal constructor(
+    val spec: CastMediaSpec,
+    internal val staged: StagedVideoReplan,
+    private val owner: CastPlaybackSessionHandle,
+) {
+    suspend fun commit(): CastMediaSpec? = owner.commitSubtitleChange(this, staged)
+
+    suspend fun discard() = owner.discardSubtitleChange(this, staged)
+}
+
+/**
+ * Retains the Cast-only [PlaybackSessionManager] beyond preparation.
+ *
+ * The Cast SDK reports player-local time, while protocol v3 progress and
+ * replans use source time. This owner keeps the active timeline and translates
+ * every boundary. It also serializes Cast recovery so one failed load cannot
+ * create competing replacement sessions.
+ */
+class CastPlaybackSessionHandle internal constructor(
+    private val sessionManager: PlaybackSessionManager,
+    private val request: CastPrepareRequest,
+    initialReady: VideoSessionStartV3.Ready,
+    private val specFactory: suspend (
+        VideoSessionStartV3.Ready,
+        CastPlaybackSessionHandle,
+    ) -> CastMediaSpec,
+) {
+    private val ready = AtomicReference(initialReady)
+    private val terminal = AtomicBoolean(false)
+    private val recoveryMutex = Mutex()
+    private val pendingSubtitleChange = AtomicReference<CastStagedSubtitleChange?>(null)
+
+    val sessionId: String
+        get() = ready.get().session.sessionId
+
+    fun sourcePositionForPlayer(playerPositionSeconds: Double): Double {
+        val snapshot = ready.get()
+        return sourcePositionForPlayer(snapshot, playerPositionSeconds)
+    }
+
+    fun playerPositionForSource(sourcePositionSeconds: Double): Double? {
+        val snapshot = ready.get()
+        return timeline(snapshot).playerPositionForSource(sourcePositionSeconds)
+    }
+
+    fun sourceDurationSeconds(): Double = ready.get().plan.source.durationSeconds
+        ?.takeIf { it.isFinite() && it >= 0.0 }
+        ?: 0.0
+
+    suspend fun reportProgress(playerPositionSeconds: Double, isPaused: Boolean) {
+        if (terminal.get()) return
+        val snapshot = ready.get()
+        sessionManager.reportProgress(
+            sessionId = snapshot.session.sessionId,
+            position = sourcePositionForPlayer(snapshot, playerPositionSeconds),
+            isPaused = isPaused,
+        )
+    }
+
+    suspend fun recoverFromLoadFailure(
+        playerPositionSeconds: Double,
+        message: String,
+    ): CastMediaSpec? = recoveryMutex.withLock {
+        if (terminal.get() || pendingSubtitleChange.get() != null) return@withLock null
+        val snapshot = ready.get()
+        val sourcePosition = sourcePositionForPlayer(snapshot, playerPositionSeconds)
+        when (
+            val result = sessionManager.replanActiveVideoSession(
+                classification = "cast_load_failed",
+                message = message,
+                positionSeconds = sourcePosition,
+                audioTrackIndex = snapshot.plan.selectedTracks.audio?.index ?: request.audioTrackIndex,
+                subtitleTrackIndex = snapshot.plan.resolvedSelectedSubtitleIndex() ?: -1,
+                diagnostics = mapOf("surface" to "google_cast"),
+            )
+        ) {
+            is ApiResult.Success -> when (val replacement = result.data) {
+                is VideoSessionStartV3.Ready -> {
+                    ready.set(replacement)
+                    try {
+                        specFactory(replacement, this)
+                    } catch (failure: Throwable) {
+                        stopLocked(playerPositionSeconds, isPaused = true, reason = "plan_mount_failed")
+                        throw failure
+                    }
+                }
+                else -> {
+                    stopLocked(playerPositionSeconds, isPaused = true, reason = "plan_terminal")
+                    null
+                }
+            }
+            else -> {
+                stopLocked(playerPositionSeconds, isPaused = true, reason = "plan_failed")
+                null
+            }
+        }
+    }
+
+    suspend fun selectSubtitleTrack(
+        playerPositionSeconds: Double,
+        combinedIndex: Int?,
+    ): CastSubtitleChangeResult = recoveryMutex.withLock {
+        if (terminal.get() || pendingSubtitleChange.get() != null) {
+            return@withLock CastSubtitleChangeResult.Failed
+        }
+        val snapshot = ready.get()
+        val sourcePosition = sourcePositionForPlayer(snapshot, playerPositionSeconds)
+        when (
+            val result = sessionManager.stageActiveVideoSessionReplan(
+                classification = "subtitle_track_changed",
+                message = "Applying Cast subtitle selection.",
+                positionSeconds = sourcePosition,
+                audioTrackIndex = snapshot.plan.selectedTracks.audio?.index ?: request.audioTrackIndex,
+                subtitleTrackIndex = combinedIndex ?: -1,
+                diagnostics = mapOf("surface" to "google_cast"),
+            )
+        ) {
+            is ApiResult.Success -> {
+                val staged = result.data
+                try {
+                    val change = CastStagedSubtitleChange(
+                        spec = specFactory(staged.candidate, this),
+                        staged = staged,
+                        owner = this,
+                    )
+                    pendingSubtitleChange.set(change)
+                    CastSubtitleChangeResult.Staged(change)
+                } catch (failure: Throwable) {
+                    withContext(NonCancellable) {
+                        sessionManager.discardStagedVideoReplan(staged)
+                    }
+                    throw failure
+                }
+            }
+            else -> CastSubtitleChangeResult.Failed
+        }
+    }
+
+    internal suspend fun commitSubtitleChange(
+        change: CastStagedSubtitleChange,
+        staged: StagedVideoReplan,
+    ): CastMediaSpec? = recoveryMutex.withLock {
+        if (terminal.get() || !pendingSubtitleChange.compareAndSet(change, null)) {
+            return@withLock null
+        }
+        when (val committed = sessionManager.commitStagedVideoReplan(staged)) {
+            is ApiResult.Success -> {
+                ready.set(committed.data)
+                change.spec
+            }
+            else -> null
+        }
+    }
+
+    internal suspend fun discardSubtitleChange(
+        change: CastStagedSubtitleChange,
+        staged: StagedVideoReplan,
+    ) = recoveryMutex.withLock {
+        if (!pendingSubtitleChange.compareAndSet(change, null)) return@withLock
+        withContext(NonCancellable) {
+            sessionManager.discardStagedVideoReplan(staged)
+        }
+    }
+
+    suspend fun seekToSource(sourcePositionSeconds: Double): CastSeekResult =
+        recoveryMutex.withLock {
+            if (terminal.get() || pendingSubtitleChange.get() != null) {
+                return@withLock CastSeekResult.Failed
+            }
+            val snapshot = ready.get()
+            when (val decision = timeline(snapshot).decideSeek(sourcePositionSeconds)) {
+                is PlaybackSeekDecision.NativeSeek ->
+                    CastSeekResult.Native(decision.targetPlayerPositionSeconds)
+                is PlaybackSeekDecision.ServerReanchor -> when (
+                    val result = sessionManager.reanchorActiveVideoSession(
+                        positionSeconds = decision.targetSourcePositionSeconds,
+                        diagnostics = mapOf(
+                            "surface" to "google_cast",
+                            "reason" to decision.reason.name.lowercase(),
+                        ),
+                    )
+                ) {
+                    is ApiResult.Success -> when (val replacement = result.data) {
+                        is VideoSessionStartV3.Ready -> {
+                            ready.set(replacement)
+                            try {
+                                CastSeekResult.Replanned(specFactory(replacement, this))
+                            } catch (failure: Throwable) {
+                                stopLocked(
+                                    playerPositionSeconds = replacement.plan.timeline.playerStartSeconds,
+                                    isPaused = true,
+                                    reason = "seek_mount_failed",
+                                )
+                                throw failure
+                            }
+                        }
+                        else -> {
+                            stopLocked(
+                                playerPositionSeconds = snapshot.plan.timeline.playerStartSeconds,
+                                isPaused = true,
+                                reason = "seek_terminal",
+                            )
+                            CastSeekResult.Failed
+                        }
+                    }
+                    else -> CastSeekResult.Failed
+                }
+            }
+        }
+
+    suspend fun stop(
+        playerPositionSeconds: Double,
+        isPaused: Boolean,
+        reason: String = "stopped",
+    ) = recoveryMutex.withLock {
+        stopLocked(playerPositionSeconds, isPaused, reason)
+    }
+
+    private suspend fun stopLocked(
+        playerPositionSeconds: Double,
+        isPaused: Boolean,
+        reason: String,
+    ) {
+        if (!terminal.compareAndSet(false, true)) return
+        val snapshot = ready.get()
+        withContext(NonCancellable) {
+            pendingSubtitleChange.getAndSet(null)?.let { change ->
+                sessionManager.discardStagedVideoReplan(change.staged)
+            }
+            sessionManager.reportActiveVideoEvent(
+                event = "stopped",
+                diagnostics = mapOf(
+                    "surface" to "google_cast",
+                    "reason" to reason,
+                ),
+            )
+            runCatching {
+                sessionManager.reportProgress(
+                    sessionId = snapshot.session.sessionId,
+                    position = sourcePositionForPlayer(snapshot, playerPositionSeconds),
+                    isPaused = isPaused,
+                )
+            }
+            sessionManager.stopSession(snapshot.session.sessionId)
+        }
+    }
+
+    private fun sourcePositionForPlayer(
+        snapshot: VideoSessionStartV3.Ready,
+        playerPositionSeconds: Double,
+    ): Double = timeline(snapshot).sourcePositionForPlayer(playerPositionSeconds)
+        ?: snapshot.plan.timeline.sourceStartSeconds.coerceAtLeast(0.0)
+
+    private fun timeline(snapshot: VideoSessionStartV3.Ready): PlaybackTimeline =
+        snapshot.plan.timeline.let { value ->
+        PlaybackTimeline(
+            sourceStartSeconds = value.sourceStartSeconds,
+            playerStartSeconds = value.playerStartSeconds,
+            streamOriginSeconds = value.streamOriginSeconds,
+            timelineOffsetSeconds = value.timelineOffsetSeconds,
+            seekWindowStartSeconds = value.seekWindowStartSeconds,
+            seekWindowEndSeconds = value.seekWindowEndSeconds,
+            canSeekAnywhere = value.canSeekAnywhere,
+            seekRestoration = value.seekRestoration,
+        )
+    }
+}
+
 data class CastSubtitleTrack(
-    val url: String,
+    val trackId: String,
+    val combinedIndex: Int,
+    /** Null for burn-in-only/receiver-incompatible inventory rows. */
+    val receiverUrl: String?,
     val language: String?,
     val label: String,
     val selected: Boolean,

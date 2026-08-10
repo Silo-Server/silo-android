@@ -6,6 +6,7 @@ import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.playback.audioTrackFingerprint
+import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import kotlin.test.assertIs
 
@@ -57,6 +58,77 @@ class TvPlayerSubtitleIntegrationPolicyTest {
         assertEquals(
             emptyList(),
             authoritativeTvSubtitleRows(snapshotRows = emptyList(), previousRows = stale),
+        )
+    }
+
+    @Test
+    fun `fresh restore resolves an exact authoritative downloaded sidecar`() {
+        val plannedRow = PlayerSubtitleInfo(
+            index = 4,
+            language = "en",
+            codec = "vtt",
+            label = "Downloaded English",
+            source = "downloaded",
+            forced = false,
+            url = "/stream/s1/subtitles/4.vtt",
+            serverTrackId = "file:22:subtitle:4",
+            serverDelivery = "sidecar",
+        )
+        val eventRow = plannedRow.copy(downloadId = 91)
+        val persistedIdentity = assertIs<SubtitleIdentity.ServerSidecar>(
+            tvSubtitleIdentity(eventRow),
+        )
+        val plannedIdentity = assertIs<SubtitleIdentity.ServerSidecar>(
+            tvSubtitleIdentity(plannedRow),
+        )
+
+        assertEquals(
+            TvFreshSubtitlePreferenceResolution(plannedIdentity),
+            resolveTvFreshSubtitlePreference(
+                preference = encodeSubtitleIdentityPreference(persistedIdentity),
+                catalogTracks = emptyList(),
+                hydratedRows = listOf(plannedRow),
+            ),
+        )
+        assertEquals("file:22:subtitle:4", persistedIdentity.media?.trackId)
+    }
+
+    @Test
+    fun `fresh restore migrates a legacy downloaded identity by unique plan metadata`() {
+        val legacy = SubtitleIdentity.Downloaded(
+            downloadId = 91,
+            media = org.siloserver.silo.model.playback.SubtitleMediaIdentity(
+                trackId = "silo-downloaded-subtitle:91",
+                label = "Downloaded English",
+                language = "en",
+                codecFamily = "webvtt",
+                forced = false,
+                hearingImpaired = false,
+            ),
+        )
+        val row = PlayerSubtitleInfo(
+            index = 4,
+            language = "en",
+            codec = "vtt",
+            label = "Downloaded English",
+            source = "downloaded",
+            forced = false,
+            url = "/stream/s1/subtitles/4.vtt",
+            serverTrackId = "file:22:subtitle:4",
+            serverDelivery = "sidecar",
+        )
+        val exact = tvSubtitleIdentity(row)
+
+        assertEquals(
+            TvFreshSubtitlePreferenceResolution(
+                identity = exact,
+                migratedPreference = encodeSubtitleIdentityPreference(exact),
+            ),
+            resolveTvFreshSubtitlePreference(
+                preference = encodeSubtitleIdentityPreference(legacy),
+                catalogTracks = emptyList(),
+                hydratedRows = listOf(row),
+            ),
         )
     }
 

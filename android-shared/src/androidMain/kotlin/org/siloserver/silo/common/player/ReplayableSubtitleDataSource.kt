@@ -70,42 +70,45 @@ private class ReplayableSubtitleDataSource(
     override fun open(dataSpec: DataSpec): Long {
         close()
 
-        synchronized(cache) {
-            cache.entry
-                ?.takeIf { it.requestedUri == dataSpec.uri }
-                ?.let { return openReplay(it, dataSpec) }
+        synchronized(cache) { cache.entry }
+            ?.takeIf { it.requestedUri == dataSpec.uri }
+            ?.let { return openReplay(it, dataSpec) }
 
-            if (!dataSpec.isWholeResourceFromStart()) {
-                upstreamOpen = true
-                return upstream.open(dataSpec)
-            }
-
-            val declaredLength = upstream.open(dataSpec)
+        if (!dataSpec.isWholeResourceFromStart()) {
+            val length = upstream.open(dataSpec)
             upstreamOpen = true
-            val resolvedUri = upstream.uri ?: dataSpec.uri
-            val responseHeaders = upstream.responseHeaders
-            val bytes = try {
-                if (declaredLength >= 0L) {
-                    checkedLimitedByteCount(
-                        currentBytes = 0L,
-                        additionalBytes = declaredLength,
-                        maxBytes = maxBytes,
-                        limitName = "subtitle",
-                    )
-                }
-                readAllFromUpstream()
-            } finally {
-                upstream.close()
-                upstreamOpen = false
+            return length
+        }
+
+        val declaredLength = upstream.open(dataSpec)
+        upstreamOpen = true
+        val resolvedUri = upstream.uri ?: dataSpec.uri
+        val responseHeaders = upstream.responseHeaders
+        val bytes = try {
+            if (declaredLength >= 0L) {
+                checkedLimitedByteCount(
+                    currentBytes = 0L,
+                    additionalBytes = declaredLength,
+                    maxBytes = maxBytes,
+                    limitName = "subtitle",
+                )
             }
-            val entry = ReplayableSubtitleEntry(
-                requestedUri = dataSpec.uri,
-                resolvedUri = resolvedUri,
-                responseHeaders = responseHeaders,
-                data = bytes,
-            )
-            cache.entry = entry
-            return openReplay(entry, dataSpec)
+            readAllFromUpstream()
+        } finally {
+            upstream.close()
+            upstreamOpen = false
+        }
+        val entry = ReplayableSubtitleEntry(
+            requestedUri = dataSpec.uri,
+            resolvedUri = resolvedUri,
+            responseHeaders = responseHeaders,
+            data = bytes,
+        )
+        synchronized(cache) {
+            val published = cache.entry
+                ?.takeIf { it.requestedUri == dataSpec.uri }
+                ?: entry.also { cache.entry = it }
+            return openReplay(published, dataSpec)
         }
     }
 

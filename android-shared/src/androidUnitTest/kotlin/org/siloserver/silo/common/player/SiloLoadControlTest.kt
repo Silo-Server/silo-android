@@ -1,13 +1,14 @@
 package org.siloserver.silo.common.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SiloLoadControlTest {
     @Test
-    fun `ordinary playback keeps the device buffer budget`() {
+    fun ordinaryPlaybackKeepsTheDeviceBufferBudget() {
         assertEquals(
             96 * 1024 * 1024,
             playbackBufferBudgetBytes(
@@ -19,7 +20,7 @@ class SiloLoadControlTest {
     }
 
     @Test
-    fun `Dolby Vision leaves half of the ordinary allocator budget as heap headroom`() {
+    fun dolbyVisionLeavesHalfOfTheOrdinaryAllocatorBudgetAsHeapHeadroom() {
         assertEquals(
             48 * 1024 * 1024,
             playbackBufferBudgetBytes(
@@ -31,7 +32,7 @@ class SiloLoadControlTest {
     }
 
     @Test
-    fun `Dolby Vision adjustment never raises or undercuts a constrained budget`() {
+    fun dolbyVisionAdjustmentNeverRaisesOrUndercutsAConstrainedBudget() {
         val constrained = 8 * 1024 * 1024
 
         assertEquals(
@@ -42,6 +43,15 @@ class SiloLoadControlTest {
                 minimumBytes = SiloLoadControl.MIN_TARGET_BUFFER_BYTES,
             ),
         )
+    }
+
+    @Test
+    fun dolbyVisionBufferTrackRecognizesMimeAndCodecSignals() {
+        assertTrue(isDolbyVisionBufferTrack("video/dolby-vision", null))
+        listOf("dvhe.08.06", "dvh1.05.06", "dva1.09.01", "dvav.09.01").forEach { codec ->
+            assertTrue(isDolbyVisionBufferTrack("video/hevc", codec))
+        }
+        assertFalse(isDolbyVisionBufferTrack("video/hevc", "hvc1.2.4.L153.B0"))
     }
 
     @Test

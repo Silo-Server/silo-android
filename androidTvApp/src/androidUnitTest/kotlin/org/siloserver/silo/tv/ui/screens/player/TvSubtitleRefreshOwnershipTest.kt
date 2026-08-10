@@ -179,18 +179,18 @@ class TvSubtitleRefreshOwnershipTest {
     }
 
     @Test
-    fun `newest authoritative empty refresh removes stale downloaded rows`() = runTest {
+    fun `newest authoritative empty refresh clears every stale row`() = runTest {
         val harness = harness(backgroundScope, tracks = listOf(server(3), downloaded(91)))
         val owner = harness.adapter.beginRefresh(TvSubtitleRefreshSource.Realtime)
 
         assertTrue(harness.adapter.applyRefresh(owner, emptyList(), autoSelectDownloadId = null))
 
-        assertEquals(listOf(3), harness.adapter.snapshot.subtitleTracks.map { it.index })
+        assertEquals(emptyList(), harness.adapter.snapshot.subtitleTracks)
         assertEquals(1L, harness.adapter.snapshot.subtitleRefreshNonce)
     }
 
     @Test
-    fun `accepted refresh rebases downloaded URLs to the owned session`() = runTest {
+    fun `accepted authoritative refresh preserves the exact server URL`() = runTest {
         val harness = harness(backgroundScope)
         val owner = harness.adapter.beginRefresh(TvSubtitleRefreshSource.Download)
 
@@ -203,7 +203,7 @@ class TvSubtitleRefreshOwnershipTest {
         )
 
         assertEquals(
-            "https://silo.test/api/v1/stream/s1/subtitles/91.vtt?token=stale",
+            "https://silo.test/api/v1/stream/stale/subtitles/91.vtt?token=stale",
             harness.adapter.snapshot.subtitleTracks.single { it.downloadId == 91 }.url,
         )
     }

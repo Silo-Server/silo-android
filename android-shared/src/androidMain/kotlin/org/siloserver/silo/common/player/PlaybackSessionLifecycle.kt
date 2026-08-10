@@ -84,6 +84,9 @@ class PlaybackSessionLifecycle(
     @Volatile private var lastStartParams: StartParams? = null
     @Volatile private var lastReportedPosition: Double? = null
     @Volatile private var lastReportedDuration: Double = 0.0
+    /** Durable content-time coordinate; differs from session time for multipart audio. */
+    @Volatile private var lastPersistencePosition: Double? = null
+    @Volatile private var lastPersistenceDuration: Double = 0.0
     @Volatile private var recoveringFromMissingSession: String? = null
     @Volatile private var flushProgressOnStop: Boolean = true
     @Volatile private var stopActiveSessionOnStop: Boolean = true
@@ -91,6 +94,7 @@ class PlaybackSessionLifecycle(
         DiagnosticsPlaybackSessionRecording.None
 
     private var reporterJob: Job? = null
+    private val recoveryJobLock = Any()
     private var recoveryJob: Job? = null
     private var outageJob: Job? = null
     private val pendingStopLock = Any()
@@ -116,6 +120,8 @@ class PlaybackSessionLifecycle(
         val lastStartParams: StartParams?,
         val lastReportedPosition: Double?,
         val lastReportedDuration: Double,
+        val lastPersistencePosition: Double?,
+        val lastPersistenceDuration: Double,
         val lastIsPaused: Boolean,
         val recoveringFromMissingSession: String?,
         val flushProgressOnStop: Boolean,
@@ -231,6 +237,8 @@ class PlaybackSessionLifecycle(
             lastStartParams = params
             lastReportedPosition = params.startPosition ?: session.position
             lastReportedDuration = session.durationSeconds ?: 0.0
+            lastPersistencePosition = params.startPosition ?: session.position
+            lastPersistenceDuration = session.durationSeconds ?: 0.0
             lastIsPaused = session.isPaused
             recoveringFromMissingSession = null
             flushProgressOnStop = manageProgress
@@ -367,6 +375,8 @@ class PlaybackSessionLifecycle(
             lastStartParams = lastStartParams,
             lastReportedPosition = lastReportedPosition,
             lastReportedDuration = lastReportedDuration,
+            lastPersistencePosition = lastPersistencePosition,
+            lastPersistenceDuration = lastPersistenceDuration,
             lastIsPaused = lastIsPaused,
             recoveringFromMissingSession = recoveringFromMissingSession,
             flushProgressOnStop = flushProgressOnStop,
@@ -382,6 +392,8 @@ class PlaybackSessionLifecycle(
         lastStartParams = snapshot.lastStartParams
         lastReportedPosition = snapshot.lastReportedPosition
         lastReportedDuration = snapshot.lastReportedDuration
+        lastPersistencePosition = snapshot.lastPersistencePosition
+        lastPersistenceDuration = snapshot.lastPersistenceDuration
         lastIsPaused = snapshot.lastIsPaused
         recoveringFromMissingSession = snapshot.recoveringFromMissingSession
         flushProgressOnStop = snapshot.flushProgressOnStop
@@ -433,6 +445,10 @@ class PlaybackSessionLifecycle(
          * either.
          */
         expectedSessionId: String?,
+        /** Content-level coordinate used by durable resume persistence. */
+        persistencePositionSec: Double = positionSec,
+        /** Content-level duration paired with [persistencePositionSec]. */
+        persistenceDurationSec: Double = durationSec,
     ) {
         if (expectedSessionId != lastAdoptedSessionId) return
         if (positionSec.isFinite() && positionSec >= 0) {
@@ -440,6 +456,12 @@ class PlaybackSessionLifecycle(
         }
         if (durationSec.isFinite() && durationSec > 0) {
             lastReportedDuration = durationSec
+        }
+        if (persistencePositionSec.isFinite() && persistencePositionSec >= 0) {
+            lastPersistencePosition = persistencePositionSec
+        }
+        if (persistenceDurationSec.isFinite() && persistenceDurationSec > 0) {
+            lastPersistenceDuration = persistenceDurationSec
         }
         lastIsPaused = isPaused
     }
@@ -549,6 +571,8 @@ class PlaybackSessionLifecycle(
             lastStartParams = null
             lastReportedPosition = null
             lastReportedDuration = 0.0
+            lastPersistencePosition = null
+            lastPersistenceDuration = 0.0
             recoveringFromMissingSession = null
             flushProgressOnStop = true
             stopActiveSessionOnStop = true
@@ -561,10 +585,13 @@ class PlaybackSessionLifecycle(
     }
 
     /**
-     * Retires a terminal playback attempt and rechecks screen ownership only
-     * after the lifecycle reporter is fully stopped. Phone and TV must share
-     * this ordering: publishing the terminal first lets the next progress tick
-     * observe the retired server session as a 404 and start a fresh attempt.
+     * Retires a terminal playback attempt, then rechecks screen ownership.
+     *
+     * [stop] cancels the reporter without joining it, so a report may still be
+     * in flight here. It clears `lastAdoptedSessionId` under [mutex] first, and
+     * [ownsProgressReply] then discards any late reply. Phone and TV must share
+     * this terminal-first ordering so a stale progress tick cannot renew the
+     * retired server session.
      */
     suspend fun stopTerminalSessionIfCurrent(
         expectedSessionId: String,
@@ -744,27 +771,39 @@ class PlaybackSessionLifecycle(
      */
     private fun handleSessionMissing(staleSessionId: String) {
         // Debounce: a flurry of 404s should only trigger one renewal.
-        if (recoveringFromMissingSession == staleSessionId) return
         val params = lastStartParams ?: return
-
-        recoveringFromMissingSession = staleSessionId
-        DiagnosticsPlaybackLogger.sessionEvent("session missing")
         val resumePosition = lastReportedPosition ?: params.startPosition ?: 0.0
-        recoveryJob?.cancel()
-        recoveryJob = scope.launch {
-            syncProgressSnapshot(
-                contentId = params.contentId,
-                position = resumePosition,
-                duration = lastReportedDuration,
-            )
-            _missingSessionEvents.emit(
-                MissingSessionRenewal(
-                    positionSeconds = resumePosition,
-                    startParams = params,
-                ),
-            )
-            recoveryJob = null
+        val persistencePosition = lastPersistencePosition ?: resumePosition
+        val persistenceDuration = lastPersistenceDuration.takeIf { it > 0.0 }
+            ?: lastReportedDuration
+        val job = synchronized(recoveryJobLock) {
+            if (recoveringFromMissingSession == staleSessionId) return
+            recoveringFromMissingSession = staleSessionId
+            recoveryJob?.cancel()
+            scope.launch(start = CoroutineStart.LAZY) {
+                if (!ownsProgressReply(staleSessionId)) return@launch
+                syncProgressSnapshot(
+                    contentId = params.contentId,
+                    position = persistencePosition,
+                    duration = persistenceDuration,
+                )
+                if (!ownsProgressReply(staleSessionId)) return@launch
+                _missingSessionEvents.emit(
+                    MissingSessionRenewal(
+                        staleSessionId = staleSessionId,
+                        positionSeconds = resumePosition,
+                        startParams = params,
+                    ),
+                )
+            }.also { recoveryJob = it }
         }
+        DiagnosticsPlaybackLogger.sessionEvent("session missing")
+        job.invokeOnCompletion {
+            synchronized(recoveryJobLock) {
+                if (recoveryJob === job) recoveryJob = null
+            }
+        }
+        job.start()
     }
 
     // ---- Internal: server-outage recovery -----------------------------------
@@ -868,14 +907,17 @@ class PlaybackSessionLifecycle(
         val params = lastStartParams ?: return
         syncProgressSnapshot(
             contentId = params.contentId,
-            position = lastReportedPosition,
-            duration = lastReportedDuration,
+            position = lastPersistencePosition ?: lastReportedPosition,
+            duration = lastPersistenceDuration.takeIf { it > 0.0 }
+                ?: lastReportedDuration,
         )
     }
 
     private fun cancelRecoveryJobs() {
-        recoveryJob?.cancel()
-        recoveryJob = null
+        synchronized(recoveryJobLock) {
+            recoveryJob?.cancel()
+            recoveryJob = null
+        }
         outageJob?.cancel()
         outageJob = null
     }
@@ -949,6 +991,7 @@ data class PlayerNotice(
  * returns the exact snapshot with the last reported source position.
  */
 data class MissingSessionRenewal(
+    val staleSessionId: String,
     val positionSeconds: Double,
     val startParams: StartParams,
 )
@@ -966,5 +1009,5 @@ data class StartParams(
     val subtitleTrackIndex: Int? = null,
     val qualityPreference: String? = null,
     val startPosition: Double? = null,
-    val clientPlaybackContext: ClientPlaybackContext? = null,
+    val clientPlaybackContext: ClientPlaybackContext,
 )

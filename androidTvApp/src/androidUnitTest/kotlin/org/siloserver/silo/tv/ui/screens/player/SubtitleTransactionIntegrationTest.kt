@@ -42,7 +42,6 @@ import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.StartParams
 import org.siloserver.silo.common.player.VideoSessionStartV3
-import org.siloserver.silo.common.player.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.common.player.subtitleArtifactTrackId
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.personal.SyncProgressItem
@@ -62,14 +61,18 @@ import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleArtifactV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
@@ -155,7 +158,11 @@ class SubtitleTransactionIntegrationTest {
         assertEquals(listOf(Harness.MountedSelection("s2", 9)), harness.media3Selections)
         harness.assertActiveSession("s2")
         assertEquals(mapOf("s1" to 1), harness.stopCounts())
-        assertEquals(listOf(sidecarB), harness.persistence.map { it.first.identity })
+        val persistedSidecar = assertIs<SubtitleIdentity.ServerSidecar>(
+            harness.persistence.single().first.identity,
+        )
+        assertEquals(B_INDEX, persistedSidecar.serverIndex)
+        assertEquals("file:$FILE_ID:subtitle:$B_INDEX", persistedSidecar.media?.trackId)
         assertEquals("s2", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
     }
@@ -298,7 +305,11 @@ class SubtitleTransactionIntegrationTest {
         assertEquals(mapOf("s1" to 1), harness.stopCounts())
         assertTrue(harness.media3Selections.isEmpty())
         assertNull(harness.adapter.snapshot.localMountIdentity)
-        assertEquals(listOf(burnIn), harness.persistence.map { it.first.identity })
+        val persistedBurnIn = assertIs<SubtitleIdentity.ServerBurnIn>(
+            harness.persistence.single().first.identity,
+        )
+        assertEquals(B_INDEX, persistedBurnIn.serverIndex)
+        assertEquals("file:$FILE_ID:subtitle:$B_INDEX", persistedBurnIn.media?.trackId)
         assertEquals("s2", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
     }
@@ -729,7 +740,9 @@ class SubtitleTransactionIntegrationTest {
             playerIndex: Int,
         ): PlayerTrackEntry {
             val row = mountedRow(expectedSessionId) {
-                it.index == serverIndex && it.source == "server_artifact"
+                it.index == serverIndex &&
+                    it.serverTrackId == "file:$FILE_ID:subtitle:$serverIndex" &&
+                    it.serverDelivery == SUBTITLE_DELIVERY_SIDECAR
             }
             assertEquals("/stream/$expectedSessionId/subtitles/$serverIndex.vtt", row.url)
             val artifactTrackId = subtitleArtifactTrackId(row.index)
@@ -939,6 +952,11 @@ class SubtitleTransactionIntegrationTest {
                     mimeType = "text/vtt",
                     format = "webvtt",
                 ),
+                inventory = subtitleInventory(
+                    sessionId = sessionId,
+                    fileId = fileId,
+                    lastIndex = subtitleIndex,
+                ),
             ),
         )
 
@@ -957,8 +975,37 @@ class SubtitleTransactionIntegrationTest {
             subtitle = PlaybackSubtitleDecisionV3(
                 mode = PlaybackSubtitleModeV3.BURN_IN,
                 trackId = "file:$fileId:subtitle:$subtitleIndex",
+                inventory = subtitleInventory(
+                    sessionId = sessionId,
+                    fileId = fileId,
+                    lastIndex = subtitleIndex,
+                    burnInIndex = subtitleIndex,
+                ),
             ),
         )
+
+        private fun subtitleInventory(
+            sessionId: String,
+            fileId: Int,
+            lastIndex: Int,
+            burnInIndex: Int? = null,
+        ): List<PlaybackSubtitleInventoryItemV3> = (0..lastIndex).map { index ->
+            val burnIn = index == burnInIndex
+            PlaybackSubtitleInventoryItemV3(
+                trackId = "file:$fileId:subtitle:$index",
+                combinedIndex = index,
+                source = "external",
+                codec = if (burnIn) "pgs" else "webvtt",
+                language = "en",
+                label = "Subtitle $index",
+                delivery = if (burnIn) {
+                    SUBTITLE_DELIVERY_BURN_IN_ONLY
+                } else {
+                    SUBTITLE_DELIVERY_SIDECAR
+                },
+                url = if (burnIn) null else "/stream/$sessionId/subtitles/$index.vtt",
+            )
+        }
 
         /**
          * Output identity is nested under the playback context in the neutral

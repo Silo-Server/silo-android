@@ -77,10 +77,10 @@ data class PlayerSubtitleInfo(
  * device, rather than a server-managed provider download in the v3 inventory.
  */
 fun PlayerSubtitleInfo.isLocalDownloadedSubtitle(): Boolean =
-    downloadId != null ||
-        (serverTrackId == null && serverDelivery == null &&
-            (source.equals("downloaded", ignoreCase = true) ||
-                catalogSource.equals("downloaded", ignoreCase = true)))
+    serverTrackId == null && serverDelivery == null &&
+        (downloadId != null ||
+            source.equals("downloaded", ignoreCase = true) ||
+            catalogSource.equals("downloaded", ignoreCase = true))
 
 /**
  * Granular HDR support advertised by the client. Optional; absent means the

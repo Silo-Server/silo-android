@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.player
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
+import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -86,6 +87,39 @@ class MobileSubtitleAutoSelectionTest {
         )
 
         assertEquals(null, resolveMobileSubtitleOrdinal(persisted, duplicates))
+    }
+
+    @Test
+    fun legacyDownloadedPreferenceMigratesToAUniqueAuthoritativePlanRow() {
+        val persisted = SubtitleIdentity.Downloaded(
+            downloadId = 312,
+            media = SubtitleMediaIdentity(
+                trackId = "silo-downloaded-subtitle:312",
+                label = "English",
+                language = "en",
+                codecFamily = "webvtt",
+                forced = false,
+                hearingImpaired = false,
+            ),
+        )
+        val authoritative = subtitle(
+            index = 4,
+            label = "English",
+            language = "en",
+            codec = "vtt",
+            forced = false,
+        ).copy(
+            source = "downloaded",
+            downloadId = null,
+            serverTrackId = "file:22:subtitle:4",
+            serverDelivery = "sidecar",
+        )
+
+        assertEquals(0, resolveMobileSubtitleOrdinal(persisted, listOf(authoritative)))
+        assertEquals(
+            "file:22:subtitle:4",
+            (mobileSubtitleIdentity(authoritative) as SubtitleIdentity.ServerSidecar).media?.trackId,
+        )
     }
 
     @Test
