@@ -104,15 +104,25 @@ class TvSilentFocusClaimSourceTest {
          * hidden-overlay root claim, the idle overlay target, both transport
          * handoffs and the up-next primary action.
          *
-         * 2026-08-10: **0** — diagnostics settings and prompt, server setup,
-         * person detail's focusBio, and calendar's NavHost-restore handoff.
+         * 2026-08-10: 2 — diagnostics settings, server setup, person detail's
+         * focusBio, and calendar's NavHost-restore handoff.
          *
-         * The ratchet now guards zero. Any new `runCatching { requestFocus() }`
-         * in a TV screen fails the build, and the two tools between them cover
+         * The two that remain are both in TvDiagnosticsPromptScreen, and they
+         * are deliberately NOT migrated here. Retrying that claim cannot work
+         * from inside the shell's content Box: its focusRestorer intercepts
+         * focus ENTRY and reroutes it, so the retry loops into the same
+         * interception forever. The fix is to give the prompt its own Dialog
+         * window, which is a separate change; migrating these two here would
+         * make the code look correct while the prompt stayed unreachable.
+         *
+         * Drop this to 0 when that change lands.
+         *
+         * Everywhere else is zero. Any new `runCatching { requestFocus() }` in
+         * a TV screen fails the build, and the two tools between them cover
          * every context: requestFocusUntilObserved where a coroutine exists,
          * claimFocusOrReport where the caller must answer synchronously.
          */
-        const val BASELINE = 0
+        const val BASELINE = 2
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 

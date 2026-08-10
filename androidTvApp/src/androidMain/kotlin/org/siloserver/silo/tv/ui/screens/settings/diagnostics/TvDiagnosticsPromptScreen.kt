@@ -14,12 +14,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -27,8 +25,6 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.diagnostics.DiagnosticsPrompt
-import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
-import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 
 @Composable
 fun TvDiagnosticsPromptScreen(
@@ -40,25 +36,11 @@ fun TvDiagnosticsPromptScreen(
 ) {
     var confirmAlways by remember { mutableStateOf(false) }
     val safeFocus = remember(prompt.reportId, confirmAlways) { FocusRequester() }
-    // Matches the treatment on the crash-prompt-reachability branch: retry
-    // until focus is OBSERVED, because an accepted request is not an acquired
-    // one and this dialog is the only route to sending a crash report.
-    var modalHasFocus by remember(prompt.reportId, confirmAlways) { mutableStateOf(false) }
-    LaunchedEffect(prompt.reportId, confirmAlways) {
-        requestFocusUntilObserved(
-            maxAttempts = TvContentInitialFocusMaxAttempts,
-            awaitAttempt = { withFrameNanos { } },
-            requestFocus = safeFocus::requestFocus,
-            isFocused = { modalHasFocus },
-        )
-    }
+    LaunchedEffect(prompt.reportId, confirmAlways) { runCatching { safeFocus.requestFocus() } }
     BackHandler(onBack = onDontSend)
     Surface(Modifier.fillMaxSize()) {
         Box(
-            Modifier
-                .fillMaxSize()
-                .onFocusChanged { modalHasFocus = it.hasFocus }
-                .background(Color.Black.copy(alpha = 0.92f)),
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.92f)),
             contentAlignment = Alignment.Center,
         ) {
             Column(
@@ -106,22 +88,11 @@ internal fun TvDiagnosticsConfirmation(
     onDismiss: () -> Unit,
 ) {
     val cancelFocus = remember { FocusRequester() }
-    var confirmationHasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        requestFocusUntilObserved(
-            maxAttempts = TvContentInitialFocusMaxAttempts,
-            awaitAttempt = { withFrameNanos { } },
-            requestFocus = cancelFocus::requestFocus,
-            isFocused = { confirmationHasFocus },
-        )
-    }
+    LaunchedEffect(Unit) { runCatching { cancelFocus.requestFocus() } }
     BackHandler(onBack = onDismiss)
     Surface(Modifier.fillMaxSize()) {
         Box(
-            Modifier
-                .fillMaxSize()
-                .onFocusChanged { confirmationHasFocus = it.hasFocus }
-                .background(Color.Black.copy(alpha = 0.9f)),
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)),
             contentAlignment = Alignment.Center,
         ) {
             Column(Modifier.width(520.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
