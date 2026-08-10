@@ -81,8 +81,11 @@ class TvSilentFocusClaimSourceTest {
          * 2026-08-10: 49 — person detail's onDispose restore and calendar's
          * Up-fallback branch (both via claimFocusOrReport), plus library's
          * clear-filters pill, sort panel and facet panel.
+         *
+         * 2026-08-10: 43 — all six search claims, including the four-way
+         * post-search target and both return restorations.
          */
-        const val BASELINE = 49
+        const val BASELINE = 43
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
