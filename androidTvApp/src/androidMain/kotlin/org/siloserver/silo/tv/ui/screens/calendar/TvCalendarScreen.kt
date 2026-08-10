@@ -1,10 +1,12 @@
 package org.siloserver.silo.tv.ui.screens.calendar
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -21,26 +23,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.gestures.BringIntoViewSpec
-import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
-import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.foundation.lazy.itemsIndexed
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.transformLatest
-import kotlinx.coroutines.withTimeoutOrNull
-import org.siloserver.silo.tv.ui.focus.TvFocusAcquisitionBudgetMillis
-import org.siloserver.silo.tv.ui.focus.TvReturnRelocation
-import org.siloserver.silo.tv.ui.focus.TvReturnResolution
-import org.siloserver.silo.tv.ui.focus.TvReturnSection
-import org.siloserver.silo.tv.ui.focus.TvReturnTarget
-import org.siloserver.silo.tv.ui.focus.TvReturnTargetSaver
-import org.siloserver.silo.tv.ui.focus.resolveTvReturnTarget
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,17 +45,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -89,8 +78,17 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.transformLatest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.calendar.localDisplayAirTime
+import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.calendar.CalendarBadge
 import org.siloserver.silo.model.calendar.CalendarFilter
 import org.siloserver.silo.model.calendar.CalendarItem
@@ -99,17 +97,25 @@ import org.siloserver.silo.tv.ui.components.LocalAmbientBackdropTint
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvRootHeroBackdrop
 import org.siloserver.silo.tv.ui.components.rememberAmbientBackdropTintState
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFocusAcquisitionBudgetMillis
+import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.TvReturnRelocation
+import org.siloserver.silo.tv.ui.focus.TvReturnResolution
+import org.siloserver.silo.tv.ui.focus.TvReturnSection
+import org.siloserver.silo.tv.ui.focus.TvReturnTarget
+import org.siloserver.silo.tv.ui.focus.TvReturnTargetSaver
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.resolveTvReturnTarget
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.DarkOnPrimary
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 import org.siloserver.silo.viewmodel.CalendarViewModel
-import kotlinx.coroutines.launch
-import org.koin.compose.viewmodel.koinViewModel
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
  * TV calendar / upcoming screen. Reuses the shared [CalendarViewModel] that
@@ -148,6 +154,7 @@ fun TvCalendarScreen(
     // First focusable element is the segmented filter capsule so the D-pad
     // lands there when the Calendar tab swaps in; gate the jump so a silent
     // re-emission doesn't yank focus back after the user has navigated.
+    var calendarFilterHasFocus by remember { mutableStateOf(false) }
     val filterFocusRequesters = remember {
         mapOf(
             CalendarFilter.Following to FocusRequester(),
@@ -328,13 +335,24 @@ fun TvCalendarScreen(
         androidx.compose.runtime.withFrameNanos { }
         androidx.compose.runtime.withFrameNanos { }
         val requester = filterFocusRequesters[state.filter] ?: filterFocusRequester
-        val applied = runCatching { requester.requestFocus() }.getOrDefault(false)
+        val applied = requestFocusUntilObserved(
+            maxAttempts = TvFrameRelocationMaxAttempts,
+            awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
+            requestFocus = requester::requestFocus,
+            isFocused = { calendarFilterHasFocus },
+        ) == TvObservedFocusResult.Focused
         if (applied) {
             // Keep the shell bar suppressed through Android's delayed initial
             // focus pass. Reconfirm the filter after that pass, then release
-            // suppression on the following frame.
+            // suppression on the following frame. The reconfirm is a second
+            // claim against the same target, so it is observed too.
             kotlinx.coroutines.delay(120)
-            runCatching { requester.requestFocus() }
+            requestFocusUntilObserved(
+                maxAttempts = TvFrameRelocationMaxAttempts,
+                awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
+                requestFocus = requester::requestFocus,
+                isFocused = { calendarFilterHasFocus },
+            )
             androidx.compose.runtime.withFrameNanos { }
             if (lastAppliedFocusRequest != focusRequest) {
                 lastAppliedFocusRequest = focusRequest
@@ -940,6 +958,7 @@ private fun CalendarList(
 ) {
     val snapScope = rememberCoroutineScope()
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    var selectedDayHasFocus by remember { mutableStateOf(false) }
     var isReturningToControls by remember { mutableStateOf(false) }
     var focusedControlZone by remember { mutableStateOf<CalendarControlFocusZone?>(null) }
     val clearControlFocusZone: () -> Unit = { focusedControlZone = null }
@@ -958,15 +977,15 @@ private fun CalendarList(
                 // animation. Keeping one scroll authority avoids the small
                 // hitch caused by focus bring-into-view and two list animations
                 // all racing toward item zero.
-                var claimed = runCatching {
-                    selectedDayFocusRequester.requestFocus()
-                }.getOrDefault(false)
-                repeat(6) {
-                    if (claimed) return@repeat
-                    androidx.compose.runtime.withFrameNanos { }
-                    claimed = runCatching { selectedDayFocusRequester.requestFocus() }.getOrDefault(false)
-                    if (!claimed) kotlinx.coroutines.delay(40)
-                }
+                // Was a hand-rolled six-attempt loop keyed on requestFocus()
+                // returning true — acceptance, not arrival. The shared policy
+                // does the same pacing and judges it on observed focus.
+                requestFocusUntilObserved(
+                    maxAttempts = TvContentInitialFocusMaxAttempts,
+                    awaitAttempt = { withFrameNanos { } },
+                    requestFocus = selectedDayFocusRequester::requestFocus,
+                    isFocused = { selectedDayHasFocus },
+                )
                 kotlinx.coroutines.delay(80)
                 isReturningToControls = false
             }
@@ -998,7 +1017,13 @@ private fun CalendarList(
                     true
                 }
                 CalendarUpFallbackAction.FocusFilter -> {
-                    runCatching { activeFilterFocusRequester.requestFocus() }.getOrDefault(false)
+                    // Key handlers answer synchronously whether they consumed
+                    // the press, so this cannot await arrival — but a claim that
+                    // is refused must not vanish silently either.
+                    activeFilterFocusRequester.claimFocusOrReport(
+                        target = "calendar_filter",
+                        action = "up_fallback",
+                    )
                 }
                 CalendarUpFallbackAction.ReturnToControls -> {
                     onMoveUpToControls()
@@ -1033,6 +1058,9 @@ private fun CalendarList(
         modifier = Modifier
             .fillMaxSize()
             .padding(top = TvTopMenuLayout.contentTopInset)
+            // The day claim above lands on a row inside this list, so "focus is
+            // in the list" is the arrival it is waiting on.
+            .onFocusChanged { selectedDayHasFocus = it.hasFocus }
             .focusGroup(),
         contentPadding = PaddingValues(
             top = Spacing.sm,
@@ -1144,15 +1172,24 @@ private fun DayShelf(
     // — otherwise, after the shelf has been scrolled horizontally, the first
     // card may be off-screen and the request is dropped.
     val targetCardIndex = focusItemIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+    var shelfHasFocus by remember { mutableStateOf(false) }
+
     LaunchedEffect(focusRequest) {
         if (focusRequest > 0 && items.isNotEmpty()) {
             rowState.scrollToItem(targetCardIndex)
-            runCatching { targetCardFocusRequester.requestFocus() }
-            onFocusApplied()
+            // onFocusApplied() retires the pending request. Retiring it after a
+            // claim that was dropped loses the request entirely — nothing
+            // focused and nothing left to retry it — so it now fires only on
+            // observed acquisition. The shelf already reports its own focus.
+            val landed = requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = targetCardFocusRequester::requestFocus,
+                isFocused = { shelfHasFocus },
+            )
+            if (landed == TvObservedFocusResult.Focused) onFocusApplied()
         }
     }
-
-    var shelfHasFocus by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()

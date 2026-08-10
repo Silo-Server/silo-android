@@ -10,26 +10,34 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
 import org.siloserver.silo.tv.ui.components.TvSkylineSectionFeed
 import org.siloserver.silo.tv.ui.components.isTvProgressRow
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.viewmodel.HomeViewModel
-import org.koin.compose.viewmodel.koinViewModel
 
 internal fun shouldShowHomeEmptyState(
     isLoading: Boolean,
@@ -122,13 +130,20 @@ private fun TvHomeEmptyState(
     onInitialContentFocus: () -> Unit,
 ) {
     val refreshFocusRequester = focusRequester ?: remember { FocusRequester() }
+    var homeContentHasFocus by remember { mutableStateOf(false) }
     LaunchedEffect(focusRequest) {
-        runCatching { refreshFocusRequester.requestFocus() }
-        onInitialContentFocus()
+        val landed = requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = refreshFocusRequester::requestFocus,
+            isFocused = { homeContentHasFocus },
+        )
+        if (landed == TvObservedFocusResult.Focused) onInitialContentFocus()
     }
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onFocusChanged { homeContentHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background)
             .padding(48.dp),
         contentAlignment = Alignment.Center,

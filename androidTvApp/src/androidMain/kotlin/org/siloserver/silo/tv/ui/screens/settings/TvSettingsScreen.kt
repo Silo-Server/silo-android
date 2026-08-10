@@ -48,9 +48,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -134,6 +139,7 @@ fun TvSettingsScreen(
         )
     }
     var detailHasFocus by remember { mutableStateOf(false) }
+    var categoryColumnHasFocus by remember { mutableStateOf(false) }
     var detailFocusRequest by remember { mutableStateOf(0) }
     var showSignOutConfirm by remember { mutableStateOf(false) }
 
@@ -143,25 +149,35 @@ fun TvSettingsScreen(
         } else {
             categoryFocusRequesters.getValue(TvSettingsCategory.General)
         }
-        var focusRestored = false
-        for (attempt in 0 until 4) {
-            if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
-                focusRestored = true
-                break
-            }
-            delay(50)
-        }
+        // Was four attempts judged on requestFocus() returning true — that is
+        // acceptance, not arrival. onInitialContentFocus() hands content focus
+        // to the shell, so firing it regardless told the shell focus had landed
+        // even when the loop had just failed four times.
+        val focusRestored = requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = requester::requestFocus,
+            isFocused = { categoryColumnHasFocus },
+        ) == TvObservedFocusResult.Focused
         if (initialManageServersFocus && focusRestored) onManageServersReturnFocusConsumed()
-        onInitialContentFocus()
+        if (focusRestored) onInitialContentFocus()
     }
 
     LaunchedEffect(detailFocusRequest) {
-        if (detailFocusRequest > 0) runCatching { detailFocusRequester.requestFocus() }
+        if (detailFocusRequest > 0) {
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = detailFocusRequester::requestFocus,
+                isFocused = { detailHasFocus },
+            )
+        }
     }
 
     BackHandler {
         if (detailHasFocus) {
-            runCatching { categoryFocusRequesters.getValue(selectedCategory).requestFocus() }
+            categoryFocusRequesters.getValue(selectedCategory)
+                .claimFocusOrReport(target = "settings_category", action = "back_from_detail")
         } else {
             onNavigateHome()
         }
@@ -188,6 +204,7 @@ fun TvSettingsScreen(
         categoryFocusRequesters = categoryFocusRequesters,
         detailFocusRequester = detailFocusRequester,
         onDetailFocusChanged = { detailHasFocus = it },
+        onRailCategoryFocusChanged = { categoryColumnHasFocus = it },
         onCategorySelected = { selectedCategory = it },
         onEnterCategory = {
             selectedCategory = it
@@ -291,6 +308,9 @@ private fun SettingsSplitLayout(
     categoryFocusRequesters: Map<TvSettingsCategory, FocusRequester>,
     detailFocusRequester: FocusRequester,
     onDetailFocusChanged: (Boolean) -> Unit,
+    // Observed arrival of the entry claim, so the shell handover below only
+    // fires when a category actually took focus.
+    onRailCategoryFocusChanged: (Boolean) -> Unit,
     onCategorySelected: (TvSettingsCategory) -> Unit,
     onEnterCategory: (TvSettingsCategory) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
@@ -353,7 +373,10 @@ private fun SettingsSplitLayout(
             detailFocusRequester = detailFocusRequester,
             onCategorySelected = onCategorySelected,
             onEnterCategory = onEnterCategory,
-            onRailCategoryFocused = { onDetailFocusChanged(false) },
+            onRailCategoryFocused = {
+                onDetailFocusChanged(false)
+                onRailCategoryFocusChanged(true)
+            },
             onSwitchProfile = onSwitchProfile,
             onNavigateToAdmin = onNavigateToAdmin,
             onRequestSignOut = onRequestSignOut,
@@ -1450,13 +1473,19 @@ fun TvSettingsPickerSheet(
 
     val initialFocus = remember { FocusRequester() }
     val selectedIndex = options.indexOfFirst { it.id == selectedId }.coerceAtLeast(0)
+    var pickerHasFocus by remember { mutableStateOf(false) }
     val focusTargetIndex = if (options.isEmpty()) -1 else selectedIndex
     val listState: LazyListState = rememberLazyListState()
 
     LaunchedEffect(title, selectedId) {
         if (focusTargetIndex >= 0) {
             runCatching { listState.scrollToItem(focusTargetIndex) }
-            runCatching { initialFocus.requestFocus() }
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = initialFocus::requestFocus,
+                isFocused = { pickerHasFocus },
+            )
         }
     }
 
@@ -1469,6 +1498,7 @@ fun TvSettingsPickerSheet(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .onFocusChanged { pickerHasFocus = it.hasFocus }
                 .background(Color.Black.copy(alpha = 0.94f)),
             contentAlignment = Alignment.Center,
         ) {
@@ -1587,7 +1617,15 @@ private fun TvSettingsConfirmDialog(
     // Default focus lands on Cancel so a stray OK press never triggers the
     // destructive action.
     val cancelFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { cancelFocus.requestFocus() } }
+    var confirmHasFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = cancelFocus::requestFocus,
+            isFocused = { confirmHasFocus },
+        )
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
