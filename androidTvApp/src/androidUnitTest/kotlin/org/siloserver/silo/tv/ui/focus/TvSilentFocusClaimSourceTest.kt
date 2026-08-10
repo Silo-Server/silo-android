@@ -140,7 +140,7 @@ class TvSilentFocusClaimSourceTest {
          * every context: requestFocusUntilObserved where a coroutine exists,
          * claimFocusOrReport where the caller must answer synchronously.
          */
-        const val BASELINE = 2
+        const val BASELINE = 0
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
