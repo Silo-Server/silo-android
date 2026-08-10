@@ -99,8 +99,12 @@ class TvSilentFocusClaimSourceTest {
          * 2026-08-10: 17 — all eight item-detail sites, including the
          * `runCatching{}.isSuccess` pair that treated "did not throw" as
          * "focused".
+         *
+         * 2026-08-10: 9 — the player: HUD tab seed and picker return, the
+         * hidden-overlay root claim, the idle overlay target, both transport
+         * handoffs and the up-next primary action.
          */
-        const val BASELINE = 17
+        const val BASELINE = 9
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
