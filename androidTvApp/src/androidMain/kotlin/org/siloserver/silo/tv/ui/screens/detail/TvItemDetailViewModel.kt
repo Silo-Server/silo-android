@@ -212,15 +212,6 @@ internal fun shouldApplyNextUpTrackRestore(
     currentSelectedFileId == requestedSelectedFileId
 
 /**
- * Drives the enhanced TV item detail screen. Loads the full [ItemDetail] plus
- * the current user's favorite/watchlist state in parallel. For series, pulls
- * seasons once the main detail lands and lazily loads episodes whenever the
- * user switches seasons.
- *
- * Receives `contentId` via Koin `parametersOf()` (see
- * [org.siloserver.silo.tv.di.androidTvModule]).
- */
-/**
  * How many `GET /favorites/{id}` probes may be in flight at once.
  *
  * A season is commonly 10-25 episodes and every one needs its own probe, so
@@ -229,8 +220,45 @@ internal fun shouldApplyNextUpTrackRestore(
  * drawn. A small window keeps the first rows filling promptly without the
  * burst.
  */
-private const val EPISODE_FAVORITE_PROBE_CONCURRENCY = 6
+internal const val EPISODE_FAVORITE_PROBE_CONCURRENCY = 6
 
+/**
+ * Resolves the favourite flag for the episodes whose state is not already
+ * known, at most [concurrency] probes in flight at once.
+ *
+ * Returns only the episodes that answered successfully: a failed probe is left
+ * out entirely rather than reported as `false`, so a transient error does not
+ * stick as a cached "not a favourite" for the rest of the visit. Callers merge
+ * the result onto what they already hold.
+ */
+internal suspend fun probeEpisodeFavorites(
+    episodeIds: List<String>,
+    knownIds: Set<String>,
+    concurrency: Int = EPISODE_FAVORITE_PROBE_CONCURRENCY,
+    probe: suspend (String) -> ApiResult<Boolean>,
+): List<Pair<String, Boolean>> {
+    val unknown = episodeIds.filterNot { it in knownIds }
+    if (unknown.isEmpty()) return emptyList()
+    val gate = Semaphore(concurrency)
+    return coroutineScope {
+        unknown.map { id ->
+            async {
+                val favorite = gate.withPermit { probe(id) }
+                (favorite as? ApiResult.Success)?.let { id to it.data }
+            }
+        }.awaitAll()
+    }.filterNotNull()
+}
+
+/**
+ * Drives the enhanced TV item detail screen. Loads the full [ItemDetail] plus
+ * the current user's favorite/watchlist state in parallel. For series, pulls
+ * seasons once the main detail lands and lazily loads episodes whenever the
+ * user switches seasons.
+ *
+ * Receives `contentId` via Koin `parametersOf()` (see
+ * [org.siloserver.silo.tv.di.androidTvModule]).
+ */
 class TvItemDetailViewModel(
     private val catalogRepository: CatalogRepository,
     private val personalDataRepository: PersonalDataRepository,
@@ -859,31 +887,13 @@ class TvItemDetailViewModel(
             _uiState.update { it.copy(episodeFavoriteStates = emptyMap()) }
             return
         }
-        val knownStates = _uiState.value.episodeFavoriteStates
-        val unknown = episodes.filterNot { knownStates.containsKey(it.contentId) }
-        if (unknown.isEmpty()) return
-
-        val gate = Semaphore(EPISODE_FAVORITE_PROBE_CONCURRENCY)
-        val probed = coroutineScope {
-            unknown.map { episode ->
-                async {
-                    val favorite = gate.withPermit {
-                        personalDataRepository.isFavorite(episode.contentId)
-                    }
-                    episode.contentId to when (favorite) {
-                        is ApiResult.Success -> favorite.data
-                        // A failed probe is left UNRECORDED rather than stored
-                        // as false, so a transient error does not stick as a
-                        // cached "not a favourite" for the rest of the visit.
-                        else -> null
-                    }
-                }
-            }.awaitAll()
-        }
+        val resolved = probeEpisodeFavorites(
+            episodeIds = episodes.map { it.contentId },
+            knownIds = _uiState.value.episodeFavoriteStates.keys,
+        ) { personalDataRepository.isFavorite(it) }
 
         val currentIds = _uiState.value.episodes.mapTo(mutableSetOf()) { it.contentId }
         if (currentIds != episodes.mapTo(mutableSetOf()) { it.contentId }) return
-        val resolved = probed.mapNotNull { (id, value) -> value?.let { id to it } }
         if (resolved.isEmpty()) return
         _uiState.update { it.copy(episodeFavoriteStates = it.episodeFavoriteStates + resolved) }
     }
