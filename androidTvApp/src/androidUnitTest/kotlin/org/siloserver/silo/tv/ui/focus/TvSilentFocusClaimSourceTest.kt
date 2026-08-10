@@ -88,8 +88,11 @@ class TvSilentFocusClaimSourceTest {
          * 2026-08-10: 36 — recommendations: six Boolean-returning bridge and
          * key-handler claims via claimFocusOrReport, plus the For You entry
          * claim, which was the fifth false shell handover found this sweep.
+         *
+         * 2026-08-10: 31 — admin hub and user edit, browse, the audiobook
+         * bookmark delete, and home — home being the sixth false handover.
          */
-        const val BASELINE = 36
+        const val BASELINE = 31
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
