@@ -5,6 +5,7 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
+import io.ktor.client.request.post
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
@@ -12,7 +13,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -50,16 +51,19 @@ class SiloAuthPluginProactiveRefreshHazardTest {
 
     /**
      * When the refresh token has been revoked, the proactive refresh returns
-     * 401 and the session is torn down. The original request must not then go
-     * out carrying the bearer the client just repudiated — the access token can
-     * still be valid for another minute, so the server may honour a write for a
-     * session the app has already ended.
+     * 401 and the session is torn down. The original request must not go out at
+     * all. Stripping only the bearer is not enough: an optionally-authenticated
+     * endpoint would accept the anonymous remainder, turning a repudiated write
+     * into a successful anonymous one. A write is the motivating case, so this
+     * uses one.
      */
     @Test
-    fun aRepudiatedSessionDoesNotStillSpendItsOldBearer() = runTest {
+    fun aRepudiatedSessionDoesNotSendTheRequestAtAll() = runTest {
         val tokenManager = TokenManagerImpl().apply {
             setServerUrl("https://silo.example")
             saveTokens("live-access", "revoked-refresh", expiresIn = 0)
+            setProfileId("profile-1")
+            setProfileToken("profile-token-1")
         }
         val sent = mutableListOf<Pair<String, String?>>()
         val client = HttpClient(
@@ -72,6 +76,8 @@ class SiloAuthPluginProactiveRefreshHazardTest {
                         headers = headersOf(HttpHeaders.ContentType, "application/json"),
                     )
                 } else {
+                    // Deliberately generous: an endpoint that would happily
+                    // accept the anonymous remainder of the request.
                     respond(
                         content = """{"ok":true}""",
                         status = HttpStatusCode.OK,
@@ -84,14 +90,18 @@ class SiloAuthPluginProactiveRefreshHazardTest {
             install(SiloAuthPlugin) { this.tokenManager = tokenManager }
         }
 
-        client.get("/api/v1/watch/history")
+        val failure = assertFailsWith<IllegalStateException> {
+            client.post("/api/v1/watch/history")
+        }
+        assertEquals("silo_auth_credentials_repudiated", failure.message)
 
-        val refresh = sent.first { it.first.endsWith("/auth/refresh") }
-        assertEquals("/api/v1/auth/refresh", refresh.first)
-        val realCall = sent.last { !it.first.endsWith("/auth/refresh") }
-        assertNull(
-            realCall.second,
-            "the request went out as ${realCall.second} after the session was invalidated",
+        assertTrue(
+            sent.any { it.first.endsWith("/auth/refresh") },
+            "the proactive refresh should still have been attempted",
+        )
+        assertTrue(
+            sent.none { it.first == "/api/v1/watch/history" },
+            "the repudiated write reached the server as ${sent.map { it.first }}",
         )
     }
 

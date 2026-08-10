@@ -522,11 +522,16 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                     }
 
                 // The refresh token was rejected, so the session is already
-                // torn down. Strip the repudiated bearer rather than spend it:
-                // the request then fails cleanly as unauthenticated instead of
-                // possibly succeeding under an identity the app has ended.
-                RefreshOutcome.CredentialsDead ->
-                    request.headers.remove(HttpHeaders.Authorization)
+                // torn down. This request must not go out at all: stripping
+                // only the bearer would send an ANONYMOUS version of it, and an
+                // optionally-authenticated endpoint may happily accept that —
+                // turning a repudiated write into a successful anonymous one.
+                // Drop every credential header and fail the call instead, the
+                // same way a pinned request with no usable token does.
+                RefreshOutcome.CredentialsDead -> {
+                    request.removeSiloCredentialHeaders()
+                    throw IllegalStateException("silo_auth_credentials_repudiated")
+                }
 
                 RefreshOutcome.NotAttempted -> Unit
             }

@@ -115,12 +115,17 @@ class RemotePlaybackIdentityManager(
                                     refreshToken = refreshToken,
                                     profileId = profileId,
                                     profileToken = profileToken,
-                                    // The SESSION deadline. The access token's
-                                    // own expiry is not in this payload, so it
-                                    // stays null until a refresh reports one —
-                                    // proactive refresh must not read a
-                                    // four-hour session as a four-hour token.
+                                    // The SESSION deadline — hours past the
+                                    // access token it was issued with, so it
+                                    // must never be read as a token expiry.
                                     expiresAtEpochMs = expiresAtMs,
+                                    // The token's own deadline, kept separate.
+                                    // Null when the server omits expires_in,
+                                    // which keeps this overlay reactive-only
+                                    // rather than guessing off the session.
+                                    accessTokenExpiresAtEpochMs = poll.expiresIn
+                                        ?.let { System.currentTimeMillis() + it * 1000L },
+                                    accessTokenLifetimeMs = poll.expiresIn?.times(1000L),
                                 ),
                             )
                             val active = ActiveIdentity(
