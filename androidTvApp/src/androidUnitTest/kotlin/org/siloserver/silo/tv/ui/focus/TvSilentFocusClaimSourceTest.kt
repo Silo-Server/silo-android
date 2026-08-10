@@ -90,7 +90,7 @@ class TvSilentFocusClaimSourceTest {
                     appendLine("hides the failure instead of handling it — focus goes nowhere and")
                     appendLine("nothing is logged. On a television there is no touch fallback.")
                     appendLine()
-                    appendLine("Use requestFocusUntilObserved (ui/focus/TvContentInitialFocus.kt),")
+                    appendLine("Use requestFocusUntilObserved (ui/focus/TvObservedFocusPolicy.kt),")
                     appendLine("which retries against observed focus and reports a claim that never")
                     appendLine("lands.")
                 } else {
