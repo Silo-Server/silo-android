@@ -38,12 +38,15 @@ class TvSilentFocusClaimSourceTest {
         /**
          * Known `runCatching { … requestFocus() … }` sites in TV screens.
          *
-         * 2026-08-10: 78 — player 10, detail 8, settings 7, recommendations 7,
-         * calendar 6, auth 6, library 6, search 6, people 5,
+         * 2026-08-10: 78 at introduction — player 10, detail 8, settings 7,
+         * recommendations 7, calendar 6, auth 6, library 6, search 6, people 5,
          * settings/diagnostics 4, requests 3, profiles 3, admin 2,
          * notifications 2, home 1, audiobook 1, browse 1.
+         *
+         * 2026-08-10: 76 — the intro auto-skip banner and the HUD option popup
+         * migrated to rememberTvContentInitialFocus.
          */
-        const val BASELINE = 78
+        const val BASELINE = 76
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 

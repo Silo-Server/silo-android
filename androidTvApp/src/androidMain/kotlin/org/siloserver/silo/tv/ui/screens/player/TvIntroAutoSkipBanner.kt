@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -141,17 +142,22 @@ private fun TvCountingDownPanel(
     // Auto-focus Cancel on the first frame this state is shown, so a D-pad
     // Select press cancels without user navigation. Re-fires whenever the
     // banner re-enters CountingDown after a cancel (the AnimatedContent
-    // recomposes with a fresh subtree on every state transition).
-    LaunchedEffect(Unit) {
-        runCatching { cancelFocus.requestFocus() }
-    }
+    // recomposes with a fresh subtree on every state transition — exactly when
+    // the tree is least settled, which is why acquisition must be OBSERVED
+    // rather than inferred from requestFocus() not throwing).
+    val cancelFocusModifier = rememberTvContentInitialFocus(
+        target = cancelFocus,
+        contentKey = Unit,
+    )
 
     Surface(
         color = Color.Black.copy(alpha = 0.65f),
         shape = RoundedCornerShape(28.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            modifier = Modifier
+                .then(cancelFocusModifier)
+                .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {

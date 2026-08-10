@@ -53,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -2150,12 +2151,14 @@ internal fun HudPickerDialog(
 
     // Auto-focus the selected option on appear. Because every option is in the
     // focus graph, Compose's scroll container brings that focused row onscreen.
-    LaunchedEffect(presentation.title) {
-        runCatching { focusRequester.requestFocus() }
-    }
+    val optionFocusModifier = rememberTvContentInitialFocus(
+        target = focusRequester,
+        contentKey = presentation.title,
+    )
 
     Box(
         modifier = modifier
+            .then(optionFocusModifier)
             .width(360.dp)
             .heightIn(max = 220.dp)
             .clip(RoundedCornerShape(14.dp))
