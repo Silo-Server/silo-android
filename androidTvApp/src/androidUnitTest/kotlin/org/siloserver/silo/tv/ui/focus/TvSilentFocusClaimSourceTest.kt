@@ -45,8 +45,11 @@ class TvSilentFocusClaimSourceTest {
          *
          * 2026-08-10: 76 — the intro auto-skip banner and the HUD option popup
          * migrated to rememberTvContentInitialFocus.
+         *
+         * 2026-08-10: 73 — the card-overlay preview relocation and both inbox
+         * claims migrated to requestFocusUntilObserved.
          */
-        const val BASELINE = 76
+        const val BASELINE = 73
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 

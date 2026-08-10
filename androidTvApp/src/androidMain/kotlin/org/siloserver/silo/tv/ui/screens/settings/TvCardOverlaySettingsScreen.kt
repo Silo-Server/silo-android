@@ -35,6 +35,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,12 +44,15 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
@@ -117,10 +121,19 @@ internal fun TvCardOverlaySettingsScreen(
     // focusable, and close the detail panel, whose edits no longer apply.
     val previewPaneFocus = remember { FocusRequester() }
     var wasEnabled by remember { mutableStateOf(enabled) }
+    var previewPaneHasFocus by remember { mutableStateOf(false) }
     LaunchedEffect(enabled) {
         if (wasEnabled && !enabled) {
             detailOverlay = null
-            runCatching { previewPaneFocus.requestFocus() }
+            // Relocation, not acquisition: focus is already somewhere, it is
+            // just about to stop being focusable. The short budget applies —
+            // a long one here would only mean seconds of visible thrash.
+            requestFocusUntilObserved(
+                maxAttempts = TvFrameRelocationMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = previewPaneFocus::requestFocus,
+                isFocused = { previewPaneHasFocus },
+            )
         }
         wasEnabled = enabled
     }
@@ -152,6 +165,7 @@ internal fun TvCardOverlaySettingsScreen(
                 modifier = Modifier
                     .width(260.dp)
                     .focusRequester(previewPaneFocus)
+                    .onFocusChanged { previewPaneHasFocus = it.isFocused }
                     .focusGroup(),
             )
             OverlayControlsPane(
