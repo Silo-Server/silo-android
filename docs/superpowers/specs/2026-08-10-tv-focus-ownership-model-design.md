@@ -162,15 +162,60 @@ and `#203` is what stops it crashing the app — with those merged, the signal
 exists. `focus trap suspected` and `navigation struggle` already arrive from
 real devices, so we can measure whether this works instead of asserting it.
 
+## The larger half: the prescribed fix was never adopted
+
+An earlier draft of this document asserted that the screen-local half of the
+08-04 design "works" and only the shell needed modelling. That is false, and
+the correction changes the priority order.
+
+Focus churn by area over 90 days, counted as file-touches by focus commits:
+
+| Area | touches |
+|---|---|
+| `ui/screens/` | **150** |
+| `ui/components/` | 71 |
+| `ui/focus/` | 42 |
+| `ui/shell/` | **31** |
+
+The shell is the most-edited single *file*, but screens are five times the
+churn. And the reason is not a missing model — it is a model nobody adopted:
+
+- **8** files use the shared bounded observed-focus policy.
+- **44** files still call `requestFocus()` directly.
+- **107** `runCatching` occurrences remain in TV screens.
+
+That is 18% adoption. Cause #1 of the 08-04 audit — *"a focus request executing
+without exception is treated as focus acquisition"* — is not a historical
+finding being worked off. It is the majority of the current code, and it is the
+same failure mode as #199 and #202.
+
+Screen churn concentrates too: `detail` 30, `player` 29, `audiobook` 21,
+`calendar` 14, `library` 12 — 106 of the 150.
+
+**So the ordering is: enforcement first, migration second, shell model third.**
+A better rule that 18% of the code follows is worth less than the existing rule
+made impossible to violate.
+
+### Enforcement
+
+Add a source test that fails on `runCatching { … requestFocus() … }` in
+`androidTvApp/.../ui/screens/`. The repo already uses `*SourceTest.kt` files
+that read source by path and assert on structure, so this is an established
+mechanism rather than a new one. Existing sites are baselined; the gate is that
+the count may only go down.
+
+That stops new instances appearing while the 36 hold-out files are migrated in
+churn order.
+
 ## Scope
 
-**In:** `TvShellFocusState`, `TvMainShell`, `TvTopMenuBar`, and the Back/dwell
-decision paths — the 15-edit hotspot.
+**In:** the enforcement gate; migration of the highest-churn screens
+(`detail`, `player`, `audiobook`, `calendar`, `library`); then
+`TvShellFocusState`, `TvMainShell`, `TvTopMenuBar` and the Back/dwell decision
+paths.
 
-**Out:** screen-local initial-focus acquisition (`TvContentInitialFocus`,
-`TvDialogInitialFocus`, the return-target adapters). That half of the 08-04
-design works; the bounded observed-focus policy is sound and stays. This is
-about who owns focus, not how a screen claims it.
+**Out:** the bounded observed-focus policy itself — it is sound and stays. The
+problem is that it is not used, not that it is wrong.
 
 **Explicitly not** a global focus coordinator. Screens keep resolving their own
 targets. The shell stops guessing what state it is in.
