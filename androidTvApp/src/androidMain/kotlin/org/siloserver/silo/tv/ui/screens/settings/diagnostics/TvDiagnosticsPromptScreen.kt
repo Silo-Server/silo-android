@@ -148,16 +148,27 @@ internal fun TvDiagnosticsConfirmation(
     onDismiss: () -> Unit,
 ) {
     val cancelFocus = remember { FocusRequester() }
+    var confirmationHasFocus by remember { mutableStateOf(false) }
+
+    // Observed acquisition, same as the prompt above. A fixed "try, wait one
+    // frame, try again" is still blind: it cannot tell a claim that landed from
+    // one that was dropped, and this dialog is the second step of a flow whose
+    // whole purpose is being reachable after a crash.
     LaunchedEffect(Unit) {
-        if (!runCatching { cancelFocus.requestFocus() }.getOrDefault(false)) {
-            withFrameNanos { }
-            runCatching { cancelFocus.requestFocus() }
-        }
+        requestFocusUntilObserved(
+            maxAttempts = TvModalRestoreMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = cancelFocus::requestFocus,
+            isFocused = { confirmationHasFocus },
+        )
     }
     BackHandler(onBack = onDismiss)
     Surface(Modifier.fillMaxSize()) {
         Box(
-            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)),
+            Modifier
+                .fillMaxSize()
+                .onFocusChanged { confirmationHasFocus = it.hasFocus }
+                .background(Color.Black.copy(alpha = 0.9f)),
             contentAlignment = Alignment.Center,
         ) {
             Column(Modifier.width(520.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
