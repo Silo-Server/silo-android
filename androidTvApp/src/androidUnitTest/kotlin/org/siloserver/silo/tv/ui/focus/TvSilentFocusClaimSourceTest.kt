@@ -26,11 +26,29 @@ import kotlin.test.assertEquals
  * — 18% adoption, which is why the audit's cause #1 was still producing new
  * defects four months on.
  *
- * This test does not fix those 78 sites. It stops the 79th.
+ * It began at 78 sites and stopped the 79th. Those 78 have since been migrated
+ * on this branch, so [BASELINE] is what remains rather than what it started at.
  *
  * **When you migrate a site, lower [BASELINE] in the same commit.** The
  * assertion is equality on purpose: a `<=` ratchet leaves slack that the next
  * silent claim quietly fills.
+ *
+ * Two limits, both real, both tolerable only because the baseline is at or near
+ * zero:
+ *
+ * 1. The scan is a fixed character window, not a brace-aware parse. It can pair
+ *    a `runCatching` with an unrelated `requestFocus` further down — which
+ *    happened during the migration, where a `runCatching { scrollToItem() }`
+ *    next to a focus claim inflated the count — and conversely it can miss a
+ *    claim written more than [WINDOW] characters from its `runCatching`. A
+ *    lexer would fix both and is a great deal of machinery for a source test.
+ *
+ * 2. The assertion compares a total, not a set. While the baseline was
+ *    non-zero, adding one claim and migrating another kept the total and passed.
+ *    At zero there is nothing to offset against, so any occurrence fails —
+ *    which is the only reason a count is sufficient here. **If this baseline is
+ *    ever raised above zero again, that hole reopens**, and the fix is to
+ *    compare discovered sites against an approved set rather than a number.
  */
 class TvSilentFocusClaimSourceTest {
 
