@@ -1,17 +1,29 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
+
 /**
  * Speeds for hold-to-seek, and how a sustained press climbs through them.
  *
  * The rate a viewer sees on the chip is a multiple of real time, and this is
  * the only place that decides what that multiple means. It previously did not
  * mean anything: the scrubber advanced `2.0 * rate` seconds on a 100ms tick, so
- * a chip reading "8×" moved at 160× and a 45-minute episode went past in
- * seventeen seconds. Every number on screen was a twentieth of the truth, which
- * is why the control felt ungovernable — you asked for 8 and got 160.
+ * a chip reading "8×" moved at 160× real time. Every number on screen was a
+ * twentieth of the truth, which is why the control felt ungovernable — you
+ * aimed with the number and the number was wrong.
  *
  * [SECONDS_PER_TICK] is what makes the label honest: rate × tick seconds per
  * tick is exactly rate × real time.
+ *
+ * A single fixed ceiling cannot serve both ends of this control. Nudging past
+ * an intro wants single digits; reaching the end of a three-hour film at 32×
+ * takes five and a half minutes of holding, which is not a seek, it is a
+ * hostage situation. So the top of the ladder is derived from the runtime
+ * instead of being a constant: [maxRateFor] targets [TRAVERSE_TARGET_SECONDS]
+ * to cross the whole item, so "hold until it gets there" costs about the same
+ * however long the thing is.
  */
 internal object TvSeekRateLadder {
 
@@ -26,43 +38,101 @@ internal object TvSeekRateLadder {
     const val BASE_RATE = 2
 
     /**
-     * Ceiling for a sustained hold. Beyond this a single tick covers more than
-     * a scene, so holding can no longer be aimed; getting further is a
-     * deliberate repeat-press rather than something a long hold falls into.
+     * Roughly how long holding should take to travel the entire item. Short
+     * enough that reaching the end is a decision rather than a commitment;
+     * long enough that the last stretch can still be released into.
      */
-    const val SUSTAINED_MAX_RATE = 16
-
-    /** Ceiling for repeat-press bumps. 32× crosses a 45-minute episode in ~84s. */
-    const val MANUAL_MAX_RATE = 32
-
-    /** Selectable speeds, signed for direction. */
-    val rates: List<Int> = listOf(-32, -16, -8, -4, -2, 2, 4, 8, 16, 32)
+    const val TRAVERSE_TARGET_SECONDS = 10.0
 
     /**
-     * Elapsed hold before each step up. Deliberately slower than the old
-     * 1s/2s/3s: three seconds of holding used to land on the top speed, so a
-     * press meant to nudge forward a few seconds overshot the scene.
+     * Floor for the derived ceiling, so short content still gets a fast top
+     * gear, and cap, so a very long item does not produce a rate whose single
+     * tick skips minutes.
      */
-    val holdRampMillis: List<Long> = listOf(1_500L, 3_000L, 5_000L)
+    const val MIN_TOP_RATE = 32
+    const val MAX_TOP_RATE = 1024
+
+    /**
+     * The fastest aimable speed. Above this a hold is travelling rather than
+     * aiming, which is fine — but it should be reached deliberately, by
+     * continuing to hold, not stumbled into in the first second.
+     */
+    const val AIMABLE_MAX_RATE = 16
+
+    /** Doubling ladder; the reachable top is bounded by [maxRateFor]. */
+    val rates: List<Int> = listOf(2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)
+
+    /**
+     * Cadence of the sustained ramp. The ramp keeps doubling on this beat until
+     * it reaches the item's ceiling, rather than walking a fixed number of
+     * steps — so a three-hour film goes on accelerating past the point where a
+     * twenty-minute episode has already topped out, which is the whole reason
+     * the ceiling is derived from runtime.
+     */
+    const val RAMP_STEP_MILLIS = 900L
+
+    /** Number of doublings needed to reach [durationSeconds]'s ceiling. */
+    fun rampSteps(durationSeconds: Double): Int {
+        val ceiling = maxRateFor(durationSeconds)
+        var rate = BASE_RATE
+        var steps = 0
+        while (rate < ceiling) {
+            rate *= 2
+            steps++
+        }
+        return steps
+    }
 
     /** Content seconds to advance for one tick at [rate]. */
     fun tickSeconds(rate: Int): Double = rate * SECONDS_PER_TICK
 
     /**
-     * The rate a sustained hold reaches at ramp [step] (0-based), in
-     * [direction]. Doubles from [BASE_RATE], capped at [SUSTAINED_MAX_RATE].
+     * Fastest rate offered for an item of [durationSeconds].
+     *
+     * Derived so a sustained hold crosses the item in about
+     * [TRAVERSE_TARGET_SECONDS], then rounded up to the next ladder rung so the
+     * chip still shows a familiar number. Unknown or nonsensical durations fall
+     * back to [MIN_TOP_RATE] rather than guessing.
      */
-    fun sustainedRate(step: Int, direction: Int): Int {
+    fun maxRateFor(durationSeconds: Double): Int {
+        if (!durationSeconds.isFinite() || durationSeconds <= 0.0) return MIN_TOP_RATE
+        val needed = ceil(durationSeconds / TRAVERSE_TARGET_SECONDS).toInt()
+        val bounded = min(max(needed, MIN_TOP_RATE), MAX_TOP_RATE)
+        return rates.firstOrNull { it >= bounded } ?: MAX_TOP_RATE
+    }
+
+    /**
+     * The rate a sustained hold reaches at ramp [step] (0-based) in
+     * [direction], for an item of [durationSeconds].
+     *
+     * Doubles from [BASE_RATE] and stops at whatever that item's ceiling is, so
+     * a long film keeps accelerating past the point where a short episode has
+     * already topped out. Step 0 is the first change, [RAMP_STEP_MILLIS] in.
+     */
+    fun sustainedRate(step: Int, direction: Int, durationSeconds: Double): Int {
         val sign = if (direction < 0) -1 else 1
+        val ceiling = maxRateFor(durationSeconds)
         var rate = BASE_RATE
-        repeat(step + 1) { rate = (rate * 2).coerceAtMost(SUSTAINED_MAX_RATE) }
+        repeat(step + 1) { rate = min(rate * 2, ceiling) }
         return rate * sign
     }
 
-    /** Neighbouring rate after a repeat-press bump, clamped to the ladder. */
-    fun bumped(current: Int, delta: Int): Int {
-        val index = rates.indexOf(current)
+    /**
+     * Neighbouring rate after a repeat-press bump, clamped to this item's range.
+     *
+     * [delta] is a direction along the signed ladder as the key handlers see it,
+     * not "faster": +1 is rightwards (faster forwards, or slower backwards) and
+     * -1 is leftwards. A bump therefore never flips direction — it stops at the
+     * base rate on the way in.
+     */
+    fun bumped(current: Int, delta: Int, durationSeconds: Double): Int {
+        val ceiling = maxRateFor(durationSeconds)
+        val usable = rates.filter { it <= ceiling }
+        val magnitude = if (current < 0) -current else current
+        val sign = if (current < 0) -1 else 1
+        val index = usable.indexOf(magnitude)
         if (index < 0) return current
-        return rates[(index + delta).coerceIn(0, rates.lastIndex)]
+        val next = usable[(index + delta * sign).coerceIn(0, usable.lastIndex)]
+        return next * sign
     }
 }

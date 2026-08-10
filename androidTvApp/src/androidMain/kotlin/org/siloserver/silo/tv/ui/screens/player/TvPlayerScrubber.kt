@@ -174,10 +174,14 @@ fun TvPlayerScrubber(
         holdRampJob?.cancel()
         holdRampJob = scope.launch {
             var previous = TvSeekRateLadder.BASE_RATE * sign
-            TvSeekRateLadder.holdRampMillis.forEachIndexed { step, atMillis ->
-                delay(atMillis - (TvSeekRateLadder.holdRampMillis.getOrNull(step - 1) ?: 0L))
+            repeat(TvSeekRateLadder.rampSteps(durationSec)) { step ->
+                delay(TvSeekRateLadder.RAMP_STEP_MILLIS)
+                // Only continue while the viewer is still holding at the rate
+                // the previous step left; a release and a fresh press the other
+                // way must not be overwritten by this hold's timer.
                 if (autoSeekRate != previous) return@launch
-                val next = TvSeekRateLadder.sustainedRate(step, sign)
+                val next = TvSeekRateLadder.sustainedRate(step, sign, durationSec)
+                if (next == previous) return@launch
                 setRate(next)
                 previous = next
             }
@@ -185,7 +189,7 @@ fun TvPlayerScrubber(
     }
 
     fun bumpRate(delta: Int) {
-        val next = TvSeekRateLadder.bumped(autoSeekRate, delta)
+        val next = TvSeekRateLadder.bumped(autoSeekRate, delta, durationSec)
         if (next == autoSeekRate) return
         // User-driven rate change cancels the time-based ramp so it doesn't
         // overwrite the manual pick a beat later.

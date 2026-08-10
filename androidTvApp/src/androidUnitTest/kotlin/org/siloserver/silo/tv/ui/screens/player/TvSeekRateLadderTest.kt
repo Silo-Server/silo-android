@@ -1,11 +1,16 @@
 package org.siloserver.silo.tv.ui.screens.player
 
-import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class TvSeekRateLadderTest {
+
+    private companion object {
+        const val EPISODE = 2_700.0      // 45 min
+        const val SHORT_EPISODE = 1_320.0 // 22 min
+        const val LONG_FILM = 10_800.0    // 3 h
+    }
 
     /**
      * The defect this ladder exists to prevent: the chip said "8×" while the
@@ -15,20 +20,15 @@ class TvSeekRateLadderTest {
     @Test
     fun aRateAdvancesExactlyThatMultipleOfRealTime() {
         val tickSeconds = TvSeekRateLadder.TICK_MILLIS / 1000.0
-        listOf(2, 4, 8, 16, 32).forEach { rate ->
+        TvSeekRateLadder.rates.forEach { rate ->
             val advancedPerSecond = TvSeekRateLadder.tickSeconds(rate) / tickSeconds
-            assertEquals(
-                rate.toDouble(),
-                advancedPerSecond,
-                0.0001,
-                "rate ${rate}x must advance ${rate}x real time",
-            )
+            assertEquals(rate.toDouble(), advancedPerSecond, 0.0001, "rate ${rate}x")
         }
     }
 
     @Test
     fun reverseRatesMirrorForwardOnes() {
-        listOf(2, 4, 8, 16, 32).forEach { rate ->
+        TvSeekRateLadder.rates.forEach { rate ->
             assertEquals(
                 -TvSeekRateLadder.tickSeconds(rate),
                 TvSeekRateLadder.tickSeconds(-rate),
@@ -38,73 +38,103 @@ class TvSeekRateLadderTest {
     }
 
     /**
-     * A hold used to reach the top speed in three seconds, so a press meant to
-     * nudge forward a few seconds crossed a scene. Reaching the sustained
-     * ceiling must take a deliberately long hold.
+     * The point of deriving the ceiling from runtime: holding to the end costs
+     * about the same whether the item is twenty minutes or three hours. A fixed
+     * 32× ceiling took 41s for a short episode and 338s for a long film.
      */
     @Test
-    fun aSustainedHoldClimbsGraduallyAndStopsBelowTheManualCeiling() {
-        val steps = TvSeekRateLadder.holdRampMillis.indices.map {
-            TvSeekRateLadder.sustainedRate(it, 1)
-        }
-
-        assertEquals(listOf(4, 8, 16), steps)
-        assertTrue(
-            steps.last() <= TvSeekRateLadder.SUSTAINED_MAX_RATE,
-            "a hold must not reach beyond the sustained ceiling on its own",
-        )
-        assertTrue(
-            TvSeekRateLadder.SUSTAINED_MAX_RATE < TvSeekRateLadder.MANUAL_MAX_RATE,
-            "the fastest speed must require a deliberate press, not just waiting",
-        )
-        assertTrue(
-            TvSeekRateLadder.holdRampMillis.first() >= 1_500L,
-            "a short hold must stay at the base rate",
-        )
-    }
-
-    @Test
-    fun sustainedRateFollowsTheHeldDirection() {
-        TvSeekRateLadder.holdRampMillis.indices.forEach { step ->
-            assertEquals(
-                -TvSeekRateLadder.sustainedRate(step, 1),
-                TvSeekRateLadder.sustainedRate(step, -1),
+    fun holdingToTheEndCostsAboutTheSameAtAnyRuntime() {
+        listOf(SHORT_EPISODE, EPISODE, 5_400.0, LONG_FILM).forEach { duration ->
+            val top = TvSeekRateLadder.maxRateFor(duration)
+            val traverseSeconds = duration / top
+            assertTrue(
+                traverseSeconds <= TvSeekRateLadder.TRAVERSE_TARGET_SECONDS * 1.5,
+                "a ${duration}s item takes ${traverseSeconds}s to cross at ${top}x",
             )
         }
     }
 
     @Test
-    fun bumpsWalkTheLadderAndClampAtBothEnds() {
-        assertEquals(4, TvSeekRateLadder.bumped(2, 1))
-        assertEquals(2, TvSeekRateLadder.bumped(4, -1))
-        assertEquals(
-            TvSeekRateLadder.MANUAL_MAX_RATE,
-            TvSeekRateLadder.bumped(TvSeekRateLadder.MANUAL_MAX_RATE, 1),
-        )
-        assertEquals(
-            -TvSeekRateLadder.MANUAL_MAX_RATE,
-            TvSeekRateLadder.bumped(-TvSeekRateLadder.MANUAL_MAX_RATE, -1),
+    fun aLongerItemGetsAFasterTopGear() {
+        assertTrue(
+            TvSeekRateLadder.maxRateFor(LONG_FILM) > TvSeekRateLadder.maxRateFor(SHORT_EPISODE),
+            "a three-hour film must reach further than a twenty-minute episode",
         )
     }
 
     /**
-     * 1× scans at exactly playback speed, so a press would look like nothing
-     * happened. Every rate must be faster than watching.
+     * An unknown runtime must not produce a guessed ceiling; live content and
+     * un-probed files both arrive as zero.
      */
     @Test
-    fun everyRateIsFasterThanPlayback() {
-        TvSeekRateLadder.rates.forEach { rate ->
-            assertTrue(abs(rate) >= 2, "rate $rate is not usefully faster than playback")
+    fun anUnknownRuntimeFallsBackRatherThanGuessing() {
+        listOf(0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY).forEach { bad ->
+            assertEquals(TvSeekRateLadder.MIN_TOP_RATE, TvSeekRateLadder.maxRateFor(bad))
         }
     }
 
     /**
-     * The number the viewer aims with has to stay aimable: one tick must not
-     * cover more than a scene even at the ceiling.
+     * The first second of holding stays slow enough to aim with — that is the
+     * half of the control used to skip an intro, and the half the old ramp
+     * destroyed by reaching its top speed in three seconds.
      */
     @Test
-    fun theFastestRateStillMovesInAimableSteps() {
-        val perTick = TvSeekRateLadder.tickSeconds(TvSeekRateLadder.MANUAL_MAX_RATE)
-        assertTrue(perTick <= 5.0, "one tick at the ceiling jumps ${perTick}s, which cannot be aimed")
+    fun theFirstSecondOfHoldingStaysAimable() {
+        assertEquals(TvSeekRateLadder.BASE_RATE, 2)
+        assertTrue(TvSeekRateLadder.RAMP_STEP_MILLIS >= 750L)
+        val afterFirstStep = TvSeekRateLadder.sustainedRate(0, 1, EPISODE)
+        assertTrue(
+            afterFirstStep <= TvSeekRateLadder.AIMABLE_MAX_RATE,
+            "one second of holding jumped to ${afterFirstStep}x",
+        )
+    }
+
+    @Test
+    fun aSustainedHoldClimbsToTheItemsCeilingAndStops() {
+        val ceiling = TvSeekRateLadder.maxRateFor(EPISODE)
+        val reached = (0 until TvSeekRateLadder.rampSteps(EPISODE)).map {
+            TvSeekRateLadder.sustainedRate(it, 1, EPISODE)
+        }
+        assertEquals(ceiling, reached.last())
+        assertTrue(reached.zipWithNext().all { (a, b) -> b >= a }, "the ramp must not go backwards")
+    }
+
+    @Test
+    fun sustainedRateFollowsTheHeldDirection() {
+        (0 until TvSeekRateLadder.rampSteps(EPISODE)).forEach { step ->
+            assertEquals(
+                -TvSeekRateLadder.sustainedRate(step, 1, EPISODE),
+                TvSeekRateLadder.sustainedRate(step, -1, EPISODE),
+            )
+        }
+    }
+
+    @Test
+    fun bumpsWalkTheLadderAndClampToTheItemsCeiling() {
+        assertEquals(4, TvSeekRateLadder.bumped(2, 1, EPISODE))
+        assertEquals(2, TvSeekRateLadder.bumped(4, -1, EPISODE))
+
+        val ceiling = TvSeekRateLadder.maxRateFor(EPISODE)
+        assertEquals(ceiling, TvSeekRateLadder.bumped(ceiling, 1, EPISODE))
+    }
+
+    /**
+     * delta is a direction along the signed ladder as the key handlers use it,
+     * so -1 is leftwards: faster when already seeking backwards. The property
+     * that matters is that a bump never crosses zero and flips direction.
+     */
+    @Test
+    fun bumpingWhileSeekingBackwardsKeepsTheDirection() {
+        assertEquals(-4, TvSeekRateLadder.bumped(-2, -1, EPISODE))
+        assertEquals(-2, TvSeekRateLadder.bumped(-4, 1, EPISODE))
+        assertEquals(-2, TvSeekRateLadder.bumped(-2, 1, EPISODE))
+        listOf(-2, -4, -32).forEach { rate ->
+            listOf(-1, 1).forEach { delta ->
+                assertTrue(
+                    TvSeekRateLadder.bumped(rate, delta, EPISODE) < 0,
+                    "bumping $rate by $delta flipped direction",
+                )
+            }
+        }
     }
 }
