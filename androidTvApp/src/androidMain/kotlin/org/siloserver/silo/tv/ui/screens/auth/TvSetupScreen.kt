@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -77,11 +78,17 @@ fun TvSetupScreen(
             onSetupComplete()
         }
     }
-    LaunchedEffect(Unit) { runCatching { usernameFocus.requestFocus() } }
+    // A text field on a first-run screen: if this claim is dropped the
+    // remote has nothing to act on and no touch fallback exists.
+    val usernameFocusModifier = rememberTvContentInitialFocus(
+        target = usernameFocus,
+        contentKey = Unit,
+    )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .then(usernameFocusModifier)
             .imePadding(),
     ) {
         TvAuroraBackdrop(variant = TvAuroraVariant.Welcome)

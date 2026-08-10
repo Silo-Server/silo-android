@@ -39,7 +39,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -201,13 +206,17 @@ fun TvRecommendationsScreen(
             focusBridgeScope.launch {
                 requestRecommendationRowFocus(
                     requestRowContainer = {
-                        runCatching { firstRowContainerFocusRequester.requestFocus() }
-                            .getOrDefault(false)
+                        firstRowContainerFocusRequester.claimFocusOrReport(
+                            target = "recommendations_row",
+                            action = "entry_container",
+                        )
                     },
                     awaitFrame = { withFrameNanos { } },
                     requestFirstCard = {
-                        runCatching { firstRecommendationCardFocusRequester.requestFocus() }
-                            .getOrDefault(false)
+                        firstRecommendationCardFocusRequester.claimFocusOrReport(
+                            target = "recommendations_card",
+                            action = "entry_first_card",
+                        )
                     },
                 )
             }
@@ -241,13 +250,22 @@ fun TvRecommendationsScreen(
                 selection = applied.selection,
                 awaitFrame = { withFrameNanos { } },
                 requestForYou = {
-                    runCatching { forYouFocusRequester.requestFocus() }.getOrDefault(false)
+                    forYouFocusRequester.claimFocusOrReport(
+                        target = "for_you_tab",
+                        action = "entry",
+                    )
                 },
                 requestWatchlist = {
-                    runCatching { watchlistFocusRequester.requestFocus() }.getOrDefault(false)
+                    watchlistFocusRequester.claimFocusOrReport(
+                        target = "watchlist_tab",
+                        action = "entry",
+                    )
                 },
                 requestFavorites = {
-                    runCatching { favoritesFocusRequester.requestFocus() }.getOrDefault(false)
+                    favoritesFocusRequester.claimFocusOrReport(
+                        target = "favorites_tab",
+                        action = "entry",
+                    )
                 },
             )
         }
@@ -365,12 +383,22 @@ fun TvRecommendationsScreen(
     // re-focused index 0 — defeating the restorer"). Saved, the grab stays a
     // genuine once-per-entry action and the shell's content restorer is left
     // to put focus back where it was.
+    var forYouContentHasFocus by remember { mutableStateOf(false) }
     var initialFocusRequested by rememberSaveable { mutableStateOf(false) }
     var lastAppliedFocusRequest by rememberSaveable { mutableStateOf(-1) }
     LaunchedEffect(focusRequest) {
         if (initialFocusRequested && focusRequest == lastAppliedFocusRequest) return@LaunchedEffect
-        runCatching { watchlistFocusRequester.requestFocus() }
-        onInitialContentFocus()
+        // The fifth site where a shell handover was reported regardless of
+        // whether the claim landed. onInitialContentFocus() tells the shell
+        // content owns focus; saying so after a dropped claim leaves nothing
+        // focused and the shell believing otherwise.
+        val landed = requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = watchlistFocusRequester::requestFocus,
+            isFocused = { forYouContentHasFocus },
+        )
+        if (landed == TvObservedFocusResult.Focused) onInitialContentFocus()
         initialFocusRequested = true
         lastAppliedFocusRequest = focusRequest
     }
@@ -394,7 +422,11 @@ fun TvRecommendationsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onFocusChanged { forYouContentHasFocus = it.hasFocus },
+    ) {
         when {
             savedListSelection == SavedListSelection.Watchlist -> TvWatchlistInline(
                 onItemClick = onSavedListItemClick,
@@ -535,8 +567,10 @@ fun TvRecommendationsScreen(
                                 },
                                 onDirectionUp = if (index == 0) {
                                     {
-                                        runCatching { forYouFocusRequester.requestFocus() }
-                                            .getOrDefault(false)
+                                        forYouFocusRequester.claimFocusOrReport(
+                                            target = "for_you_tab",
+                                            action = "row_direction_up",
+                                        )
                                     }
                                 } else {
                                     null

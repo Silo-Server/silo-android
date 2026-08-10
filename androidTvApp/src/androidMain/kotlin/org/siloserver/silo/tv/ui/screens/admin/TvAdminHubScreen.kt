@@ -18,19 +18,24 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Card
@@ -39,6 +44,10 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.Spacing
 
 /**
@@ -66,11 +75,20 @@ fun TvAdminHubScreen(
     BackHandler(enabled = true) { onBack() }
 
     val firstRowFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { firstRowFocus.requestFocus() } }
+    var hubHasFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = firstRowFocus::requestFocus,
+            isFocused = { hubHasFocus },
+        )
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .onFocusChanged { hubHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background),
     ) {
         TvAdminScreenHeader(eyebrow = "ADMIN", title = "Admin")

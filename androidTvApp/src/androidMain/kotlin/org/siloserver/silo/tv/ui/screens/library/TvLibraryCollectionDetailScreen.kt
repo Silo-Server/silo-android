@@ -12,8 +12,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -44,16 +48,23 @@ fun TvLibraryCollectionDetailScreen(
     // Without an explicit focus target, the user lands on this screen with
     // nothing focused and has to mash D-pad before anything responds.
     val firstItemFocusRequester = remember { FocusRequester() }
+    var collectionHasFocus by remember { mutableStateOf(false) }
     var initialFocusRequested by remember { mutableStateOf(false) }
     LaunchedEffect(state.items.firstOrNull()?.contentId) {
         if (initialFocusRequested || state.items.isEmpty()) return@LaunchedEffect
-        runCatching { firstItemFocusRequester.requestFocus() }
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = firstItemFocusRequester::requestFocus,
+            isFocused = { collectionHasFocus },
+        )
         initialFocusRequested = true
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .onFocusChanged { collectionHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background),
     ) {
         Text(
