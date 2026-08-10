@@ -58,8 +58,11 @@ class TvSilentFocusClaimSourceTest {
          * all. Sites like that need a different answer than migration, and
          * counting them here is a known limitation of this ratchet rather than
          * a debt that can be paid down to zero.
+         *
+         * 2026-08-10: 66 — first-run setup, signup, and both login-surface
+         * claims.
          */
-        const val BASELINE = 70
+        const val BASELINE = 66
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
