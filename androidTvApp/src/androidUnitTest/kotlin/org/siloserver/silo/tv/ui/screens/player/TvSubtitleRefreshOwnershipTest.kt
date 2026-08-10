@@ -8,7 +8,6 @@ import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
-import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.network.ApiResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -274,17 +273,7 @@ class TvSubtitleRefreshOwnershipTest {
     )
 
     private fun downloadedIdentity(id: Int): SubtitleIdentity.Downloaded =
-        SubtitleIdentity.Downloaded(
-            downloadId = id,
-            media = SubtitleMediaIdentity(
-                trackId = "silo-downloaded-subtitle:$id",
-                label = if (id == 40) "English" else "English",
-                language = "en",
-                codecFamily = "webvtt",
-                forced = false,
-                hearingImpaired = false,
-            ),
-        )
+        tvSubtitleIdentity(downloaded(id)) as SubtitleIdentity.Downloaded
 
     private fun sidecar(index: Int): SubtitleIdentity = SubtitleIdentity.ServerSidecar(index)
 
