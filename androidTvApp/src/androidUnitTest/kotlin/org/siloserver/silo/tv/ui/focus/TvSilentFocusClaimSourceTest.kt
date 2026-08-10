@@ -61,8 +61,12 @@ class TvSilentFocusClaimSourceTest {
          *
          * 2026-08-10: 66 — first-run setup, signup, and both login-surface
          * claims.
+         *
+         * 2026-08-10: 63 — the two library grids and collection detail. The
+         * library grids also stopped reporting a handover that had not
+         * happened; see that commit.
          */
-        const val BASELINE = 66
+        const val BASELINE = 63
 
         const val SCREENS_ROOT = "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens"
 
