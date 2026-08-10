@@ -153,6 +153,22 @@ interface TokenManager {
     // ----- Scoped auth (Track B outbox replay; see [AuthScopeSnapshot]) -----
 
     /**
+     * True when the ACTIVE scope's access token expires within [marginMs], so a
+     * caller can refresh before spending it rather than after the server has
+     * rejected it.
+     *
+     * Every implementation already records an expiry at save time and no caller
+     * has ever read it, so expiry was only ever discovered by a 401: the first
+     * request after the deadline paid a wasted round trip, and on a live device
+     * that was 42 of 351 `/home/sections` calls.
+     *
+     * Default false — an implementation that cannot answer must keep today's
+     * reactive behaviour rather than guess, since a wrong "yes" spends a
+     * refresh token on every request.
+     */
+    suspend fun accessTokenExpiresWithin(marginMs: Long): Boolean = false
+
+    /**
      * Capture the currently-active scope for pinning a background request. Returns
      * null when no server is active or the implementation isn't multi-server-aware.
      * Default: not supported (single-scope impls), so callers fall back to the

@@ -103,6 +103,22 @@ class EncryptedTokenManagerImpl(
     }
 
     /**
+     * Answers for whichever identity is actually installed: a remote-playback
+     * overlay carries its own deadline, and falling through to the saved
+     * account's would refresh credentials this request is not spending.
+     */
+    override suspend fun accessTokenExpiresWithin(marginMs: Long): Boolean = mutex.withLock {
+        ensureCacheMatchesRegistryLocked()
+        val margin = marginMs.coerceAtLeast(0)
+        temporaryScope?.let { overlay ->
+            return@withLock overlay.expiresAtEpochMs - System.currentTimeMillis() <= margin
+        }
+        if (accessToken == null) return@withLock false
+        val expiry = tokenExpiryEpochMs ?: return@withLock false
+        expiry - System.currentTimeMillis() <= margin
+    }
+
+    /**
      * The registry observer flushes the cache asynchronously; between a
      * direct `ServerRegistry.switchTo()` and that collector running there is
      * a window where `getServerUrl()` already answers with the NEW server

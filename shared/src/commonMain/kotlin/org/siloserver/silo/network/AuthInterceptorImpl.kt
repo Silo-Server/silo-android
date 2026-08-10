@@ -14,6 +14,15 @@ import org.siloserver.silo.model.auth.RefreshRequest
 import org.siloserver.silo.model.auth.RefreshResponse
 
 /**
+ * How close to expiry an access token may get before a request refreshes it
+ * rather than spending it.
+ *
+ * Wide enough to cover the round trip plus clock skew between client and
+ * server, narrow enough that it never dominates a short token lifetime.
+ */
+private const val PROACTIVE_REFRESH_MARGIN_MS = 60_000L
+
+/**
  * Configuration for the [SiloAuthPlugin].
  */
 class SiloAuthConfig {
@@ -57,6 +66,154 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
     // the owner. Flagging the generation here is what stops the plugin from
     // refreshing dead credentials again on every subsequent 401.
     val deadCredentialGenerations = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * One refresh of [refreshScope], serialised on [refreshMutex].
+     *
+     * Lifted verbatim out of the 401 path so the proactive path cannot drift
+     * from it. Every guard inside — mid-flight server switch, a sign-out
+     * landing while the round trip is open, a dead temporary generation —
+     * exists because it was needed once; a second copy would be a second place
+     * to forget one.
+     *
+     * @return true when the caller should retry with a token that now differs
+     * from [authorizationBeforeRequest].
+     */
+    suspend fun refreshScopeOnce(
+        refreshScope: AuthScopeSnapshot,
+        trustedServerUrl: String,
+        activeServerIdBeforeRequest: String?,
+        authorizationBeforeRequest: String?,
+        temporaryGeneration: String?,
+    ): Boolean = refreshMutex.withLock {
+        // If the user switched servers between request-send and 401-retry,
+        // we are now operating against a different server. Don't try to
+        // "refresh" — the refresh token wouldn't be valid for the new
+        // server anyway, and we'd risk persisting cross-server tokens.
+        val serverIdNow = tokenManager.getCurrentServerId()
+        val serverUrlNow = tokenManager.getServerUrl()
+        if (
+            serverIdNow != activeServerIdBeforeRequest ||
+            !isSameHttpOrigin(trustedServerUrl, serverUrlNow)
+        ) {
+            return@withLock false
+        }
+
+        val tokenNow = tokenManager.getAccessTokenForScope(refreshScope)
+        if (
+            tokenManager.getCurrentServerId() != activeServerIdBeforeRequest ||
+            !isSameHttpOrigin(trustedServerUrl, tokenManager.getServerUrl())
+        ) {
+            return@withLock false
+        }
+        if (tokenNow != null && "Bearer $tokenNow" != authorizationBeforeRequest) {
+            // Another coroutine already refreshed while we were waiting —
+            // just retry the original request with the new token.
+            return@withLock true
+        }
+
+        if (temporaryGeneration != null &&
+            temporaryGeneration in deadCredentialGenerations.value
+        ) {
+            // A 401 that won the race already proved these temporary credentials
+            // are dead; the token is unchanged, so without this every waiter would
+            // repeat the same doomed refresh.
+            return@withLock false
+        }
+
+        // Scope-bound, not global: a refresh must spend the token belonging to
+        // the scope this request ran under.
+        val refreshToken = tokenManager.getRefreshTokenForScope(refreshScope)
+        if (refreshToken.isNullOrBlank()) {
+            return@withLock false
+        }
+
+        try {
+            diagnosticsObserver.safeAuthRefresh("started")
+            if (trustedServerUrl.isBlank()) {
+                return@withLock false
+            }
+
+            val refreshResponse = client.post("$trustedServerUrl/api/v1/auth/refresh") {
+                contentType(ContentType.Application.Json)
+                setBody(RefreshRequest(refreshToken))
+            }
+
+            // Re-check serverId AFTER the network call as well — the user
+            // could have switched while we were waiting on the network.
+            // The token write below targets whichever server is active at
+            // save time, so a mismatch here means we'd write to the wrong
+            // slot.
+            val serverIdAfterCall = tokenManager.getCurrentServerId()
+            val serverUrlAfterCall = tokenManager.getServerUrl()
+            if (
+                serverIdAfterCall != activeServerIdBeforeRequest ||
+                !isSameHttpOrigin(trustedServerUrl, serverUrlAfterCall)
+            ) {
+                return@withLock false
+            }
+
+            // Re-check sign-out state AFTER the network call too. Logout
+            // revokes the access token server-side before clearTokens()
+            // runs, so concurrent requests 401 exactly during sign-out and
+            // start a refresh with the still-valid refresh token; without
+            // this guard the refresh response lands after clearTokens()
+            // and saveTokens() silently signs the user back in.
+            if (tokenManager.getRefreshTokenForScope(refreshScope).isNullOrBlank()) {
+                return@withLock false
+            }
+
+            if (refreshResponse.status.isSuccess()) {
+                diagnosticsObserver.safeAuthRefresh("succeeded")
+                val tokens = refreshResponse.body<RefreshResponse>()
+                tokenManager.saveTokensForScope(
+                    scope = refreshScope,
+                    accessToken = tokens.accessToken,
+                    refreshToken = tokens.refreshToken,
+                    expiresIn = tokens.expiresIn,
+                )
+                val after = tokenManager.getAccessTokenForScope(refreshScope)
+                after != null && "Bearer $after" != authorizationBeforeRequest
+            } else {
+                diagnosticsObserver.safeAuthRefresh("failed")
+                // Only auth rejection proves the refresh token is bad.
+                // Gateway/proxy/server failures should keep the session so
+                // a temporary outage does not sign the user out.
+                if (refreshResponse.status.shouldInvalidateSessionAfterRefreshFailure()) {
+                    val generationNow = tokenManager.temporaryGenerationId()
+                    when {
+                        // The identity changed while the refresh was in flight
+                        // (overlay began or ended): the rejection belongs to a
+                        // credential set that is no longer installed, so it must
+                        // not tear down whatever is installed now.
+                        generationNow != temporaryGeneration -> Unit
+
+                        // Remote playback: the rejected credentials are a
+                        // temporary overlay. invalidateSession() would drop that
+                        // overlay, and every later read would fall through to the
+                        // saved OWNER's account — the guest would keep browsing
+                        // and writing history as the owner. Flag the generation
+                        // dead and leave the overlay installed instead; the cast
+                        // teardown path is what removes it.
+                        temporaryGeneration != null ->
+                            deadCredentialGenerations.update { it + temporaryGeneration }
+
+                        // The [TokenManager.sessionExpired] event emitted by
+                        // this call is what the root NavHost observer uses to
+                        // route the user back to the login screen; without it,
+                        // the UI would stay on Home and keep rendering
+                        // "Failed to load..." for every subsequent API call
+                        // that now has no credentials.
+                        else -> tokenManager.invalidateSessionForScope(refreshScope)
+                    }
+                }
+                false
+            }
+        } catch (e: Throwable) {
+            diagnosticsObserver.safeAuthRefresh("failed")
+            false
+        }
+    }
 
     onRequest { request, _ ->
         val skipAuth = request.attributes.getOrNull(SkipSiloAuthAttributeKey) == true
@@ -284,6 +441,44 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
         // already happened — so N parallel 401s collapse into ONE refresh.
         val authorizationBeforeRequest = request.headers[HttpHeaders.Authorization]
 
+        // Spend a token we already know is about to expire and the server will
+        // simply reject it: the 401 path below then refreshes and retries, so
+        // the request costs two round trips instead of one. Refreshing first
+        // costs the same one refresh and drops the wasted call.
+        //
+        // Deliberately narrow: only an authenticated request on the active
+        // scope, never the auth endpoints themselves (refreshing before a
+        // login is meaningless and before a refresh is recursive), and never a
+        // pinned outbox op — that path is handled above and must not disturb
+        // the active session. Everything else falls through unchanged, so a
+        // manager that cannot answer the expiry question keeps today's
+        // behaviour exactly.
+        val proactivePath = request.url.encodedPath
+        if (
+            authorizationBeforeRequest != null &&
+            !proactivePath.endsWith("/auth/refresh") &&
+            !proactivePath.endsWith("/auth/login") &&
+            tokenManager.accessTokenExpiresWithin(PROACTIVE_REFRESH_MARGIN_MS)
+        ) {
+            val generationNow = tokenManager.temporaryGenerationId()
+            if (generationNow == null || generationNow !in deadCredentialGenerations.value) {
+                diagnosticsObserver.safeAuthRefresh("required")
+                val refreshedEarly = refreshScopeOnce(
+                    refreshScope = refreshScope,
+                    trustedServerUrl = trustedServerUrl,
+                    activeServerIdBeforeRequest = activeServerIdBeforeRequest,
+                    authorizationBeforeRequest = authorizationBeforeRequest,
+                    temporaryGeneration = generationNow,
+                )
+                if (refreshedEarly) {
+                    tokenManager.getAccessTokenForScope(refreshScope)?.let { token ->
+                        request.headers.remove(HttpHeaders.Authorization)
+                        request.header(HttpHeaders.Authorization, "Bearer $token")
+                    }
+                }
+            }
+        }
+
         val originalCall = proceed(request)
 
         // Only attempt refresh on 401 for non-auth endpoints
@@ -329,135 +524,13 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
         // the double-check guarantees that only one coroutine HITS the network
         // for the refresh — subsequent waiters observe the already-refreshed
         // token and skip straight to retry.
-        val refreshed = refreshMutex.withLock {
-            // If the user switched servers between request-send and 401-retry,
-            // we are now operating against a different server. Don't try to
-            // "refresh" — the refresh token wouldn't be valid for the new
-            // server anyway, and we'd risk persisting cross-server tokens.
-            val serverIdNow = tokenManager.getCurrentServerId()
-            val serverUrlNow = tokenManager.getServerUrl()
-            if (
-                serverIdNow != activeServerIdBeforeRequest ||
-                !isSameHttpOrigin(trustedServerUrl, serverUrlNow)
-            ) {
-                return@withLock false
-            }
-
-            val tokenNow = tokenManager.getAccessTokenForScope(refreshScope)
-            if (
-                tokenManager.getCurrentServerId() != activeServerIdBeforeRequest ||
-                !isSameHttpOrigin(trustedServerUrl, tokenManager.getServerUrl())
-            ) {
-                return@withLock false
-            }
-            if (tokenNow != null && "Bearer $tokenNow" != authorizationBeforeRequest) {
-                // Another coroutine already refreshed while we were waiting —
-                // just retry the original request with the new token.
-                return@withLock true
-            }
-
-            if (temporaryGeneration != null &&
-                temporaryGeneration in deadCredentialGenerations.value
-            ) {
-                // A 401 that won the race already proved these temporary credentials
-                // are dead; the token is unchanged, so without this every waiter would
-                // repeat the same doomed refresh.
-                return@withLock false
-            }
-
-            // Scope-bound, not global: a refresh must spend the token belonging to
-            // the scope this request ran under.
-            val refreshToken = tokenManager.getRefreshTokenForScope(refreshScope)
-            if (refreshToken.isNullOrBlank()) {
-                return@withLock false
-            }
-
-            try {
-                diagnosticsObserver.safeAuthRefresh("started")
-                if (trustedServerUrl.isBlank()) {
-                    return@withLock false
-                }
-
-                val refreshResponse = client.post("$trustedServerUrl/api/v1/auth/refresh") {
-                    contentType(ContentType.Application.Json)
-                    setBody(RefreshRequest(refreshToken))
-                }
-
-                // Re-check serverId AFTER the network call as well — the user
-                // could have switched while we were waiting on the network.
-                // The token write below targets whichever server is active at
-                // save time, so a mismatch here means we'd write to the wrong
-                // slot.
-                val serverIdAfterCall = tokenManager.getCurrentServerId()
-                val serverUrlAfterCall = tokenManager.getServerUrl()
-                if (
-                    serverIdAfterCall != activeServerIdBeforeRequest ||
-                    !isSameHttpOrigin(trustedServerUrl, serverUrlAfterCall)
-                ) {
-                    return@withLock false
-                }
-
-                // Re-check sign-out state AFTER the network call too. Logout
-                // revokes the access token server-side before clearTokens()
-                // runs, so concurrent requests 401 exactly during sign-out and
-                // start a refresh with the still-valid refresh token; without
-                // this guard the refresh response lands after clearTokens()
-                // and saveTokens() silently signs the user back in.
-                if (tokenManager.getRefreshTokenForScope(refreshScope).isNullOrBlank()) {
-                    return@withLock false
-                }
-
-                if (refreshResponse.status.isSuccess()) {
-                    diagnosticsObserver.safeAuthRefresh("succeeded")
-                    val tokens = refreshResponse.body<RefreshResponse>()
-                    tokenManager.saveTokensForScope(
-                        scope = refreshScope,
-                        accessToken = tokens.accessToken,
-                        refreshToken = tokens.refreshToken,
-                        expiresIn = tokens.expiresIn,
-                    )
-                    val after = tokenManager.getAccessTokenForScope(refreshScope)
-                    after != null && "Bearer $after" != authorizationBeforeRequest
-                } else {
-                    diagnosticsObserver.safeAuthRefresh("failed")
-                    // Only auth rejection proves the refresh token is bad.
-                    // Gateway/proxy/server failures should keep the session so
-                    // a temporary outage does not sign the user out.
-                    if (refreshResponse.status.shouldInvalidateSessionAfterRefreshFailure()) {
-                        val generationNow = tokenManager.temporaryGenerationId()
-                        when {
-                            // The identity changed while the refresh was in flight
-                            // (overlay began or ended): the rejection belongs to a
-                            // credential set that is no longer installed, so it must
-                            // not tear down whatever is installed now.
-                            generationNow != temporaryGeneration -> Unit
-
-                            // Remote playback: the rejected credentials are a
-                            // temporary overlay. invalidateSession() would drop that
-                            // overlay, and every later read would fall through to the
-                            // saved OWNER's account — the guest would keep browsing
-                            // and writing history as the owner. Flag the generation
-                            // dead and leave the overlay installed instead; the cast
-                            // teardown path is what removes it.
-                            temporaryGeneration != null ->
-                                deadCredentialGenerations.update { it + temporaryGeneration }
-
-                            // The [TokenManager.sessionExpired] event emitted by
-                            // this call is what the root NavHost observer uses to
-                            // route the user back to the login screen; without it,
-                            // the UI would stay on Home and keep rendering
-                            // "Failed to load..." for every subsequent API call
-                            // that now has no credentials.
-                            else -> tokenManager.invalidateSessionForScope(refreshScope)
-                        }
-                    }
-                    false
-                }
-            } catch (e: Throwable) {
-                diagnosticsObserver.safeAuthRefresh("failed")
-                false
-            }
-        }
+        val refreshed = refreshScopeOnce(
+            refreshScope = refreshScope,
+            trustedServerUrl = trustedServerUrl,
+            activeServerIdBeforeRequest = activeServerIdBeforeRequest,
+            authorizationBeforeRequest = authorizationBeforeRequest,
+            temporaryGeneration = temporaryGeneration,
+        )
 
         if (refreshed) {
             // Explicitly replace the Authorization header on the request builder

@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -105,6 +106,19 @@ class TokenManagerImpl(
                 _sessionExpired.tryEmit(Unit)
             }
         }
+    }
+
+    /**
+     * Reads the deadline [saveTokensLocked] has always recorded. A temporary
+     * overlay is excluded: this impl does not track an expiry for one, and
+     * answering from the underlying account's deadline would refresh the wrong
+     * credentials.
+     */
+    override suspend fun accessTokenExpiresWithin(marginMs: Long): Boolean = mutex.withLock {
+        if (temporaryScope != null) return@withLock false
+        if (accessToken == null) return@withLock false
+        val expiry = tokenExpiry ?: return@withLock false
+        expiry - timeSource.markNow() <= marginMs.coerceAtLeast(0).milliseconds
     }
 
     override suspend fun getProfileId(): String? = mutex.withLock {
