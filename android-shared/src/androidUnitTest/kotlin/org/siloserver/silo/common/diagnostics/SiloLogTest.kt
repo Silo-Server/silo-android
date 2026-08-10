@@ -86,6 +86,49 @@ class SiloLogTest {
         }
     }
 
+    /**
+     * The whole point of naming the route: #199 added
+     * `DiagnosticsFocusLogger.contentEntryFailed(route)` without registering
+     * the attribute, so the warning meant to make silent focus failures visible
+     * threw the moment it fired in a debug build. A strict render of exactly
+     * that shape is the regression guard.
+     */
+    @Test
+    fun strictRendererAcceptsTheFocusRouteAttribute() {
+        val renderer = DiagnosticsLogRenderer(redactor, strictAttributeRegistry = true)
+
+        val rendered = assertNotNull(
+            renderer.render(
+                DiagnosticsLogLevel.WARNING,
+                DiagnosticsLogCategory.FOCUS,
+                "TvShell",
+                "content entry failed",
+                mapOf(
+                    "target" to SiloLogAttribute.Text("content"),
+                    "action" to SiloLogAttribute.Text("entry"),
+                    "route" to SiloLogAttribute.Text("main/movies"),
+                ),
+            ),
+        )
+
+        assertTrue(rendered.contains("main/movies"), rendered)
+    }
+
+    @Test
+    fun strictRendererStillRejectsAFocusRouteOfTheWrongKind() {
+        val renderer = DiagnosticsLogRenderer(redactor, strictAttributeRegistry = true)
+
+        assertFailsWith<IllegalArgumentException> {
+            renderer.render(
+                DiagnosticsLogLevel.WARNING,
+                DiagnosticsLogCategory.FOCUS,
+                "TvShell",
+                "content entry failed",
+                mapOf("route" to SiloLogAttribute.Integer(7)),
+            )
+        }
+    }
+
     @Test
     fun strictRendererAcceptsRegisteredSeekPerformanceAttributes() {
         val renderer = DiagnosticsLogRenderer(redactor, strictAttributeRegistry = true)

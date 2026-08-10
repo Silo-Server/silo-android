@@ -55,6 +55,43 @@ class DiagnosticsInstrumentationTest {
         assertEquals("/other", safeDiagnosticsNetworkPath("/not-api/private-id"))
     }
 
+    /**
+     * Every root this change allowlisted, not just the two the original test
+     * happened to cover. 116 of 121 recorded 4xx were unnameable because these
+     * collapsed to "/api/v1/other"; a template that silently stops matching
+     * puts them straight back there.
+     */
+    @Test
+    fun everyNewlyAllowlistedRouteResolvesToItsTemplate() {
+        mapOf(
+            "/api/v1/favorites" to "/api/v1/favorites",
+            "/api/v1/favorites/episode-tvdb-1-1-1" to "/api/v1/favorites/{id}",
+            "/api/v1/history" to "/api/v1/history",
+            "/api/v1/library-playback-prefs" to "/api/v1/library-playback-prefs",
+            "/api/v1/library-playback-prefs/library-7" to "/api/v1/library-playback-prefs/{id}",
+            "/api/v1/metadata/ai/status" to "/api/v1/metadata/ai/status",
+            "/api/v1/onboarding/flow" to "/api/v1/onboarding/flow",
+            "/api/v1/onboarding/state" to "/api/v1/onboarding/state",
+            "/api/v1/onboarding/progress" to "/api/v1/onboarding/progress",
+            "/api/v1/watch/series-tvdb-1" to "/api/v1/watch/{id}",
+            "/api/v1/watchlist" to "/api/v1/watchlist",
+            "/api/v1/watchlist/series-tvdb-1" to "/api/v1/watchlist/{id}",
+        ).forEach { (rawPath, expected) ->
+            assertEquals(expected, safeDiagnosticsNetworkPath(rawPath), rawPath)
+        }
+    }
+
+    /**
+     * The other half of the same bargain: an allowlisted resource names itself
+     * even on an unmatched tail, but an unknown resource stays anonymous.
+     */
+    @Test
+    fun anAllowlistedResourceNamesItselfWhileAnUnknownOneStaysAnonymous() {
+        assertEquals("/api/v1/history/other", safeDiagnosticsNetworkPath("/api/v1/history/2026/08"))
+        assertEquals("/api/v1/onboarding/other", safeDiagnosticsNetworkPath("/api/v1/onboarding/private-step/detail"))
+        assertEquals("/api/v1/other", safeDiagnosticsNetworkPath("/api/v1/private-resource/private-id"))
+    }
+
     @Test
     fun statsSnapshotsRequireDetailedCaptureAndFiveSecondCadence() {
         val cadence = DiagnosticsStatsCadence(intervalMs = 5_000)
