@@ -253,9 +253,17 @@ fun TvTopMenuBar(
             requestIdentity = focusRequestIdentity,
             lastHandledRequest = lastHandledFocusRequest,
             isFocusSuppressed = isFocusSuppressed,
-            isTargetAvailable = focusRequestTargetAvailable,
+            // Availability gates only the EXPLICIT target, never the request
+            // itself. Skipping the whole request left nothing focused, so
+            // Compose's default search landed on the first bar element — the
+            // search icon — and Back out of a cascade appeared to "go to
+            // search". Falling back to the selected entry keeps the viewer on
+            // the tab they came from.
+            isTargetAvailable = true,
             requestFocus = {
-                val explicitFocus = focusRequestTarget?.let(::focusForPanel)
+                val explicitFocus = focusRequestTarget
+                    ?.takeIf { focusRequestTargetAvailable }
+                    ?.let(::focusForPanel)
                 // The target names which bar element to land on; it does NOT by
                 // itself mean the preview should be suppressed. Only a panel
                 // Back-close wants that. Arming it for every targeted request
