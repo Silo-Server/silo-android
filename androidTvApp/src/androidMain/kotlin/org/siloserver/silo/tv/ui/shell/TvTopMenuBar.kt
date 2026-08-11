@@ -417,14 +417,16 @@ fun TvTopMenuBar(
             // for any call that merely did not throw. That made a refused
             // claim look like a move, which armed suppression, closed the
             // panel and skipped the deferred fallback, leaving focus nowhere.
-            val moved = requester.claimFocusOrReport(
+            val accepted = requester.claimFocusOrReport(
                 target = "menu_anchor",
                 action = "back_close_anchor",
             )
-            // Arm the suppression only if focus actually moved; otherwise the
-            // state-request fallback will arm it a frame later.
-            if (moved) dwellSuppressedButton = target
-            moved
+            // Accepted is not arrival — the helper says so itself — but it
+            // does separate a claim that took from one that definitely needs
+            // the deferred retry. Arm the suppression only on acceptance;
+            // otherwise the state-request fallback arms it a frame later.
+            if (accepted) dwellSuppressedButton = target
+            accepted
         }
     }
 
