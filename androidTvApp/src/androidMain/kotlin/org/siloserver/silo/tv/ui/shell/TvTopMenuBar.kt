@@ -160,7 +160,11 @@ fun TvTopMenuBar(
     isFocusSuppressed: Boolean,
     focusRequest: Int,
     focusRequestTarget: TvTopMenuPanel? = null,
-    /** True only for a panel Back-close; see TvShellFocusState.menuFocusSuppressesDwell. */
+    /**
+     * True for a deliberate shell handoff to the bar — Back up from content, or
+     * the fallback when content has nothing focusable. See
+     * TvShellFocusState.menuFocusSuppressesDwell.
+     */
     focusRequestSuppressesDwell: Boolean = false,
     profileFocusRequest: Int = 0,
     isSearchActive: Boolean = false,
@@ -303,10 +307,11 @@ fun TvTopMenuBar(
             // suppression armed until the requested anchor actually focuses.
             // A transient null is the panel→bar focus handoff itself; keep the
             // suppression armed until the requested anchor actually focuses,
-            // and hold it while that anchor keeps focus so a Back-close does
-            // not flash the panel straight back open. This can no longer wedge
-            // the tab: only closePanel() arms it now, so an ordinary
-            // content-to-bar Up arrives unsuppressed and opens the cascade.
+            // and hold it while that anchor keeps focus so a deliberate handoff
+            // to the bar does not flash a panel straight back open. This can no
+            // longer wedge the tab: only an explicit requestMenuFocus arms it,
+            // so an ordinary content-to-bar Up arrives unsuppressed and opens
+            // the cascade.
             if (focus == null || focus == suppressed) return@LaunchedEffect
             // Moving anywhere else re-arms normal dwell behavior, matching
             // tvOS's dwellSuppressedElement lifecycle.

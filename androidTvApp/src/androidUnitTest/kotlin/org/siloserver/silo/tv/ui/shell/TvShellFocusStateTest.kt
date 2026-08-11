@@ -207,12 +207,39 @@ class TvShellFocusStateTest {
     fun backOutOfAnEnteredPanelStillReturnsToContent() {
         val s = TvShellFocusState()
         s.enterPanel(moviesPanel)
+        s.onPanelFocusChanged(true)
         assertTrue(s.panelEntersFocus)
 
         val action = s.onBack(onTabRoot = true)
 
         assertEquals(TvShellBackAction.ClosePanel, action)
         assertNull(s.openPanel)
+    }
+
+    /**
+     * Entry intent that never became focus. An empty panel, an unattached
+     * requester or a silently failed claim all leave the viewer on the bar, and
+     * Back must return them to the bar's world rather than throwing them into
+     * content they never reached.
+     */
+    @Test
+    fun anEnteredPanelThatNeverTookFocusIsStillTreatedAsAPreview() {
+        val s = TvShellFocusState()
+        s.enterPanel(moviesPanel)
+        assertTrue(s.panelEntersFocus, "intent is recorded")
+        assertFalse(s.panelHasFocus, "but nothing inside it ever focused")
+
+        assertEquals(TvShellBackAction.ClosePanelPreview, s.onBack(onTabRoot = true))
+        assertNull(s.openPanel)
+    }
+
+    @Test
+    fun closingAPanelForgetsThatItHadFocus() {
+        val s = TvShellFocusState()
+        s.enterPanel(moviesPanel)
+        s.onPanelFocusChanged(true)
+        s.closePanel()
+        assertFalse(s.panelHasFocus)
     }
 
     @Test
@@ -352,6 +379,9 @@ class TvShellFocusStateTest {
         // nudged: Back out of a cascade hands focus to content, so the holder
         // must not claim it for the bar. The caller performs that move.
         s.enterPanel(moviesPanel)
+        // Entry INTENT is not entry: routing waits for the panel to report that
+        // something inside it actually holds focus.
+        s.onPanelFocusChanged(true)
         val menuBefore = s.menuFocusRequest
         assertEquals(TvShellBackAction.ClosePanel, s.onBack(onTabRoot = true))
         assertNull(s.openPanel)

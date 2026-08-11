@@ -677,14 +677,26 @@ fun TvMainShell(
                 requestFocus = { claimContentFocus(route) },
                 isFocused = { contentHasFocus },
             )
-            if (result != TvObservedFocusResult.Focused) {
+            // One more frame before giving up. The last attempt inspects focus
+            // in the same frame it requested it, so a claim that WAS accepted
+            // but reports asynchronously would otherwise look like a failure —
+            // and the fallback below would yank focus off content that had just
+            // taken it.
+            if (result != TvObservedFocusResult.Focused) withFrameNanos { }
+            if (result != TvObservedFocusResult.Focused && !contentHasFocus) {
                 // Content has nothing focusable — a loading or empty rail, which
                 // should not have to invent a focusable control just to satisfy
                 // shell navigation. The shell dismantled the old focus owner, so
                 // the shell owes a real successor: put it back on the bar rather
                 // than leaving focus nowhere and the D-pad apparently dead.
                 DiagnosticsFocusLogger.contentEntryFailed(route)
-                focusState.requestMenuFocus(suppressDwellPreview = true)
+                // With a target, so dwell suppression actually applies: without
+                // one the suppressed-button is null and the tab we just focused
+                // reopens its preview a moment later.
+                focusState.requestMenuFocus(
+                    target = selectedMenuFocusTarget,
+                    suppressDwellPreview = true,
+                )
             }
         }
     }
@@ -909,7 +921,7 @@ fun TvMainShell(
         onTabRoot = selectedRoot != null,
         // Must match what onBack() will decide, or the shell would decline the
         // press and let navigation take it while handleShellBack expected it.
-        panelEntered = focusState.panelEntersFocus,
+        panelEntered = focusState.panelHasFocus,
     )
     val shellHandlesBack = currentRoute != TvMainRoute.Settings.route && when (pendingShellBackAction) {
         TvShellBackAction.ClosePanel,
@@ -1533,7 +1545,9 @@ fun TvMainShell(
                         focusEntryToken = focusState.panelFocusEntryToken,
                         onCommitLibrary = { lib -> commitScope(dest.type, lib, TvLibraryPill.Recommended) },
                         onCommitSection = { lib, pill -> commitScope(dest.type, lib, pill) },
-                        onPanelFocusChanged = { /* optional bar-dim tracking */ },
+                        // Where focus actually is, which is what Back routing
+                        // needs — the entry flag only records intent.
+                        onPanelFocusChanged = { focusState.onPanelFocusChanged(it) },
                         modifier = Modifier,
                     )
                 }

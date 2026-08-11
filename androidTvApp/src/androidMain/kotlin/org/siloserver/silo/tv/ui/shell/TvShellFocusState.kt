@@ -87,9 +87,10 @@ internal fun tvShellMode(
 /**
  * Pure Back/Escape routing, mirroring the historical shell `onPreviewKeyEvent`
  * `when`. The order is load-bearing and was settled across several "fix focus"
- * commits: an open cascade panel (even a mere preview) is dismissed first, then
- * the profile dropdown, then a focused menu bar hands focus back to content;
- * only with nothing to dismiss does Back fall through to navigation.
+ * commits: an open cascade panel is dismissed first — a preview
+ * without moving focus, an entered panel by handing focus to content — then the
+ * profile dropdown, then a focused menu bar; only with nothing to dismiss does
+ * Back fall through to navigation.
  */
 internal fun tvShellBackAction(
     panelOpen: Boolean,
@@ -155,6 +156,23 @@ class TvShellFocusState {
     var menuFocusSuppressesDwell by mutableStateOf(false)
         private set
 
+    /**
+     * Whether anything inside the open panel actually holds focus, reported by
+     * the selector as its rows and pills gain and lose it.
+     *
+     * Back routing asks this rather than [panelEntersFocus], because entry
+     * INTENT is not entry: an empty panel, an unattached requester, or a claim
+     * that silently failed all leave focus on the bar while the intent flag
+     * says otherwise — and Back would then throw the viewer into content from a
+     * bar they never left.
+     */
+    var panelHasFocus by mutableStateOf(false)
+        private set
+
+    fun onPanelFocusChanged(focused: Boolean) {
+        panelHasFocus = focused
+    }
+
     /** Nudge the menu bar to return focus to the profile avatar. */
     var profileFocusRequest by mutableIntStateOf(0)
         private set
@@ -179,7 +197,12 @@ class TvShellFocusState {
     var openPanel by mutableStateOf<TvTopMenuPanel?>(null)
         private set
 
-    /** True once the user has committed to *entering* [openPanel] (vs previewing). */
+    /**
+     * True once the user has committed to *entering* [openPanel] (vs previewing).
+     *
+     * Intent, not arrival: this is set before the selector's asynchronous focus
+     * request runs. Use [panelHasFocus] for questions about where focus IS.
+     */
     var panelEntersFocus by mutableStateOf(false)
         private set
 
@@ -312,6 +335,7 @@ class TvShellFocusState {
         val closingPanel = openPanel
         openPanel = null
         panelEntersFocus = false
+        panelHasFocus = false
         DiagnosticsFocusLogger.transition(closingPanel?.diagnosticsTarget() ?: "panel", "close")
     }
 
@@ -332,7 +356,7 @@ class TvShellFocusState {
             profileMenuOpen = profileMenuOpen,
             menuFocused = isMenuFocused,
             onTabRoot = onTabRoot,
-            panelEntered = panelEntersFocus,
+            panelEntered = panelHasFocus,
         )
         when (action) {
             // Back out of a cascade the viewer ENTERED hands focus to content,
