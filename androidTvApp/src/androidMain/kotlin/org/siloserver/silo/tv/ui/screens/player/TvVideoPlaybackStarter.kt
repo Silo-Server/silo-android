@@ -283,7 +283,7 @@ class TvVideoPlaybackStarter(
                 mediaFileId = effectiveFileId,
                 // Protocol v3 source duration is authoritative. Unknown stays
                 // unknown; catalog/player runtimes must not fill this field.
-                durationSeconds = resolved.durationSeconds ?: 0.0,
+                durationSeconds = resolved.durationSeconds,
                 subtitleUrls = enrichAuthoritativePlaybackSubtitleChoices(
                     catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
                     plannedTracks = resolved.subtitleUrls.orEmpty(),

@@ -72,6 +72,9 @@ class PlaybackSubtitleIdentityTest {
     fun sharedSubtitleMetadataHelpersStayCanonical() {
         assertEquals("silo-downloaded-subtitle:91", downloadedSubtitleArtifactTrackId(91))
         assertTrue(subtitleLabelIndicatesHearingImpaired("English SDH"))
+        assertTrue(subtitleLabelIndicatesHearingImpaired("English CC"))
+        assertFalse(subtitleLabelIndicatesHearingImpaired("hi"))
+        assertFalse(subtitleLabelIndicatesHearingImpaired("EN - HI"))
         assertFalse(subtitleLabelIndicatesHearingImpaired("English"))
         assertTrue(isBitmapSubtitleCodecFamily("application/pgs"))
         assertFalse(isBitmapSubtitleCodecFamily("text/vtt"))

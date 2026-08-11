@@ -131,6 +131,8 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** Reduced to the fields that can identify the track across index spaces. */
@@ -154,6 +156,11 @@ internal fun authoritativePlaybackQualityOptions(
         resolution = quality.height.takeIf { it > 0 }?.let { "${it}p" },
     )
 }
+
+internal fun clampTvScrubPreview(seconds: Double, duration: Double): Double =
+    seconds.coerceAtLeast(0.0).let { value ->
+        if (duration > 0.0) value.coerceAtMost(duration) else value
+    }
 
 /**
  * Renderable audio or subtitle track pulled out of ExoPlayer's current
@@ -1200,6 +1207,7 @@ class TvPlayerViewModel(
             ) != null
         },
     )
+    private val subtitleTransactionLaunchMutex = Mutex()
     private val playbackMutationFence by lazy {
         TvPlayerMutationFence(loadOwners, subtitleTransactions::invalidate)
     }
@@ -1538,8 +1546,10 @@ class TvPlayerViewModel(
         transaction: () -> Unit,
     ) {
         viewModelScope.launch {
-            subtitleTransactions.updatePlaybackContext(subtitlePlaybackContext(state))
-            transaction()
+            subtitleTransactionLaunchMutex.withLock {
+                subtitleTransactions.updatePlaybackContext(subtitlePlaybackContext(state))
+                transaction()
+            }
         }
     }
 
@@ -2020,8 +2030,8 @@ class TvPlayerViewModel(
                                 mediaFileId = result.mediaFileId,
                                 startPosition = result.startPositionSeconds,
                                 position = result.sourceStartPositionSeconds,
-                                duration = result.durationSeconds,
-                                serverDuration = result.durationSeconds,
+                                duration = result.durationSeconds ?: 0.0,
+                                serverDuration = result.durationSeconds ?: 0.0,
                                 isPaused = false,
                                 subtitleUrls = hydratedSubtitleUrls,
                                 preferredAudioLanguage = result.preferredAudioLanguage,
@@ -4074,8 +4084,7 @@ class TvPlayerViewModel(
 
     fun updateScrubPreview(sec: Double) {
         _uiState.update {
-            val clamped = sec.coerceIn(0.0, it.duration.coerceAtLeast(0.0))
-            it.copy(scrubPreviewSec = clamped)
+            it.copy(scrubPreviewSec = clampTvScrubPreview(sec, it.duration))
         }
     }
 

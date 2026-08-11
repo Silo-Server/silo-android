@@ -245,7 +245,9 @@ class AudiobookPlayerViewModel(
                         val start = playback.data
                         if (generation != loadGeneration || isClosing) {
                             if (start is VideoSessionStartV3.Ready) {
-                                playbackSessionManager.stopSession(start.session.sessionId)
+                                runCatching {
+                                    playbackSessionManager.stopSession(start.session.sessionId)
+                                }
                             }
                         } else if (start is VideoSessionStartV3.Ready) {
                             applyStartedSession(

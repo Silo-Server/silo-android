@@ -11,6 +11,9 @@ import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 const val DOWNLOADED_SUBTITLE_ARTIFACT_TRACK_ID_PREFIX =
     "silo-downloaded-subtitle:"
 
+private val HEARING_IMPAIRED_TOKEN_REGEX =
+    Regex("""(^|[^a-z0-9])(cc|sdh)([^a-z0-9]|$)""")
+
 /**
  * Builds the canonical typed identity for a subtitle row on both Android
  * clients. Protocol-v3 server identity wins over local download metadata.
@@ -186,7 +189,7 @@ fun subtitleLabelIndicatesHearingImpaired(label: String?): Boolean {
     ) {
         return true
     }
-    return Regex("""(^|[^a-z0-9])(cc|sdh|hi)([^a-z0-9]|$)""").containsMatchIn(value)
+    return HEARING_IMPAIRED_TOKEN_REGEX.containsMatchIn(value)
 }
 
 private fun String?.normalizedSubtitleValue(): String? =

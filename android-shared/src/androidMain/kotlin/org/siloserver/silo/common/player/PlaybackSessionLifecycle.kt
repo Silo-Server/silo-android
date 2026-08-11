@@ -809,72 +809,80 @@ class PlaybackSessionLifecycle(
     // ---- Internal: server-outage recovery -----------------------------------
 
     private fun beginOutageRecovery(currentSession: PlaybackSessionResponse) {
-        if (outageJob?.isActive == true) return  // already probing
-        if (_state.value is SessionState.Reconnecting) return
+        val job = synchronized(recoveryJobLock) {
+            if (outageJob?.isActive == true) return
+            if (_state.value is SessionState.Reconnecting) return
 
-        val deadline = nowMs() + OUTAGE_TIMEOUT_MS
-        _state.value = SessionState.Reconnecting(deadlineEpochMs = deadline, tone = NoticeTone.Warning)
-        DiagnosticsPlaybackLogger.sessionEvent("session reconnecting")
-        _notice.value = PlayerNotice(
-            message = OUTAGE_RECONNECT_MESSAGE,
-            tone = NoticeTone.Warning,
-            expiresAtEpochMs = deadline,
-        )
-
-        val diagnosticsRecording = this.diagnosticsRecording
-        // Ownership token for this recovery run. The probe cannot be aborted
-        // mid-flight, so the loop can resume after cancellation and after a new
-        // session has been adopted; every publication below is gated on this
-        // still being the session we set out to recover.
-        val recoveredSessionId = currentSession.sessionId
-        outageJob = scope.launch {
-            // Track elapsed via accumulating delay sums. We can't rely on
-            // System.currentTimeMillis() here because tests run with a virtual
-            // clock — `delay()` advances virtual time but the wall clock does
-            // not. Counting our own delays is correct in both regimes.
-            var elapsed = 0L
-            var delayMs = OUTAGE_INITIAL_DELAY_MS
-            while (isActive && elapsed < OUTAGE_TIMEOUT_MS) {
-                val step = delayMs.coerceAtMost(OUTAGE_TIMEOUT_MS - elapsed)
-                delay(step)
-                elapsed += step
-                if (elapsed >= OUTAGE_TIMEOUT_MS) break
-                // Leave via return, not break: falling out of the loop reaches
-                // the terminal Failed publication below, which a cancelled
-                // recovery must never perform.
-                if (!isActive) return@launch
-                val probe = healthApi.checkHealth()
-                // A probe that completed after we were cancelled must not
-                // publish anything.
-                currentCoroutineContext().ensureActive()
-                if (probe is ApiResult.Success) {
-                    // Only a decoded health payload is authoritative. Reverse
-                    // proxies/tunnels can still produce HTTP errors, or even
-                    // an HTML 200 page, while the Silo origin is down.
-                    if (!ownsRecoveredSession(recoveredSessionId)) return@launch
-                    Log.i(TAG, "Health probe succeeded; resuming playback session")
-                    DiagnosticsPlaybackLogger.sessionEvent("session reconnected")
-                    diagnosticsRecording.record(currentSession.sessionId)
-                    lastAdoptedSessionId = currentSession.sessionId
-                    _state.value = SessionState.Active(currentSession)
-                    _notice.value = null
-                    return@launch
-                }
-                // Error or NetworkError — back off and try again.
-                delayMs = (delayMs * 2).coerceAtMost(OUTAGE_MAX_DELAY_MS)
-            }
-            // Timed out before the server came back.
-            currentCoroutineContext().ensureActive()
-            if (!ownsRecoveredSession(recoveredSessionId)) return@launch
-            Log.w(TAG, "Outage recovery exhausted for playback session")
-            DiagnosticsPlaybackLogger.sessionEvent("session reconnect failed")
-            _state.value = SessionState.Failed(OUTAGE_TIMEOUT_MESSAGE)
+            val deadline = nowMs() + OUTAGE_TIMEOUT_MS
+            _state.value = SessionState.Reconnecting(deadlineEpochMs = deadline, tone = NoticeTone.Warning)
+            DiagnosticsPlaybackLogger.sessionEvent("session reconnecting")
             _notice.value = PlayerNotice(
-                message = OUTAGE_TIMEOUT_MESSAGE,
+                message = OUTAGE_RECONNECT_MESSAGE,
                 tone = NoticeTone.Warning,
-                expiresAtEpochMs = null,
+                expiresAtEpochMs = deadline,
             )
+
+            val diagnosticsRecording = this.diagnosticsRecording
+            // Ownership token for this recovery run. The probe cannot be aborted
+            // mid-flight, so the loop can resume after cancellation and after a new
+            // session has been adopted; every publication below is gated on this
+            // still being the session we set out to recover.
+            val recoveredSessionId = currentSession.sessionId
+            scope.launch(start = CoroutineStart.LAZY) {
+                // Track elapsed via accumulating delay sums. We can't rely on
+                // System.currentTimeMillis() here because tests run with a virtual
+                // clock — `delay()` advances virtual time but the wall clock does
+                // not. Counting our own delays is correct in both regimes.
+                var elapsed = 0L
+                var delayMs = OUTAGE_INITIAL_DELAY_MS
+                while (isActive && elapsed < OUTAGE_TIMEOUT_MS) {
+                    val step = delayMs.coerceAtMost(OUTAGE_TIMEOUT_MS - elapsed)
+                    delay(step)
+                    elapsed += step
+                    if (elapsed >= OUTAGE_TIMEOUT_MS) break
+                    // Leave via return, not break: falling out of the loop reaches
+                    // the terminal Failed publication below, which a cancelled
+                    // recovery must never perform.
+                    if (!isActive) return@launch
+                    val probe = healthApi.checkHealth()
+                    // A probe that completed after we were cancelled must not
+                    // publish anything.
+                    currentCoroutineContext().ensureActive()
+                    if (probe is ApiResult.Success) {
+                        // Only a decoded health payload is authoritative. Reverse
+                        // proxies/tunnels can still produce HTTP errors, or even
+                        // an HTML 200 page, while the Silo origin is down.
+                        if (!ownsRecoveredSession(recoveredSessionId)) return@launch
+                        Log.i(TAG, "Health probe succeeded; resuming playback session")
+                        DiagnosticsPlaybackLogger.sessionEvent("session reconnected")
+                        diagnosticsRecording.record(currentSession.sessionId)
+                        lastAdoptedSessionId = currentSession.sessionId
+                        _state.value = SessionState.Active(currentSession)
+                        _notice.value = null
+                        return@launch
+                    }
+                    // Error or NetworkError — back off and try again.
+                    delayMs = (delayMs * 2).coerceAtMost(OUTAGE_MAX_DELAY_MS)
+                }
+                // Timed out before the server came back.
+                currentCoroutineContext().ensureActive()
+                if (!ownsRecoveredSession(recoveredSessionId)) return@launch
+                Log.w(TAG, "Outage recovery exhausted for playback session")
+                DiagnosticsPlaybackLogger.sessionEvent("session reconnect failed")
+                _state.value = SessionState.Failed(OUTAGE_TIMEOUT_MESSAGE)
+                _notice.value = PlayerNotice(
+                    message = OUTAGE_TIMEOUT_MESSAGE,
+                    tone = NoticeTone.Warning,
+                    expiresAtEpochMs = null,
+                )
+            }.also { outageJob = it }
         }
+        job.invokeOnCompletion {
+            synchronized(recoveryJobLock) {
+                if (outageJob === job) outageJob = null
+            }
+        }
+        job.start()
     }
 
     // ---- Internal: snapshot & helpers ---------------------------------------
@@ -917,9 +925,9 @@ class PlaybackSessionLifecycle(
         synchronized(recoveryJobLock) {
             recoveryJob?.cancel()
             recoveryJob = null
+            outageJob?.cancel()
+            outageJob = null
         }
-        outageJob?.cancel()
-        outageJob = null
     }
 
     private fun isPlaybackSessionMissing(result: ApiResult<*>): Boolean {

@@ -416,6 +416,7 @@ class CastPlaybackSessionHandle internal constructor(
     private val terminal = AtomicBoolean(false)
     private val recoveryMutex = Mutex()
     private val pendingSubtitleChange = AtomicReference<CastStagedSubtitleChange?>(null)
+    private var loadFailureRecoveryAttempts = 0
 
     val sessionId: String
         get() = ready.get().session.sessionId
@@ -449,6 +450,11 @@ class CastPlaybackSessionHandle internal constructor(
         message: String,
     ): CastMediaSpec? = recoveryMutex.withLock {
         if (terminal.get() || pendingSubtitleChange.get() != null) return@withLock null
+        if (loadFailureRecoveryAttempts >= MAX_LOAD_FAILURE_RECOVERY_ATTEMPTS) {
+            stopLocked(playerPositionSeconds, isPaused = true, reason = "load_recovery_exhausted")
+            return@withLock null
+        }
+        loadFailureRecoveryAttempts += 1
         val snapshot = ready.get()
         val sourcePosition = sourcePositionForPlayer(snapshot, playerPositionSeconds)
         when (
@@ -650,6 +656,10 @@ class CastPlaybackSessionHandle internal constructor(
             canSeekAnywhere = value.canSeekAnywhere,
             seekRestoration = value.seekRestoration,
         )
+    }
+
+    private companion object {
+        const val MAX_LOAD_FAILURE_RECOVERY_ATTEMPTS = 3
     }
 }
 

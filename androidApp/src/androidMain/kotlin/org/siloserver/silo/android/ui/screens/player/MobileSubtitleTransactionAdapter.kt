@@ -864,6 +864,7 @@ internal class MobileSubtitleTransactionAdapter(
         context = liveContext.copy(
             mediaFileId = playback.effectiveMediaFileId ?: liveContext.mediaFileId,
             versionId = playback.effectiveMediaFileId
+                ?.takeIf { it != liveContext.mediaFileId }
                 ?.let { "adapted:$it" }
                 ?: liveContext.versionId,
             sessionId = playback.sessionId,

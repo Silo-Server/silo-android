@@ -66,6 +66,7 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SleepTimerController
+import org.siloserver.silo.common.player.StartParams
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
@@ -84,6 +85,8 @@ import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
+import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
+import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -607,6 +610,30 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         assertEquals(1, allocation?.subtitleTrackIndex)
     }
 
+    @Test
+    fun serverSelectedSubtitleIndexIsRetainedForSessionRenewal() = runTest(dispatcher) {
+        var adoptedParams: StartParams? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            readyStart = allocatedReady("subtitle-session", selectedSubtitleIndex = 4),
+            onAdoption = { adoptedParams = it },
+        )
+
+        assertEquals(4, adoptedParams?.subtitleTrackIndex)
+    }
+
+    @Test
+    fun unknownSourceDurationStaysUnknownAtTheStarterBoundary() = runTest(dispatcher) {
+        val ready = start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+        )
+
+        assertNull(ready.durationSeconds)
+    }
+
     private suspend fun TestScope.start(
         effective: String,
         profile: Profile,
@@ -614,6 +641,8 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         explicitSubtitleTrackIndex: Int? = null,
         userItemStatePort: UserItemStatePort = NoOpUserItemStatePort,
         onAllocation: (MobileVideoSessionAllocation) -> Unit = {},
+        readyStart: VideoSessionStartV3.Ready = allocatedReady("subtitle-session"),
+        onAdoption: (StartParams) -> Unit = {},
     ): VideoPlaybackStartResult.Ready {
         val client = catalogClient(effective, versionFields)
         val tokenManager = FakeTokenManager()
@@ -640,9 +669,9 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             userItemStatePort = userItemStatePort,
             sessionAllocator = {
                 onAllocation(it)
-                ApiResult.Success(allocatedReady("subtitle-session"))
+                ApiResult.Success(readyStart)
             },
-            sessionAdopter = { _, _ -> },
+            sessionAdopter = { params, _ -> onAdoption(params) },
         )
 
         val result = starter.start(
@@ -880,7 +909,13 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun flushPendingDeviceSettings() = Unit
 }
 
-private fun allocatedReady(sessionId: String): VideoSessionStartV3.Ready {
+private fun allocatedReady(
+    sessionId: String,
+    selectedSubtitleIndex: Int? = null,
+): VideoSessionStartV3.Ready {
+    val selectedSubtitle = selectedSubtitleIndex?.let { index ->
+        PlaybackTrackIdentityV3("file:41:subtitle:$index", index)
+    }
     val plan = PlaybackPlanV3(
         planId = "plan-$sessionId",
         planAttemptKey = "v3:test:$sessionId",
@@ -893,6 +928,7 @@ private fun allocatedReady(sessionId: String): VideoSessionStartV3.Ready {
         ),
         decisionReason = "test",
         effectiveMediaFileId = 41,
+        selectedTracks = SelectedPlaybackTracksV3(subtitle = selectedSubtitle),
     )
     return VideoSessionStartV3.Ready(
         session = PlaybackSessionResponse(

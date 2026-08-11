@@ -25,7 +25,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.player.cast.CastSeekResult
@@ -116,6 +118,7 @@ class SiloCastSessionManager(private val context: Context) {
     /** Receiver-local position used for protocol timeline translation. */
     private var lastPlayerPosition: Double = 0.0
     private var lastProgressReportAtMs: Long = 0L
+    private var progressReportJob: Job? = null
     private var listenersAttachedTo: CastSession? = null
 
     private val remoteCallback = object : RemoteMediaClient.Callback() {
@@ -148,13 +151,22 @@ class SiloCastSessionManager(private val context: Context) {
             },
         )
         val now = SystemClock.elapsedRealtime()
-        if (spec != null && now - lastProgressReportAtMs >= SERVER_PROGRESS_INTERVAL_MS) {
+        if (
+            spec != null &&
+            progressReportJob?.isActive != true &&
+            now - lastProgressReportAtMs >= SERVER_PROGRESS_INTERVAL_MS
+        ) {
             lastProgressReportAtMs = now
             val paused = listenersAttachedTo?.remoteMediaClient?.playerState !=
                 MediaStatus.PLAYER_STATE_PLAYING
-            lifecycleScope.launch {
+            val job = lifecycleScope.launch(start = CoroutineStart.LAZY) {
                 spec.playbackSession.reportProgress(position, paused)
             }
+            progressReportJob = job
+            job.invokeOnCompletion {
+                if (progressReportJob === job) progressReportJob = null
+            }
+            job.start()
         }
     }
 
@@ -290,6 +302,8 @@ class SiloCastSessionManager(private val context: Context) {
     }
 
     private fun publishPendingSpec(spec: CastMediaSpec) {
+        progressReportJob?.cancel()
+        progressReportJob = null
         pending = spec
         lastPlayerPosition = spec.positionSeconds
         lastPosition = spec.playbackSession.sourcePositionForPlayer(spec.positionSeconds)
@@ -675,12 +689,15 @@ class SiloCastSessionManager(private val context: Context) {
                 // their server sessions, and burns the start rate limit.
                 fileId = pending?.fileId ?: _castState.value.fileId,
                 subtitleOptions = subtitleOptions,
-                activeSubtitleId = plannedSubtitles
-                    ?.firstOrNull { it.selected }
-                    ?.let { castReceiverTrackId(it.combinedIndex) }
-                    ?: subtitleOptions
+                activeSubtitleId = if (plannedSubtitles != null) {
+                    plannedSubtitles
+                        .firstOrNull { it.selected }
+                        ?.let { castReceiverTrackId(it.combinedIndex) }
+                } else {
+                    subtitleOptions
                         .firstOrNull { option -> activeIds?.contains(option.id) == true }
-                        ?.id,
+                        ?.id
+                },
             )
         } else {
             _castState.value.copy(isConnected = false, deviceName = null, isPlaying = false)
@@ -697,6 +714,8 @@ class SiloCastSessionManager(private val context: Context) {
 
     private fun finalizePending(event: String) {
         val spec = pending ?: return
+        progressReportJob?.cancel()
+        progressReportJob = null
         pendingSubtitleLoad = null
         pending = null
         finalizeSpec(spec, event)

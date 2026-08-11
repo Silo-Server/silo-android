@@ -26,6 +26,7 @@ import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleCho
 import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
 import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
+import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
@@ -314,7 +315,8 @@ internal class MobileVideoPlaybackStarter(
                 fileId = effectiveFileId,
                 capabilities = readyV3.capabilities,
                 audioTrackIndex = initialTracks.audioTrackIndex ?: resolved.audioTrackIndex,
-                subtitleTrackIndex = initialTracks.subtitleTrackIndex,
+                subtitleTrackIndex = initialTracks.subtitleTrackIndex
+                    ?: readyV3.plan.resolvedSelectedSubtitleIndex(),
                 qualityPreference = playbackQualityIntent,
                 startPosition = sourceStartPos,
                 clientPlaybackContext = readyV3.clientPlaybackContext,
@@ -371,7 +373,7 @@ internal class MobileVideoPlaybackStarter(
                 audioTrackIndex = resolved.audioTrackIndex,
                 // Protocol v3 source duration is authoritative. Unknown stays
                 // unknown; catalog/player runtimes must not fill this field.
-                durationSeconds = resolved.durationSeconds ?: 0.0,
+                durationSeconds = resolved.durationSeconds,
                 subtitleUrls = enrichAuthoritativePlaybackSubtitleChoices(
                     catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
                     plannedTracks = resolved.subtitleUrls.orEmpty(),

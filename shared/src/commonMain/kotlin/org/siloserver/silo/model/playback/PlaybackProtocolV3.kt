@@ -608,7 +608,9 @@ private fun PlaybackPlanV3.hasValidSubtitleInventory(): Boolean {
     ) {
         return false
     }
-    val selected = selectedTracks.subtitle ?: return true
+    val selected = selectedTracks.subtitle
+    if (subtitle.artifact != null && selected == null) return false
+    if (selected == null) return true
     return subtitle.inventory.any {
         it.trackId == selected.id &&
             (selected.index == null || it.combinedIndex == selected.index)

@@ -189,6 +189,41 @@ class PlaybackProtocolV3Test {
     }
 
     @Test
+    fun subtitleArtifactRequiresASelectedInventoryIdentity() {
+        val track = PlaybackSubtitleInventoryItemV3(
+            trackId = "file:84:subtitle:0",
+            combinedIndex = 0,
+            source = "external",
+            codec = "srt",
+            delivery = SUBTITLE_DELIVERY_SIDECAR,
+            url = "/api/v1/playback/session-1/subtitles/0.vtt",
+        )
+        val result = PlaybackDecisionResponseV3(
+            protocolVersion = PLAYBACK_PROTOCOL_V3,
+            serverFeatures = neutralServerFeatures,
+            outcome = PlaybackDecisionOutcome.PLAYABLE,
+            playbackPlan = plan.copy(
+                selectedTracks = SelectedPlaybackTracksV3(subtitle = null),
+                subtitle = PlaybackSubtitleDecisionV3(
+                    mode = PlaybackSubtitleModeV3.CONVERT,
+                    trackId = track.trackId,
+                    artifact = PlaybackSubtitleArtifactV3(
+                        url = track.url.orEmpty(),
+                        mimeType = "text/vtt",
+                        format = "vtt",
+                    ),
+                    inventory = listOf(track),
+                ),
+            ),
+        ).validateForMedia3()
+
+        assertEquals(
+            "invalid_playback_plan",
+            assertIs<PlaybackV3Validation.Terminal>(result).reason,
+        )
+    }
+
+    @Test
     fun unknownUnselectedSubtitleDeliveryRejectsThePlan() {
         val result = PlaybackDecisionResponseV3(
             protocolVersion = PLAYBACK_PROTOCOL_V3,

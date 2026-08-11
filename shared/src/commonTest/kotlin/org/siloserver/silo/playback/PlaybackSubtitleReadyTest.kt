@@ -1,7 +1,9 @@
 package org.siloserver.silo.playback
 
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import kotlin.test.Test
@@ -63,5 +65,21 @@ class PlaybackSubtitleReadyTest {
         )
 
         assertNull(applyAuthoritativeSubtitleReadyTrack(emptyList(), update))
+    }
+
+    @Test
+    fun malformedScalarFieldsDoNotAbortRealtimeDecoding() {
+        val update = decodePlaybackSubtitleReady(
+            buildJsonObject {
+                putJsonObject("session_id") { put("unexpected", true) }
+                putJsonArray("file_id") { add(JsonPrimitive(9)) }
+                putJsonObject("subtitle_id") { put("unexpected", 77) }
+            },
+        )
+
+        assertNull(update.sessionId)
+        assertNull(update.mediaFileId)
+        assertNull(update.subtitleId)
+        assertNull(update.track)
     }
 }

@@ -1146,7 +1146,7 @@ class PlayerViewModel(
                     listOf(
                         FileVersion(
                             fileId = fileId,
-                            duration = playbackState.durationSeconds,
+                            duration = playbackState.durationSeconds ?: 0.0,
                             chapters = playbackState.chapters.takeIf { it.isNotEmpty() },
                         ),
                     )
@@ -1289,8 +1289,8 @@ class PlayerViewModel(
                 position = playbackState.sourceStartPositionSeconds,
                 // V3 source duration is authoritative. Zero means the plan did
                 // not declare one; neither catalog nor Media3 may substitute it.
-                duration = playbackState.durationSeconds.takeIf { it > 0.0 } ?: 0.0,
-                serverDuration = playbackState.durationSeconds.takeIf { it > 0.0 } ?: 0.0,
+                duration = playbackState.durationSeconds?.takeIf { it > 0.0 } ?: 0.0,
+                serverDuration = playbackState.durationSeconds?.takeIf { it > 0.0 } ?: 0.0,
                 isPlaying = true,
                 isPaused = false,
                 subtitleTracks = mountedSubtitles,
@@ -3414,10 +3414,11 @@ class PlayerViewModel(
             authoritativeSubtitleReadyRows[sessionId to subtitleId] = added
         }
         if (subtitleId != null && pendingAuthoritativeSubtitleDownloadId == subtitleId) {
-            pendingAuthoritativeSubtitleDownloadId = null
-            added
+            val selected = added
                 ?.let(::mobileSubtitleIdentity)
                 ?.let { mobileSubtitleTransactions.selectFromRefresh(owner, it) }
+                ?: false
+            if (selected) pendingAuthoritativeSubtitleDownloadId = null
         }
     }
 

@@ -175,6 +175,34 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `same file commit preserves the catalog version identity`() = runTest {
+        val harness = harness(backgroundScope)
+
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.completeStage(
+            candidate(
+                id = "same-file",
+                selectedIndex = 4,
+                sessionId = "s-same-file",
+                effectiveMediaFileId = 11,
+            ),
+        )
+        runCurrent()
+        val owner = harness.adapter.beginRefresh()
+
+        harness.adapter.updatePlaybackContext(
+            context(
+                mediaFileId = 11,
+                versionId = "version-1",
+                sessionId = "s-same-file",
+            ),
+        )
+
+        assertTrue(harness.adapter.ownsRefresh(owner))
+    }
+
+    @Test
     fun `local then audio before mount keeps one client-owned transaction`() = runTest {
         val downloaded = downloadedIdentity()
         val row = downloadedTrack(

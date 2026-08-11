@@ -136,6 +136,31 @@ class PlaybackV3SessionTest {
     }
 
     @Test
+    fun unresolvedArtifactDoesNotCollideWithAuthoritativeIndexZero() {
+        val inventory = listOf(
+            PlaybackSubtitleInventoryItemV3(
+                trackId = "catalog-zero",
+                combinedIndex = 0,
+                source = "external",
+                codec = "srt",
+                delivery = "sidecar",
+                url = "/subtitles/0.vtt",
+            ),
+        )
+        val incomplete = plan(
+            mode = PlaybackSubtitleModeV3.CONVERT,
+            format = "vtt",
+            url = "/artifact.vtt",
+            inventory = inventory,
+        ).copy(selectedTracks = SelectedPlaybackTracksV3(subtitle = null))
+
+        val rows = incomplete.toSessionResponse("session", "profile", 482).subtitleUrls.orEmpty()
+
+        assertEquals(listOf("catalog-zero"), rows.mapNotNull(PlayerSubtitleInfo::serverTrackId))
+        assertTrue(rows.none { it.source == "server_artifact" })
+    }
+
+    @Test
     fun convertedTextArtifactRemainsAMountableServerSidecar() {
         val response = plan(
             mode = PlaybackSubtitleModeV3.CONVERT,

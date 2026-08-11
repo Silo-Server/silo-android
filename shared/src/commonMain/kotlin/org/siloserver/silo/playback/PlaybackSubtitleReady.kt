@@ -1,8 +1,9 @@
 package org.siloserver.silo.playback
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
@@ -29,9 +30,9 @@ fun decodePlaybackSubtitleReady(payload: JsonObject): PlaybackSubtitleReady {
         }.getOrNull()
     }
     return PlaybackSubtitleReady(
-        sessionId = payload["session_id"]?.jsonPrimitive?.content,
-        mediaFileId = payload["file_id"]?.jsonPrimitive?.intOrNull,
-        subtitleId = payload["subtitle_id"]?.jsonPrimitive?.intOrNull,
+        sessionId = (payload["session_id"] as? JsonPrimitive)?.contentOrNull,
+        mediaFileId = (payload["file_id"] as? JsonPrimitive)?.intOrNull,
+        subtitleId = (payload["subtitle_id"] as? JsonPrimitive)?.intOrNull,
         track = track,
     )
 }

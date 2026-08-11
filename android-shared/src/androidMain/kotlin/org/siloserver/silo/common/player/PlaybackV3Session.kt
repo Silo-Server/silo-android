@@ -58,6 +58,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
     val selectedSubtitle = subtitle.artifact?.takeIf {
         subtitle.mode == PlaybackSubtitleModeV3.CONVERT || subtitle.mode == PlaybackSubtitleModeV3.RENDER
     }?.let { artifact ->
+        val artifactIndex = selectedSubtitleIndex ?: return@let null
         // A bitmap RENDER artifact describes the subtitle stream already
         // embedded in ORIGINAL_HTTP media. It is not a WebVTT sidecar: trying
         // to mount its descriptive `/subtitles/{index}.vtt` URL makes the
@@ -69,7 +70,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
                 isBitmapSubtitleCodecFamily(artifact.format)
         listOf(
             PlayerSubtitleInfo(
-                index = selectedSubtitleIndex ?: 0,
+                index = artifactIndex,
                 codec = artifact.format,
                 label = if (rendersEmbeddedBitmap) null else "Server subtitle",
                 source = if (rendersEmbeddedBitmap) "embedded" else "server_artifact",
