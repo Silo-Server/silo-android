@@ -2108,6 +2108,9 @@ class TvPlayerViewModel(
                 }
                 .distinctUntilChanged(),
             onAutoSkipFire = { seekToSec -> seekImmediate(seekToSec) },
+            playbackActive = _uiState
+                .map { it.isPlaying && !it.isLoading }
+                .distinctUntilChanged(),
         )
     }
 

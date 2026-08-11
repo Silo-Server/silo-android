@@ -14,6 +14,8 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.clickable
@@ -1011,6 +1013,36 @@ fun TvPlayerScreen(
                 return@handler false
             }
 
+            // Back during the countdown dismisses the prompt for this intro and
+            // is consumed, so it can't also fall through to exiting playback.
+            // Handled here because the banner's own BackHandler loses to the
+            // screen's back handling.
+            if (event.action == KeyEvent.ACTION_DOWN &&
+                event.repeatCount == 0 &&
+                latestIntroSkipState is IntroAutoSkipState.CountingDown &&
+                event.keyCode == KeyEvent.KEYCODE_BACK
+            ) {
+                viewModel.onDismissIntroAutoSkip()
+                return@handler true
+            }
+
+            // A D-pad direction press during the countdown stops the timer but
+            // leaves the prompt in place. Handled here, not on the button: the
+            // banner is not reliably in the focus tree, so a key modifier on it
+            // never sees these events. Falls through so navigation/seek still run.
+            if (event.action == KeyEvent.ACTION_DOWN &&
+                event.repeatCount == 0 &&
+                latestIntroSkipState is IntroAutoSkipState.CountingDown &&
+                event.keyCode in setOf(
+                    KeyEvent.KEYCODE_DPAD_UP,
+                    KeyEvent.KEYCODE_DPAD_DOWN,
+                    KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT,
+                )
+            ) {
+                viewModel.onCancelIntroAutoSkip()
+            }
+
             if (!playerState.showControls && !playerState.showNextUp && horizontalDirection != 0) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     beginCleanSeekPress(direction = horizontalDirection, allowsHold = true)
@@ -1020,7 +1052,10 @@ fun TvPlayerScreen(
 
             if (event.action == KeyEvent.ACTION_DOWN &&
                 event.repeatCount == 0 &&
-                latestIntroSkipState is IntroAutoSkipState.ShowingButton &&
+                (
+                    latestIntroSkipState is IntroAutoSkipState.ShowingButton ||
+                        latestIntroSkipState is IntroAutoSkipState.CountingDown
+                    ) &&
                 // Only while the transport overlay is hidden: with controls up
                 // a focused button owns Select — hijacking it here made every
                 // OK press skip the intro for the whole intro window.
@@ -3392,10 +3427,18 @@ private fun TvPlayerOverlays(
         // Bottom inset (200dp) clears the transport cluster + scrubber column.
         if (!isInPictureInPictureMode) {
             if (!hudOpen && !showNextUp) {
+                // Drops toward the corner once the transport cluster fades out,
+                // and lifts back above it when controls return. Decorative
+                // motion, so it intentionally honors the device animation scale.
+                val introSkipBottomInset by animateDpAsState(
+                    targetValue = if (showControls) 200.dp else 56.dp,
+                    animationSpec = tween(durationMillis = 220),
+                    label = "introSkipBottomInset",
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(bottom = 200.dp, end = 32.dp),
+                        .padding(bottom = introSkipBottomInset, end = 32.dp),
                     contentAlignment = Alignment.BottomEnd,
                 ) {
                     TvIntroAutoSkipBanner(

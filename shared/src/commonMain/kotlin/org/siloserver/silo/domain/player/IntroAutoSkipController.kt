@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 sealed interface IntroAutoSkipState {
@@ -30,16 +31,23 @@ class IntroAutoSkipController(
     private var countdownJob: Job? = null
     private var activeKey: String? = null
 
+    private fun cancelJob() {
+        countdownJob?.cancel()
+        countdownJob = null
+    }
+
     fun observe(
         position: Flow<Double>,
         introRange: Flow<TimeRange?>,
         autoSkipEnabled: Flow<Boolean>,
         introKey: Flow<String?>,
         onAutoSkipFire: suspend (toSeconds: Double) -> Unit,
+        playbackActive: Flow<Boolean> = flowOf(true),
     ): Job {
         return scope.launch {
-            combine(position, introRange, autoSkipEnabled, introKey) { pos, range, enabled, key ->
-                Inputs(pos, range, enabled, key)
+            combine(position, introRange, autoSkipEnabled, introKey, playbackActive) {
+                    pos, range, enabled, key, playing ->
+                Inputs(pos, range, enabled, key, playing)
             }
                 .distinctUntilChanged()
                 .collect { handle(it, onAutoSkipFire) }
@@ -82,7 +90,7 @@ class IntroAutoSkipController(
         inputs: Inputs,
         onAutoSkipFire: suspend (toSeconds: Double) -> Unit,
     ) {
-        val (pos, range, enabled, key) = inputs
+        val (pos, range, enabled, key, playbackActive) = inputs
 
         val insideRange = range != null &&
             key != null &&
@@ -90,10 +98,7 @@ class IntroAutoSkipController(
             pos < range.end
 
         if (!insideRange) {
-            if (countdownJob != null) {
-                countdownJob?.cancel()
-                countdownJob = null
-            }
+            cancelJob()
             activeKey = null
             if (_state.value !is IntroAutoSkipState.Hidden) {
                 _state.value = IntroAutoSkipState.Hidden
@@ -107,28 +112,32 @@ class IntroAutoSkipController(
 
         // If the active key changed, drop any in-flight countdown.
         if (activeKey != null && activeKey != safeKey) {
-            countdownJob?.cancel()
-            countdownJob = null
+            cancelJob()
         }
         activeKey = safeKey
 
         val isCancelled = safeKey in cancelledKeys
         val isDismissed = safeKey in dismissedKeys
         if (isDismissed) {
-            if (countdownJob != null) {
-                countdownJob?.cancel()
-                countdownJob = null
-            }
+            cancelJob()
             if (_state.value !is IntroAutoSkipState.Hidden) {
                 _state.value = IntroAutoSkipState.Hidden
             }
             return
         }
         if (!enabled || isCancelled) {
-            if (countdownJob != null) {
-                countdownJob?.cancel()
-                countdownJob = null
+            cancelJob()
+            if (_state.value !is IntroAutoSkipState.ShowingButton) {
+                _state.value = IntroAutoSkipState.ShowingButton
             }
+            return
+        }
+
+        // Hold the countdown until the video is actually playing. Otherwise it
+        // starts while the player is still coming up, and the prompt only
+        // appears partway through an already-elapsed timer.
+        if (!playbackActive) {
+            cancelJob()
             if (_state.value !is IntroAutoSkipState.ShowingButton) {
                 _state.value = IntroAutoSkipState.ShowingButton
             }
@@ -155,5 +164,6 @@ class IntroAutoSkipController(
         val range: TimeRange?,
         val enabled: Boolean,
         val key: String?,
+        val playbackActive: Boolean,
     )
 }
