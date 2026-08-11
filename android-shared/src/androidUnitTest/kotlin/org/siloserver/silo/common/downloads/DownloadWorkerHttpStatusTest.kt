@@ -6,6 +6,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import org.siloserver.silo.network.SiloAuthUnavailableException
 
 class DownloadWorkerHttpStatusTest {
     @Test
@@ -66,5 +69,34 @@ class DownloadWorkerHttpStatusTest {
         assertEquals("revoked", extractDownloadErrorCode("""{"error":"revoked"}"""))
         // And a bare Conflict without the preparing code is still fatal.
         assertIs<IllegalStateException>(downloadHttpStatusFailure(HttpStatusCode.Conflict))
+    }
+}
+
+class DownloadWorkerAuthFailureTest {
+    @Test
+    fun `a repudiated session is retriable, not a permanent download failure`() {
+        assertTrue(
+            downloadAuthFailureIsRetriable(
+                SiloAuthUnavailableException(SiloAuthUnavailableException.CREDENTIALS_REPUDIATED),
+            ),
+        )
+        assertTrue(
+            downloadAuthFailureIsRetriable(
+                SiloAuthUnavailableException(SiloAuthUnavailableException.REQUIRED_AUTH_UNAVAILABLE),
+            ),
+        )
+    }
+
+    @Test
+    fun `a genuine client error stays permanent`() {
+        // SiloAuthUnavailableException extends IllegalStateException, which is
+        // what downloadHttpStatusFailure returns for a 404. Widening the auth
+        // predicate to that supertype would make every 404 retry forever.
+        assertFalse(
+            downloadAuthFailureIsRetriable(
+                downloadHttpStatusFailure(HttpStatusCode.NotFound)!!,
+            ),
+        )
+        assertFalse(downloadAuthFailureIsRetriable(IOException("socket closed")))
     }
 }

@@ -164,6 +164,11 @@ internal class DiagnosticsLogRenderer(
             DiagnosticsLogCategory.FOCUS to mapOf(
                 "target" to AttributeKind.STRING,
                 "action" to AttributeKind.STRING,
+                // Registered because contentEntryFailed() reports it. An
+                // unregistered attribute THROWS while strictAttributeRegistry
+                // is on (debug builds), so the warning added to make silent
+                // focus failures visible crashed the app the moment it fired.
+                "route" to AttributeKind.STRING,
             ),
             DiagnosticsLogCategory.NETWORK to mapOf(
                 "method" to AttributeKind.STRING,

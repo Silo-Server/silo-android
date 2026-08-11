@@ -10,7 +10,20 @@ data class TemporaryAuthScope(
     val refreshToken: String,
     val profileId: String,
     val profileToken: String,
+    /**
+     * When the temporary SESSION ends — the deadline the cast UI counts down
+     * to. Not the access token's deadline: the session outlives many access
+     * tokens, so this must never be used to decide whether to refresh.
+     */
     val expiresAtEpochMs: Long,
+    /**
+     * When this overlay's ACCESS TOKEN expires, or null before the first
+     * refresh has told us. Null means "unknown", which keeps the reactive
+     * 401 path rather than guessing off the session deadline.
+     */
+    val accessTokenExpiresAtEpochMs: Long? = null,
+    /** Lifetime the server gave that access token, for the half-life clamp. */
+    val accessTokenLifetimeMs: Long? = null,
 ) {
     override fun toString(): String =
         "TemporaryAuthScope(" +
@@ -151,6 +164,27 @@ interface TokenManager {
     suspend fun signOutCurrentServer()
 
     // ----- Scoped auth (Track B outbox replay; see [AuthScopeSnapshot]) -----
+
+    /**
+     * True when the ACTIVE scope's access token expires within [marginMs], so a
+     * caller can refresh before spending it rather than after the server has
+     * rejected it.
+     *
+     * Every implementation already records an expiry at save time and no caller
+     * has ever read it, so expiry was only ever discovered by a 401: the first
+     * request after the deadline paid a wasted round trip, and on a live device
+     * that was 42 of 351 `/home/sections` calls.
+     *
+     * Default false — an implementation that cannot answer must keep today's
+     * reactive behaviour rather than guess, since a wrong "yes" spends a
+     * refresh token on every request.
+     *
+     * Implementations must clamp [marginMs] to half the token's own lifetime
+     * (see [shouldRefreshProactively]). Without that, a server issuing tokens
+     * shorter than the margin is inside the window from the moment it issues
+     * one, and every single request refreshes.
+     */
+    suspend fun accessTokenExpiresWithin(marginMs: Long): Boolean = false
 
     /**
      * Capture the currently-active scope for pinning a background request. Returns
