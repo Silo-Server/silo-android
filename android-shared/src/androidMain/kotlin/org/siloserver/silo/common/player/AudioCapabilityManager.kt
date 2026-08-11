@@ -321,6 +321,9 @@ class AudioCapabilityManager(
             AudioLayoutProbe(6, AudioFormat.CHANNEL_OUT_5POINT1, listOf("5.1", "5.1(side)")),
             AudioLayoutProbe(8, AudioFormat.CHANNEL_OUT_7POINT1_SURROUND, listOf("7.1")),
         )
+        check(layoutsToProbe.map { it.channelCount }.toSet() == PROBED_PASSTHROUGH_CHANNEL_COUNTS) {
+            "PROBED_PASSTHROUGH_CHANNEL_COUNTS must list exactly what is probed"
+        }
         return encodings.mapNotNull { support ->
             val channelCounts = sortedSetOf<Int>()
             val layouts = sortedSetOf<String>()

@@ -120,8 +120,10 @@ class PlaybackCapabilityDetector(
         if (selectedAudio != null) {
             val mime = selectedAudio.sampleMimeType.orEmpty()
             val channels = selectedAudio.channelCount
-            val passthroughCodecs = audioCapabilityManager.capabilities.value.passthroughCodecs.toSet()
-            val maxChannels = audioCapabilityManager.capabilities.value.maxChannels
+            // ONE snapshot: read three times, a route change mid-check could
+            // mix one snapshot's codec list with another's channel limits.
+            val routeCaps = audioCapabilityManager.capabilities.value
+            val maxChannels = routeCaps.maxChannels
 
             val rendererCanDecode = canDecodeAudio(
                 mime = mime,
@@ -135,22 +137,24 @@ class PlaybackCapabilityDetector(
             // anything, but a false refusal the moment that assumption is
             // dropped — an E-AC-3-capable receiver plays 5.1 fine behind a
             // stereo-only decoder.
-            val routeCaps = audioCapabilityManager.capabilities.value
-            val passthroughCodec = when (mime) {
-                MimeTypes.AUDIO_TRUEHD -> "truehd"
-                MimeTypes.AUDIO_DTS_HD -> "dts_hd"
-                MimeTypes.AUDIO_DTS -> "dts"
-                MimeTypes.AUDIO_AC4 -> "ac4"
-                MimeTypes.AUDIO_AC3 -> "ac3"
-                MimeTypes.AUDIO_E_AC3 -> "eac3"
-                MimeTypes.AUDIO_E_AC3_JOC ->
-                    if ("eac3_joc" in passthroughCodecs) "eac3_joc" else "eac3"
-                else -> null
-            }
             // Asked per codec AND per layout: the sink carrying this codec says
-            // nothing about it carrying this many channels of it.
-            val sinkCanPassthrough = passthroughCodec != null &&
-                sinkCanPassthrough(passthroughCodec, channels, routeCaps)
+            // nothing about it carrying this many channels of it. JOC tries its
+            // own entry first and then plain E-AC-3 — picking by codec presence
+            // alone refused a JOC stream whose layout only the E-AC-3 entry
+            // covered, which Android explicitly permits.
+            val passthroughCandidates = when (mime) {
+                MimeTypes.AUDIO_TRUEHD -> listOf("truehd")
+                MimeTypes.AUDIO_DTS_HD -> listOf("dts_hd")
+                MimeTypes.AUDIO_DTS -> listOf("dts")
+                MimeTypes.AUDIO_AC4 -> listOf("ac4")
+                MimeTypes.AUDIO_AC3 -> listOf("ac3")
+                MimeTypes.AUDIO_E_AC3 -> listOf("eac3")
+                MimeTypes.AUDIO_E_AC3_JOC -> listOf("eac3_joc", "eac3")
+                else -> emptyList()
+            }
+            val sinkCanPassthrough = passthroughCandidates.any {
+                sinkCanPassthrough(it, channels, routeCaps)
+            }
 
             // Absent codec and unusable channel layout are different verdicts:
             // the first tells the viewer their device cannot play this format at
@@ -664,11 +668,31 @@ internal fun sinkCanPassthrough(
 ): Boolean {
     if (codec !in capabilities.passthroughCodecs) return false
     if (channelCount <= 0) return true
-    val entry = capabilities.entries.firstOrNull { it.codec == codec }
-    val exactCounts = entry?.channelCounts?.takeIf { it.isNotEmpty() }
+    val exactCounts = capabilities.entries
+        .firstOrNull { it.codec == codec }
+        ?.channelCounts
+        ?.takeIf { it.isNotEmpty() }
         ?: return channelCount <= capabilities.maxChannels
-    return channelCount in exactCounts
+
+    if (channelCount in exactCounts) return true
+    // An entry lists what was PROBED, not everything the sink accepts: only
+    // 2/6/8 are ever tried. Absence is a refusal for those three, because they
+    // were asked and said no. For any other layout the probe simply never
+    // asked, so falling back to the aggregate is the honest answer rather than
+    // refusing a 5- or 7-channel stream the receiver would have carried.
+    return if (channelCount in PROBED_PASSTHROUGH_CHANNEL_COUNTS) {
+        false
+    } else {
+        channelCount <= capabilities.maxChannels
+    }
 }
+
+/**
+ * Channel counts [AudioCapabilityManager] actually probes per encoded format.
+ * Only for these does an entry's silence mean "no"; anything else was never
+ * asked. Kept in step with the probe by a check() at its call site.
+ */
+internal val PROBED_PASSTHROUGH_CHANNEL_COUNTS = setOf(2, 6, 8)
 
 /** One platform decoder's claim about one MIME type. */
 internal data class PlatformAudioDecodeCapability(

@@ -243,3 +243,68 @@ class SinkPassthroughLayoutTest {
         assertFalse(sinkCanPassthrough("dts", 0, receiver))
     }
 }
+
+/**
+ * Entries record what was PROBED, not everything the sink accepts — only
+ * 2/6/8 are ever tried. Treating that list as exhaustive turns a partial probe
+ * into a refusal of layouts nobody asked about.
+ */
+class SinkPassthroughPartialEntriesTest {
+
+    private val receiver = AudioPassthroughCapabilities(
+        passthroughCodecs = listOf("eac3", "eac3_joc"),
+        maxChannels = 8,
+        entries = listOf(AudioPassthroughEntry("eac3", channelCounts = listOf(2, 6))),
+    )
+
+    @Test
+    fun `a probed layout the entry omits is refused`() {
+        assertFalse(
+            sinkCanPassthrough("eac3", 8, receiver),
+            "8 is probed, so its absence is a real no",
+        )
+    }
+
+    @Test
+    fun `an unprobed layout falls back to the aggregate rather than being refused`() {
+        assertTrue(
+            sinkCanPassthrough("eac3", 5, receiver),
+            "5 channels is never probed, so the entry cannot be read as refusing it",
+        )
+        assertTrue(sinkCanPassthrough("eac3", 7, receiver))
+    }
+
+    @Test
+    fun `an unprobed layout beyond the aggregate is still refused`() {
+        assertFalse(sinkCanPassthrough("eac3", 9, receiver))
+    }
+
+    /**
+     * A JOC stream whose layout only the plain E-AC-3 entry covers must still
+     * pass: Android permits JOC through an E-AC-3 path.
+     */
+    @Test
+    fun `JOC falls back to the plain E-AC-3 entry for its layout`() {
+        val jocNarrow = AudioPassthroughCapabilities(
+            passthroughCodecs = listOf("eac3_joc", "eac3"),
+            maxChannels = 8,
+            entries = listOf(
+                AudioPassthroughEntry("eac3_joc", channelCounts = listOf(2)),
+                AudioPassthroughEntry("eac3", channelCounts = listOf(2, 6)),
+            ),
+        )
+        assertFalse(
+            sinkCanPassthrough("eac3_joc", 6, jocNarrow),
+            "its own entry stops at stereo",
+        )
+        assertTrue(
+            sinkCanPassthrough("eac3", 6, jocNarrow),
+            "but the E-AC-3 path carries it, which is the fallback checkPlayability uses",
+        )
+    }
+
+    @Test
+    fun `the probed set matches what the capability manager probes`() {
+        assertEquals(setOf(2, 6, 8), PROBED_PASSTHROUGH_CHANNEL_COUNTS)
+    }
+}
