@@ -700,6 +700,7 @@ internal fun sinkCanPassthrough(
  * device if the two ever disagreed. A structural invariant is not worth
  * crashing playback setup over.
  */
+@UnstableApi
 internal val PROBED_PASSTHROUGH_CHANNEL_COUNTS: Set<Int> =
     PASSTHROUGH_LAYOUT_PROBES.mapTo(mutableSetOf()) { it.channelCount }
 

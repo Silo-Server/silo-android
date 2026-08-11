@@ -429,6 +429,7 @@ private class SpatializerBridge(
  * need a runtime check, and a structural invariant is not worth crashing
  * capability detection over.
  */
+@UnstableApi
 internal val PASSTHROUGH_LAYOUT_PROBES: List<AudioCapabilityManager.AudioLayoutProbe> = listOf(
     AudioCapabilityManager.AudioLayoutProbe(2, AudioFormat.CHANNEL_OUT_STEREO, listOf("stereo")),
     // FFprobe commonly distinguishes 5.1 and 5.1(side), while Android exposes
