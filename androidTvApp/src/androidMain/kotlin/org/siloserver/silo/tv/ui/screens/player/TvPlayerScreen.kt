@@ -1941,6 +1941,7 @@ fun TvPlayerScreen(
                         // playback seeks the MediaController directly.
                         transportEnabled = canSeekInRoom,
                         playPauseEnabled = canPlayPauseInRoom,
+                        canToggleAfterCommit = roomController == null,
                         onSkipBack = {
                             if (canSeekInRoom) {
                                 performRelativeSeek(
@@ -2285,6 +2286,16 @@ private fun TvPlayerIdleOverlay(
     // play/pause (host_only policy) gets a no-op play/pause.
     transportEnabled: Boolean = true,
     playPauseEnabled: Boolean = true,
+    /**
+     * Whether Center may toggle playback after committing a scrub.
+     *
+     * False in a Watch Together room. There, the commit and the play/pause are
+     * two independently launched room requests, and the play/pause carries the
+     * live position rather than the committed one — so it can land after the
+     * seek and pull every participant back to where the scrub started. Solo
+     * playback applies both locally and in order, so it keeps the behaviour.
+     */
+    canToggleAfterCommit: Boolean = true,
 ) {
     val scrubberFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
@@ -2407,6 +2418,7 @@ private fun TvPlayerIdleOverlay(
                 onCancelScrub = onCancelScrub,
                 onRequestFocus = scrubberFocus,
                 onPlayPause = onPlayPause,
+                canToggleAfterCommit = canToggleAfterCommit,
                 onMoveDownToTransport = {
                     playPauseFocus.claimFocusOrReport(
                         target = "player_transport",
