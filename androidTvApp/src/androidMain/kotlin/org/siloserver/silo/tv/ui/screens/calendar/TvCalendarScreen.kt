@@ -380,7 +380,16 @@ fun TvCalendarScreen(
 
     CompositionLocalProvider(LocalAmbientBackdropTint provides tintState) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                // The zone callbacks only fire when a calendar control or shelf
+                // GAINS focus, so moving Up from the filter into the top menu
+                // left the flag true with focus outside the screen entirely.
+                // A later shell handoff then read that stale true, skipped both
+                // claims, and still reported initial content focus — and only
+                // another calendar zone gaining focus could clear it, which the
+                // skipped handoff could never cause.
+                .onFocusChanged { if (!it.hasFocus) calendarFilterHasFocus = false },
         ) {
             TvRootHeroBackdrop(
                 content = null,

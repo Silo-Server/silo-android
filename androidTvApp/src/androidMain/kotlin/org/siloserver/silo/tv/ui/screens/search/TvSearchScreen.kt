@@ -520,12 +520,22 @@ fun TvSearchScreen(
             restoreItemIndex = restoreCatalogIndex,
             restoreItemFocusRequester = restoreCatalogFocusRequester,
             onItemFocusedAtIndex = { item, _, focused ->
-                setFocusedRegion(TvSearchFocusRegion.CatalogResults, focused)
+                // Guarded on item IDENTITY, not just the region. These callbacks
+                // are per card, and Compose can deliver the newly focused card
+                // before the outgoing one reports false — a bare region flag
+                // would then be cleared by the card that just lost focus, right
+                // after the new one set it. Recycling an outgoing item has the
+                // same shape. A stale false whose id is no longer the focused
+                // one is ignored here.
                 val id = tvSearchCatalogItemId(item.contentId)
                 if (focused) {
                     focusedReturnItemId = id
+                    focusedRegion = TvSearchFocusRegion.CatalogResults
                 } else if (focusedReturnItemId == id) {
                     focusedReturnItemId = null
+                    if (focusedRegion == TvSearchFocusRegion.CatalogResults) {
+                        focusedRegion = null
+                    }
                 }
             },
             // UP from the first card always lands back on the filter chip rail.
@@ -586,12 +596,18 @@ fun TvSearchScreen(
                     restoreItemIndex = restoreRequestIndex,
                     restoreItemFocusRequester = restoreRequestFocusRequester,
                     onItemFocusChanged = { item, _, focused ->
-                        setFocusedRegion(TvSearchFocusRegion.RequestResults, focused)
+                        // Identity-guarded for the same reason as the catalog
+                        // cards above: a late false from the card that just
+                        // lost focus must not clear the region the new one set.
                         val id = tvSearchRequestItemId(item.mediaType, item.tmdbId)
                         if (focused) {
                             focusedReturnItemId = id
+                            focusedRegion = TvSearchFocusRegion.RequestResults
                         } else if (focusedReturnItemId == id) {
                             focusedReturnItemId = null
+                            if (focusedRegion == TvSearchFocusRegion.RequestResults) {
+                                focusedRegion = null
+                            }
                         }
                     },
                     onItemClicked = { item, index ->
