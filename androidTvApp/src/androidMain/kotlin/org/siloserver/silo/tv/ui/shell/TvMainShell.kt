@@ -1459,6 +1459,9 @@ fun TvMainShell(
             focusRequest = focusState.menuFocusRequest,
             focusRequestTarget = focusState.menuFocusTarget,
             focusRequestSuppressesDwell = focusState.menuFocusSuppressesDwell,
+            // Lets Back move focus to the anchor tab while the cascade is still
+            // composed — removing it afterwards then has no focus to recover.
+            onInstallAnchorFocus = { hook -> focusState.focusBarAnchorNow = hook },
             profileFocusRequest = focusState.profileFocusRequest,
             isSearchActive = currentRoute == TvMainRoute.Search.route,
             visibility = if (currentRoute == TvMainRoute.Settings.route) 0f else menuVisibility.value,

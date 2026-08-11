@@ -196,7 +196,57 @@ class TvShellFocusStateTest {
 
         assertEquals(TvShellBackAction.ClosePanelPreview, action)
         assertNull(s.openPanel)
-        assertEquals(menuBefore, s.menuFocusRequest, "focus was already on the bar; nothing to move")
+        // Focus is on the bar, but not necessarily on the ANCHOR: with no
+        // target named, the bar falls back to the SELECTED tab — Home, or the
+        // search icon on the Search route — so backing out of Movies' cascade
+        // landed on Home. Name the anchor, and suppress its dwell so it does
+        // not immediately re-preview the cascade Back just dismissed.
+        assertEquals(menuBefore + 1, s.menuFocusRequest)
+        assertEquals(moviesPanel, s.menuFocusTarget)
+        assertTrue(s.menuFocusSuppressesDwell)
+    }
+
+    /**
+     * When the bar has installed its synchronous hook, focus moves while the
+     * panel is still composed and the state request is not needed. Ordering is
+     * the whole point: closing first lets Compose recover focus onto the bar's
+     * first child (the search icon) a frame before any request of ours lands,
+     * which is a visible flash through search on every Back.
+     */
+    @Test
+    fun theSynchronousAnchorHookReplacesTheDeferredFocusRequest() {
+        val s = TvShellFocusState()
+        val anchors = mutableListOf<TvTopMenuPanel?>()
+        var panelStillOpenWhenFocusMoved: TvTopMenuPanel? = null
+        s.focusBarAnchorNow = { anchor ->
+            anchors += anchor
+            panelStillOpenWhenFocusMoved = s.openPanel
+            true
+        }
+        s.previewPanel(moviesPanel)
+        val menuBefore = s.menuFocusRequest
+
+        assertEquals(TvShellBackAction.ClosePanelPreview, s.onBack(onTabRoot = true))
+
+        assertEquals(listOf<TvTopMenuPanel?>(moviesPanel), anchors)
+        assertEquals(moviesPanel, panelStillOpenWhenFocusMoved)
+        assertNull(s.openPanel)
+        assertEquals(menuBefore, s.menuFocusRequest, "the hook moved focus; no deferred request needed")
+    }
+
+    /** A hook that could not move focus still falls back to the request. */
+    @Test
+    fun aFailedAnchorHookFallsBackToTheDeferredRequest() {
+        val s = TvShellFocusState()
+        s.focusBarAnchorNow = { false }
+        s.previewPanel(moviesPanel)
+        val menuBefore = s.menuFocusRequest
+
+        s.onBack(onTabRoot = true)
+
+        assertEquals(menuBefore + 1, s.menuFocusRequest)
+        assertEquals(moviesPanel, s.menuFocusTarget)
+        assertTrue(s.menuFocusSuppressesDwell)
     }
 
     /**
@@ -426,9 +476,8 @@ class TvShellFocusStateTest {
     fun onBackAppliesTheStateHalfAndReportsTheAction() {
         val s = TvShellFocusState()
 
-        // Panel open → ClosePanel, panel cleared, and the bar deliberately NOT
-        // nudged: Back out of a cascade hands focus to content, so the holder
-        // must not claim it for the bar. The caller performs that move.
+        // Panel open → ClosePanel, panel cleared, and focus returned to the
+        // anchor tab.
         s.enterPanel(moviesPanel)
         // Entry INTENT is not entry: routing waits for the panel to report that
         // something inside it actually holds focus.
@@ -436,7 +485,11 @@ class TvShellFocusStateTest {
         val menuBefore = s.menuFocusRequest
         assertEquals(TvShellBackAction.ClosePanel, s.onBack(onTabRoot = true))
         assertNull(s.openPanel)
-        assertEquals(menuBefore, s.menuFocusRequest)
+        // Back out of an ENTERED cascade also returns to the anchor tab rather
+        // than diving into content — the tab the viewer was browsing, with its
+        // dwell suppressed so the cascade does not spring straight back open.
+        assertEquals(menuBefore + 1, s.menuFocusRequest)
+        assertEquals(moviesPanel, s.menuFocusTarget)
 
         // Profile open → CloseProfileMenu, dropdown closed and avatar nudged.
         s.previewProfileMenu()

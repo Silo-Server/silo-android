@@ -249,6 +249,18 @@ class TvShellFocusState {
 
     // --- Menu-bar focus signals -------------------------------------------------
 
+    /**
+     * Moves bar focus to a panel's anchor RIGHT NOW, installed by the bar.
+     *
+     * Closing a cascade removes the focused node, and Compose recovers focus a
+     * frame before any request of ours can land — it picks the bar's first
+     * child, so Back visibly flashed through the search icon on its way to the
+     * anchor. Nothing written to state can win that frame; the fix is to move
+     * focus while the panel is still composed, leaving no recovery to lose.
+     * Returns whether focus actually moved.
+     */
+    var focusBarAnchorNow: ((TvTopMenuPanel?) -> Boolean)? = null
+
     /** Route focus to the bar's selected tab (content → bar Up, or panel close). */
     fun requestMenuFocus(target: TvTopMenuPanel? = null, suppressDwellPreview: Boolean = false) {
         DiagnosticsFocusLogger.transition(target?.diagnosticsTarget() ?: "menu", "request")
@@ -395,28 +407,13 @@ class TvShellFocusState {
             // Back out of a cascade the viewer ENTERED hands focus to content,
             // not back to the anchor tab. Parking them one level up in the
             // chrome is what "back doesn't exit the menus" meant.
-            TvShellBackAction.ClosePanel -> {
-                // Focus returns to the anchor tab whether we ask for it or not
-                // — Compose restores it when the panel leaves composition, and
-                // the telemetry shows "focused -> menu" with no preceding
-                // "request". Requesting it explicitly is what ARMS dwell
-                // suppression: without it the anchor re-previews ~250ms later
-                // and the next Back is spent closing that preview instead of
-                // reaching MenuBack, so Home stays unreachable.
-                val anchor = openPanel
-                closePanel()
-                requestMenuFocus(anchor, suppressDwellPreview = true)
-            }
-            // Focus is on the bar, but not necessarily on the ANCHOR: without an
-            // explicit request the bar falls back to selectedEntryRequester(),
-            // which is the selected tab (Home) — or the search icon when the
-            // route is Search. Backing out of Movies' cascade therefore landed
-            // on Home. Request the anchor so the viewer stays where they were.
-            TvShellBackAction.ClosePanelPreview -> {
-                val anchor = openPanel
-                closePanel()
-                requestMenuFocus(anchor, suppressDwellPreview = true)
-            }
+            TvShellBackAction.ClosePanel -> closePanelOntoAnchor()
+            // The preview case looks like focus never left the bar, but it is
+            // not necessarily on the ANCHOR: with no explicit target the bar
+            // falls back to selectedEntryRequester(), which is the selected tab
+            // — Home, or the search icon on the Search route. Backing out of
+            // Movies' cascade therefore landed on Home.
+            TvShellBackAction.ClosePanelPreview -> closePanelOntoAnchor()
             TvShellBackAction.CloseProfileMenu -> dismissProfileMenu()
             // Back from content climbs to the bar, and must NOT pop that tab's
             // cascade on arrival: the viewer is leaving, not browsing. Without
@@ -432,6 +429,27 @@ class TvShellFocusState {
             TvShellBackAction.DelegateToNav -> Unit
         }
         return action
+    }
+
+    /**
+     * Close the open panel and leave focus on ITS anchor tab, with that tab's
+     * dwell preview suppressed.
+     *
+     * Order matters: focus moves first, while the panel is still composed, so
+     * removing it never triggers Compose's focus recovery. The state request is
+     * the fallback for when the bar has not installed its hook, or the anchor is
+     * not focusable yet — it lands a frame later, which is exactly the window
+     * that made Back flash through the search icon.
+     *
+     * The suppression is the other half: without it the anchor re-previews its
+     * cascade ~250ms later and the next Back is spent closing that preview
+     * instead of reaching MenuBack, so Home stays unreachable.
+     */
+    private fun closePanelOntoAnchor() {
+        val anchor = openPanel
+        val moved = focusBarAnchorNow?.invoke(anchor) ?: false
+        closePanel()
+        if (!moved) requestMenuFocus(anchor, suppressDwellPreview = true)
     }
 }
 
