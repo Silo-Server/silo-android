@@ -99,6 +99,7 @@ internal fun tvShellBackAction(
     onTabRoot: Boolean,
     panelEntered: Boolean = true,
     barHandoffAttempted: Boolean = false,
+    onHome: Boolean = false,
 ): TvShellBackAction = when {
     // A panel the viewer never entered is a dwell preview: focus is still on
     // the bar, so dismissing it must leave focus there. Routing this through
@@ -117,7 +118,10 @@ internal fun tvShellBackAction(
     // consecutive "focus request -> menu" with no "focused -> menu" between
     // them. Progress matters more than tidiness here, so the second Back goes
     // Home regardless of where focus actually is.
-    onTabRoot && barHandoffAttempted -> TvShellBackAction.MenuBack
+    // Escalate only where MenuBack actually NAVIGATES. On Home, MenuBack means
+    // "exit the app", so escalating there turns a Back the viewer expected to
+    // move focus into quitting Silo — which is worse than the loop it fixes.
+    onTabRoot && barHandoffAttempted && !onHome -> TvShellBackAction.MenuBack
     onTabRoot -> TvShellBackAction.MoveFocusToMenu
     else -> TvShellBackAction.DelegateToNav
 }
@@ -376,6 +380,7 @@ class TvShellFocusState {
     fun onBack(
         onTabRoot: Boolean,
         menuFocusTarget: TvTopMenuPanel? = null,
+        onHome: Boolean = false,
     ): TvShellBackAction {
         val action = tvShellBackAction(
             panelOpen = openPanel != null,
@@ -384,6 +389,7 @@ class TvShellFocusState {
             onTabRoot = onTabRoot,
             panelEntered = panelHasFocus,
             barHandoffAttempted = barHandoffAttempted,
+            onHome = onHome,
         )
         when (action) {
             // Back out of a cascade the viewer ENTERED hands focus to content,

@@ -873,6 +873,7 @@ fun TvMainShell(
         return when (focusState.onBack(
             onTabRoot = selectedRoot != null,
             menuFocusTarget = selectedMenuFocusTarget,
+            onHome = selectedRoot == TvRootDestination.Home,
         )) {
             // Panel/dropdown already closed by onBack(): just consume.
             // onBack() closed the panel without claiming focus; put the viewer
@@ -934,6 +935,7 @@ fun TvMainShell(
         // Must match what onBack() will decide, or the shell declines a press
         // it would then have handled.
         barHandoffAttempted = focusState.barHandoffAttempted,
+        onHome = selectedRoot == TvRootDestination.Home,
     )
     val shellHandlesBack = currentRoute != TvMainRoute.Settings.route && when (pendingShellBackAction) {
         TvShellBackAction.ClosePanel,
