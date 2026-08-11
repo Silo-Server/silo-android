@@ -68,8 +68,10 @@ import kotlin.math.roundToInt
  *
  * - **Tap left/right** (idle): ±10 s quick skip via [onSkipBack] / [onSkipForward].
  * - **Tap left/right** (timeline scrub): ±10 s nudge of the in-flight preview.
- * - **Hold left/right**: enter timeline auto-seek at ±2x → tap again to bump
- *   the rate up to ±32x.
+ * - **Hold left/right**: enter timeline auto-seek at ±2x, doubling every
+ *   900 ms up to a ceiling derived from the item's runtime — ±256x for a
+ *   22-minute episode, ±1024x for a feature — or tap again to bump the rate
+ *   by hand. See [TvSeekRateLadder.maxRateFor].
  * - **OK / Select**: commit an in-flight preview (or enter timeline scrub).
  * - **Back / Down**: cancel the preview / move focus to transport.
  *
