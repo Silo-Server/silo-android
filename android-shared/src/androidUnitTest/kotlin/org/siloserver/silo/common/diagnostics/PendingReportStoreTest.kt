@@ -286,6 +286,86 @@ class PendingReportStoreTest {
         assertTrue(recovered.hostedDeletionIntents().isEmpty())
     }
 
+    @Test
+    fun hostedReadyReceiptSurvivesEvidenceDeletionAndRestartUntilErasureCompletes() {
+        val hostedBinding = PendingReportBinding(
+            serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            accountUserId = "anonymous-hosted-device",
+            profileId = null,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val store = newStore(nowMs = { day(10) })
+        val report = store.save(capture(day = 10, fingerprint = "hosted-ready", binding = hostedBinding))
+        store.markHostedProcessing(report.id, "ABC123")
+        val interruptedCopy = temporaryFolder.newFolder("hosted-ready-interrupted")
+        report.directory.copyRecursively(interruptedCopy, overwrite = true)
+
+        store.recordHostedReadyAndDelete(report.id, hostedBinding)
+
+        assertNull(store.load(report.id))
+        assertFalse(report.directory.exists())
+        assertEquals(hostedBinding.binding, store.hostedReadyBinding(report.id))
+        assertTrue(store.hostedDeletionIntents().isEmpty())
+
+        // Simulate stopping after the atomic UUID receipt write but before raw
+        // evidence removal. Startup must hide and finish removing the evidence.
+        interruptedCopy.copyRecursively(report.directory, overwrite = true)
+        assertTrue(report.directory.isDirectory)
+        val restarted = newStore(nowMs = { day(11) })
+        assertFalse(report.directory.exists())
+        assertNull(restarted.load(report.id))
+        assertEquals(hostedBinding.binding, restarted.hostedReadyBinding(report.id))
+
+        restarted.stageHostedDeletionAndDelete(report.id)
+        assertEquals(listOf(report.id), restarted.hostedDeletionIntents())
+        assertEquals(hostedBinding.binding, restarted.hostedReadyBinding(report.id))
+        restarted.completeHostedDeletion(report.id)
+        assertTrue(restarted.hostedDeletionIntents().isEmpty())
+        assertNull(restarted.hostedReadyBinding(report.id))
+    }
+
+    @Test
+    fun purgeStagesErasureForReceiptAfterReadyEvidenceWasRemoved() {
+        val hostedBinding = PendingReportBinding(
+            serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            accountUserId = "anonymous-hosted-device",
+            profileId = null,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val store = newStore(nowMs = { day(10) })
+        val report = store.save(capture(day = 10, fingerprint = "hosted-ready-purge", binding = hostedBinding))
+        store.markHostedProcessing(report.id, "ABC123")
+        store.recordHostedReadyAndDelete(report.id, hostedBinding)
+
+        store.purge(hostedBinding.binding)
+
+        assertNull(store.load(report.id))
+        assertEquals(listOf(report.id), store.hostedDeletionIntents())
+        assertEquals(hostedBinding.binding, store.hostedReadyBinding(report.id))
+    }
+
+    @Test
+    fun hostedReadyReceiptOutlivesCollectorRetentionBySevenDayRetryGrace() {
+        val hostedBinding = PendingReportBinding(
+            serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            accountUserId = "anonymous-hosted-device",
+            profileId = null,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        var now = day(10)
+        val store = newStore(nowMs = { now })
+        val report = store.save(capture(day = 10, fingerprint = "hosted-ready-retention", binding = hostedBinding))
+        store.recordHostedReadyAndDelete(report.id, hostedBinding)
+
+        now = day(47)
+        assertEquals(hostedBinding.binding, store.hostedReadyBinding(report.id))
+        now += 1
+        assertNull(store.hostedReadyBinding(report.id))
+    }
+
     private fun newStore(
         nowMs: () -> Long,
         maxReportsPerBinding: Int = 3,

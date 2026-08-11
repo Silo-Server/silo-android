@@ -81,6 +81,8 @@ interface PendingReportStore {
     fun delete(id: String)
     fun stageHostedDeletionAndDelete(id: String)
     fun purge(binding: DiagnosticsBinding)
+    fun recordHostedReadyAndDelete(id: String, binding: PendingReportBinding)
+    fun hostedReadyBinding(id: String): DiagnosticsBinding?
     fun hostedDeletionIntents(): List<String>
     fun completeHostedDeletion(id: String)
     fun markState(id: String, status: PendingReportStatus, errorCode: String? = null)
@@ -107,15 +109,20 @@ class FilePendingReportStore(
     private val indexFile = noBackupFilesDir.resolve("client-diagnostics/pending-index.json")
     private val hostedDeletionIntentsFile =
         noBackupFilesDir.resolve("client-diagnostics/hosted-deletion-intents.json")
+    private val hostedReadyReceiptsFile =
+        noBackupFilesDir.resolve("client-diagnostics/hosted-ready-receipts.json")
     private val lock = Any()
 
     init {
         require(maxReportsPerBinding > 0)
         require(retentionMs > 0)
-        // A process can stop after publishing a hosted erasure intent but
-        // before removing the corresponding report directory. Finish that
-        // local half of the transaction before the store serves any data.
-        synchronized(lock) { runCatching { reconcileHostedDeletionIntentsLocked() } }
+        // A process can stop after publishing either a READY receipt or a
+        // hosted erasure intent but before removing the corresponding report
+        // directory. Finish that local half before serving any data.
+        synchronized(lock) {
+            runCatching { reconcileHostedReadyReceiptsLocked() }
+            runCatching { reconcileHostedDeletionIntentsLocked() }
+        }
     }
 
     override fun save(capture: PendingReportCapture): PendingReport = synchronized(lock) {
@@ -194,14 +201,21 @@ class FilePendingReportStore(
 
     override fun stageHostedDeletionAndDelete(id: String) = synchronized(lock) {
         if (!ID_PATTERN.matches(id)) return@synchronized
-        val report = loadLocked(id) ?: return@synchronized
-        stageHostedDeletionsLocked(listOf(report))
-        deleteDirectory(report.directory)
+        pruneHostedReadyReceiptsLocked()
+        val report = loadReportDirectoryLocked(id)
+        val receiptId = id.takeIf { it in readHostedReadyReceiptsLocked() }
+        if (report == null && receiptId == null) return@synchronized
+        stageHostedDeletionsLocked(listOfNotNull(report), setOfNotNull(receiptId))
+        deleteDirectory(root.resolve(id))
     }
 
     override fun purge(binding: DiagnosticsBinding) = synchronized(lock) {
-        val removed = reportsLocked().filter { it.binding.binding == binding }
-        stageHostedDeletionsLocked(removed)
+        pruneHostedReadyReceiptsLocked()
+        val removed = reportDirectoriesLocked().filter { it.binding.binding == binding }
+        val receiptIds = readHostedReadyReceiptsLocked()
+            .filterValues { it.binding == binding }
+            .keys
+        stageHostedDeletionsLocked(removed, receiptIds)
         removed.forEach { deleteDirectory(it.directory) }
         val removedFingerprints = removed.mapTo(hashSetOf()) { it.state.fingerprint }
         val index = readIndex()
@@ -213,6 +227,34 @@ class FilePendingReportStore(
         )
     }
 
+    override fun recordHostedReadyAndDelete(id: String, binding: PendingReportBinding) = synchronized(lock) {
+        require(ID_PATTERN.matches(id)) { "invalid hosted report id" }
+        require(binding.destinationKind == DiagnosticsDestinationKind.HOSTED)
+        require(binding.serverInstanceId == HOSTED_DIAGNOSTICS_COLLECTOR_ID)
+        pruneHostedReadyReceiptsLocked()
+        loadReportDirectoryLocked(id)?.let { report ->
+            require(report.binding == binding) { "hosted READY binding changed" }
+        }
+        if (id !in readHostedDeletionIntentsLocked()) {
+            val receipts = readHostedReadyReceiptsLocked().toMutableMap()
+            receipts[id] = HostedReadyReceipt(
+                binding = binding.binding,
+                destinationKind = binding.destinationKind,
+                readyAtEpochMs = nowMs(),
+            )
+            // Publish the UUID/binding receipt before deleting raw evidence so
+            // a queued Delete or Turn Off can still request remote erasure.
+            writeHostedReadyReceiptsLocked(receipts)
+        }
+        deleteDirectory(root.resolve(id))
+    }
+
+    override fun hostedReadyBinding(id: String): DiagnosticsBinding? = synchronized(lock) {
+        if (!ID_PATTERN.matches(id)) return@synchronized null
+        pruneHostedReadyReceiptsLocked()
+        readHostedReadyReceiptsLocked()[id]?.binding
+    }
+
     override fun hostedDeletionIntents(): List<String> = synchronized(lock) {
         runCatching { reconcileHostedDeletionIntentsLocked() }.getOrDefault(emptyList())
     }
@@ -222,6 +264,8 @@ class FilePendingReportStore(
         val intents = readHostedDeletionIntentsLocked()
         if (id !in intents) return@synchronized
         check(!root.resolve(id).exists()) { "hosted report evidence still exists" }
+        val receipts = readHostedReadyReceiptsLocked()
+        if (id in receipts) writeHostedReadyReceiptsLocked(receipts - id)
         writeHostedDeletionIntentsLocked(intents - id)
     }
 
@@ -417,6 +461,7 @@ class FilePendingReportStore(
     }
 
     private fun pruneLocked() {
+        pruneHostedReadyReceiptsLocked()
         if (!root.exists()) {
             val index = readIndex()
             val pruned = index.pruned(nowMs(), retentionMs)
@@ -437,13 +482,22 @@ class FilePendingReportStore(
             .mapNotNull { loadLocked(it.name) }
 
     private fun loadLocked(id: String): PendingReport? {
-        if (id in hostedDeletionIntentIdsLocked()) {
-            // Never let evidence covered by a durable erasure request
-            // reappear or reach an uploader, even if physical cleanup must be
-            // retried after an interrupted deletion.
+        if (id in hostedDeletionIntentIdsLocked() || id in hostedReadyReceiptIdsLocked()) {
+            // Never let evidence covered by a READY receipt or durable erasure
+            // request reappear or reach an uploader, even if physical cleanup
+            // must be retried after an interrupted deletion.
             runCatching { deleteDirectory(root.resolve(id)) }
             return null
         }
+        return loadReportDirectoryLocked(id)
+    }
+
+    private fun reportDirectoriesLocked(): List<PendingReport> =
+        root.listFiles().orEmpty()
+            .filter { it.isDirectory && ID_PATTERN.matches(it.name) }
+            .mapNotNull { loadReportDirectoryLocked(it.name) }
+
+    private fun loadReportDirectoryLocked(id: String): PendingReport? {
         val directory = root.resolve(id)
         if (!directory.isDirectory) return null
         return runCatching {
@@ -516,7 +570,10 @@ class FilePendingReportStore(
         writeAtomic(indexFile, bytes)
     }
 
-    private fun stageHostedDeletionsLocked(reports: List<PendingReport>) {
+    private fun stageHostedDeletionsLocked(
+        reports: List<PendingReport>,
+        readyReceiptIds: Set<String> = emptySet(),
+    ) {
         val reportIds = reports.asSequence()
             .filter { report ->
                 report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED &&
@@ -526,7 +583,7 @@ class FilePendingReportStore(
                     )
             }
             .map(PendingReport::id)
-            .toSet()
+            .toSet() + readyReceiptIds
         if (reportIds.isEmpty()) return
         val intents = readHostedDeletionIntentsLocked().toMutableMap()
         reportIds.forEach { reportId -> intents[reportId] = nowMs() }
@@ -552,6 +609,55 @@ class FilePendingReportStore(
 
     private fun hostedDeletionIntentIdsLocked(): Set<String> =
         runCatching { readHostedDeletionIntentsLocked().keys }.getOrDefault(emptySet())
+
+    private fun reconcileHostedReadyReceiptsLocked() {
+        pruneHostedReadyReceiptsLocked()
+        readHostedReadyReceiptsLocked().keys.forEach { reportId ->
+            runCatching { deleteDirectory(root.resolve(reportId)) }
+        }
+    }
+
+    private fun pruneHostedReadyReceiptsLocked() {
+        val receipts = readHostedReadyReceiptsLocked()
+        if (receipts.isEmpty()) return
+        val intents = runCatching { readHostedDeletionIntentsLocked().keys }.getOrDefault(emptySet())
+        val cutoff = nowMs() - HOSTED_READY_RECEIPT_RETENTION_MS
+        val retained = receipts.filter { (id, receipt) -> id in intents || receipt.readyAtEpochMs >= cutoff }
+        if (retained != receipts) writeHostedReadyReceiptsLocked(retained)
+    }
+
+    private fun hostedReadyReceiptIdsLocked(): Set<String> =
+        runCatching { readHostedReadyReceiptsLocked().keys }.getOrDefault(emptySet())
+
+    private fun readHostedReadyReceiptsLocked(): Map<String, HostedReadyReceipt> {
+        if (!hostedReadyReceiptsFile.isFile) return emptyMap()
+        require(hostedReadyReceiptsFile.length() <= MAX_READY_RECEIPTS_BYTES) {
+            "hosted READY receipt state exceeds its size limit"
+        }
+        return JSON.decodeFromString<Map<String, HostedReadyReceipt>>(hostedReadyReceiptsFile.readText())
+            .filter { (id, receipt) ->
+                ID_PATTERN.matches(id) &&
+                    receipt.destinationKind == DiagnosticsDestinationKind.HOSTED &&
+                    receipt.binding.serverInstanceId == HOSTED_DIAGNOSTICS_COLLECTOR_ID &&
+                    receipt.readyAtEpochMs >= 0
+            }
+    }
+
+    private fun writeHostedReadyReceiptsLocked(receipts: Map<String, HostedReadyReceipt>) {
+        val parent = checkNotNull(hostedReadyReceiptsFile.parentFile)
+        check(parent.mkdirs() || parent.isDirectory) { "unable to create diagnostics state directory" }
+        if (receipts.isEmpty()) {
+            if (hostedReadyReceiptsFile.exists()) {
+                check(hostedReadyReceiptsFile.delete()) { "unable to clear hosted READY receipts" }
+                syncDirectory(parent)
+            }
+            return
+        }
+        require(receipts.keys.all(ID_PATTERN::matches)) { "invalid hosted READY receipt" }
+        val bytes = JSON.encodeToString<Map<String, HostedReadyReceipt>>(receipts.toSortedMap()).encodeToByteArray()
+        require(bytes.size <= MAX_READY_RECEIPTS_BYTES) { "too many hosted READY receipts" }
+        writeAtomic(hostedReadyReceiptsFile, bytes)
+    }
 
     private fun readHostedDeletionIntentsLocked(): Map<String, Long> {
         if (!hostedDeletionIntentsFile.isFile) return emptyMap()
@@ -579,6 +685,13 @@ class FilePendingReportStore(
     }
 
     @Serializable
+    private data class HostedReadyReceipt(
+        val binding: DiagnosticsBinding,
+        @SerialName("destination_kind") val destinationKind: DiagnosticsDestinationKind,
+        @SerialName("ready_at_epoch_ms") val readyAtEpochMs: Long,
+    )
+
+    @Serializable
     private data class PendingIndex(
         val fingerprints: Map<String, Long> = emptyMap(),
         val throttles: Map<String, Long> = emptyMap(),
@@ -600,6 +713,9 @@ class FilePendingReportStore(
         const val MAX_CAPTURE_BYTES = 20L * 1_024 * 1_024
         const val MAX_INDEX_BYTES = 256 * 1_024
         const val MAX_DELETION_INTENTS_BYTES = 256 * 1_024
+        const val MAX_READY_RECEIPTS_BYTES = 256 * 1_024
+        const val HOSTED_READY_RECEIPT_RETENTION_MS =
+            (HOSTED_DIAGNOSTICS_RETENTION_DAYS + PENDING_DIAGNOSTICS_RETENTION_DAYS) * 24L * 60 * 60 * 1_000
         const val BINDING_FILE = "binding.json"
         const val MANIFEST_FILE = "manifest.json"
         const val STATE_FILE = "state.json"

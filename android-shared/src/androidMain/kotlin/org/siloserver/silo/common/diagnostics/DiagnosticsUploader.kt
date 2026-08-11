@@ -302,7 +302,7 @@ class DefaultDiagnosticsUploader(
             markRetryable(report.id, "installation_unavailable")
             return DiagnosticsUploadDecision.KeptRetryable
         }
-        return uploadHosted(report, bundle, wireReportId, credentials, mayReplaceInvalidCredentials = true)
+        return uploadHosted(report, bundle, wireReportId, credentials)
     }
 
     private suspend fun uploadHosted(
@@ -310,7 +310,6 @@ class DefaultDiagnosticsUploader(
         bundle: DiagnosticsBundle,
         wireReportId: String,
         credentials: HostedDiagnosticsCredentials,
-        mayReplaceInvalidCredentials: Boolean,
     ): DiagnosticsUploadDecision {
         val hostedApi = hostedApi ?: return DiagnosticsUploadDecision.KeptUnavailable
         val created = when (
@@ -326,19 +325,6 @@ class DefaultDiagnosticsUploader(
         ) {
             is HostedDiagnosticsApiResult.Success -> result.value
             is HostedDiagnosticsApiResult.Failure -> {
-                if (result.errorCode == "invalid_installation_token" && mayReplaceInvalidCredentials) {
-                    val replacement = replaceHostedCredentials() ?: run {
-                        markRetryable(report.id, "installation_unavailable")
-                        return DiagnosticsUploadDecision.KeptRetryable
-                    }
-                    return uploadHosted(
-                        report,
-                        bundle,
-                        wireReportId,
-                        replacement,
-                        mayReplaceInvalidCredentials = false,
-                    )
-                }
                 return mapHostedError(report, result)
             }
             is HostedDiagnosticsApiResult.NetworkError -> {
@@ -414,7 +400,7 @@ class DefaultDiagnosticsUploader(
             -> uploadReceipt.state
         }
         if (state == HostedDiagnosticsReportState.READY) {
-            reports.delete(report.id)
+            reports.recordHostedReadyAndDelete(report.id, report.binding)
             runCatching { sentRecorder.record(report.binding.binding, uploadShortId, nowMs(), state.wireValue) }
             return DiagnosticsUploadDecision.Uploaded(uploadShortId, state.wireValue)
         }
@@ -452,7 +438,7 @@ class DefaultDiagnosticsUploader(
                 }
                 when (status.state) {
                     HostedDiagnosticsReportState.READY -> {
-                        reports.delete(report.id)
+                        reports.recordHostedReadyAndDelete(report.id, report.binding)
                         runCatching {
                             sentRecorder.record(report.binding.binding, expectedShortId, nowMs(), "ready")
                         }
@@ -477,18 +463,6 @@ class DefaultDiagnosticsUploader(
                     }
                 }
             }
-        }
-    }
-
-    private suspend fun replaceHostedCredentials(): HostedDiagnosticsCredentials? {
-        val installations = hostedInstallations ?: return null
-        return try {
-            installations.clear()
-            installations.getOrCreate()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            null
         }
     }
 
@@ -640,6 +614,7 @@ class DefaultDiagnosticsUploader(
             "internal_error",
             "invalid_upload_token",
             "upload_cancelled",
+            "invalid_installation_token",
         )
         val HOSTED_TOO_LARGE_ERRORS = setOf(
             "bundle_too_large",
@@ -667,7 +642,6 @@ class DefaultDiagnosticsUploader(
             "upload_attempt_limit_exceeded",
             "unsupported_media_type",
             "size_mismatch",
-            "invalid_installation_token",
         )
     }
 }

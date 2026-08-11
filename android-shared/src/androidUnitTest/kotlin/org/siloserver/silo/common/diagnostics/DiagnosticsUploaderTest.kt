@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.diagnostics
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -339,6 +341,60 @@ class DiagnosticsUploaderTest {
         assertEquals(1, fixture.api.capabilitiesCalls, "an accepted report must poll before live capability gating")
         assertEquals(listOf("ready"), fixture.sent.states)
         assertNull(fixture.store.load(fixture.report.id))
+        assertEquals(fixture.report.binding.binding, fixture.store.hostedReadyBinding(fixture.report.id))
+    }
+
+    @Test
+    fun hostedProcessingReadyRaceWithDeleteKeepsIntentUntilRemoteErasure() = runTest {
+        val fixture = hostedFixture()
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        val statusStarted = CompletableDeferred<Unit>()
+        val releaseStatus = CompletableDeferred<Unit>()
+        fixture.api.beforeReportStatus = {
+            statusStarted.complete(Unit)
+            releaseStatus.await()
+        }
+        fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
+            fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
+        )
+
+        val polling = async { fixture.uploader.uploadAutomatically(fixture.report.id) }
+        statusStarted.await()
+        fixture.store.stageHostedDeletionAndDelete(fixture.report.id)
+        assertEquals(listOf(fixture.report.id), fixture.store.hostedDeletionIntents())
+        releaseStatus.complete(Unit)
+
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "ready"), polling.await())
+        assertNull(fixture.store.load(fixture.report.id))
+        assertEquals(listOf(fixture.report.id), fixture.store.hostedDeletionIntents())
+        val deleter = DefaultHostedDiagnosticsReportDeleter(fixture.api, fixture.installations)
+        assertTrue(deleter.delete(fixture.report.id))
+        fixture.store.completeHostedDeletion(fixture.report.id)
+        assertTrue(fixture.store.hostedDeletionIntents().isEmpty())
+        assertEquals(listOf(requireNotNull(fixture.report.id.toHostedWireReportIdOrNull())), fixture.api.deleteReportIds)
+        assertEquals(
+            DiagnosticsUploadDecision.KeptInvalid,
+            fixture.uploader.uploadAutomatically(fixture.report.id),
+            "evidence covered by a winning deletion must never become re-uploadable",
+        )
+    }
+
+    @Test
+    fun hostedDeleteRetainsIntentWhenUuidIsLiveUnderAnotherInstallation() = runTest {
+        val fixture = hostedFixture(
+            credentials = HostedDiagnosticsCredentials("old-installation", "old-installation-token"),
+        )
+        fixture.api.deleteResult = HostedDiagnosticsApiResult.Failure(
+            httpStatus = 404,
+            errorCode = "report_not_found",
+            message = "report is not owned by this installation",
+        )
+        val deleter = DefaultHostedDiagnosticsReportDeleter(fixture.api, fixture.installations)
+
+        assertFalse(deleter.delete(fixture.report.id))
+
+        assertEquals(listOf("old-installation-token"), fixture.api.deleteInstallationTokens)
+        assertEquals(listOf(requireNotNull(fixture.report.id.toHostedWireReportIdOrNull())), fixture.api.deleteReportIds)
     }
 
     @Test
@@ -434,23 +490,19 @@ class DiagnosticsUploaderTest {
     }
 
     @Test
-    fun invalidHostedInstallationIsReRegisteredWithoutChangingTheCreateEnvelope() = runTest {
+    fun invalidHostedInstallationPreservesOwnershipCredentialAndRetryEnvelope() = runTest {
         val fixture = hostedFixture(
             credentials = HostedDiagnosticsCredentials("stale-installation", "stale-installation-token"),
         )
         fixture.api.invalidInstallationToken = "stale-installation-token"
-        fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
-            fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
-        )
 
         assertEquals(
-            DiagnosticsUploadDecision.Uploaded("ABC123", "ready"),
+            DiagnosticsUploadDecision.KeptRetryable,
             fixture.uploader.upload(fixture.report.id),
         )
-        assertEquals(listOf("stale-installation-token", "installation-token"), fixture.api.createReportTokens)
-        assertEquals(1, fixture.api.installationCreateCalls)
-        assertEquals(fixture.api.createdRequests[0], fixture.api.createdRequests[1])
-        assertNull(fixture.store.load(fixture.report.id))
+        assertEquals(listOf("stale-installation-token"), fixture.api.createReportTokens)
+        assertEquals(0, fixture.api.installationCreateCalls)
+        assertNotNull(fixture.store.load(fixture.report.id)?.state?.hostedEnvelopeGeneration)
     }
 
     @Test
@@ -605,7 +657,7 @@ class DiagnosticsUploaderTest {
             staleConsentHandler = staleConsent,
             nowMs = { CAPTURED_AT + 1_000 },
         )
-        return HostedFixture(store, report, hostedApi, redactionTokens, sent, staleConsent, uploader)
+        return HostedFixture(store, report, hostedApi, installations, redactionTokens, sent, staleConsent, uploader)
     }
 
     private fun fixture(maxBundleBytes: Long = 1_024 * 1_024): Fixture {
@@ -750,6 +802,8 @@ class DiagnosticsUploaderTest {
         var uploadFailure: HostedDiagnosticsApiResult.Failure? = null
         var uploadReceiptOverride: HostedDiagnosticsReportStatusResponse? = null
         var reportStatusResultOverride: HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>? = null
+        var beforeReportStatus: suspend () -> Unit = {}
+        var deleteResult: HostedDiagnosticsApiResult<Unit> = HostedDiagnosticsApiResult.Success(Unit)
         var nextUploadToken: String = "upload-token"
         var installationCreateCalls: Int = 0
         var capabilitiesCalls: Int = 0
@@ -759,6 +813,8 @@ class DiagnosticsUploaderTest {
         val uploadReportIds = mutableListOf<String>()
         val uploadTokens = mutableListOf<String>()
         val statusReportIds = mutableListOf<String>()
+        val deleteInstallationTokens = mutableListOf<String>()
+        val deleteReportIds = mutableListOf<String>()
         var capabilities = HostedDiagnosticsCapabilities(
             status = HostedDiagnosticsAvailability.AVAILABLE,
             collectorId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
@@ -826,6 +882,7 @@ class DiagnosticsUploaderTest {
             reportId: String,
         ): HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse> {
             statusReportIds += reportId
+            beforeReportStatus()
             reportStatusResultOverride?.let { return it }
             return HostedDiagnosticsApiResult.Success(
                 HostedDiagnosticsReportStatusResponse(reportId, "ABC123", HostedDiagnosticsReportState.PROCESSING),
@@ -834,7 +891,11 @@ class DiagnosticsUploaderTest {
         override suspend fun deleteReport(
             installationToken: String,
             reportId: String,
-        ): HostedDiagnosticsApiResult<Unit> = HostedDiagnosticsApiResult.Success(Unit)
+        ): HostedDiagnosticsApiResult<Unit> {
+            deleteInstallationTokens += installationToken
+            deleteReportIds += reportId
+            return deleteResult
+        }
 
         fun status(
             report: PendingReport,
@@ -890,6 +951,7 @@ class DiagnosticsUploaderTest {
         val store: FilePendingReportStore,
         val report: PendingReport,
         val api: FakeHostedDiagnosticsApi,
+        val installations: HostedDiagnosticsInstallationManager,
         val redactionTokens: RecordingRedactionTokenProvider,
         val sent: FakeSentRecorder,
         val staleConsent: FakeStaleConsentHandler,

@@ -433,14 +433,15 @@ class DefaultDiagnosticsCoordinator(
     }
 
     private suspend fun deleteOwned(reportId: String): Boolean {
-        val report = reports.load(reportId) ?: return true
+        val report = reports.load(reportId)
+        val deletionBinding = report?.binding?.binding ?: reports.hostedReadyBinding(reportId) ?: return true
         val liveBinding = currentEligibleContext()?.binding
         val cachedBinding = if (liveBinding == null) {
             trustedCachedContext()?.binding
         } else {
             null
         }
-        if (report.binding.binding != (liveBinding ?: cachedBinding)) return false
+        if (deletionBinding != (liveBinding ?: cachedBinding)) return false
         try {
             reports.stageHostedDeletionAndDelete(reportId)
         } catch (cancelled: CancellationException) {

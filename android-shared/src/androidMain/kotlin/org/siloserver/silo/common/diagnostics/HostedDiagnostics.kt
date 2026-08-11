@@ -156,8 +156,6 @@ class HostedDiagnosticsInstallationManager(
         }
     }
 
-    suspend fun clear() = store.clear()
-
     private fun HostedDiagnosticsInstallationResponse.toCredentialsOrNull(): HostedDiagnosticsCredentials? =
         runCatching { HostedDiagnosticsCredentials(installationId, installationToken) }.getOrNull()
 }

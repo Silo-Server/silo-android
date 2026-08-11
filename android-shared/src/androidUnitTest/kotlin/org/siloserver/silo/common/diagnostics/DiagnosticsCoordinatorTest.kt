@@ -2,8 +2,10 @@ package org.siloserver.silo.common.diagnostics
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import java.io.File
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -28,6 +30,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -392,6 +395,105 @@ class DiagnosticsCoordinatorTest {
     }
 
     @Test
+    fun queuedDeleteAfterHostedReadyStagesReceiptAndEventuallyErasesRemoteReport() = runTest {
+        val hosted = hostedContext()
+        val uploadStarted = CompletableDeferred<Unit>()
+        val releaseUpload = CompletableDeferred<Unit>()
+        val deleter = RecordingHostedReportDeleter(result = false)
+        val fixture = fixture(
+            MutableIdentityResolver(hosted),
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+            uploaderFactory = { reports ->
+                DiagnosticsUploader { reportId ->
+                    val report = checkNotNull(reports.load(reportId))
+                    uploadStarted.complete(Unit)
+                    releaseUpload.await()
+                    reports.recordHostedReadyAndDelete(reportId, report.binding)
+                    DiagnosticsUploadDecision.Uploaded("ABC123", "ready")
+                }
+            },
+            hostedReportDeleter = deleter,
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        val report = fixture.reports.save(reportCapture(hosted, "hosted-ready-delete-race"))
+
+        val upload = async { fixture.coordinator.upload(report.id) }
+        uploadStarted.await()
+        val deletion = async { fixture.coordinator.delete(report.id) }
+        assertTrue(deleter.reportIds.isEmpty(), "Delete must remain queued while the manual upload owns the actor")
+        releaseUpload.complete(Unit)
+
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "ready"), upload.await())
+        assertTrue(deletion.await())
+        assertNull(fixture.reports.load(report.id))
+        assertEquals(hosted.binding, fixture.reports.hostedReadyBinding(report.id))
+        assertEquals(listOf(report.id), fixture.reports.hostedDeletionIntents())
+        assertEquals(listOf(report.id), deleter.reportIds)
+
+        deleter.result = true
+        fixture.coordinator.refresh()
+
+        assertTrue(fixture.reports.hostedDeletionIntents().isEmpty())
+        assertNull(fixture.reports.hostedReadyBinding(report.id))
+        assertEquals(listOf(report.id, report.id), deleter.reportIds)
+        assertEquals(DiagnosticsUploadDecision.KeptInvalid, fixture.coordinator.upload(report.id))
+    }
+
+    @Test
+    fun queuedTurnOffAfterHostedReadyStagesReceiptAndEventuallyErasesRemoteReport() = runTest {
+        val hosted = hostedContext()
+        val uploadStarted = CompletableDeferred<Unit>()
+        val releaseUpload = CompletableDeferred<Unit>()
+        val deleter = RecordingHostedReportDeleter(result = false)
+        val fixture = fixture(
+            MutableIdentityResolver(hosted),
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+            uploaderFactory = { reports ->
+                DiagnosticsUploader { reportId ->
+                    val report = checkNotNull(reports.load(reportId))
+                    uploadStarted.complete(Unit)
+                    releaseUpload.await()
+                    reports.recordHostedReadyAndDelete(reportId, report.binding)
+                    DiagnosticsUploadDecision.Uploaded("ABC123", "ready")
+                }
+            },
+            hostedReportDeleter = deleter,
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        val report = fixture.reports.save(reportCapture(hosted, "hosted-ready-never-race"))
+
+        val upload = async { fixture.coordinator.upload(report.id) }
+        uploadStarted.await()
+        val turnOff = async { fixture.coordinator.setConsent(DiagnosticsConsentMode.NEVER) }
+        assertTrue(deleter.reportIds.isEmpty(), "Turn Off must remain queued while the manual upload owns the actor")
+        releaseUpload.complete(Unit)
+
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "ready"), upload.await())
+        turnOff.await()
+        assertEquals(DiagnosticsConsentMode.NEVER, fixture.coordinator.state.value.consent)
+        assertNull(fixture.reports.load(report.id))
+        assertEquals(hosted.binding, fixture.reports.hostedReadyBinding(report.id))
+        assertEquals(listOf(report.id), fixture.reports.hostedDeletionIntents())
+        assertEquals(listOf(report.id), deleter.reportIds)
+        assertEquals(listOf(hosted.binding), fixture.purgedBindings)
+
+        deleter.result = true
+        fixture.coordinator.refresh()
+
+        assertTrue(fixture.reports.hostedDeletionIntents().isEmpty())
+        assertNull(fixture.reports.hostedReadyBinding(report.id))
+        assertEquals(listOf(report.id, report.id), deleter.reportIds)
+    }
+
+    @Test
     fun offlineStatePreservesTheCachedConsentChoice() = runTest {
         val identity = MutableIdentityResolver(ADULT_A)
         val fixture = fixture(
@@ -522,6 +624,9 @@ class DiagnosticsCoordinatorTest {
         capture: RecordingCaptureController,
         scope: CoroutineScope,
         actorDispatcher: CoroutineDispatcher,
+        uploaderFactory: (PendingReportStore) -> DiagnosticsUploader = {
+            DiagnosticsUploader { DiagnosticsUploadDecision.KeptUnavailable }
+        },
         hostedReportDeleter: HostedDiagnosticsReportDeleter = HostedDiagnosticsReportDeleter.None,
     ): Fixture {
         val files = temporaryFolder.newFolder()
@@ -547,12 +652,20 @@ class DiagnosticsCoordinatorTest {
             settings = settings,
             reports = reports,
             capture = capture,
-            uploader = DiagnosticsUploader { DiagnosticsUploadDecision.KeptUnavailable },
+            uploader = uploaderFactory(reports),
             uploadScheduler = DiagnosticsUploadScheduler { },
             hostedReportDeleter = hostedReportDeleter,
         )
         return Fixture(coordinator, reports, evidence, purgedBindings)
     }
+
+    private fun hostedContext() = ADULT_A.copy(
+        binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "anonymous-hosted-device"),
+        profileId = null,
+        sourceProfileId = ADULT_A.profileId,
+        destinationKind = DiagnosticsDestinationKind.HOSTED,
+        retentionDays = HOSTED_DIAGNOSTICS_RETENTION_DAYS,
+    )
 
     private fun reportCapture(context: DiagnosticsCaptureContext, fingerprint: String) = PendingReportCapture(
         binding = PendingReportBinding(
