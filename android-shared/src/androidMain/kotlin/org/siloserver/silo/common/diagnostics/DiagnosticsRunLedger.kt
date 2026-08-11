@@ -22,6 +22,7 @@ data class DiagnosticsRunRecord(
     val processStartedAtEpochMs: Long,
     val captureSessionId: String,
     val ownershipGeneration: Long,
+    val destinationKind: DiagnosticsDestinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
 )
 
 /** Bounded local mapping from an opaque process-state token to validated capture identity. */
@@ -57,6 +58,7 @@ class DiagnosticsRunLedger(
             processStartedAtEpochMs = processStartedAtEpochMs,
             captureSessionId = captureSessionId,
             ownershipGeneration = context.ownershipGeneration,
+            destinationKind = context.destinationKind,
         )
         mutex.withLock {
             val records = (listOf(record) + load())

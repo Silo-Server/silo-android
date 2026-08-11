@@ -231,6 +231,30 @@ class DiagnosticsCoordinatorTest {
     }
 
     @Test
+    fun hostedDestinationNeverEnablesAutomaticCrashUploads() = runTest {
+        val hosted = ADULT_A.copy(
+            binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "anonymous-hosted-device"),
+            profileId = null,
+            sourceProfileId = ADULT_A.profileId,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val fixture = fixture(
+            MutableIdentityResolver(hosted),
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+
+        fixture.coordinator.setConsent(DiagnosticsConsentMode.ALWAYS)
+
+        assertEquals(DiagnosticsConsentMode.ASK, fixture.coordinator.state.value.consent)
+        assertFalse(fixture.coordinator.state.value.allowsAutomaticUpload)
+    }
+
+    @Test
     fun offlineStatePreservesTheCachedConsentChoice() = runTest {
         val identity = MutableIdentityResolver(ADULT_A)
         val fixture = fixture(

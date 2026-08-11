@@ -62,7 +62,7 @@ class DiagnosticsPlaybackSessionTrackerTest {
             logBuffer = LogRing(),
             deviceSnapshots = DeviceSnapshotCollector(EmptyProbe),
             deviceSnapshotCache = DeviceSnapshotCache(),
-            redactionTokens = DiagnosticsRedactionTokenProvider { emptyList() },
+            redactionTokens = DiagnosticsRedactionTokenProvider { _ -> emptyList() },
             playbackSessions = tracker,
             captureSessionIdFactory = { "capture-1" },
         )

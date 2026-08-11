@@ -6,19 +6,25 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
-import org.siloserver.silo.network.NetworkDiagnosticsObserver
 import org.siloserver.silo.model.diagnostics.DiagnosticsDeviceSummary
 import org.siloserver.silo.model.diagnostics.DiagnosticsPlatform
+import org.siloserver.silo.network.NetworkDiagnosticsObserver
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.api.DefaultHostedDiagnosticsApi
+import org.siloserver.silo.network.api.HostedDiagnosticsApi
+import org.siloserver.silo.network.api.createHostedDiagnosticsClient
 
 private val DIAGNOSTICS_DATA_STORE = named("diagnostics-data-store")
 private val DIAGNOSTICS_SCOPE = named("diagnostics-scope")
+private val SELF_HOSTED_DIAGNOSTICS_IDENTITY = named("self-hosted-diagnostics-identity")
+private val HOSTED_DIAGNOSTICS_HTTP = named("hosted-diagnostics-http")
 
 val diagnosticsModule = module {
     single<NetworkDiagnosticsObserver> { DiagnosticsNetworkLogger }
@@ -45,7 +51,7 @@ val diagnosticsModule = module {
     single<DiagnosticsStatusProvider> { ApiDiagnosticsStatusProvider(get()) }
     single<DiagnosticsAccountProvider> { RepositoryDiagnosticsAccountProvider(get()) }
     single<DiagnosticsProfileProvider> { RepositoryDiagnosticsProfileProvider(get()) }
-    single<DiagnosticsIdentityResolver> {
+    single<DiagnosticsIdentityResolver>(SELF_HOSTED_DIAGNOSTICS_IDENTITY) {
         DefaultDiagnosticsIdentityResolver(
             tokenManager = get(),
             identityTransitions = get(),
@@ -55,16 +61,42 @@ val diagnosticsModule = module {
             profileProvider = get(),
         )
     }
+    single<HttpClient>(HOSTED_DIAGNOSTICS_HTTP) { createHostedDiagnosticsClient() }
+    single<HostedDiagnosticsApi> { DefaultHostedDiagnosticsApi(get(HOSTED_DIAGNOSTICS_HTTP)) }
+    single<HostedDiagnosticsCapabilitiesStore> {
+        val settings = get<DiagnosticsSettingsStore>()
+        object : HostedDiagnosticsCapabilitiesStore {
+            override suspend fun load() = settings.hostedCapabilities()
+            override suspend fun save(capabilities: org.siloserver.silo.network.api.HostedDiagnosticsCapabilities) {
+                settings.cacheHostedCapabilities(capabilities)
+            }
+        }
+    }
+    single { HostedDiagnosticsCapabilitiesRepository(get(), get()) }
+    single<HostedDiagnosticsCredentialStore> {
+        EncryptedPreferencesHostedDiagnosticsCredentialStore(get())
+    }
+    single { HostedDiagnosticsInstallationManager(get(), get(), get()) }
+    single<DiagnosticsIdentityResolver> {
+        DestinationDiagnosticsIdentityResolver(
+            destination = { get<DiagnosticsSettingsStore>().destinationKind() },
+            hosted = HostedDiagnosticsIdentityResolver(
+                tokenManager = get(),
+                identityTransitions = get(),
+                registry = get(),
+                profileProvider = get(),
+                capabilities = get(),
+            ),
+            selfHosted = get(SELF_HOSTED_DIAGNOSTICS_IDENTITY),
+        )
+    }
 
     single<DiagnosticsBundleBuilder> { FileDiagnosticsBundleBuilder() }
     single<DiagnosticsRedactionTokenProvider> {
         val tokenManager = get<TokenManager>()
-        DiagnosticsRedactionTokenProvider {
-            listOfNotNull(
-                tokenManager.getAccessToken(),
-                tokenManager.getRefreshToken(),
-                tokenManager.getProfileToken(),
-            ).filter(String::isNotBlank)
+        val hostedInstallations = get<HostedDiagnosticsInstallationManager>()
+        DestinationAwareDiagnosticsRedactionTokenProvider(tokenManager) {
+            hostedInstallations.current()?.installationToken
         }
     }
     single<DiagnosticsUploader> {
@@ -73,6 +105,9 @@ val diagnosticsModule = module {
             identity = get(),
             bundleBuilder = get(),
             api = get(),
+            hostedApi = get(),
+            hostedInstallations = get(),
+            hostedCapabilities = get(),
             redactionTokens = get(),
             sentRecorder = get(),
             consentProvider = get(),
@@ -121,7 +156,7 @@ val diagnosticsModule = module {
         val cache = get<DeviceSnapshotCache>()
         val tokenProvider = get<DiagnosticsRedactionTokenProvider>()
         DiagnosticsIncidentCollector { context, consent ->
-            val tokens = runCatching { tokenProvider.tokens() }.getOrDefault(emptyList())
+            val tokens = runCatching { tokenProvider.tokens(context.destinationKind) }.getOrDefault(emptyList())
             ExitInfoCollector(
                 source = source,
                 ledger = ledger,
@@ -171,7 +206,9 @@ val diagnosticsModule = module {
     }
     single<DiagnosticsSentRecorder> {
         val settings = get<DiagnosticsSettingsStore>()
-        DiagnosticsSentRecorder(settings::recordSent)
+        DiagnosticsSentRecorder { binding, shortId, sentAtEpochMs, state ->
+            settings.recordSent(binding, shortId, sentAtEpochMs, state)
+        }
     }
     single<DiagnosticsStaleConsentHandler> {
         SettingsDiagnosticsStaleConsentHandler(get())

@@ -6,9 +6,15 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsErrorCode
 import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResult
 import org.siloserver.silo.network.api.DiagnosticsApi
+import org.siloserver.silo.network.api.HostedDiagnosticsApi
+import org.siloserver.silo.network.api.HostedDiagnosticsApiResult
+import org.siloserver.silo.network.api.HostedDiagnosticsCreateReportRequest
+import org.siloserver.silo.network.api.HostedDiagnosticsAvailability
+import org.siloserver.silo.network.api.HostedDiagnosticsCapabilities
+import org.siloserver.silo.network.api.HostedDiagnosticsReportState
 
 sealed interface DiagnosticsUploadDecision {
-    data class Uploaded(val shortId: String) : DiagnosticsUploadDecision
+    data class Uploaded(val shortId: String, val state: String = "ready") : DiagnosticsUploadDecision
     data object KeptRetryable : DiagnosticsUploadDecision
     data object KeptIdentityChanged : DiagnosticsUploadDecision
     data object KeptTooLarge : DiagnosticsUploadDecision
@@ -30,11 +36,11 @@ fun interface DiagnosticsUploader {
 }
 
 fun interface DiagnosticsRedactionTokenProvider {
-    suspend fun tokens(): List<String>
+    suspend fun tokens(destinationKind: DiagnosticsDestinationKind): List<String>
 }
 
 fun interface DiagnosticsSentRecorder {
-    suspend fun record(binding: DiagnosticsBinding, shortId: String, sentAtEpochMs: Long)
+    suspend fun record(binding: DiagnosticsBinding, shortId: String, sentAtEpochMs: Long, state: String)
 }
 
 fun interface DiagnosticsUploadConsentProvider {
@@ -58,6 +64,9 @@ class DefaultDiagnosticsUploader(
     private val identity: DiagnosticsIdentityResolver,
     private val bundleBuilder: DiagnosticsBundleBuilder,
     private val api: DiagnosticsApi,
+    private val hostedApi: HostedDiagnosticsApi? = null,
+    private val hostedInstallations: HostedDiagnosticsInstallationManager? = null,
+    private val hostedCapabilities: HostedDiagnosticsCapabilitiesRepository? = null,
     private val redactionTokens: DiagnosticsRedactionTokenProvider,
     private val sentRecorder: DiagnosticsSentRecorder,
     private val consentProvider: DiagnosticsUploadConsentProvider = DiagnosticsUploadConsentProvider {
@@ -89,8 +98,25 @@ class DefaultDiagnosticsUploader(
         val report = reports.load(reportId) ?: return DiagnosticsUploadDecision.KeptInvalid
         val retryDeadline = reports.retryAfterDeadline(report.binding.binding)
         if (retryDeadline != null && retryDeadline > nowMs()) return DiagnosticsUploadDecision.KeptRetryable
-        val before = identity.resolve(requirePersistentCapture = true)
+        if (requireAlwaysConsent && report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+            return DiagnosticsUploadDecision.KeptConsentReviewRequired
+        }
+        val liveHostedCapabilities = if (report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+            when (val result = hostedCapabilities?.refresh()) {
+                is HostedDiagnosticsApiResult.Success -> result.value
+                is HostedDiagnosticsApiResult.Failure -> return mapHostedError(report, result)
+                is HostedDiagnosticsApiResult.NetworkError, null -> {
+                    markRetryable(report.id, "network")
+                    return DiagnosticsUploadDecision.KeptRetryable
+                }
+            }
+        } else {
+            null
+        }
+        val beforeBase = identity.resolve(requirePersistentCapture = true)
             ?: return DiagnosticsUploadDecision.KeptUnavailable
+        val before = beforeBase.withHostedCapabilities(liveHostedCapabilities)
+            ?: return DiagnosticsUploadDecision.KeptIdentityChanged
         if (expectedNoticeVersion != null && before.noticeVersion != expectedNoticeVersion) {
             return DiagnosticsUploadDecision.KeptConsentReviewRequired
         }
@@ -110,7 +136,7 @@ class DefaultDiagnosticsUploader(
         val framedReport = report.withCurrentConsent(consentBefore, before.noticeVersion)
 
         val tokens = try {
-            redactionTokens.tokens()
+            redactionTokens.tokens(report.binding.destinationKind)
         } catch (error: CancellationException) {
             throw error
         } catch (_: Throwable) {
@@ -126,7 +152,9 @@ class DefaultDiagnosticsUploader(
             return DiagnosticsUploadDecision.KeptTooLarge
         }
 
-        val after = identity.resolve(requirePersistentCapture = true)
+        val afterBase = identity.resolve(requirePersistentCapture = true)
+            ?: return DiagnosticsUploadDecision.KeptIdentityChanged
+        val after = afterBase.withHostedCapabilities(liveHostedCapabilities)
             ?: return DiagnosticsUploadDecision.KeptIdentityChanged
         if (before.identityKey != after.identityKey || !report.canUploadUnder(after)) {
             return DiagnosticsUploadDecision.KeptIdentityChanged
@@ -154,26 +182,215 @@ class DefaultDiagnosticsUploader(
             return DiagnosticsUploadDecision.KeptTooLarge
         }
 
-        val result = try {
-            api.upload(bundle.manifestBytes, bundle.bytes, report.binding.profileId)
+        val decision = try {
+            when (report.binding.destinationKind) {
+                DiagnosticsDestinationKind.HOSTED -> uploadHosted(report, bundle)
+                DiagnosticsDestinationKind.SELF_HOSTED -> uploadSelfHosted(report, bundle, after.noticeVersion)
+            }
         } catch (error: CancellationException) {
             throw error
         } catch (_: Throwable) {
             markRetryable(report.id, "network")
             return DiagnosticsUploadDecision.KeptRetryable
         }
-        return when (result) {
+        return decision
+    }
+
+    private suspend fun uploadSelfHosted(
+        report: PendingReport,
+        bundle: DiagnosticsBundle,
+        noticeVersion: Int,
+    ): DiagnosticsUploadDecision = when (
+        val result = api.upload(bundle.manifestBytes, bundle.bytes, report.binding.profileId)
+    ) {
             is DiagnosticsUploadResult.Success -> {
                 reports.delete(report.id)
-                runCatching { sentRecorder.record(report.binding.binding, result.response.shortId, nowMs()) }
-                DiagnosticsUploadDecision.Uploaded(result.response.shortId)
+                runCatching { sentRecorder.record(report.binding.binding, result.response.shortId, nowMs(), "ready") }
+                DiagnosticsUploadDecision.Uploaded(result.response.shortId, "ready")
             }
             is DiagnosticsUploadResult.NetworkError -> {
                 markRetryable(report.id, "network")
                 DiagnosticsUploadDecision.KeptRetryable
             }
-            is DiagnosticsUploadResult.Failure -> mapServerError(report, result, after.noticeVersion)
+            is DiagnosticsUploadResult.Failure -> mapServerError(report, result, noticeVersion)
         }
+
+    private suspend fun uploadHosted(
+        report: PendingReport,
+        bundle: DiagnosticsBundle,
+    ): DiagnosticsUploadDecision {
+        val wireReportId = report.id.toHostedWireReportIdOrNull() ?: run {
+            markPermanent(report.id, "invalid_report_id")
+            return DiagnosticsUploadDecision.KeptInvalid
+        }
+        val installations = hostedInstallations ?: return DiagnosticsUploadDecision.KeptUnavailable
+        val credentials = installations.getOrCreate() ?: run {
+            markRetryable(report.id, "installation_unavailable")
+            return DiagnosticsUploadDecision.KeptRetryable
+        }
+        return uploadHosted(report, bundle, wireReportId, credentials, mayReplaceInvalidCredentials = true)
+    }
+
+    private suspend fun uploadHosted(
+        report: PendingReport,
+        bundle: DiagnosticsBundle,
+        wireReportId: String,
+        credentials: HostedDiagnosticsCredentials,
+        mayReplaceInvalidCredentials: Boolean,
+    ): DiagnosticsUploadDecision {
+        val hostedApi = hostedApi ?: return DiagnosticsUploadDecision.KeptUnavailable
+        val created = when (
+            val result = hostedApi.createReport(
+                installationToken = credentials.installationToken,
+                request = HostedDiagnosticsCreateReportRequest(
+                    reportId = wireReportId,
+                    manifest = bundle.manifest,
+                    bundleBytes = bundle.bytes.size.toLong(),
+                    bundleSha256 = bundle.manifest.archive.sha256,
+                ),
+            )
+        ) {
+            is HostedDiagnosticsApiResult.Success -> result.value
+            is HostedDiagnosticsApiResult.Failure -> {
+                if (result.errorCode == "invalid_installation_token" && mayReplaceInvalidCredentials) {
+                    val replacement = replaceHostedCredentials() ?: run {
+                        markRetryable(report.id, "installation_unavailable")
+                        return DiagnosticsUploadDecision.KeptRetryable
+                    }
+                    return uploadHosted(
+                        report,
+                        bundle,
+                        wireReportId,
+                        replacement,
+                        mayReplaceInvalidCredentials = false,
+                    )
+                }
+                return mapHostedError(report, result)
+            }
+            is HostedDiagnosticsApiResult.NetworkError -> {
+                markRetryable(report.id, "network")
+                return DiagnosticsUploadDecision.KeptRetryable
+            }
+        }
+        if (created.reportId != wireReportId || created.shortId.isBlank() || created.uploadToken.isBlank()) {
+            markPermanent(report.id, "invalid_response")
+            return DiagnosticsUploadDecision.KeptInvalid
+        }
+        val uploadReceipt = when (
+            val uploaded = hostedApi.uploadBundle(
+                installationToken = credentials.installationToken,
+                reportId = wireReportId,
+                uploadToken = created.uploadToken,
+                bundle = bundle.bytes,
+            )
+        ) {
+            is HostedDiagnosticsApiResult.Success -> uploaded.value
+            is HostedDiagnosticsApiResult.Failure -> return mapHostedError(report, uploaded)
+            is HostedDiagnosticsApiResult.NetworkError -> {
+                markRetryable(report.id, "network")
+                return DiagnosticsUploadDecision.KeptRetryable
+            }
+        }
+        val uploadShortId = uploadReceipt.shortId?.takeIf(String::isNotBlank) ?: run {
+            markPermanent(report.id, "invalid_response")
+            return DiagnosticsUploadDecision.KeptInvalid
+        }
+        if (
+            uploadReceipt.reportId != wireReportId ||
+            uploadShortId != created.shortId ||
+            uploadReceipt.state !in HOSTED_DURABLY_ACCEPTED_STATES
+        ) {
+            markPermanent(report.id, "invalid_response")
+            return DiagnosticsUploadDecision.KeptInvalid
+        }
+
+        val state = when (
+            val status = hostedApi.reportStatus(credentials.installationToken, wireReportId)
+        ) {
+            is HostedDiagnosticsApiResult.Success -> {
+                if (
+                    status.value.reportId != wireReportId ||
+                    status.value.shortId?.takeIf(String::isNotBlank) != uploadShortId
+                ) {
+                    markPermanent(report.id, "invalid_response")
+                    return DiagnosticsUploadDecision.KeptInvalid
+                }
+                when (status.value.state) {
+                    HostedDiagnosticsReportState.REJECTED,
+                    HostedDiagnosticsReportState.DELETING,
+                    HostedDiagnosticsReportState.DELETED,
+                    -> {
+                        markPermanent(report.id, status.value.errorCode ?: status.value.state.wireValue)
+                        return DiagnosticsUploadDecision.KeptInvalid
+                    }
+                    in HOSTED_DURABLY_ACCEPTED_STATES -> status.value.state.wireValue
+                    else -> {
+                        markPermanent(report.id, "invalid_response")
+                        return DiagnosticsUploadDecision.KeptInvalid
+                    }
+                }
+            }
+            // Only a validated durable-acceptance receipt permits this fallback.
+            is HostedDiagnosticsApiResult.Failure,
+            is HostedDiagnosticsApiResult.NetworkError,
+            -> uploadReceipt.state.wireValue
+        }
+        reports.delete(report.id)
+        runCatching { sentRecorder.record(report.binding.binding, uploadShortId, nowMs(), state) }
+        return DiagnosticsUploadDecision.Uploaded(uploadShortId, state)
+    }
+
+    private suspend fun replaceHostedCredentials(): HostedDiagnosticsCredentials? {
+        val installations = hostedInstallations ?: return null
+        return try {
+            installations.clear()
+            installations.getOrCreate()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private suspend fun mapHostedError(
+        report: PendingReport,
+        error: HostedDiagnosticsApiResult.Failure,
+    ): DiagnosticsUploadDecision {
+        val code = error.errorCode.ifBlank { "unknown" }
+        if (code == "stale_consent") {
+            return try {
+                staleConsentHandler.demote(report.binding.binding, report.manifest.consent.noticeVersion)
+                markRetryable(report.id, code)
+                DiagnosticsUploadDecision.KeptConsentReviewRequired
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                markRetryable(report.id, code)
+                DiagnosticsUploadDecision.KeptRetryable
+            }
+        }
+        val decision = when {
+            code == "bundle_too_large" -> DiagnosticsUploadDecision.KeptTooLarge
+            code == "unsupported_schema" -> DiagnosticsUploadDecision.KeptServerUpdateRequired
+            code == "disabled" || code == "storage_unavailable" -> DiagnosticsUploadDecision.KeptUnavailable
+            code in HOSTED_PERMANENT_ERRORS -> DiagnosticsUploadDecision.KeptInvalid
+            code in HOSTED_RETRYABLE_ERRORS || error.httpStatus == 429 || error.httpStatus >= 500 -> {
+                DiagnosticsUploadDecision.KeptRetryable
+            }
+            else -> DiagnosticsUploadDecision.KeptInvalid
+        }
+        if (decision == DiagnosticsUploadDecision.KeptRetryable) {
+            error.retryAfterSeconds?.coerceIn(0, MAX_RETRY_AFTER_SECONDS)?.let { seconds ->
+                reports.setRetryAfterDeadline(report.binding.binding, nowMs() + seconds * 1_000L)
+            }
+        }
+        when (decision) {
+            DiagnosticsUploadDecision.KeptRetryable,
+            DiagnosticsUploadDecision.KeptUnavailable,
+            -> markRetryable(report.id, code)
+            else -> markPermanent(report.id, code)
+        }
+        return decision
     }
 
     private suspend fun mapServerError(
@@ -273,13 +490,59 @@ class DefaultDiagnosticsUploader(
 
     private companion object {
         const val MAX_RETRY_AFTER_SECONDS = 7L * 24 * 60 * 60
+        val HOSTED_RETRYABLE_ERRORS = setOf("busy", "quota_exceeded", "rate_limited", "internal_error")
+        val HOSTED_DURABLY_ACCEPTED_STATES = setOf(
+            HostedDiagnosticsReportState.UPLOADED,
+            HostedDiagnosticsReportState.PROCESSING,
+            HostedDiagnosticsReportState.READY,
+        )
+        val HOSTED_PERMANENT_ERRORS = setOf(
+            "invalid_request",
+            "unexpected_field",
+            "invalid_report_id",
+            "invalid_bundle_size",
+            "invalid_bundle_sha256",
+            "invalid_manifest",
+            "privacy_field_rejected",
+            "privacy_value_rejected",
+            "wrong_destination",
+            "archive_metadata_mismatch",
+            "report_conflict",
+            "unsupported_media_type",
+            "size_mismatch",
+            "invalid_installation_token",
+        )
     }
 }
 
 private fun PendingReport.canUploadUnder(context: DiagnosticsCaptureContext): Boolean =
     context.profileEligible &&
+        binding.destinationKind == context.destinationKind &&
         binding.matches(context) &&
         manifest.destination.serverInstanceId == context.binding.serverInstanceId
+
+private fun DiagnosticsCaptureContext.withHostedCapabilities(
+    capabilities: HostedDiagnosticsCapabilities?,
+): DiagnosticsCaptureContext? {
+    if (capabilities == null) return this
+    if (
+        destinationKind != DiagnosticsDestinationKind.HOSTED ||
+        capabilities.collectorId != HOSTED_DIAGNOSTICS_COLLECTOR_ID ||
+        binding.serverInstanceId != capabilities.collectorId
+    ) return null
+    return copy(
+        noticeVersion = capabilities.consentNoticeVersion,
+        status = when (capabilities.status) {
+            HostedDiagnosticsAvailability.AVAILABLE -> DiagnosticsAvailabilityStatus.AVAILABLE
+            HostedDiagnosticsAvailability.DISABLED -> DiagnosticsAvailabilityStatus.DISABLED
+            HostedDiagnosticsAvailability.STORAGE_UNAVAILABLE -> DiagnosticsAvailabilityStatus.STORAGE_UNAVAILABLE
+        },
+        acceptedSchemaVersions = capabilities.acceptedSchemaVersions.toSet(),
+        maxBundleBytes = capabilities.maxBundleBytes,
+        maxManifestBytes = capabilities.maxManifestBytes,
+        retentionDays = capabilities.retentionDays,
+    )
+}
 
 private fun PendingReport.canUploadWithConsent(
     mode: DiagnosticsConsentMode,
@@ -295,20 +558,41 @@ private fun DiagnosticsConsentMode.rejectedUploadDecision(requireAlways: Boolean
         DiagnosticsUploadDecision.KeptUnavailable
     }
 
-private fun PendingReport.withCurrentConsent(
+internal fun PendingReport.withCurrentConsent(
     mode: DiagnosticsConsentMode,
     noticeVersion: Int,
 ): PendingReport {
+    val hosted = binding.destinationKind == DiagnosticsDestinationKind.HOSTED
     val manifestMode = if (manifest.report.type == DiagnosticsReportType.MANUAL) {
         org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode.MANUAL
-    } else if (mode == DiagnosticsConsentMode.ALWAYS) {
+    } else if (!hosted && mode == DiagnosticsConsentMode.ALWAYS) {
         org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode.ALWAYS
     } else {
         org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode.PROMPT
     }
     return copy(
         manifest = manifest.copy(
+            report = if (hosted) manifest.report.copy(profileId = null) else manifest.report,
             consent = org.siloserver.silo.model.diagnostics.DiagnosticsConsent(manifestMode, noticeVersion),
+            playbackSessionIds = if (hosted) emptyList() else manifest.playbackSessionIds,
         ),
     )
 }
+
+internal fun String.toHostedWireReportIdOrNull(): String? {
+    val local = lowercase()
+    if (!LOCAL_REPORT_ID.matches(local)) return null
+    return buildString(36) {
+        append(local, 0, 8)
+        append('-')
+        append(local, 8, 12)
+        append('-')
+        append(local, 12, 16)
+        append('-')
+        append(local, 16, 20)
+        append('-')
+        append(local, 20, 32)
+    }
+}
+
+private val LOCAL_REPORT_ID = Regex("[0-9a-f]{32}")

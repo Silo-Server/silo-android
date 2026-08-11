@@ -70,6 +70,156 @@ class DiagnosticsPrivacyIntegrationTest {
     }
 
     @Test
+    fun hostedManualBundleOmitsSourceServerAccountAndProfileIdentity() = runTest {
+        val root = temporaryFolder.newFolder()
+        val ring = LogRing()
+        val reports = FilePendingReportStore(root, nowMs = { CAPTURED_AT })
+        val context = DiagnosticsCaptureContext(
+            binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, LOCAL_HOSTED_OWNER),
+            profileId = null,
+            profileEligible = true,
+            noticeVersion = 1,
+            status = DiagnosticsAvailabilityStatus.AVAILABLE,
+            ownershipGeneration = 3,
+            localServerId = SOURCE_SERVER_ID,
+            credentialFingerprint = "f".repeat(64),
+            sourceProfileId = SOURCE_PROFILE_ID,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val playbackSessions = DiagnosticsPlaybackSessionTracker().apply {
+            open(context.identityKey)
+            record(PRIVATE_PLAYBACK_SESSION_ID)
+        }
+        val capture = captureController(
+            root,
+            ring,
+            reports,
+            UnconfinedTestDispatcher(testScheduler),
+            playbackSessions,
+        )
+        SiloLog.installSink(ring)
+        SiloLog.i(
+            DiagnosticsLogCategory.NETWORK,
+            "PrivacyTest",
+            "request to $SOURCE_SERVER_URL profile=$SOURCE_PROFILE_ID account=$SOURCE_ACCOUNT_ID",
+        )
+        SiloLog.i(
+            DiagnosticsLogCategory.PLAYBACK,
+            "PrivacyTest",
+            "playback_session_id=$PRIVATE_PLAYBACK_SESSION_ID",
+            mapOf(
+                "decoder" to SiloLogAttribute.Text("safe-decoder"),
+                "buffered_ms" to SiloLogAttribute.Integer(1_200),
+            ),
+        )
+
+        val report = requireNotNull(capture.captureNow(context))
+        assertTrue(report.manifest.playbackSessionIds.isEmpty(), "hosted capture must strip playback ids")
+        val capturedLogs = report.directory.resolve("logs.jsonl").readText()
+        assertTrue(capturedLogs.contains(SOURCE_PROFILE_ID))
+        assertTrue(capturedLogs.contains(SOURCE_ACCOUNT_ID))
+        val framed = report.withCurrentConsent(DiagnosticsConsentMode.ALWAYS, context.noticeVersion)
+        val bundle = FileDiagnosticsBundleBuilder().build(
+            framed,
+            redactionTokens = listOf(SOURCE_SERVER_URL, SOURCE_PROFILE_ID, SOURCE_ACCOUNT_ID),
+        )
+        val outerManifest = bundle.manifestBytes.decodeToString()
+        val archive = GZIPInputStream(ByteArrayInputStream(bundle.bytes)).use { it.readBytes() }.decodeToString()
+
+        assertEquals(DiagnosticsDestinationKind.HOSTED, report.binding.destinationKind)
+        assertEquals(null, bundle.manifest.report.profileId)
+        assertEquals(HOSTED_DIAGNOSTICS_COLLECTOR_ID, bundle.manifest.destination.serverInstanceId)
+        assertTrue(archive.contains("safe-decoder"), "collector-v1 playback attributes must remain")
+        assertFalse(archive.contains("buffered_ms"), "extended Android attributes must not ship hosted")
+        listOf(
+            SOURCE_SERVER_URL,
+            SOURCE_SERVER_ID,
+            SOURCE_PROFILE_ID,
+            SOURCE_ACCOUNT_ID,
+            LOCAL_HOSTED_OWNER,
+            PRIVATE_PLAYBACK_SESSION_ID,
+        ).forEach { identity ->
+            assertFalse(outerManifest.contains(identity), "outer manifest: $identity")
+            assertFalse(archive.contains(identity), "embedded manifest/logs: $identity")
+        }
+    }
+
+    @Test
+    fun hostedCrashBundleStripsSourceAndPlaybackIdentityAndForcesPromptConsent() = runTest {
+        val root = temporaryFolder.newFolder()
+        val reports = FilePendingReportStore(root, nowMs = { CAPTURED_AT + 1_000 })
+        val context = DiagnosticsCaptureContext(
+            binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, LOCAL_HOSTED_OWNER),
+            profileId = null,
+            profileEligible = true,
+            noticeVersion = 1,
+            status = DiagnosticsAvailabilityStatus.AVAILABLE,
+            ownershipGeneration = 9,
+            localServerId = SOURCE_SERVER_ID,
+            credentialFingerprint = "f".repeat(64),
+            sourceProfileId = SOURCE_PROFILE_ID,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val ledger = DiagnosticsRunLedger(root, tokenFactory = { RUN_TOKEN })
+        ledger.beginRun(context, CAPTURED_AT - 10_000, "hosted-crash-session")
+        val marker = JvmCrashMarkerRecord(
+            occurredAtEpochMs = CAPTURED_AT,
+            threadName = "main",
+            threadId = 1,
+            throwableType = "java.lang.IllegalStateException",
+            stack = "java.lang.IllegalStateException: boom",
+            binding = PendingReportBinding(
+                serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+                accountUserId = LOCAL_HOSTED_OWNER,
+                profileId = null,
+                ownershipGeneration = context.ownershipGeneration,
+                destinationKind = DiagnosticsDestinationKind.HOSTED,
+            ),
+            captureSessionId = "hosted-crash-session",
+            runToken = RUN_TOKEN,
+            foreground = true,
+            playbackSessionIds = listOf(PRIVATE_PLAYBACK_SESSION_ID),
+            deviceSnapshotJson = DEVICE_JSON,
+            logLines = emptyList(),
+            logDroppedCount = 0,
+            logTornCount = 0,
+            logGeneration = context.ownershipGeneration,
+            truncated = false,
+        )
+        val collector = ExitInfoCollector(
+            source = AndroidExitInfoSource { emptyList() },
+            ledger = ledger,
+            reports = reports,
+            markers = InMemoryMarkers(marker),
+            environment = ENVIRONMENT,
+            deviceSnapshotBytes = { DEVICE_JSON.encodeToByteArray() },
+            noticeVersion = { context.noticeVersion },
+            consentMode = { org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode.ALWAYS },
+        )
+
+        val report = collector.collect().single()
+        assertTrue(report.manifest.playbackSessionIds.isEmpty())
+        assertEquals(null, report.manifest.report.profileId)
+        val framed = report.withCurrentConsent(DiagnosticsConsentMode.ALWAYS, context.noticeVersion)
+        val bundle = FileDiagnosticsBundleBuilder().build(framed, redactionTokens = emptyList())
+        assertEquals(
+            org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode.PROMPT,
+            bundle.manifest.consent.mode,
+        )
+        val outerManifest = bundle.manifestBytes.decodeToString()
+        val archive = GZIPInputStream(ByteArrayInputStream(bundle.bytes)).use { it.readBytes() }.decodeToString()
+        listOf(
+            SOURCE_SERVER_ID,
+            SOURCE_PROFILE_ID,
+            LOCAL_HOSTED_OWNER,
+            PRIVATE_PLAYBACK_SESSION_ID,
+        ).forEach { identity ->
+            assertFalse(outerManifest.contains(identity), "outer manifest: $identity")
+            assertFalse(archive.contains(identity), "embedded manifest/logs: $identity")
+        }
+    }
+
+    @Test
     fun jvmMarkerAndExitInfoProduceOneCoordinatorReport() = runTest {
         val root = temporaryFolder.newFolder()
         val reports = FilePendingReportStore(root, nowMs = { CAPTURED_AT + 1_000 })
@@ -163,6 +313,7 @@ class DiagnosticsPrivacyIntegrationTest {
         ring: LogRing,
         reports: PendingReportStore,
         dispatcher: kotlinx.coroutines.CoroutineDispatcher,
+        playbackSessions: DiagnosticsPlaybackSessionTracker = DiagnosticsPlaybackSessionTracker(),
     ) = FileDiagnosticsCaptureController(
         logBuffer = ring,
         fileLogger = DiagnosticsFileLogger(root, dispatcher),
@@ -172,6 +323,7 @@ class DiagnosticsPrivacyIntegrationTest {
         environment = ENVIRONMENT,
         nowMs = { CAPTURED_AT },
         sessionIdFactory = { "manual-session" },
+        playbackSessions = playbackSessions,
     )
 
     private fun jvmExit() = object : AndroidExitInfoRecord {
@@ -226,6 +378,12 @@ class DiagnosticsPrivacyIntegrationTest {
         const val CAPTURED_AT = 1_700_000_000_000L
         const val RUN_TOKEN = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         const val DEVICE_JSON = "{\"captured_at\":\"2026-07-22T00:00:00Z\"}"
+        const val SOURCE_SERVER_ID = "private-server-id"
+        const val SOURCE_SERVER_URL = "https://private-silo.example"
+        const val SOURCE_PROFILE_ID = "private-profile-id"
+        const val SOURCE_ACCOUNT_ID = "private-account-id"
+        const val LOCAL_HOSTED_OWNER = "local-hosted-owner-hash"
+        const val PRIVATE_PLAYBACK_SESSION_ID = "private-playback-session-id"
         val ENVIRONMENT = ExitReportEnvironment(
             appVersion = "1.0",
             appBuild = "1",

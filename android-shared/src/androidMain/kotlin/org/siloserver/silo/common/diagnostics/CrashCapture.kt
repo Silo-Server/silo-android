@@ -389,7 +389,15 @@ object CrashCapture {
     fun updatePlaybackSessionIds(identityKey: DiagnosticsIdentityKey, sessionIds: List<String>) {
         runtime.updateAndGet { current ->
             if (current.identityKey == identityKey) {
-                current.copy(playbackSessionIds = sessionIds.toList())
+                current.copy(
+                    playbackSessionIds = if (
+                        current.binding?.destinationKind == DiagnosticsDestinationKind.HOSTED
+                    ) {
+                        emptyList()
+                    } else {
+                        sessionIds.toList()
+                    },
+                )
             } else {
                 current
             }

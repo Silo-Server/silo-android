@@ -20,6 +20,7 @@ data class PendingReportBinding(
     @SerialName("account_user_id") val accountUserId: String,
     @SerialName("profile_id") val profileId: String? = null,
     @SerialName("ownership_generation") val ownershipGeneration: Long,
+    @SerialName("destination_kind") val destinationKind: DiagnosticsDestinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
 ) {
     val binding: DiagnosticsBinding get() = DiagnosticsBinding(serverInstanceId, accountUserId)
 

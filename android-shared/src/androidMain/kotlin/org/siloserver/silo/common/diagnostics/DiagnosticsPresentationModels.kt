@@ -22,6 +22,7 @@ data class DiagnosticsReportSummary(
     val archiveEntries: List<String>,
     val uploadStatus: PendingReportStatus,
     val uploadErrorCode: String?,
+    val destinationKind: DiagnosticsDestinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
 )
 
 data class DiagnosticsPrompt(
@@ -57,4 +58,7 @@ data class DiagnosticsUiState(
     val prompt: DiagnosticsPrompt? = null,
     val timedCapture: TimedCaptureState = TimedCaptureState(),
     val sentHistory: List<SentDiagnosticsReport> = emptyList(),
+    val destinationKind: DiagnosticsDestinationKind = DiagnosticsDestinationKind.HOSTED,
+    val allowsAutomaticUpload: Boolean = false,
+    val retentionDays: Int = HOSTED_DIAGNOSTICS_RETENTION_DAYS,
 )

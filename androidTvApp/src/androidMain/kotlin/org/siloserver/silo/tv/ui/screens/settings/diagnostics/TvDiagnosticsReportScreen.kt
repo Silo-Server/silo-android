@@ -21,6 +21,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
+import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadDecision
 
 @Composable
@@ -34,6 +35,7 @@ fun TvDiagnosticsReportScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var uploading by remember { mutableStateOf(false) }
     var sentShortId by remember { mutableStateOf<String?>(null) }
+    var sentState by remember { mutableStateOf("processing") }
     var uploadNotice by remember { mutableStateOf<String?>(null) }
     BackHandler(onBack = onBack)
     TvDiagnosticsPage(title = "Report details") {
@@ -44,16 +46,17 @@ fun TvDiagnosticsReportScreen(
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("Report sent", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
                 TvReportLine("Reference ID", shortId)
+                TvReportLine("Processing state", sentState.replace('_', ' '))
                 Text(
-                    "The report was removed from this device once your server received a copy. " +
-                        "Share the reference ID with your server admin so they can find it.",
+                    "The report was removed from this device after the destination accepted a copy. " +
+                        "Share the reference ID with Silo Diagnostics or your server admin.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 TvDiagnosticsAction(label = "Done", onClick = onBack)
             }
         } else if (report == null) {
             if (uploading) {
-                Text("Sending report to your server…")
+                Text("Sending report…")
             } else {
                 Text("This report is no longer on this device.")
             }
@@ -65,8 +68,17 @@ fun TvDiagnosticsReportScreen(
                 }
                 item {
                     TvReportLine("Evidence", tvFormatBytes(report.evidenceBytes))
-                    TvReportLine("Destination", report.destinationServerInstanceId)
-                    TvReportLine("Captured profile", report.capturedProfileId ?: "Account scoped")
+                    TvReportLine(
+                        "Destination",
+                        if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                            "Silo Diagnostics"
+                        } else {
+                            report.destinationServerInstanceId
+                        },
+                    )
+                    if (report.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED) {
+                        TvReportLine("Captured profile", report.capturedProfileId ?: "Account scoped")
+                    }
                     TvReportLine("Expires", tvFormatDate(report.expiresAtEpochMs))
                     TvReportLine("Upload state", report.uploadStatus.name.lowercase().replace('_', ' '))
                     report.uploadErrorCode?.let { TvReportLine("Last error", it) }
@@ -82,7 +94,7 @@ fun TvDiagnosticsReportScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (uploading) {
                             Text(
-                                "Sending report to your server…",
+                                "Sending report…",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -99,7 +111,10 @@ fun TvDiagnosticsReportScreen(
                                     viewModel.upload(report.id) { decision ->
                                         uploading = false
                                         when (decision) {
-                                            is DiagnosticsUploadDecision.Uploaded -> sentShortId = decision.shortId
+                                            is DiagnosticsUploadDecision.Uploaded -> {
+                                                sentShortId = decision.shortId
+                                                sentState = decision.state
+                                            }
                                             else -> uploadNotice = tvUploadKeptMessage(decision)
                                         }
                                     }

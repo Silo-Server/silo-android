@@ -186,6 +186,7 @@ class FileDiagnosticsCaptureController(
             accountUserId = context.binding.accountUserId,
             profileId = context.profileId,
             ownershipGeneration = context.ownershipGeneration,
+            destinationKind = context.destinationKind,
         )
         val manifest = DiagnosticsManifest(
             schemaVersion = 1,
@@ -202,7 +203,11 @@ class FileDiagnosticsCaptureController(
             destination = DiagnosticsDestination(context.binding.serverInstanceId),
             consent = DiagnosticsConsent(DiagnosticsConsentMode.MANUAL, context.noticeVersion),
             deviceSummary = environment.deviceSummary,
-            playbackSessionIds = playbackSessions.snapshot(),
+            playbackSessionIds = if (context.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                emptyList()
+            } else {
+                playbackSessions.snapshot()
+            },
             logSummary = DiagnosticsLogSummaryBuilder.build(logBytes, droppedLines, debugLogging),
             archive = DiagnosticsArchive(
                 entries = CANONICAL_ORDER.filter { it == MANIFEST_FILE || it in artifacts },

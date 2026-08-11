@@ -12,6 +12,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
+import org.siloserver.silo.network.api.HostedDiagnosticsCapabilities
 
 @Serializable
 data class DiagnosticsBinding(
@@ -44,12 +45,15 @@ data class CachedDiagnosticsContext(
     val maxBundleBytes: Long,
     val maxManifestBytes: Long,
     val retentionDays: Int,
+    val sourceProfileId: String? = profileId,
+    val destinationKind: DiagnosticsDestinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
 )
 
 @Serializable
 data class SentDiagnosticsReport(
     val shortId: String,
     val sentAtEpochMs: Long,
+    val state: String = "accepted",
 )
 
 fun interface DiagnosticsBindingPurger {
@@ -126,6 +130,27 @@ class DiagnosticsSettingsStore(
     suspend fun debugLogging(): Boolean =
         dataStore.data.first()[DEBUG_LOGGING_KEY] ?: false
 
+    /** Hosted collection is the device default; self-hosted remains an explicit compatibility choice. */
+    suspend fun destinationKind(): DiagnosticsDestinationKind =
+        dataStore.data.first()[DESTINATION_KIND_KEY]
+            ?.let { raw -> DiagnosticsDestinationKind.entries.firstOrNull { it.name == raw } }
+            ?: DiagnosticsDestinationKind.HOSTED
+
+    suspend fun setDestinationKind(destinationKind: DiagnosticsDestinationKind) {
+        dataStore.edit { preferences -> preferences[DESTINATION_KIND_KEY] = destinationKind.name }
+    }
+
+    suspend fun hostedCapabilities(): HostedDiagnosticsCapabilities? =
+        dataStore.data.first()[HOSTED_CAPABILITIES_KEY]?.let { encoded ->
+            runCatching { JSON.decodeFromString<HostedDiagnosticsCapabilities>(encoded) }.getOrNull()
+        }
+
+    suspend fun cacheHostedCapabilities(capabilities: HostedDiagnosticsCapabilities) {
+        dataStore.edit { preferences ->
+            preferences[HOSTED_CAPABILITIES_KEY] = JSON.encodeToString(capabilities)
+        }
+    }
+
     suspend fun setDebugLogging(enabled: Boolean) {
         dataStore.edit { preferences -> preferences[DEBUG_LOGGING_KEY] = enabled }
     }
@@ -143,6 +168,8 @@ class DiagnosticsSettingsStore(
             maxBundleBytes = context.maxBundleBytes,
             maxManifestBytes = context.maxManifestBytes,
             retentionDays = context.retentionDays,
+            sourceProfileId = context.sourceProfileId,
+            destinationKind = context.destinationKind,
         )
         dataStore.edit { preferences -> preferences[CACHED_CONTEXT_KEY] = JSON.encodeToString(cached) }
     }
@@ -161,12 +188,18 @@ class DiagnosticsSettingsStore(
         }
     }
 
-    suspend fun recordSent(binding: DiagnosticsBinding, shortId: String, sentAtEpochMs: Long) {
+    suspend fun recordSent(
+        binding: DiagnosticsBinding,
+        shortId: String,
+        sentAtEpochMs: Long,
+        state: String = "accepted",
+    ) {
         require(shortId.isNotBlank()) { "shortId must not be blank" }
+        require(state.isNotBlank()) { "state must not be blank" }
         val keys = keys(binding)
         dataStore.edit { preferences ->
             val existing = decodeHistory(preferences[keys.sentHistory])
-            val updated = (listOf(SentDiagnosticsReport(shortId, sentAtEpochMs)) + existing)
+            val updated = (listOf(SentDiagnosticsReport(shortId, sentAtEpochMs, state)) + existing)
                 .distinctBy(SentDiagnosticsReport::shortId)
                 .sortedByDescending(SentDiagnosticsReport::sentAtEpochMs)
                 .take(historyLimit)
@@ -230,6 +263,8 @@ class DiagnosticsSettingsStore(
     private companion object {
         const val DEFAULT_HISTORY_LIMIT = 20
         val DEBUG_LOGGING_KEY = booleanPreferencesKey("diagnostics.device.debug_logging")
+        val DESTINATION_KIND_KEY = stringPreferencesKey("diagnostics.device.destination_kind")
+        val HOSTED_CAPABILITIES_KEY = stringPreferencesKey("diagnostics.hosted.capabilities")
         val CACHED_CONTEXT_KEY = stringPreferencesKey("diagnostics.last_context")
         val JSON = Json { ignoreUnknownKeys = true }
     }

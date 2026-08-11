@@ -11,6 +11,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.siloserver.silo.network.api.HostedDiagnosticsAvailability
+import org.siloserver.silo.network.api.HostedDiagnosticsCapabilities
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DiagnosticsSettingsStoreTest {
@@ -89,6 +91,26 @@ class DiagnosticsSettingsStoreTest {
 
         assertEquals(listOf("R-4", "R-3", "R-2"), store.sentHistory(bindingA).map { it.shortId })
         assertEquals(listOf("other"), store.sentHistory(bindingB).map { it.shortId })
+    }
+
+    @Test
+    fun hostedDestinationDefaultsOnAndCapabilityCacheContainsNoCredential() = runTest {
+        val store = newStore()
+        val capabilities = HostedDiagnosticsCapabilities(
+            status = HostedDiagnosticsAvailability.AVAILABLE,
+            collectorId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            acceptedSchemaVersions = listOf(1),
+            maxBundleBytes = 10L * 1_024 * 1_024,
+            maxManifestBytes = 64L * 1_024,
+            retentionDays = 7,
+            consentNoticeVersion = 1,
+        )
+
+        assertEquals(DiagnosticsDestinationKind.HOSTED, store.destinationKind())
+        store.setDestinationKind(DiagnosticsDestinationKind.SELF_HOSTED)
+        assertEquals(DiagnosticsDestinationKind.SELF_HOSTED, store.destinationKind())
+        store.cacheHostedCapabilities(capabilities)
+        assertEquals(capabilities, store.hostedCapabilities())
     }
 
     private fun newStore(

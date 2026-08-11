@@ -83,6 +83,9 @@ data class DiagnosticsCaptureContext(
     val retentionDays: Int = 7,
     val localServerId: String? = null,
     val credentialFingerprint: String? = null,
+    /** Source profile is retained only in encrypted/local state for privacy gating. */
+    val sourceProfileId: String? = profileId,
+    val destinationKind: DiagnosticsDestinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
 ) {
     val identityKey: DiagnosticsIdentityKey = DiagnosticsIdentityKey(
         binding = binding,

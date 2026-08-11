@@ -62,6 +62,7 @@ interface DiagnosticsCoordinator {
     fun start()
     suspend fun refresh()
     suspend fun setConsent(mode: DiagnosticsConsentMode, expectedNoticeVersion: Int? = null)
+    suspend fun setDestination(destinationKind: DiagnosticsDestinationKind)
     suspend fun setDebugLogging(enabled: Boolean)
     suspend fun captureNow(): String?
     suspend fun startTimedCapture()
@@ -123,6 +124,9 @@ class DefaultDiagnosticsCoordinator(
     override suspend fun setConsent(mode: DiagnosticsConsentMode, expectedNoticeVersion: Int?) =
         request { Command.SetConsent(mode, expectedNoticeVersion, it) }
 
+    override suspend fun setDestination(destinationKind: DiagnosticsDestinationKind) =
+        request { Command.SetDestination(destinationKind, it) }
+
     override suspend fun setDebugLogging(enabled: Boolean) =
         request { Command.SetDebugLogging(enabled, it) }
 
@@ -152,6 +156,7 @@ class DefaultDiagnosticsCoordinator(
             is Command.SetConsent -> complete(command.completion) {
                 setConsentOwned(command.mode, command.expectedNoticeVersion)
             }
+            is Command.SetDestination -> complete(command.completion) { setDestinationOwned(command.destinationKind) }
             is Command.SetDebugLogging -> complete(command.completion) { setDebugLoggingOwned(command.enabled) }
             is Command.CaptureNow -> completeResult(command.completion) { captureNowOwned() }
             is Command.StartTimedCapture -> complete(command.completion) { startTimedCaptureOwned() }
@@ -166,6 +171,8 @@ class DefaultDiagnosticsCoordinator(
     }
 
     private suspend fun refreshOwnedState() {
+        val selectedDestination = runCatching { settings.destinationKind() }
+            .getOrDefault(DiagnosticsDestinationKind.HOSTED)
         val resolved = runCatching { identity.resolve(requirePersistentCapture = true) }.getOrNull()
         val previous = currentContext
         if (
@@ -199,6 +206,11 @@ class DefaultDiagnosticsCoordinator(
                 sentHistory = cached?.let { context ->
                     runCatching { settings.sentHistory(context.binding) }.getOrDefault(emptyList())
                 }.orEmpty(),
+                destinationKind = selectedDestination,
+                allowsAutomaticUpload = selectedDestination == DiagnosticsDestinationKind.SELF_HOSTED,
+                retentionDays = cached?.retentionDays ?: if (
+                    selectedDestination == DiagnosticsDestinationKind.HOSTED
+                ) HOSTED_DIAGNOSTICS_RETENTION_DAYS else 7,
             )
             return
         }
@@ -215,6 +227,9 @@ class DefaultDiagnosticsCoordinator(
                 pending = emptyList(),
                 prompt = null,
                 sentHistory = emptyList(),
+                destinationKind = selectedDestination,
+                allowsAutomaticUpload = selectedDestination == DiagnosticsDestinationKind.SELF_HOSTED,
+                retentionDays = resolved.retentionDays,
             )
             return
         }
@@ -263,8 +278,15 @@ class DefaultDiagnosticsCoordinator(
                 )
             },
             sentHistory = history,
+            destinationKind = resolved.destinationKind,
+            allowsAutomaticUpload = resolved.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED,
+            retentionDays = resolved.retentionDays,
         )
-        if (consent.mode == DiagnosticsConsentMode.ALWAYS && resolved.status == DiagnosticsAvailabilityStatus.AVAILABLE) {
+        if (
+            resolved.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED &&
+            consent.mode == DiagnosticsConsentMode.ALWAYS &&
+            resolved.status == DiagnosticsAvailabilityStatus.AVAILABLE
+        ) {
             pendingReports.forEach { report -> uploadScheduler.enqueue(report.id) }
         }
     }
@@ -275,6 +297,7 @@ class DefaultDiagnosticsCoordinator(
     ) {
         if (expectedNoticeVersion != null) refreshOwnedState()
         val context = currentEligibleContext() ?: return
+        if (mode == DiagnosticsConsentMode.ALWAYS && context.destinationKind == DiagnosticsDestinationKind.HOSTED) return
         if (expectedNoticeVersion != null && context.noticeVersion != expectedNoticeVersion) return
         if (mode == DiagnosticsConsentMode.NEVER) {
             capture.closeGate()
@@ -284,6 +307,20 @@ class DefaultDiagnosticsCoordinator(
             mutableState.value = mutableState.value.copy(timedCapture = TimedCaptureState())
         }
         settings.setConsent(context.binding, mode, context.noticeVersion)
+        refreshOwnedState()
+    }
+
+    private suspend fun setDestinationOwned(destinationKind: DiagnosticsDestinationKind) {
+        if (settings.destinationKind() == destinationKind) return
+        capture.closeGate()
+        runtimePublisher.closeGate()
+        val active = activeCapture
+        activeCapture = null
+        if (active != null) runCatching { capture.cancel(active) }
+        runCatching { settings.clearCachedContext() }
+        settings.setDestinationKind(destinationKind)
+        currentContext = null
+        mutableState.value = mutableState.value.copy(timedCapture = TimedCaptureState())
         refreshOwnedState()
     }
 
@@ -453,6 +490,10 @@ class DefaultDiagnosticsCoordinator(
             val expectedNoticeVersion: Int?,
             val completion: CompletableDeferred<Unit>,
         ) : Command
+        data class SetDestination(
+            val destinationKind: DiagnosticsDestinationKind,
+            val completion: CompletableDeferred<Unit>,
+        ) : Command
         data class SetDebugLogging(val enabled: Boolean, val completion: CompletableDeferred<Unit>) : Command
         data class CaptureNow(val completion: CompletableDeferred<String?>) : Command
         data class StartTimedCapture(val completion: CompletableDeferred<Unit>) : Command
@@ -498,6 +539,7 @@ private fun PendingReport.summary(retentionDays: Int): DiagnosticsReportSummary 
     archiveEntries = manifest.archive.entries,
     uploadStatus = state.status,
     uploadErrorCode = state.errorCode,
+    destinationKind = binding.destinationKind,
 )
 
 private fun promptThrottleKey(report: PendingReport): String = "prompt:${report.state.fingerprint}"

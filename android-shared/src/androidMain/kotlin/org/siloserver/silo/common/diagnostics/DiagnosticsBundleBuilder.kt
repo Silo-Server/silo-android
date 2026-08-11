@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.siloserver.silo.model.diagnostics.DiagnosticsArchive
 import org.siloserver.silo.model.diagnostics.DiagnosticsManifest
 import org.siloserver.silo.model.diagnostics.validate
@@ -48,7 +49,16 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             val file = report.directory.resolve(path)
             if (!file.isFile) return@mapNotNull null
             require(file.isWithin(report.directory)) { "diagnostics artifact escapes report directory: $path" }
-            val bytes = if (path in TEXT_ENTRIES) sanitizeText(path, file.readBytes(), tokens) else file.readBytes()
+            val bytes = if (path in TEXT_ENTRIES) {
+                sanitizeText(
+                    path = path,
+                    bytes = file.readBytes(),
+                    tokens = tokens,
+                    hosted = report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED,
+                )
+            } else {
+                file.readBytes()
+            }
             ArchiveEntry(path, bytes)
         }
         val sanitizedManifest = sanitizeManifest(report.manifest, tokens).let { manifest ->
@@ -101,25 +111,61 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         path: String,
         bytes: ByteArray,
         tokens: List<String>,
+        hosted: Boolean,
     ): ByteArray =
         runCatching {
             val decoded = checkNotNull(UTF8_DECODER.get()).decode(ByteBuffer.wrap(bytes)).toString()
             val sanitized = when {
                 path.endsWith(".json") -> JSON.encodeToString(JSON.parseToJsonElement(decoded).redact(tokens))
-                path.endsWith(".jsonl") -> redactJsonLines(decoded, tokens)
+                path.endsWith(".jsonl") -> redactJsonLines(decoded, tokens, hosted)
                 else -> decoded.redact(tokens)
             }
             check(tokens.none(sanitized::contains)) { "artifact redaction could not be verified" }
             sanitized.encodeToByteArray()
         }.getOrElse { REDACTION_FAILURE_SENTINEL }
 
-    private fun redactJsonLines(value: String, tokens: List<String>): String {
+    private fun redactJsonLines(
+        value: String,
+        tokens: List<String>,
+        hosted: Boolean,
+    ): String {
         val hadTrailingNewline = value.endsWith('\n')
         val lines = value.split('\n').let { if (hadTrailingNewline) it.dropLast(1) else it }
         val redacted = lines.joinToString("\n") { line ->
-            if (line.isBlank()) line else JSON.encodeToString(JSON.parseToJsonElement(line).redact(tokens))
+            if (line.isBlank()) {
+                line
+            } else {
+                val sanitized = JSON.parseToJsonElement(line).redact(tokens).let { element ->
+                    if (hosted) element.toHostedDiagnosticsLogLine() else element
+                }
+                JSON.encodeToString(sanitized)
+            }
         }
         return if (hadTrailingNewline) "$redacted\n" else redacted
+    }
+
+    private fun JsonElement.toHostedDiagnosticsLogLine(): JsonElement {
+        if (this !is JsonObject) return this
+        val output = toMutableMap()
+        val category = output["cat"]?.jsonPrimitive?.contentOrNull
+        val allowedAttributes = HOSTED_V1_LOG_ATTRIBUTES[category].orEmpty()
+        val filteredAttributes = (output["attrs"] as? JsonObject)
+            ?.filterKeys(allowedAttributes::contains)
+            .orEmpty()
+        if (filteredAttributes.isEmpty()) {
+            output.remove("attrs")
+        } else {
+            output["attrs"] = JsonObject(filteredAttributes)
+        }
+        val message = output["msg"] as? JsonPrimitive
+        if (message?.isString == true) {
+            output["msg"] = JsonPrimitive(
+                PRIVATE_PLAYBACK_ASSIGNMENT.replace(checkNotNull(message.contentOrNull)) { match ->
+                    "${match.groupValues[1]}${match.groupValues[2]}[REDACTED]"
+                },
+            )
+        }
+        return JsonObject(output)
     }
 
     private fun JsonElement.redact(tokens: List<String>): JsonElement = when (this) {
@@ -225,6 +271,26 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         const val REDACTED_VALUE = "[REDACTED]"
         val REDACTION_FAILURE_SENTINEL = "{\"redaction_failure\":true}\n".encodeToByteArray()
         val TEXT_ENTRIES = CANONICAL_ARCHIVE_ORDER.toSet() - MANIFEST_FILE - "crash/tombstone.pb"
+        val HOSTED_V1_LOG_ATTRIBUTES = mapOf(
+            "playback" to setOf(
+                "sink",
+                "fmt",
+                "decoder",
+                "width",
+                "height",
+                "hdr_mode",
+                "bitrate_kbps",
+                "dropped_frames",
+                "audio_underruns",
+            ),
+            "focus" to setOf("target", "action"),
+            "network" to setOf("method", "path", "status", "duration_ms"),
+            "lifecycle" to setOf("state"),
+            "crash" to setOf("fingerprint", "source"),
+        )
+        val PRIVATE_PLAYBACK_ASSIGNMENT = Regex(
+            """(?i)\b(playback(?:[_\s-]?session)?[_\s-]?ids?)\s*([:=])\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)""",
+        )
         val JSON = Json { encodeDefaults = true; explicitNulls = false; ignoreUnknownKeys = false }
         val UTF8_DECODER: ThreadLocal<java.nio.charset.CharsetDecoder> = ThreadLocal.withInitial {
             Charsets.UTF_8.newDecoder()

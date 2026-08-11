@@ -24,6 +24,10 @@ class DiagnosticsViewModel(
         viewModelScope.launch { coordinator.setConsent(mode) }
     }
 
+    fun setDestination(destinationKind: DiagnosticsDestinationKind) {
+        viewModelScope.launch { coordinator.setDestination(destinationKind) }
+    }
+
     fun setDebugLogging(enabled: Boolean) {
         viewModelScope.launch { coordinator.setDebugLogging(enabled) }
     }

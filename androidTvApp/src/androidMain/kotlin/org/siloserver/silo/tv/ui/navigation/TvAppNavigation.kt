@@ -1242,6 +1242,7 @@ fun TvAppNavigation(
             onSend = { diagnosticsViewModel.uploadPrompt(prompt) },
             onAlwaysSend = { diagnosticsViewModel.alwaysSendPrompt(prompt) },
             onDontSend = { diagnosticsViewModel.declinePrompt(prompt) },
+            allowAlwaysSend = diagnosticsState.allowsAutomaticUpload,
         )
     }
     }

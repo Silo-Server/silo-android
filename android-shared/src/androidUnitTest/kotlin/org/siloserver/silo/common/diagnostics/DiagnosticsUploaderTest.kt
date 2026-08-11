@@ -21,6 +21,16 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResponse
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResult
 import org.siloserver.silo.network.api.DiagnosticsApi
+import org.siloserver.silo.network.api.HostedDiagnosticsApi
+import org.siloserver.silo.network.api.HostedDiagnosticsApiResult
+import org.siloserver.silo.network.api.HostedDiagnosticsAvailability
+import org.siloserver.silo.network.api.HostedDiagnosticsCapabilities
+import org.siloserver.silo.network.api.HostedDiagnosticsCreateReportRequest
+import org.siloserver.silo.network.api.HostedDiagnosticsCreateReportResponse
+import org.siloserver.silo.network.api.HostedDiagnosticsInstallationRequest
+import org.siloserver.silo.network.api.HostedDiagnosticsInstallationResponse
+import org.siloserver.silo.network.api.HostedDiagnosticsReportState
+import org.siloserver.silo.network.api.HostedDiagnosticsReportStatusResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -29,6 +39,15 @@ import kotlin.test.assertNull
 class DiagnosticsUploaderTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun hostedWireIdCanonicalizesTheLocalUuidWithoutChangingItsIdentity() {
+        assertEquals(
+            "01234567-89ab-4def-8123-456789abcdef",
+            "0123456789ab4def8123456789abcdef".toHostedWireReportIdOrNull(),
+        )
+        assertNull("not-a-local-report-id".toHostedWireReportIdOrNull())
+    }
 
     @Test
     fun profileSwitchDuringBuildPreventsPost() = runTest {
@@ -289,6 +308,125 @@ class DiagnosticsUploaderTest {
         assertEquals(PendingReportStatus.RETRYABLE, assertNotNull(fixture.store.load(fixture.report.id)).state.status)
     }
 
+    @Test
+    fun hostedAcceptedUploadRecordsShortIdAndProcessingState() = runTest {
+        val store = FilePendingReportStore(temporaryFolder.newFolder(), nowMs = { CAPTURED_AT })
+        val binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "anonymous-hosted-device")
+        val pendingBinding = PendingReportBinding(
+            serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            accountUserId = binding.accountUserId,
+            profileId = null,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val hostedManifest = manifest().copy(
+            report = manifest().report.copy(profileId = null),
+            destination = DiagnosticsDestination(HOSTED_DIAGNOSTICS_COLLECTOR_ID),
+        )
+        val report = store.save(
+            PendingReportCapture(
+                binding = pendingBinding,
+                manifest = hostedManifest,
+                artifacts = mapOf("device.json" to "{}".encodeToByteArray()),
+                fingerprint = "hosted-fingerprint",
+                capturedAtEpochMs = CAPTURED_AT,
+            ),
+        )
+        val hostedApi = FakeHostedDiagnosticsApi()
+        hostedApi.invalidInstallationToken = "stale-installation-token"
+        val credentialStore = InMemoryHostedCredentialStore(
+            HostedDiagnosticsCredentials("stale-installation", "stale-installation-token"),
+        )
+        val environment = ExitReportEnvironment(
+            appVersion = "1.0",
+            appBuild = "1",
+            platform = DiagnosticsPlatform.ANDROID,
+            osVersion = "36",
+            deviceSummary = hostedManifest.deviceSummary,
+        )
+        val installations = HostedDiagnosticsInstallationManager(credentialStore, hostedApi, environment)
+        val capabilityStore = InMemoryHostedCapabilitiesStore()
+        val capabilities = HostedDiagnosticsCapabilitiesRepository(capabilityStore, hostedApi)
+        val sent = FakeSentRecorder()
+        val uploader = DefaultDiagnosticsUploader(
+            reports = store,
+            identity = FakeIdentityResolver(
+                DiagnosticsCaptureContext(
+                    binding = binding,
+                    profileId = null,
+                    profileEligible = true,
+                    noticeVersion = 1,
+                    status = DiagnosticsAvailabilityStatus.AVAILABLE,
+                    ownershipGeneration = 7,
+                    sourceProfileId = "adult-source-profile",
+                    destinationKind = DiagnosticsDestinationKind.HOSTED,
+                ),
+            ),
+            bundleBuilder = FakeBundleBuilder(),
+            api = FakeDiagnosticsApi(),
+            hostedApi = hostedApi,
+            hostedInstallations = installations,
+            hostedCapabilities = capabilities,
+            redactionTokens = DiagnosticsRedactionTokenProvider { _ -> listOf("source-access") },
+            sentRecorder = sent,
+            consentProvider = FakeConsentProvider(DiagnosticsConsentMode.ASK),
+            nowMs = { CAPTURED_AT + 1_000 },
+        )
+
+        val automaticDecision = uploader.uploadAutomatically(report.id)
+
+        assertEquals(DiagnosticsUploadDecision.KeptConsentReviewRequired, automaticDecision)
+        assertNull(hostedApi.createdRequest, "hosted reports must never enter the automatic upload path")
+
+        hostedApi.createReportFailure = HostedDiagnosticsApiResult.Failure(
+            httpStatus = 422,
+            errorCode = "privacy_field_rejected",
+            message = "source identity is not allowed",
+        )
+        assertEquals(DiagnosticsUploadDecision.KeptInvalid, uploader.upload(report.id))
+        assertEquals(PendingReportStatus.PERMANENT_FAILURE, store.load(report.id)?.state?.status)
+        assertEquals("privacy_field_rejected", store.load(report.id)?.state?.errorCode)
+        hostedApi.createReportFailure = null
+        val wireReportId = requireNotNull(report.id.toHostedWireReportIdOrNull())
+
+        hostedApi.uploadReceiptOverride = HostedDiagnosticsReportStatusResponse(
+            reportId = "11111111-1111-4111-8111-111111111111",
+            shortId = "ABC123",
+            state = HostedDiagnosticsReportState.PROCESSING,
+        )
+        assertEquals(DiagnosticsUploadDecision.KeptInvalid, uploader.upload(report.id))
+        assertNotNull(store.load(report.id), "a wrong-ID 202 receipt must not delete local evidence")
+        assertEquals(emptyList(), hostedApi.statusReportIds, "an invalid PUT receipt must not be trusted")
+        hostedApi.uploadReceiptOverride = null
+        hostedApi.reportStatusResultOverride = HostedDiagnosticsApiResult.NetworkError(
+            IllegalStateException("status temporarily unavailable"),
+        )
+
+        val decision = uploader.upload(report.id)
+
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "processing"), decision)
+        assertEquals(32, report.id.length)
+        assertEquals(false, report.id.contains('-'), "the local file identity must remain 32-hex")
+        assertEquals(
+            listOf(
+                "stale-installation-token",
+                "stale-installation-token",
+                "installation-token",
+                "installation-token",
+            ),
+            hostedApi.createReportTokens,
+        )
+        assertEquals(List(4) { wireReportId }, hostedApi.createReportIds)
+        assertEquals(listOf(wireReportId, wireReportId), hostedApi.uploadReportIds)
+        assertEquals(listOf(wireReportId), hostedApi.statusReportIds)
+        assertEquals(1, hostedApi.installationCreateCalls)
+        assertEquals(wireReportId, hostedApi.createdRequest?.reportId)
+        assertNull(hostedApi.createdRequest?.manifest?.report?.profileId)
+        assertEquals(listOf("ABC123"), sent.shortIds)
+        assertEquals(listOf("processing"), sent.states)
+        assertNull(store.load(report.id))
+    }
+
     private fun fixture(maxBundleBytes: Long = 1_024 * 1_024): Fixture {
         val store = FilePendingReportStore(
             noBackupFilesDir = temporaryFolder.newFolder(),
@@ -314,7 +452,7 @@ class DiagnosticsUploaderTest {
             identity = identity,
             bundleBuilder = builder,
             api = api,
-            redactionTokens = DiagnosticsRedactionTokenProvider { listOf("secret-token") },
+            redactionTokens = DiagnosticsRedactionTokenProvider { _ -> listOf("secret-token") },
             sentRecorder = sent,
             consentProvider = consent,
             staleConsentHandler = staleConsent,
@@ -396,8 +534,105 @@ class DiagnosticsUploaderTest {
 
     private class FakeSentRecorder : DiagnosticsSentRecorder {
         val shortIds = mutableListOf<String>()
-        override suspend fun record(binding: DiagnosticsBinding, shortId: String, sentAtEpochMs: Long) {
+        val states = mutableListOf<String>()
+        override suspend fun record(binding: DiagnosticsBinding, shortId: String, sentAtEpochMs: Long, state: String) {
             shortIds += shortId
+            states += state
+        }
+    }
+
+    private class InMemoryHostedCredentialStore(
+        private var credentials: HostedDiagnosticsCredentials?,
+    ) : HostedDiagnosticsCredentialStore {
+        override suspend fun load(): HostedDiagnosticsCredentials? = credentials
+        override suspend fun save(credentials: HostedDiagnosticsCredentials) {
+            this.credentials = credentials
+        }
+        override suspend fun clear() {
+            credentials = null
+        }
+    }
+
+    private class InMemoryHostedCapabilitiesStore : HostedDiagnosticsCapabilitiesStore {
+        private var capabilities: HostedDiagnosticsCapabilities? = null
+        override suspend fun load(): HostedDiagnosticsCapabilities? = capabilities
+        override suspend fun save(capabilities: HostedDiagnosticsCapabilities) {
+            this.capabilities = capabilities
+        }
+    }
+
+    private class FakeHostedDiagnosticsApi : HostedDiagnosticsApi {
+        var createdRequest: HostedDiagnosticsCreateReportRequest? = null
+        var invalidInstallationToken: String? = null
+        var createReportFailure: HostedDiagnosticsApiResult.Failure? = null
+        var uploadReceiptOverride: HostedDiagnosticsReportStatusResponse? = null
+        var reportStatusResultOverride: HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>? = null
+        var installationCreateCalls: Int = 0
+        val createReportTokens = mutableListOf<String>()
+        val createReportIds = mutableListOf<String>()
+        val uploadReportIds = mutableListOf<String>()
+        val statusReportIds = mutableListOf<String>()
+        private val capabilities = HostedDiagnosticsCapabilities(
+            status = HostedDiagnosticsAvailability.AVAILABLE,
+            collectorId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            acceptedSchemaVersions = listOf(1),
+            maxBundleBytes = 10L * 1_024 * 1_024,
+            maxManifestBytes = 64L * 1_024,
+            retentionDays = 30,
+            consentNoticeVersion = 1,
+        )
+
+        override suspend fun capabilities() = HostedDiagnosticsApiResult.Success(capabilities)
+        override suspend fun createInstallation(request: HostedDiagnosticsInstallationRequest):
+            HostedDiagnosticsApiResult<HostedDiagnosticsInstallationResponse> {
+            installationCreateCalls += 1
+            return HostedDiagnosticsApiResult.Success(
+                HostedDiagnosticsInstallationResponse("installation-1", "installation-token"),
+            )
+        }
+        override suspend fun createReport(
+            installationToken: String,
+            request: HostedDiagnosticsCreateReportRequest,
+        ): HostedDiagnosticsApiResult<HostedDiagnosticsCreateReportResponse> {
+            createReportTokens += installationToken
+            createReportIds += request.reportId
+            createReportFailure?.let { return it }
+            if (installationToken == invalidInstallationToken) {
+                return HostedDiagnosticsApiResult.Failure(
+                    httpStatus = 401,
+                    errorCode = "invalid_installation_token",
+                    message = "installation token is invalid",
+                )
+            }
+            createdRequest = request
+            return HostedDiagnosticsApiResult.Success(
+                HostedDiagnosticsCreateReportResponse(request.reportId, "ABC123", "upload-token", "2026-08-18T00:00:00Z"),
+            )
+        }
+        override suspend fun uploadBundle(
+            installationToken: String,
+            reportId: String,
+            uploadToken: String,
+            bundle: ByteArray,
+        ): HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse> {
+            uploadReportIds += reportId
+            return HostedDiagnosticsApiResult.Success(
+                uploadReceiptOverride ?: HostedDiagnosticsReportStatusResponse(
+                    reportId,
+                    "ABC123",
+                    HostedDiagnosticsReportState.PROCESSING,
+                ),
+            )
+        }
+        override suspend fun reportStatus(
+            installationToken: String,
+            reportId: String,
+        ): HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse> {
+            statusReportIds += reportId
+            reportStatusResultOverride?.let { return it }
+            return HostedDiagnosticsApiResult.Success(
+                HostedDiagnosticsReportStatusResponse(reportId, "ABC123", HostedDiagnosticsReportState.PROCESSING),
+            )
         }
     }
 

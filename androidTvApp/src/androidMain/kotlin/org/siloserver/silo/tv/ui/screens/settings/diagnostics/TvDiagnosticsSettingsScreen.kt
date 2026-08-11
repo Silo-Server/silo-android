@@ -47,6 +47,7 @@ import java.util.Date
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode
+import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.TimedCaptureStatus
 import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
@@ -73,8 +74,8 @@ fun TvDiagnosticsSettingsScreen(
         TvDiagnosticsCrashFocus.entries.associateWith { FocusRequester() }
     }
     var crashRowHasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(state.consent) {
-        val target = initialTvDiagnosticsCrashFocus(state.consent)
+    LaunchedEffect(state.consent, state.allowsAutomaticUpload) {
+        val target = initialTvDiagnosticsCrashFocus(state.consent, state.allowsAutomaticUpload)
         // Relocation, not acquisition: the page is already focusable, so a
         // miss just leaves focus wherever the route transition put it.
         // tvDiagnosticsCrashFocusRequestResult mapped a Result, so "did not
@@ -103,6 +104,7 @@ fun TvDiagnosticsSettingsScreen(
                         current = current,
                         direction = it,
                         debugLoggingEnabled = state.consent != DiagnosticsConsentMode.NEVER,
+                        allowAlways = state.allowsAutomaticUpload,
                         isRepeat = event.nativeKeyEvent.repeatCount > 0,
                     )
                 }
@@ -124,11 +126,37 @@ fun TvDiagnosticsSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
+                TvDiagnosticsSection("SEND REPORTS TO") {
+                    TvDiagnosticsAction(
+                        label = "Silo Diagnostics",
+                        value = if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) "Selected" else null,
+                        onClick = { viewModel.setDestination(DiagnosticsDestinationKind.HOSTED) },
+                    )
+                    TvDiagnosticsAction(
+                        label = "This Silo server",
+                        value = if (state.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED) "Selected" else null,
+                        onClick = { viewModel.setDestination(DiagnosticsDestinationKind.SELF_HOSTED) },
+                    )
+                    Text(
+                        if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                            "Reports go directly to Silo Diagnostics without server setup. A pseudonymous " +
+                                "installation credential is not linked to your Silo account. Account, profile, " +
+                                "server address, and playback session IDs are omitted. Reports are never sent " +
+                                "automatically and may be retained for up to ${state.retentionDays} days."
+                        } else {
+                            "Compatibility mode sends reports to your active server."
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            item {
                 TvDiagnosticsSection("STATUS") {
                     val status = when (state.availability) {
-                        DiagnosticsAvailabilityUi.AVAILABLE -> "Available — reports can be sent to this server."
-                        DiagnosticsAvailabilityUi.DISABLED -> "Disabled by server — local review and deletion remain available."
-                        DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE -> "Server storage unavailable — reports stay local."
+                        DiagnosticsAvailabilityUi.AVAILABLE -> "Available — reports can be sent to the selected destination."
+                        DiagnosticsAvailabilityUi.DISABLED -> "Disabled — local review and deletion remain available."
+                        DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE -> "Destination storage unavailable — reports stay local."
                         DiagnosticsAvailabilityUi.OFFLINE -> "Offline — connect to refresh availability."
                         DiagnosticsAvailabilityUi.INELIGIBLE -> "Unavailable for this profile."
                     }
@@ -137,7 +165,9 @@ fun TvDiagnosticsSettingsScreen(
             }
             item {
                 TvDiagnosticsSection("CRASH REPORTS") {
-                    DiagnosticsConsentMode.entries.forEach { mode ->
+                    DiagnosticsConsentMode.entries
+                        .filter { it != DiagnosticsConsentMode.ALWAYS || state.allowsAutomaticUpload }
+                        .forEach { mode ->
                         TvDiagnosticsAction(
                             label = when (mode) {
                                 DiagnosticsConsentMode.ASK -> "Ask before sending"
@@ -153,7 +183,7 @@ fun TvDiagnosticsSettingsScreen(
                                 }
                             },
                             modifier = Modifier.crashFocusControl(
-                                initialTvDiagnosticsCrashFocus(mode),
+                                initialTvDiagnosticsCrashFocus(mode, state.allowsAutomaticUpload),
                             ),
                         )
                     }
@@ -205,11 +235,14 @@ fun TvDiagnosticsSettingsScreen(
                         state.sentHistory.forEach { sent ->
                             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                                 Text(sent.shortId, modifier = Modifier.weight(1f))
-                                Text(tvFormatDate(sent.sentAtEpochMs), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "${sent.state.replace('_', ' ')} · ${tvFormatDate(sent.sentAtEpochMs)}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
                         Text(
-                            "Sent reports are removed from this device once your server has a copy. " +
+                            "Sent reports are removed from this device once the selected destination has a copy. " +
                                 "Use the reference ID when asking for help.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,
@@ -219,7 +252,7 @@ fun TvDiagnosticsSettingsScreen(
             }
         }
     }
-    if (confirmAlways) {
+    if (confirmAlways && state.allowsAutomaticUpload) {
         TvDiagnosticsConfirmation(
             title = "Always send crash reports?",
             message = "Future eligible reports may upload automatically until you change this setting.",
@@ -252,15 +285,21 @@ internal fun tvDiagnosticsCrashFocusRequestResult(
     TvDiagnosticsCrashFocusRequestResult.RETRY
 }
 
-internal fun initialTvDiagnosticsCrashFocus(mode: DiagnosticsConsentMode) = when (mode) {
+internal fun initialTvDiagnosticsCrashFocus(
+    mode: DiagnosticsConsentMode,
+    allowAlways: Boolean = true,
+) = when (mode) {
     DiagnosticsConsentMode.ASK -> TvDiagnosticsCrashFocus.ASK
-    DiagnosticsConsentMode.ALWAYS -> TvDiagnosticsCrashFocus.ALWAYS
+    DiagnosticsConsentMode.ALWAYS -> if (allowAlways) TvDiagnosticsCrashFocus.ALWAYS else TvDiagnosticsCrashFocus.ASK
     DiagnosticsConsentMode.NEVER -> TvDiagnosticsCrashFocus.NEVER
 }
 
-internal fun tvDiagnosticsCrashFocusOrder(debugLoggingEnabled: Boolean) = buildList {
+internal fun tvDiagnosticsCrashFocusOrder(
+    debugLoggingEnabled: Boolean,
+    allowAlways: Boolean = true,
+) = buildList {
     add(TvDiagnosticsCrashFocus.ASK)
-    add(TvDiagnosticsCrashFocus.ALWAYS)
+    if (allowAlways) add(TvDiagnosticsCrashFocus.ALWAYS)
     add(TvDiagnosticsCrashFocus.NEVER)
     if (debugLoggingEnabled) add(TvDiagnosticsCrashFocus.DEBUG_LOGGING)
 }
@@ -269,8 +308,9 @@ internal fun nextTvDiagnosticsCrashFocus(
     current: TvDiagnosticsCrashFocus,
     direction: TvDiagnosticsFocusDirection,
     debugLoggingEnabled: Boolean,
+    allowAlways: Boolean = true,
 ): TvDiagnosticsCrashFocus? {
-    val order = tvDiagnosticsCrashFocusOrder(debugLoggingEnabled)
+    val order = tvDiagnosticsCrashFocusOrder(debugLoggingEnabled, allowAlways)
     // A control outside the current order (Debug logging under consent NEVER)
     // has no neighbour to move to. Coercing a -1 miss to 0 would silently treat
     // it as the FIRST row and send Down upwards, so hand the key back instead.
@@ -287,9 +327,10 @@ internal fun tvDiagnosticsCrashFocusKeyResult(
     direction: TvDiagnosticsFocusDirection,
     debugLoggingEnabled: Boolean,
     isRepeat: Boolean,
+    allowAlways: Boolean = true,
 ): TvDiagnosticsCrashFocusKeyResult {
     if (isRepeat) return TvDiagnosticsCrashFocusKeyResult(target = null, consume = true)
-    val target = nextTvDiagnosticsCrashFocus(current, direction, debugLoggingEnabled)
+    val target = nextTvDiagnosticsCrashFocus(current, direction, debugLoggingEnabled, allowAlways)
     return TvDiagnosticsCrashFocusKeyResult(target = target, consume = target != null)
 }
 

@@ -380,7 +380,11 @@ class ExitInfoCollector(
                 appBuild = environment.appBuild.take(64),
                 platform = environment.platform,
                 osVersion = environment.osVersion.take(128),
-                profileId = profileId?.take(128),
+                profileId = if (binding.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                    null
+                } else {
+                    profileId?.take(128)
+                },
             ),
             destination = DiagnosticsDestination(binding.serverInstanceId),
             consent = DiagnosticsConsent(consentMode(), noticeVersion().coerceAtLeast(1)),
@@ -394,7 +398,11 @@ class ExitInfoCollector(
                 occurredAt = rfc3339(capturedAtEpochMs),
             ),
             deviceSummary = environment.deviceSummary,
-            playbackSessionIds = playbackSessionIds.take(20).map { it.take(128) },
+            playbackSessionIds = if (binding.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                emptyList()
+            } else {
+                playbackSessionIds.take(20).map { it.take(128) }
+            },
             logSummary = logSummary,
             archive = DiagnosticsArchive(
                 entries = CANONICAL_ARCHIVE_ORDER.filter { it == "manifest.json" || it in artifacts },
@@ -422,6 +430,7 @@ class ExitInfoCollector(
         accountUserId = binding.accountUserId,
         profileId = profileId,
         ownershipGeneration = ownershipGeneration,
+        destinationKind = destinationKind,
     )
 
     private fun DiagnosticsRunRecord.identityKey() = DiagnosticsIdentityKey(
