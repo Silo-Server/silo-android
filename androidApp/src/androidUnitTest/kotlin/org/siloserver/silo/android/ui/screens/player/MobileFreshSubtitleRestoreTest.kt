@@ -18,6 +18,37 @@ import kotlin.test.assertNull
 
 class MobileFreshSubtitleRestoreTest {
     @Test
+    fun authoritativeV3InventoryIsNotRebuiltFromTheDownloadedCatalog() = runTest {
+        val authoritative = PlayerSubtitleInfo(
+            index = 3,
+            language = "es",
+            codec = "ass",
+            label = "Spanish",
+            source = "downloaded",
+            url = "/stream/fresh-session/subtitles/3.ass",
+            serverTrackId = "file:7:subtitle:3",
+            serverDelivery = "sidecar",
+        )
+        var catalogRead = false
+
+        val result = prepareMobileFreshSubtitleRestore(
+            mediaFileId = 7,
+            mountedSubtitles = listOf(authoritative),
+            sessionId = "fresh-session",
+            serverUrl = "https://silo.test",
+            persistedPreference = null,
+            authoritativeInventory = true,
+            loadDownloadedSubtitles = {
+                catalogRead = true
+                ApiResult.Success(DownloadedSubtitlesResponse(listOf(downloadedTrack(312))))
+            },
+        )
+
+        assertEquals(false, catalogRead)
+        assertEquals(listOf(authoritative), result.subtitleTracks)
+    }
+
+    @Test
     fun `fresh playback hydrates downloads before resolving typed download id`() = runTest {
         val result = prepareMobileFreshSubtitleRestore(
             mediaFileId = 7,

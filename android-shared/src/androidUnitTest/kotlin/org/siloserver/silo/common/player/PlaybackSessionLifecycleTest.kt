@@ -3,6 +3,7 @@ package org.siloserver.silo.common.player
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackSessionRecorder
 import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
+import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.network.ApiResult
@@ -11,10 +12,8 @@ import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.PlaybackApi
-import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
-import org.siloserver.silo.repository.ProfileRepository
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -39,11 +38,15 @@ import kotlin.test.fail
 
 /**
  * Integration-flavor tests for [PlaybackSessionLifecycle]. Exercises the
- * three transition paths the wrapper introduces:
+ * transition paths the wrapper owns:
  *
- *   - happy-path start -> Active and clean stop
- *   - 404 session_not_found mid-progress -> snapshot + re-start
+ *   - adoption of an already-planned session -> Active and clean stop
+ *   - 404 session_not_found mid-progress -> snapshot + a renewal handed to the owner
  *   - NetworkError mid-progress -> Reconnecting + health-probe loop
+ *
+ * The lifecycle does not start sessions: under protocol v3 planning belongs to
+ * `PlaybackSessionManager.startVideoSessionV3`, so every test here begins from
+ * [PlaybackSessionLifecycle.adoptActiveSession].
  *
  * Time is fully virtual via `runTest` + `advanceTimeBy` so we can verify the
  * 1s -> 2s -> 4s -> 8s -> 8s exponential backoff and the 90s outage timeout
@@ -51,171 +54,6 @@ import kotlin.test.fail
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackSessionLifecycleTest {
-
-    @Test
-    fun `start emits Loading then Active on success`() = runTest {
-        // We can't rely on StateFlow.collect to capture every intermediate
-        // value — StateFlow conflates writes that happen before a
-        // collector is ready to consume. Instead, hold sessionManager.startSession
-        // suspended at a gate and inspect state.value at each known boundary.
-        val gate = kotlinx.coroutines.CompletableDeferred<ApiResult<PlaybackSessionResponse>>()
-        val sessionMgr = object : FakeSessionManager() {
-            override suspend fun startSession(
-                fileId: Int,
-                profileId: String,
-                capabilities: ClientCodecCapabilities,
-                audioTrackIndex: Int?,
-                qualityPreference: String?,
-                startPosition: Double?,
-                disableProgressPersistence: Boolean,
-            ): ApiResult<PlaybackSessionResponse> {
-                startCallCount++
-                return gate.await()
-            }
-        }
-        val recordedSessions = mutableListOf<String>()
-        val lifecycle = newLifecycle(
-            sessionMgr,
-            scope = backgroundScope,
-            playbackSessions = DiagnosticsPlaybackSessionRecorder { recordedSessions += it },
-        )
-
-        assertEquals(SessionState.Idle, lifecycle.state.value)
-
-        // Launch start() onto the test scheduler. Its first real suspension
-        // is sessionManager.startSession, which awaits the gate. After
-        // advanceUntilIdle, state must be Loading.
-        val startJob = launch { lifecycle.start(defaultStartParams()) }
-        advanceUntilIdle()
-        assertEquals(SessionState.Loading, lifecycle.state.value)
-
-        // Resume — start() finishes with Active.
-        gate.complete(ApiResult.Success(makeSession("sess-1")))
-        advanceUntilIdle()
-        startJob.join()
-
-        val terminal = lifecycle.state.value
-        assertTrue(terminal is SessionState.Active, "expected Active, got $terminal")
-        assertEquals("sess-1", (terminal as SessionState.Active).session.sessionId)
-        assertEquals(listOf("sess-1"), recordedSessions)
-
-        lifecycle.stop()
-    }
-
-    @Test
-    fun `a stop during start does not strand the new session`() = runTest {
-        // start() runs its API call outside the lifecycle mutex, and for that
-        // whole window state is Loading with no adopted id — so stop()'s
-        // ownership guard has nothing to compare and tears down anyway. The
-        // start then published Active over a screen the user had dismissed, and
-        // because that stop never saw this session id, the session stayed alive
-        // on the server eating a concurrent-stream slot until it timed out.
-        val gate = kotlinx.coroutines.CompletableDeferred<ApiResult<PlaybackSessionResponse>>()
-        val sessionMgr = object : FakeSessionManager() {
-            override suspend fun startSession(
-                fileId: Int,
-                profileId: String,
-                capabilities: ClientCodecCapabilities,
-                audioTrackIndex: Int?,
-                qualityPreference: String?,
-                startPosition: Double?,
-                disableProgressPersistence: Boolean,
-            ): ApiResult<PlaybackSessionResponse> {
-                startCallCount++
-                return gate.await()
-            }
-        }
-        val lifecycle = newLifecycle(sessionMgr, scope = backgroundScope)
-
-        val startJob = launch { lifecycle.start(defaultStartParams()) }
-        advanceUntilIdle()
-        assertEquals(SessionState.Loading, lifecycle.state.value)
-
-        // The user leaves. Nothing is Active yet, so the caller has no id to pass.
-        lifecycle.stop()
-        advanceUntilIdle()
-
-        gate.complete(ApiResult.Success(makeSession("sess-late")))
-        advanceUntilIdle()
-        startJob.join()
-
-        assertEquals(
-            SessionState.Idle,
-            lifecycle.state.value,
-            "a dismissed screen must not be resurrected by its own in-flight start",
-        )
-        assertEquals(
-            "sess-late",
-            sessionMgr.lastStoppedSessionId,
-            "the late session must be stopped, not left running on the server",
-        )
-    }
-
-    @Test
-    fun `a failed start finishing after stop does not publish stale failure`() = runTest {
-        val gate = kotlinx.coroutines.CompletableDeferred<ApiResult<PlaybackSessionResponse>>()
-        val sessionMgr = object : FakeSessionManager() {
-            override suspend fun startSession(
-                fileId: Int,
-                profileId: String,
-                capabilities: ClientCodecCapabilities,
-                audioTrackIndex: Int?,
-                qualityPreference: String?,
-                startPosition: Double?,
-                disableProgressPersistence: Boolean,
-            ): ApiResult<PlaybackSessionResponse> = gate.await()
-        }
-        val lifecycle = newLifecycle(sessionMgr, scope = backgroundScope)
-
-        val startJob = launch { lifecycle.start(defaultStartParams()) }
-        advanceUntilIdle()
-        assertEquals(SessionState.Loading, lifecycle.state.value)
-
-        lifecycle.stop()
-        gate.complete(
-            ApiResult.Error(
-                code = 500,
-                error = "start_failed",
-                message = "Start failed",
-            ),
-        )
-        advanceUntilIdle()
-        startJob.join()
-
-        assertEquals(
-            SessionState.Idle,
-            lifecycle.state.value,
-            "a completed teardown must remain terminal for its in-flight start",
-        )
-    }
-
-    @Test
-    fun `start emits Failed when profile id is null`() = runTest {
-        val lifecycle = newLifecycle(
-            sessionMgr = FakeSessionManager(),
-            profileRepo = FakeProfileRepository(activeProfileId = null),
-            scope = backgroundScope,
-        )
-
-        val terminal = lifecycle.start(defaultStartParams())
-        advanceUntilIdle()
-
-        assertTrue(terminal is SessionState.Failed)
-        assertTrue((terminal as SessionState.Failed).message.contains("profile", ignoreCase = true))
-    }
-
-    @Test
-    fun `start emits Failed on session API NetworkError`() = runTest {
-        val sessionMgr = FakeSessionManager().apply {
-            startResult = ApiResult.NetworkError(RuntimeException("boom"))
-        }
-        val lifecycle = newLifecycle(sessionMgr, scope = backgroundScope)
-
-        val terminal = lifecycle.start(defaultStartParams())
-        advanceUntilIdle()
-
-        assertTrue(terminal is SessionState.Failed)
-    }
 
     @Test
     fun `adoptActiveSession reports progress without starting duplicate session`() = runTest {
@@ -232,7 +70,6 @@ class PlaybackSessionLifecycleTest {
             session = makeSession("sess-adopted"),
         )
 
-        assertEquals(0, sessionMgr.startCallCount)
         val active = lifecycle.state.value
         assertTrue(active is SessionState.Active)
         assertEquals("sess-adopted", (active as SessionState.Active).session.sessionId)
@@ -241,10 +78,62 @@ class PlaybackSessionLifecycleTest {
         lifecycle.reportOwnedPosition(positionSec = 33.0, durationSec = 100.0, isPaused = false)
         advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
 
-        assertEquals(0, sessionMgr.startCallCount)
         assertEquals(1, sessionMgr.progressCallCount)
         assertEquals("sess-adopted", sessionMgr.lastProgressSessionId)
         assertEquals(33.0, sessionMgr.lastProgressPosition)
+    }
+
+    @Test
+    fun `same-session replan preserves an in-flight progress report`() = runTest {
+        val reportEntered = CompletableDeferred<Unit>()
+        val releaseReport = CompletableDeferred<Unit>()
+        var reportWasCancelled = false
+        val sessionMgr = object : FakeSessionManager() {
+            override suspend fun reportProgress(
+                sessionId: String,
+                position: Double,
+                isPaused: Boolean,
+            ): ApiResult<Unit> {
+                progressCallCount++
+                reportEntered.complete(Unit)
+                return try {
+                    releaseReport.await()
+                    ApiResult.Success(Unit)
+                } catch (cancellation: kotlinx.coroutines.CancellationException) {
+                    reportWasCancelled = true
+                    // Matches safeApiCall, which currently wraps cancellation
+                    // as a network result instead of rethrowing it.
+                    ApiResult.NetworkError(cancellation)
+                }
+            }
+        }
+        val healthApi = FakeHealthApi()
+        val lifecycle = newLifecycle(
+            sessionMgr = sessionMgr,
+            healthApi = healthApi,
+            scope = backgroundScope,
+        )
+
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-replan"))
+        lifecycle.reportOwnedPosition(42.0, 100.0, isPaused = false)
+        advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
+        reportEntered.await()
+
+        lifecycle.adoptActiveSession(
+            params = defaultStartParams(startPosition = 42.0).copy(subtitleTrackIndex = 7),
+            session = makeSession("sess-replan"),
+            deferPublication = true,
+        )
+        yield()
+
+        assertFalse(reportWasCancelled)
+        assertTrue(lifecycle.state.value is SessionState.Active)
+        assertEquals(0, healthApi.callCount)
+
+        releaseReport.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(reportWasCancelled)
+        assertEquals(0, healthApi.callCount)
     }
 
     @Test
@@ -269,7 +158,6 @@ class PlaybackSessionLifecycleTest {
         lifecycle.stop()
         advanceUntilIdle()
 
-        assertEquals(0, sessionMgr.startCallCount)
         assertEquals(0, sessionMgr.progressCallCount)
         assertEquals(0, sessionMgr.stopCallCount)
         assertTrue(personalRepo.syncCalls.isEmpty())
@@ -483,13 +371,8 @@ class PlaybackSessionLifecycleTest {
     }
 
     @Test
-    fun `reportPosition with 404 triggers session-missing recovery and re-starts`() = runTest {
+    fun `reportPosition with 404 snapshots progress and hands renewal to the owner`() = runTest {
         val sessionMgr = FakeSessionManager().apply {
-            // Two distinct sessions back-to-back: original then renewed.
-            startResults = ArrayDeque(listOf(
-                ApiResult.Success(makeSession("sess-original")),
-                ApiResult.Success(makeSession("sess-renewed")),
-            ))
             // First reportProgress returns 404 to trigger recovery.
             progressResults = ArrayDeque(listOf(
                 ApiResult.Error(404, "playback_session_not_found", "Playback session not found"),
@@ -501,19 +384,29 @@ class PlaybackSessionLifecycleTest {
             personalRepo = personalRepo,
             scope = backgroundScope,
         )
+        val renewals = mutableListOf<MissingSessionRenewal>()
+        backgroundScope.launch { lifecycle.missingSessionEvents.collect { renewals += it } }
+        advanceUntilIdle()
 
-        val first = lifecycle.start(defaultStartParams(startPosition = 0.0))
-        assertTrue(first is SessionState.Active)
-        assertEquals("sess-original", (first as SessionState.Active).session.sessionId)
+        val startParams = defaultStartParams(startPosition = 0.0).copy(
+            audioTrackIndex = 2,
+            subtitleTrackIndex = 8,
+            qualityPreference = "original",
+        )
+        lifecycle.adoptActiveSession(
+            params = startParams,
+            session = makeSession("sess-original"),
+        )
 
         // Simulate the player advancing.
         lifecycle.reportOwnedPosition(positionSec = 42.5, durationSec = 100.0, isPaused = false)
 
-        // Trigger the 10s reporter; first call returns 404 -> recovery -> re-start.
+        // Trigger the 10s reporter; the first call returns 404 -> recovery.
         advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
         advanceUntilIdle()
 
-        // Snapshot was synced with forceOverwrite at position 42.5.
+        // Snapshot was synced with forceOverwrite at position 42.5. This write
+        // is what protects the resume point if the owner's replan then fails.
         val snapshot = personalRepo.syncCalls.firstOrNull()
             ?: fail("expected syncProgress to be called during recovery")
         assertEquals(1, snapshot.size)
@@ -521,14 +414,12 @@ class PlaybackSessionLifecycleTest {
         assertEquals(42.5, snapshot.first().position)
         assertTrue(snapshot.first().forceOverwrite)
 
-        // New session is now active.
-        val state = lifecycle.state.value
-        assertTrue(state is SessionState.Active)
-        assertEquals("sess-renewed", (state as SessionState.Active).session.sessionId)
-        assertEquals(2, sessionMgr.startCallCount)
-
-        // Last start call resumed at 42.5.
-        assertEquals(42.5, sessionMgr.lastStartPosition)
+        // The lifecycle hands the resume position to whoever owns planning;
+        // it does not start a replacement session itself.
+        assertEquals(1, renewals.size)
+        assertEquals("sess-original", renewals.single().staleSessionId)
+        assertEquals(42.5, renewals.single().positionSeconds, 0.0)
+        assertEquals(startParams, renewals.single().startParams)
 
         lifecycle.stop()
     }
@@ -536,7 +427,6 @@ class PlaybackSessionLifecycleTest {
     @Test
     fun `reportPosition with NetworkError transitions to Reconnecting and probes health`() = runTest {
         val sessionMgr = FakeSessionManager().apply {
-            startResult = ApiResult.Success(makeSession("sess-1"))
             progressResults = ArrayDeque(listOf(
                 ApiResult.NetworkError(RuntimeException("offline")),
             ))
@@ -550,8 +440,8 @@ class PlaybackSessionLifecycleTest {
         }
         val lifecycle = newLifecycle(sessionMgr, healthApi = healthApi, scope = backgroundScope)
 
-        val active = lifecycle.start(defaultStartParams())
-        assertTrue(active is SessionState.Active)
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-1"))
+        assertTrue(lifecycle.state.value is SessionState.Active)
         lifecycle.reportOwnedPosition(10.0, 100.0, isPaused = false)
 
         // Trigger the 10s reporter -> NetworkError -> beginOutageRecovery.
@@ -585,7 +475,6 @@ class PlaybackSessionLifecycleTest {
     @Test
     fun `health probe Success transitions back to Active and clears notice`() = runTest {
         val sessionMgr = FakeSessionManager().apply {
-            startResult = ApiResult.Success(makeSession("sess-keepalive"))
             progressResults = ArrayDeque(listOf(
                 ApiResult.NetworkError(RuntimeException("offline")),
             ))
@@ -594,8 +483,8 @@ class PlaybackSessionLifecycleTest {
             results = ArrayDeque(listOf(ApiResult.Success(healthOk())))
         }
         val lifecycle = newLifecycle(sessionMgr, healthApi = healthApi, scope = backgroundScope)
-        val active = lifecycle.start(defaultStartParams())
-        assertTrue(active is SessionState.Active)
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-keepalive"))
+        assertTrue(lifecycle.state.value is SessionState.Active)
         lifecycle.reportOwnedPosition(5.0, 100.0, isPaused = false)
 
         advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
@@ -616,7 +505,6 @@ class PlaybackSessionLifecycleTest {
     @Test
     fun `health probe NetworkError repeats with exponential backoff up to 8s cap`() = runTest {
         val sessionMgr = FakeSessionManager().apply {
-            startResult = ApiResult.Success(makeSession("sess-1"))
             progressResults = ArrayDeque(listOf(
                 ApiResult.NetworkError(RuntimeException("offline")),
             ))
@@ -633,7 +521,7 @@ class PlaybackSessionLifecycleTest {
             ))
         }
         val lifecycle = newLifecycle(sessionMgr, healthApi = healthApi, scope = backgroundScope)
-        lifecycle.start(defaultStartParams())
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-1"))
         lifecycle.reportOwnedPosition(0.0, 100.0, isPaused = false)
         advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
         advanceUntilIdle()
@@ -671,7 +559,6 @@ class PlaybackSessionLifecycleTest {
     @Test
     fun `outage recovery times out at 90s and transitions to Failed`() = runTest {
         val sessionMgr = FakeSessionManager().apply {
-            startResult = ApiResult.Success(makeSession("sess-1"))
             progressResults = ArrayDeque(listOf(
                 ApiResult.NetworkError(RuntimeException("offline")),
             ))
@@ -681,7 +568,7 @@ class PlaybackSessionLifecycleTest {
             alwaysReturn = ApiResult.NetworkError(RuntimeException("down"))
         }
         val lifecycle = newLifecycle(sessionMgr, healthApi = healthApi, scope = backgroundScope)
-        lifecycle.start(defaultStartParams())
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-1"))
         lifecycle.reportOwnedPosition(0.0, 100.0, isPaused = false)
 
         advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
@@ -703,7 +590,6 @@ class PlaybackSessionLifecycleTest {
     @Test
     fun `health gateway error does not mark outage recovery reachable`() = runTest {
         val sessionMgr = FakeSessionManager().apply {
-            startResult = ApiResult.Success(makeSession("sess-proxy-down"))
             progressResults = ArrayDeque(
                 listOf(ApiResult.NetworkError(RuntimeException("offline"))),
             )
@@ -717,7 +603,7 @@ class PlaybackSessionLifecycleTest {
             )
         }
         val lifecycle = newLifecycle(sessionMgr, healthApi = healthApi, scope = backgroundScope)
-        lifecycle.start(defaultStartParams())
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-proxy-down"))
         lifecycle.reportOwnedPosition(0.0, 100.0, isPaused = false)
 
         advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
@@ -743,7 +629,6 @@ class PlaybackSessionLifecycleTest {
     @Test
     fun `gateway progress error starts outage recovery`() = runTest {
         val sessionMgr = FakeSessionManager().apply {
-            startResult = ApiResult.Success(makeSession("sess-progress-503"))
             progressResults = ArrayDeque(
                 listOf(ApiResult.Error(503, "unavailable", "origin down")),
             )
@@ -752,7 +637,7 @@ class PlaybackSessionLifecycleTest {
             results = ArrayDeque(listOf(ApiResult.Success(healthOk())))
         }
         val lifecycle = newLifecycle(sessionMgr, healthApi = healthApi, scope = backgroundScope)
-        lifecycle.start(defaultStartParams())
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-progress-503"))
         lifecycle.reportOwnedPosition(12.0, 100.0, isPaused = false)
 
         advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
@@ -774,11 +659,10 @@ class PlaybackSessionLifecycleTest {
     @Test
     fun `stop clears state to Idle and cancels all jobs`() = runTest {
         val sessionMgr = FakeSessionManager().apply {
-            startResult = ApiResult.Success(makeSession("sess-1"))
             progressDefault = ApiResult.Success(Unit)
         }
         val lifecycle = newLifecycle(sessionMgr, scope = backgroundScope)
-        lifecycle.start(defaultStartParams())
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-1"))
         lifecycle.reportOwnedPosition(15.0, 100.0, isPaused = false)
         advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
         advanceUntilIdle()
@@ -800,59 +684,36 @@ class PlaybackSessionLifecycleTest {
 
     @Test
     fun `repeated 404s during recovery do not fire multiple renewals`() = runTest {
-        // To exercise the debounce we MUST keep the original session active
-        // while several 404s arrive for it. We do that by holding the
-        // renewal `startSession` call suspended on a gate — every reporter
-        // tick runs against `sess-original` and returns 404. With the
-        // debounce honored, only one recovery (one renewal start) fires.
-        val renewalGate = kotlinx.coroutines.CompletableDeferred<ApiResult<PlaybackSessionResponse>>()
-        val sessionMgr = object : FakeSessionManager() {
-            override suspend fun startSession(
-                fileId: Int,
-                profileId: String,
-                capabilities: ClientCodecCapabilities,
-                audioTrackIndex: Int?,
-                qualityPreference: String?,
-                startPosition: Double?,
-                disableProgressPersistence: Boolean,
-            ): ApiResult<PlaybackSessionResponse> {
-                startCallCount++
-                lastStartPosition = startPosition
-                return when (startCallCount) {
-                    1 -> ApiResult.Success(makeSession("sess-original"))
-                    2 -> renewalGate.await()  // hold the renewal so reporter keeps polling sess-original
-                    else -> ApiResult.Success(makeSession("sess-${startCallCount}"))
-                }
-            }
-        }.apply {
+        // The owner's replan is not instantaneous, so the adopted session stays
+        // Active while several more 404s arrive for it. Each reporter tick runs
+        // against `sess-original` and gets a 404; with the debounce honored the
+        // owner is told exactly once.
+        val sessionMgr = FakeSessionManager().apply {
             // Five 404s on tap — well more than reporter ticks we'll fire.
             progressResults = ArrayDeque(List(5) {
                 ApiResult.Error(404, "playback_session_not_found", "Playback session not found")
             })
         }
         val lifecycle = newLifecycle(sessionMgr, scope = backgroundScope)
-        lifecycle.start(defaultStartParams())
+        val renewals = mutableListOf<MissingSessionRenewal>()
+        backgroundScope.launch { lifecycle.missingSessionEvents.collect { renewals += it } }
+        advanceUntilIdle()
+
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sess-original"))
         lifecycle.reportOwnedPosition(7.0, 100.0, isPaused = false)
 
-        // Four reporter ticks — every tick reads state.value's session, which
-        // is still sess-original because the renewal start() is gated. Each
-        // tick returns 404 for sess-original; the debounce should keep us
-        // from launching multiple renewal coroutines.
+        // Four reporter ticks, each returning 404 for the still-adopted
+        // sess-original. The debounce should collapse them to one renewal.
         repeat(4) {
             advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
             advanceUntilIdle()
         }
 
-        // Exactly two start calls: original + one renewal — *not* one per 404.
         assertEquals(
-            2,
-            sessionMgr.startCallCount,
+            listOf(7.0),
+            renewals.map(MissingSessionRenewal::positionSeconds),
             "expected exactly one renewal regardless of how many 404s arrived",
         )
-
-        // Let the renewal finish so the test ends cleanly.
-        renewalGate.complete(ApiResult.Success(makeSession("sess-renewed")))
-        advanceUntilIdle()
 
         lifecycle.stop()
     }
@@ -1008,14 +869,12 @@ class PlaybackSessionLifecycleTest {
 
     private fun TestScope.newLifecycle(
         sessionMgr: FakeSessionManager,
-        profileRepo: ProfileRepository = FakeProfileRepository(activeProfileId = "p1"),
         healthApi: FakeHealthApi = FakeHealthApi(),
         personalRepo: PersonalDataRepository = RecordingPersonalDataRepository(),
         scope: CoroutineScope = this.backgroundScope,
         playbackSessions: DiagnosticsPlaybackSessionRecorder = DiagnosticsPlaybackSessionRecorder.None,
     ): PlaybackSessionLifecycle = PlaybackSessionLifecycle(
         sessionManager = sessionMgr,
-        profileRepository = profileRepo,
         healthApi = healthApi,
         personalDataRepository = personalRepo,
         scope = scope,
@@ -1044,6 +903,7 @@ class PlaybackSessionLifecycleTest {
         contentId = "content-1",
         fileId = 42,
         capabilities = ClientCodecCapabilities(),
+        clientPlaybackContext = ClientPlaybackContext(formFactor = "tv", appVersion = "test"),
         audioTrackIndex = null,
         qualityPreference = null,
         startPosition = startPosition,
@@ -1070,39 +930,16 @@ private open class FakeSessionManager : PlaybackSessionManager(
     tokenManager = NoOpTokenManager,
 ) {
 
-    /** If `startResults` is non-empty it takes priority; otherwise `startResult`. */
-    var startResult: ApiResult<PlaybackSessionResponse> = ApiResult.Error(500, "x", "x")
-    var startResults: ArrayDeque<ApiResult<PlaybackSessionResponse>>? = null
-
     var progressDefault: ApiResult<Unit> = ApiResult.Success(Unit)
     var progressResults: ArrayDeque<ApiResult<Unit>>? = null
 
     var stopResult: ApiResult<Unit> = ApiResult.Success(Unit)
 
-    var startCallCount = 0
     var progressCallCount = 0
     var stopCallCount = 0
     var lastStoppedSessionId: String? = null
-    var lastStartPosition: Double? = null
     var lastProgressSessionId: String? = null
     var lastProgressPosition: Double? = null
-
-    var lastDisableProgressPersistence: Boolean? = null
-
-    override suspend fun startSession(
-        fileId: Int,
-        profileId: String,
-        capabilities: ClientCodecCapabilities,
-        audioTrackIndex: Int?,
-        qualityPreference: String?,
-        startPosition: Double?,
-        disableProgressPersistence: Boolean,
-    ): ApiResult<PlaybackSessionResponse> {
-        startCallCount++
-        lastStartPosition = startPosition
-        lastDisableProgressPersistence = disableProgressPersistence
-        return startResults?.takeIf { it.isNotEmpty() }?.removeFirst() ?: startResult
-    }
 
     override suspend fun reportProgress(
         sessionId: String,
@@ -1137,15 +974,6 @@ private class FakeHealthApi : HealthApi(client = HttpClient()) {
 
 private fun healthOk(): HealthStatus = HealthStatus(status = "ok")
 
-private class FakeProfileRepository(
-    private val activeProfileId: String?,
-) : ProfileRepository(
-    profileApi = NoOpProfileApi,
-    tokenManager = NoOpTokenManager,
-) {
-    override suspend fun getActiveProfileId(): String? = activeProfileId
-}
-
 private class RecordingPersonalDataRepository : PersonalDataRepository(
     personalDataApi = NoOpPersonalDataApi,
 ) {
@@ -1162,7 +990,6 @@ private class RecordingPersonalDataRepository : PersonalDataRepository(
 
 private val NoOpHttpClient: HttpClient = HttpClient()
 private val NoOpPlaybackApi: PlaybackApi = PlaybackApi(NoOpHttpClient)
-private val NoOpProfileApi: ProfileApi = ProfileApi(NoOpHttpClient)
 private val NoOpPersonalDataApi: PersonalDataApi = PersonalDataApi(NoOpHttpClient)
 
 private val NoOpTokenManager: TokenManager = object : TokenManager {

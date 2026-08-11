@@ -87,6 +87,39 @@ fun buildPlaybackSubtitleChoices(
         .distinctBy(PlayerSubtitleInfo::index)
 }
 
+/**
+ * Enriches a protocol-v3 subtitle inventory without changing its membership.
+ *
+ * Unlike [buildPlaybackSubtitleChoices], this function never synthesizes a row
+ * from catalog metadata: `PlaybackPlanV3.subtitle.inventory` is complete and
+ * authoritative, including when it is empty. Catalog data may only fill display
+ * metadata on the exact combined ordinal the server already published.
+ */
+fun enrichAuthoritativePlaybackSubtitleChoices(
+    catalogTracks: List<SubtitleTrack>,
+    plannedTracks: List<PlayerSubtitleInfo>,
+): List<PlayerSubtitleInfo> {
+    if (plannedTracks.isEmpty()) return emptyList()
+    val catalogByCombinedIndex = combinedSubtitleSelectionIndexes(catalogTracks)
+        .zip(catalogTracks)
+        .toMap()
+    return plannedTracks
+        .distinctBy(PlayerSubtitleInfo::index)
+        .map { planned ->
+            val catalog = catalogByCombinedIndex[planned.index] ?: return@map planned
+            planned.copy(
+                language = planned.language ?: catalog.language,
+                codec = planned.codec ?: catalog.codec,
+                label = planned.label ?: catalog.title,
+                source = planned.source ?: if (catalog.external) "external" else "embedded",
+                forced = planned.forced ?: catalog.forced,
+                catalogLabel = catalog.title,
+                catalogSource = if (catalog.external) "external" else "embedded",
+                isDefault = catalog.isDefault,
+            )
+        }
+}
+
 private val DOWNLOADED_SUBTITLE_SESSION_PATH =
     Regex("""(/stream/)([^/]+)(/subtitles/[0-9]+\.[^/]+)$""")
 

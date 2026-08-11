@@ -1,6 +1,7 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.auth.AuthSession
+import org.siloserver.silo.model.auth.InvitationLookupResponse
 import org.siloserver.silo.model.auth.LoginResponse
 import org.siloserver.silo.model.auth.LoginRequest
 import org.siloserver.silo.model.auth.SetupStatusResponse
@@ -11,7 +12,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.AuthApi
-import org.siloserver.silo.model.auth.InvitationLookupResponse
+import org.siloserver.silo.network.api.BrandingApi
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.map
 
@@ -20,6 +21,7 @@ class AuthRepository(
     private val tokenManager: TokenManager,
     private val serverRegistry: ServerRegistry? = null,
     private val healthApi: HealthApi? = null,
+    private val brandingApi: BrandingApi? = null,
 ) {
     /**
      * Persists a successful auth response's tokens into the active server's
@@ -200,20 +202,26 @@ class AuthRepository(
     }
 
     /**
-     * Best-effort: hit `/api/v1/health` and update the active registry entry's
-     * fetched name. Quietly no-ops if there's no registry, no active server,
-     * or the call fails — this is purely for nicer UX in the server list.
+     * Best-effort: read the native branding identity and update the active
+     * registry entry's fetched name. Health is a fallback for older servers
+     * without the branding endpoint. Quietly no-ops if no usable name can be
+     * resolved — this is purely for nicer UX in the server list.
      */
     suspend fun refreshActiveServerName() {
         val registry = serverRegistry ?: return
-        val api = healthApi ?: return
         val activeId = registry.activeServerId.value ?: return
-        val result = api.checkHealth()
-        if (result is ApiResult.Success && registry.activeServerId.value == activeId) {
-            result.data.serverName
-                ?.trim()
-                ?.takeIf { it.isNotBlank() }
-                ?.let { registry.setFetchedName(activeId, it) }
+        val brandingName = (brandingApi?.getBranding() as? ApiResult.Success)
+            ?.data
+            ?.serverName
+            .usableServerName()
+        val resolvedName = brandingName ?: (healthApi?.checkHealth() as? ApiResult.Success)
+            ?.data
+            ?.serverName
+            .usableServerName()
+        if (resolvedName != null && registry.activeServerId.value == activeId) {
+            registry.setFetchedName(activeId, resolvedName)
         }
     }
+
+    private fun String?.usableServerName(): String? = this?.trim()?.takeIf { it.isNotBlank() }
 }

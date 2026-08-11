@@ -31,6 +31,13 @@ data class AudioDiagnosticsSnapshot(
     val capabilities: AudioPassthroughCapabilities,
 )
 
+/** One atomically published planning view of the active audio route. */
+data class AudioPlaybackRouteSnapshot(
+    val sinkType: String,
+    val routeGeneration: Long,
+    val capabilities: AudioPassthroughCapabilities,
+)
+
 /**
  * Tracks the current [AudioCapabilities] of the active audio sink (built-in
  * speaker, HDMI receiver, Bluetooth, USB DAC) and exposes them as an
@@ -63,11 +70,30 @@ class AudioCapabilityManager(
     private val generationCounter = AtomicLong(0)
     private val _outputRouteGeneration = MutableStateFlow(0L)
     val outputRouteGeneration: StateFlow<Long> = _outputRouteGeneration.asStateFlow()
+    @Volatile
+    private var playbackRouteSnapshot = AudioPlaybackRouteSnapshot(
+        sinkType = "unknown",
+        routeGeneration = 0L,
+        capabilities = AudioPassthroughCapabilities(),
+    )
+    private var routeSnapshotInitialized = false
 
     private fun publishCapabilities(next: AudioPassthroughCapabilities) {
-        if (_capabilities.value == next) return
+        val changed = _capabilities.value != next
+        if (!changed && routeSnapshotInitialized) return
+        val generation = if (changed) {
+            generationCounter.incrementAndGet()
+        } else {
+            _outputRouteGeneration.value
+        }
+        playbackRouteSnapshot = AudioPlaybackRouteSnapshot(
+            sinkType = currentSinkType(),
+            routeGeneration = generation,
+            capabilities = next.immutableCopy(),
+        )
+        routeSnapshotInitialized = true
         _capabilities.value = next
-        _outputRouteGeneration.value = generationCounter.incrementAndGet()
+        _outputRouteGeneration.value = generation
         Log.i(
             TAG,
             "Audio output capabilities updated: " +
@@ -77,7 +103,14 @@ class AudioCapabilityManager(
     }
 
     private fun bumpOutputRouteGeneration() {
-        _outputRouteGeneration.value = generationCounter.incrementAndGet()
+        val generation = generationCounter.incrementAndGet()
+        playbackRouteSnapshot = AudioPlaybackRouteSnapshot(
+            sinkType = currentSinkType(),
+            routeGeneration = generation,
+            capabilities = _capabilities.value.immutableCopy(),
+        )
+        routeSnapshotInitialized = true
+        _outputRouteGeneration.value = generation
     }
 
     private var lastDisplayHdr = DisplayHdrProbe.probe(appContext)
@@ -178,21 +211,30 @@ class AudioCapabilityManager(
         return sinkType(devices)
     }
 
+    /** Planning callers consume this single value, never separate route flows. */
+    fun playbackRouteSnapshot(): AudioPlaybackRouteSnapshot = playbackRouteSnapshot
+
     /** Privacy-safe immutable route evidence. Raw device names and addresses never leave this class. */
     fun diagnosticsSnapshot(): AudioDiagnosticsSnapshot {
         val devices = currentOutputDevices()
+        val planning = playbackRouteSnapshot
         return AudioDiagnosticsSnapshot(
-            sinkType = sinkType(devices),
+            sinkType = planning.sinkType,
             routeHashes = devices.map(::routeHash).distinct().sorted(),
-            routeGeneration = outputRouteGeneration.value,
-            capabilities = capabilities.value.copy(
-                passthroughCodecs = capabilities.value.passthroughCodecs.toList(),
-                entries = capabilities.value.entries.map { entry ->
-                    entry.copy(channelCounts = entry.channelCounts.toList(), layouts = entry.layouts.toList())
-                },
-            ),
+            routeGeneration = planning.routeGeneration,
+            capabilities = planning.capabilities,
         )
     }
+
+    private fun AudioPassthroughCapabilities.immutableCopy(): AudioPassthroughCapabilities = copy(
+        passthroughCodecs = passthroughCodecs.toList(),
+        entries = entries.map { entry ->
+            entry.copy(
+                channelCounts = entry.channelCounts.toList(),
+                layouts = entry.layouts.toList(),
+            )
+        },
+    )
 
     private fun currentOutputDevices(): List<AudioDeviceInfo> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -68,3 +68,34 @@ internal fun parseTvPlaybackDeepLinkArgs(
     audioTrackIndex = queryParameter("audioTrackIndex")?.toIntOrNull()?.takeIf { it >= 0 },
     subtitleTrackIndex = queryParameter("subtitleTrackIndex")?.toIntOrNull()?.takeIf { it >= -1 },
 )
+
+/**
+ * Whether the current player entry represents this exact app-owned play link.
+ *
+ * Arrival gating must compare the full request, not only content identity. A
+ * warm deep link can deliberately replay the same file with another subtitle,
+ * audio track or quality. Treating the title already on screen as "arrived"
+ * consumed that new link before navigation and left the old player state live.
+ */
+internal fun tvPlaybackDeepLinkArrived(
+    currentRoute: String?,
+    currentContentId: String?,
+    currentFileId: Int?,
+    currentQuality: String?,
+    currentAudioTrackIndex: Int?,
+    currentSubtitleTrackIndex: Int?,
+    itemType: String?,
+    contentId: String,
+    requested: TvPlaybackDeepLinkArgs,
+): Boolean {
+    if (currentContentId != contentId) return false
+    if (isAudiobookItemType(itemType)) {
+        return currentRoute == TvRoute.AudiobookPlayer.ROUTE &&
+            currentFileId == requested.fileId
+    }
+    return currentRoute == TvRoute.Player.ROUTE &&
+        currentFileId == requested.fileId &&
+        VideoPlayerRouteArgs.normalizeQuality(currentQuality) == requested.quality &&
+        currentAudioTrackIndex == requested.audioTrackIndex &&
+        currentSubtitleTrackIndex == requested.subtitleTrackIndex
+}

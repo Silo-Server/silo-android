@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Pure routing decision: audiobook-type items go to the audiobook player route,
@@ -108,5 +109,72 @@ class TvAudiobookRoutingTest {
         )
 
         assertEquals(TvPlaybackDeepLinkArgs(), parseTvPlaybackDeepLinkArgs(query::get))
+    }
+
+    @Test
+    fun exactVideoPlaybackDeepLinkIsAlreadyArrived() {
+        assertTrue(
+            tvPlaybackDeepLinkArrived(
+                currentRoute = TvRoute.Player.ROUTE,
+                currentContentId = "movie-1",
+                currentFileId = 42,
+                currentQuality = "original",
+                currentAudioTrackIndex = 1,
+                currentSubtitleTrackIndex = 8,
+                itemType = "movie",
+                contentId = "movie-1",
+                requested = TvPlaybackDeepLinkArgs(
+                    fileId = 42,
+                    quality = "original",
+                    audioTrackIndex = 1,
+                    subtitleTrackIndex = 8,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun sameContentWithAnotherSubtitleIsANewPlaybackRequest() {
+        assertFalse(
+            tvPlaybackDeepLinkArrived(
+                currentRoute = TvRoute.Player.ROUTE,
+                currentContentId = "movie-1",
+                currentFileId = 42,
+                currentQuality = "original",
+                currentAudioTrackIndex = 1,
+                currentSubtitleTrackIndex = 10,
+                itemType = "movie",
+                contentId = "movie-1",
+                requested = TvPlaybackDeepLinkArgs(
+                    fileId = 42,
+                    quality = "original",
+                    audioTrackIndex = 1,
+                    subtitleTrackIndex = 8,
+                ),
+            ),
+            "a warm test link must replace the player instead of reusing stale subtitle state",
+        )
+    }
+
+    @Test
+    fun audiobookArrivalIgnoresVideoOnlyTrackArguments() {
+        assertTrue(
+            tvPlaybackDeepLinkArrived(
+                currentRoute = TvRoute.AudiobookPlayer.ROUTE,
+                currentContentId = "book-1",
+                currentFileId = 7,
+                currentQuality = null,
+                currentAudioTrackIndex = null,
+                currentSubtitleTrackIndex = null,
+                itemType = "audiobook",
+                contentId = "book-1",
+                requested = TvPlaybackDeepLinkArgs(
+                    fileId = 7,
+                    quality = "720p",
+                    audioTrackIndex = 2,
+                    subtitleTrackIndex = 4,
+                ),
+            ),
+        )
     }
 }

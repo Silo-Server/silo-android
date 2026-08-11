@@ -14,16 +14,48 @@ import kotlinx.serialization.json.decodeFromJsonElement
 
 const val PLAYBACK_PROTOCOL_V3 = 3
 const val PLAYBACK_PLAN_V3_FEATURE = "playback_plan_v3"
-const val MEDIA3_ONLY_FEATURE = "media3_only"
-const val DETAILED_DECODE_CAPABILITIES_FEATURE = "detailed_decode_capabilities"
+const val NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE = "neutral_playback_v3_contract_v1"
 const val LAYOUT_AWARE_PASSTHROUGH_FEATURE = "layout_aware_passthrough"
 const val CLIENT_VIDEO_TRANSFORMATIONS_FEATURE = "client_video_transformations_v1"
 const val DEVICE_QUIRKS_V3_FEATURE = "device_quirks_v1"
 const val SEEK_REANCHOR_V3_FEATURE = "seek_reanchor_v1"
 const val DIRECT_STREAM_RESUME_V1_FEATURE = "direct_stream_resume_v1"
-const val EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE = "external_text_sidecar_set_v1"
+
+/**
+ * How a capability list was obtained. The server validates strictly against
+ * [CAPABILITY_EVIDENCE_EXACT] and only grants audio passthrough at that tier;
+ * weaker tiers exist so a platform that cannot enumerate decoders does not have
+ * to fabricate profile/level tuples to be understood.
+ */
+const val CAPABILITY_EVIDENCE_EXACT = "exact"
+const val CAPABILITY_EVIDENCE_PLATFORM_ATTESTED = "platform_attested"
+const val CAPABILITY_EVIDENCE_DECLARED = "declared"
+
+/** Transport classes a client negotiates over; the unit of [DeliveryCapability]. */
+const val DELIVERY_CLASS_ORIGINAL_HTTP = "original_http"
+const val DELIVERY_CLASS_PROGRESSIVE = "progressive"
+const val DELIVERY_CLASS_HLS = "hls"
+
+/** Subtitle delivery values understood by this client. */
+const val SUBTITLE_DELIVERY_SIDECAR = "sidecar"
+const val SUBTITLE_DELIVERY_BURN_IN_ONLY = "burn_in_only"
+
+/** Replan operations. Omitted means [FAILURE_RECOVERY_V3_OPERATION]. */
+const val FAILURE_RECOVERY_V3_OPERATION = "failure_recovery"
 const val SEEK_REANCHOR_V3_OPERATION = "seek_reanchor"
 const val SEEK_FAILURE_RECOVERY_V3_OPERATION = "seek_failure_recovery"
+const val TRACK_CHANGE_V3_OPERATION = "track_change"
+const val QUALITY_CHANGE_V3_OPERATION = "quality_change"
+
+/**
+ * Operations that describe a user-initiated change rather than a failure, and so
+ * carry no `failure.classification`.
+ */
+val INTENT_V3_OPERATIONS = setOf(TRACK_CHANGE_V3_OPERATION, QUALITY_CHANGE_V3_OPERATION)
+
+/** The quality rung that asks the server to preserve the source as-is. */
+const val QUALITY_ORIGINAL_V3 = "original"
+
 const val CLIENT_DV7_TO_DV81 = "client_dv7_to_dv81"
 const val CLIENT_DV7_TO_HDR10 = "client_dv7_to_hdr10"
 const val CLIENT_DV_TRANSFORM_RECIPE_VERSION = "1"
@@ -31,23 +63,32 @@ const val CLIENT_DV8_HDR10_PLUS_SANITIZER = "client_dv8_hdr10plus_sanitizer_v1"
 const val CLIENT_POST_RESUME_VIDEO_RECOVERY = "client_post_resume_video_recovery_v1"
 const val CLIENT_SURFACE_RECOVERY = "client_surface_recovery_v1"
 
-/** Features the client advertises on `POST /api/v1/playback/start`. */
+/** Features the client advertises unconditionally on every v3 request. */
 val PLAYBACK_START_CLIENT_FEATURES_V3 = listOf(
     PLAYBACK_PLAN_V3_FEATURE,
-    MEDIA3_ONLY_FEATURE,
-    DETAILED_DECODE_CAPABILITIES_FEATURE,
     CLIENT_VIDEO_TRANSFORMATIONS_FEATURE,
     DEVICE_QUIRKS_V3_FEATURE,
     SEEK_REANCHOR_V3_FEATURE,
     DIRECT_STREAM_RESUME_V1_FEATURE,
 )
 
-fun playbackStartClientFeatures(context: ClientPlaybackContext): List<String> =
-    if (EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE in context.features) {
-        PLAYBACK_START_CLIENT_FEATURES_V3 + EXTERNAL_TEXT_SIDECAR_SET_V1_FEATURE
-    } else {
-        PLAYBACK_START_CLIENT_FEATURES_V3
+/**
+ * The features to advertise for a given output context.
+ *
+ * `client_features` lives only at the top level of a start/replan request — the
+ * neutral contract deliberately has no second features list inside the playback
+ * context — so anything conditional on the device's current output has to be
+ * folded in here. [LAYOUT_AWARE_PASSTHROUGH_FEATURE] is exactly that: the
+ * server grants a validated passthrough claim only when the client both
+ * advertises the feature and enumerates real per-codec channel layouts, so
+ * claiming it with an empty entry list would be a claim we cannot back.
+ */
+fun playbackClientFeaturesV3(context: ClientPlaybackContext): List<String> = buildList {
+    addAll(PLAYBACK_START_CLIENT_FEATURES_V3)
+    if (!context.output.audioPassthrough?.entries.isNullOrEmpty()) {
+        add(LAYOUT_AWARE_PASSTHROUGH_FEATURE)
     }
+}
 
 @Serializable
 enum class PlaybackDecisionOutcome {
@@ -80,6 +121,12 @@ enum class PlaybackSubtitleModeV3 {
 enum class SubtitleFidelityPreference {
     @SerialName("preserve") PRESERVE,
     @SerialName("compatible") COMPATIBLE,
+}
+
+@Serializable
+enum class ProgressPersistenceV3 {
+    @SerialName("server") SERVER,
+    @SerialName("client") CLIENT,
 }
 
 @Serializable
@@ -125,10 +172,15 @@ internal object TolerantPlaybackPlanV3Serializer : KSerializer<PlaybackPlanV3?> 
 data class PlaybackPlanV3(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
     @SerialName("plan_id") val planId: String,
+    /**
+     * Server-minted opaque loop-prevention token for this plan. The client
+     * stores it and echoes the keys of everything it has already attempted in
+     * `attempted_plan_keys`; it never computes a key itself.
+     */
+    @SerialName("plan_attempt_key") val planAttemptKey: String = "",
     @SerialName("session_id") val sessionId: String? = null,
     @SerialName("expires_at") val expiresAt: String? = null,
     val delivery: PlaybackDelivery,
-    val engine: PlaybackEngineKind,
     val stream: PlaybackStreamV3,
     val timeline: PlaybackTimelineV3 = PlaybackTimelineV3(),
     @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracksV3 = SelectedPlaybackTracksV3(),
@@ -138,11 +190,27 @@ data class PlaybackPlanV3(
     val transformations: List<PlaybackTransformationV3> = emptyList(),
     @SerialName("applied_quirks") val appliedQuirks: List<PlaybackAppliedQuirkV3> = emptyList(),
     @SerialName("runtime_corrections") val runtimeCorrections: List<String> = emptyList(),
+    /**
+     * The quality rungs the server will honor for this source, in the order it
+     * wants them shown. The client renders this menu; it never derives rungs
+     * from the source resolution itself.
+     */
+    @SerialName("available_qualities") val availableQualities: List<PlaybackAvailableQualityV3> = emptyList(),
     @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
     @SerialName("decision_reason") val decisionReason: String,
     @SerialName("requested_media_file_id") val requestedMediaFileId: Int? = null,
     @SerialName("effective_media_file_id") val effectiveMediaFileId: Int? = null,
     val source: PlaybackSourceDescriptorV3 = PlaybackSourceDescriptorV3(),
+    @SerialName("subtitle_fidelity_policy") val subtitleFidelityPolicy: String? = null,
+)
+
+/** One selectable rung of [PlaybackPlanV3.availableQualities]. */
+@Serializable
+data class PlaybackAvailableQualityV3(
+    val label: String,
+    val height: Int = 0,
+    @SerialName("bitrate_kbps") val bitrateKbps: Int = 0,
+    @SerialName("preserves_source") val preservesSource: Boolean = false,
 )
 
 /**
@@ -166,7 +234,13 @@ data class PlaybackSourceDescriptorV3(
      * reports the window produced so far, not the runtime.
      */
     @SerialName("duration_seconds") val durationSeconds: Double? = null,
+    val container: String? = null,
+    @SerialName("video_codec") val videoCodec: String? = null,
     @SerialName("color_range") val colorRange: String? = null,
+    val width: Int = 0,
+    val height: Int = 0,
+    @SerialName("dynamic_range") val dynamicRange: String? = null,
+    @SerialName("audio_codec") val audioCodec: String? = null,
     @SerialName("letterbox_top_fraction") val letterboxTopFraction: Double = 0.0,
     @SerialName("letterbox_bottom_fraction") val letterboxBottomFraction: Double = 0.0,
 )
@@ -236,22 +310,45 @@ data class PlaybackSubtitleArtifactV3(
 )
 
 @Serializable
-data class PlaybackSubtitleSidecarV3(
-    @SerialName("track_id") val trackId: String,
-    val index: Int,
-    val url: String,
-    @SerialName("mime_type") val mimeType: String,
-    val format: String,
-    @SerialName("timing_origin_seconds") val timingOriginSeconds: Double = 0.0,
-)
-
-@Serializable
 data class PlaybackSubtitleDecisionV3(
     val mode: PlaybackSubtitleModeV3 = PlaybackSubtitleModeV3.OFF,
     @SerialName("track_id") val trackId: String? = null,
     val artifact: PlaybackSubtitleArtifactV3? = null,
-    val sidecars: List<PlaybackSubtitleSidecarV3> = emptyList(),
+    /**
+     * The complete, gap-free combined-ordinal subtitle list for the effective
+     * source. Authoritative: select a track by echoing an entry's
+     * [PlaybackSubtitleInventoryItemV3.trackId] or
+     * [PlaybackSubtitleInventoryItemV3.combinedIndex], never by counting tracks
+     * or taking `max(index) + 1`.
+     */
+    val inventory: List<PlaybackSubtitleInventoryItemV3> = emptyList(),
 )
+
+/** One selectable subtitle track at its frozen combined ordinal. */
+@Serializable
+data class PlaybackSubtitleInventoryItemV3(
+    @SerialName("track_id") val trackId: String,
+    @SerialName("combined_index") val combinedIndex: Int,
+    val source: String,
+    val codec: String? = null,
+    val language: String? = null,
+    val label: String? = null,
+    val forced: Boolean = false,
+    @SerialName("default") val isDefault: Boolean = false,
+    @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
+    /** `sidecar` or `burn_in_only`; the last carries no [url]. */
+    val delivery: String = "",
+    val url: String? = null,
+    @SerialName("font_bundle_url") val fontBundleUrl: String? = null,
+)
+
+/** Resolves the optional ordinal from the stable server track identity. */
+fun PlaybackPlanV3.resolvedSelectedSubtitleIndex(): Int? =
+    selectedTracks.subtitle?.let { selected ->
+        selected.index ?: subtitle.inventory
+            .firstOrNull { it.trackId == selected.id }
+            ?.combinedIndex
+    }
 
 @Serializable
 data class PlaybackTransformationV3(
@@ -277,18 +374,18 @@ data class PlaybackTerminalV3(
 @Serializable
 data class PlaybackStartRequestV3(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
-    @SerialName("client_features") val clientFeatures: List<String> = PLAYBACK_START_CLIENT_FEATURES_V3,
+    @SerialName("client_features") val clientFeatures: List<String>,
     @SerialName("file_id") val fileId: Int,
     @SerialName("profile_id") val profileId: String,
     @SerialName("playback_attempt_id") val playbackAttemptId: String,
     @SerialName("quality_preference") val qualityPreference: String = "auto",
     @SerialName("subtitle_fidelity_preference") val subtitleFidelityPreference: SubtitleFidelityPreference,
     @SerialName("start_position") val startPosition: Double? = null,
+    @SerialName("progress_persistence") val progressPersistence: ProgressPersistenceV3 = ProgressPersistenceV3.SERVER,
     @SerialName("audio_track_id") val audioTrackId: String? = null,
     @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
     @SerialName("subtitle_track_id") val subtitleTrackId: String? = null,
     @SerialName("subtitle_track_index") val subtitleTrackIndex: Int? = null,
-    @SerialName("output_route_generation") val outputRouteGeneration: Long,
     val metered: Boolean = false,
     @SerialName("bandwidth_estimate_kbps") val bandwidthEstimateKbps: Int? = null,
     @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
@@ -306,11 +403,8 @@ data class PlaybackFailureV3(
 @Serializable
 data class PlaybackReplanRequestV3(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
-    /**
-     * Omitted requests retain the protocol-v3 failure-recovery behavior.
-     * Explicit operations are negotiated independently through client/server
-     * features so an older server never has to infer new semantics.
-     */
+    @SerialName("client_features") val clientFeatures: List<String>,
+    /** Omitted means [FAILURE_RECOVERY_V3_OPERATION]. */
     val operation: String? = null,
     @SerialName("playback_attempt_id") val playbackAttemptId: String,
     @SerialName("replan_request_id") val replanRequestId: String,
@@ -318,15 +412,26 @@ data class PlaybackReplanRequestV3(
     @SerialName("plan_attempt_id") val planAttemptId: String,
     @SerialName("plan_attempt_key") val planAttemptKey: String,
     @SerialName("attempted_plan_keys") val attemptedPlanKeys: List<String>,
+    /**
+     * Client-applied mutations the server should fold into the next attempt
+     * key, so two plans that differ only by something the client did locally do
+     * not collide. The client reports the mutations; the server does the
+     * hashing.
+     */
+    @SerialName("local_mutations") val localMutations: List<String> = emptyList(),
     @SerialName("attempt_count") val attemptCount: Int,
     @SerialName("quality_preference") val qualityPreference: String = "auto",
     @SerialName("position_seconds") val positionSeconds: Double,
-    @SerialName("output_route_generation") val outputRouteGeneration: Long,
     val metered: Boolean = false,
     @SerialName("bandwidth_estimate_kbps") val bandwidthEstimateKbps: Int? = null,
     @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
     @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracksV3,
-    val failure: PlaybackFailureV3,
+    /**
+     * Absent for intent operations ([INTENT_V3_OPERATIONS]), which describe a
+     * user's choice, and for [SEEK_REANCHOR_V3_OPERATION], which requests a
+     * different transport anchor rather than reporting a route failure.
+     */
+    val failure: PlaybackFailureV3? = null,
     @SerialName("client_capabilities") val capabilities: ClientCodecCapabilities,
     @SerialName("client_playback_context") val clientPlaybackContext: ClientPlaybackContext,
 )
@@ -344,47 +449,9 @@ data class PlaybackRouteEventV3(
     @SerialName("fallback_reason") val fallbackReason: String? = null,
     @SerialName("applied_quirk_ids") val appliedQuirkIds: List<String> = emptyList(),
     @SerialName("quirk_registry_revision") val quirkRegistryRevision: String? = null,
-    @SerialName("output_route_generation") val outputRouteGeneration: Long,
+    @SerialName("output_context_id") val outputContextId: String? = null,
     val diagnostics: Map<String, String> = emptyMap(),
 )
-
-fun PlaybackPlanV3.planAttemptKey(
-    outputRouteGeneration: Long,
-    localMutations: List<String> = emptyList(),
-): String {
-    val canonical = buildString {
-        append(planId)
-        append('|').append(delivery.name)
-        append('|').append(stream.protocol.name)
-        append('|').append(stream.container.orEmpty().lowercase())
-        append('|').append(effectiveRecipe.videoCodec.orEmpty().lowercase())
-        append('|').append(effectiveRecipe.audioCodec.orEmpty().lowercase())
-        append('|').append(effectiveRecipe.width ?: 0)
-        append('x').append(effectiveRecipe.height ?: 0)
-        append('|').append(effectiveRecipe.bitrateKbps ?: 0)
-        append('|').append(effectiveRecipe.dynamicRange.orEmpty().lowercase())
-        append('|').append(subtitle.mode.name)
-        append('|').append(transformations.map {
-            "${it.executor.name.lowercase()}:${it.name}:${it.recipeVersion}"
-        }.sorted().joinToString(",") {
-            it
-        })
-        if (appliedQuirks.isNotEmpty() || runtimeCorrections.isNotEmpty()) {
-            append('|').append(appliedQuirks.map {
-                "${it.registryRevision}:${it.id}"
-            }.sorted().joinToString(","))
-            append('|').append(runtimeCorrections.sorted().joinToString(","))
-        }
-        append('|').append(outputRouteGeneration)
-        append('|').append(localMutations.sorted().joinToString(","))
-    }
-    var hash = 0xcbf29ce484222325uL
-    canonical.encodeToByteArray().forEach { byte ->
-        hash = hash xor byte.toUByte().toULong()
-        hash *= 0x100000001b3uL
-    }
-    return "v3:${hash.toString(16).padStart(16, '0')}"
-}
 
 sealed interface PlaybackV3Validation {
     data class Playable(val plan: PlaybackPlanV3, val sessionId: String) : PlaybackV3Validation
@@ -394,7 +461,10 @@ sealed interface PlaybackV3Validation {
 }
 
 fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
-    if (protocolVersion != PLAYBACK_PROTOCOL_V3 || PLAYBACK_PLAN_V3_FEATURE !in serverFeatures) {
+    if (protocolVersion != PLAYBACK_PROTOCOL_V3 ||
+        PLAYBACK_PLAN_V3_FEATURE !in serverFeatures ||
+        NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE !in serverFeatures
+    ) {
         return PlaybackV3Validation.Incompatible(sessionId)
     }
     if (outcome == PlaybackDecisionOutcome.ADAPTATION_UNAVAILABLE) {
@@ -419,11 +489,37 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
     if (plan.protocolVersion != PLAYBACK_PROTOCOL_V3) {
         return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned an unsupported plan version.", false)
     }
-    if (plan.engine == PlaybackEngineKind.MPV_DIRECT ||
-        plan.engine == PlaybackEngineKind.CLIENT_LOCAL_LOOPBACK ||
-        plan.engine == PlaybackEngineKind.EXTERNAL_PLAYER
+    if (plan.planAttemptKey.isBlank()) {
+        return PlaybackV3Validation.Terminal(
+            "invalid_playback_plan",
+            "The server returned no plan-attempt identity.",
+            false,
+        )
+    }
+    if (!plan.hasValidSubtitleInventory()) {
+        return PlaybackV3Validation.Terminal(
+            "invalid_playback_plan",
+            "The server returned an invalid subtitle inventory.",
+            false,
+        )
+    }
+    val selectedSubtitle = plan.selectedTracks.subtitle?.let { selected ->
+        plan.subtitle.inventory.firstOrNull {
+            it.trackId == selected.id &&
+                (selected.index == null || it.combinedIndex == selected.index)
+        }
+    }
+    if (selectedSubtitle != null &&
+        selectedSubtitle.delivery !in setOf(
+            SUBTITLE_DELIVERY_SIDECAR,
+            SUBTITLE_DELIVERY_BURN_IN_ONLY,
+        )
     ) {
-        return PlaybackV3Validation.ReplanRequired("unsupported_legacy_engine", plan, resolvedSessionId)
+        return PlaybackV3Validation.ReplanRequired(
+            "unsupported_subtitle_delivery:${selectedSubtitle.delivery}",
+            plan,
+            resolvedSessionId,
+        )
     }
     if (plan.stream.url.isBlank()) {
         return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned an empty stream URL.", false)
@@ -472,11 +568,15 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
             resolvedSessionId,
         )
     }
+    // A client-side Dolby Vision rewrite edits the elementary stream on its way
+    // into the decoder, which the client only owns when it is playing the
+    // original file. On any server-produced delivery the server already made
+    // the dynamic-range decision and there is nothing left to rewrite.
     if (plan.transformations.any { it.executor == PlaybackTransformationExecutor.CLIENT } &&
-        plan.engine != PlaybackEngineKind.MEDIA3_DIRECT
+        plan.delivery != PlaybackDelivery.ORIGINAL_HTTP
     ) {
         return PlaybackV3Validation.ReplanRequired(
-            "client_transformation_requires_media3_direct",
+            "client_transformation_requires_original_delivery",
             plan,
             resolvedSessionId,
         )
@@ -487,6 +587,34 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
         return PlaybackV3Validation.ReplanRequired("invalid_original_server_transformation", plan, resolvedSessionId)
     }
     return PlaybackV3Validation.Playable(plan, resolvedSessionId)
+}
+
+private fun PlaybackPlanV3.hasValidSubtitleInventory(): Boolean {
+    if (subtitle.inventory.map { it.combinedIndex }.sorted() != subtitle.inventory.indices.toList()) {
+        return false
+    }
+    if (subtitle.inventory.any { it.trackId.isBlank() } ||
+        subtitle.inventory.map { it.trackId }.distinct().size != subtitle.inventory.size
+    ) {
+        return false
+    }
+    if (subtitle.inventory.any { item ->
+            when (item.delivery) {
+                SUBTITLE_DELIVERY_SIDECAR -> item.url.isNullOrBlank()
+                SUBTITLE_DELIVERY_BURN_IN_ONLY -> !item.url.isNullOrBlank()
+                else -> true
+            }
+        }
+    ) {
+        return false
+    }
+    val selected = selectedTracks.subtitle
+    if (subtitle.artifact != null && selected == null) return false
+    if (selected == null) return true
+    return subtitle.inventory.any {
+        it.trackId == selected.id &&
+            (selected.index == null || it.combinedIndex == selected.index)
+    }
 }
 
 fun PlaybackPlanV3.executableMedia3ClientTransformations(): List<String> =

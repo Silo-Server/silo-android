@@ -1,0 +1,18 @@
+repository=https://github.com/Silo-Server/silo-server
+path=internal/playback/testdata/protocol_v3
+commit=79e3e761ad391b1aa9f2c280eeceeb23df9d3c81
+protocol_version=3
+
+Byte-identical copies of the server's golden playback-v3 wire fixtures; do not
+hand-edit any of them. They are generated from the live Go contract types by
+`cmd/playbackfixtures`, and the server's `make verify-playback-fixtures`
+regenerates and diffs them, so a contract change cannot merge there without
+refreshing what these files assert. Re-vendor by copying the directory again
+and updating the commit above, then run :shared:testDebugUnitTest.
+
+The direction of authority runs one way: the server defines the protocol and
+this client proves conformance against it. That is why
+PlaybackProtocolV3ConformanceTest compares against these values as opaque
+expected output rather than recomputing them — in particular attempt_keys.json,
+whose server-minted keys can only be echoed, never derived here. Under the
+neutral contract the client no longer mints keys at all.

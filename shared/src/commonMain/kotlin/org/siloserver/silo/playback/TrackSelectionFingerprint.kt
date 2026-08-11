@@ -287,14 +287,6 @@ private fun String?.isCatalogBitmapSubtitle(): Boolean {
         normalized.contains("vobsub")
 }
 
-private fun catalogLabelIndicatesHearingImpaired(label: String): Boolean {
-    val normalized = label.lowercase()
-    return normalized.contains("closed caption") ||
-        normalized.contains("hearing impaired") ||
-        normalized.contains("hearing-impaired") ||
-        Regex("""(^|[^a-z0-9])(cc|sdh|hi)([^a-z0-9]|$)""").containsMatchIn(normalized)
-}
-
 private fun SubtitleTrack.catalogMediaIdentity(): SubtitleMediaIdentity =
     SubtitleMediaIdentity(
         label = title,
@@ -302,7 +294,7 @@ private fun SubtitleTrack.catalogMediaIdentity(): SubtitleMediaIdentity =
         codecFamily = canonicalSubtitleCodecFamily(codec),
         forced = forced,
         hearingImpaired = title
-            ?.takeIf(::catalogLabelIndicatesHearingImpaired)
+            ?.takeIf(::subtitleLabelIndicatesHearingImpaired)
             ?.let { true },
     )
 

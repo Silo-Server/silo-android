@@ -425,12 +425,35 @@ fun TvAppNavigation(
             // Arrived: the current destination is this link's target, so the
             // link is spent. This is the only place a successful content link
             // is cleared — see the bookkeeping comment above.
-            val arrived = entry.arguments?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID) == contentId &&
-                when (uri.host) {
-                    "item" -> route.startsWith("item/")
-                    "play" -> route.startsWith("player/") || route.startsWith("audiobook/")
-                    else -> false
-                }
+            val itemType = uri.getQueryParameter("type")
+            val playbackArgs = if (uri.host == "play") {
+                parseTvPlaybackDeepLinkArgs(uri::getQueryParameter)
+            } else {
+                null
+            }
+            val arrived = when (uri.host) {
+                "item" ->
+                    route == TvRoute.ItemDetail.ROUTE &&
+                        entry.arguments?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID) == contentId
+                "play" -> tvPlaybackDeepLinkArrived(
+                    currentRoute = route,
+                    currentContentId = entry.arguments?.getString(TvRoute.Player.ARG_CONTENT_ID),
+                    currentFileId = entry.arguments
+                        ?.getString(TvRoute.Player.ARG_FILE_ID)
+                        ?.toIntOrNull(),
+                    currentQuality = entry.arguments?.getString(TvRoute.Player.ARG_QUALITY),
+                    currentAudioTrackIndex = entry.arguments
+                        ?.getString(TvRoute.Player.ARG_AUDIO_TRACK_INDEX)
+                        ?.toIntOrNull(),
+                    currentSubtitleTrackIndex = entry.arguments
+                        ?.getString(TvRoute.Player.ARG_SUBTITLE_TRACK_INDEX)
+                        ?.toIntOrNull(),
+                    itemType = itemType,
+                    contentId = contentId,
+                    requested = checkNotNull(playbackArgs),
+                )
+                else -> false
+            }
             if (arrived) {
                 Log.i(MainTvActivity.DEEP_LINK_TAG, "deep link arrived: ${uri.host}/$contentId")
                 pendingDeepLink.value = null
@@ -459,19 +482,18 @@ fun TvAppNavigation(
                     // [tvPlayDestinationFor] treats a null type as non-audiobook
                     // and falls through to [TvRoute.Player], preserving today's
                     // behavior for movie/episode tiles.
-                    val itemType = uri.getQueryParameter("type")
-                    val playbackArgs = parseTvPlaybackDeepLinkArgs(uri::getQueryParameter)
+                    val requested = checkNotNull(playbackArgs)
                     // A retried link (arrival-gated above) must not stack a
                     // second player over one already being created.
                     navController.navigateToTvPlayback(
                         destination = tvPlayDestinationFor(
                             itemType = itemType,
                             contentId = contentId,
-                            fileId = playbackArgs.fileId,
+                            fileId = requested.fileId,
                             resumePositionSeconds = null,
-                            audioTrackIndex = playbackArgs.audioTrackIndex,
-                            subtitleTrackIndex = playbackArgs.subtitleTrackIndex,
-                            quality = playbackArgs.quality,
+                            audioTrackIndex = requested.audioTrackIndex,
+                            subtitleTrackIndex = requested.subtitleTrackIndex,
+                            quality = requested.quality,
                         ),
                         contentId = contentId,
                         lastPlaybackNavigation = lastPlaybackNavigation,

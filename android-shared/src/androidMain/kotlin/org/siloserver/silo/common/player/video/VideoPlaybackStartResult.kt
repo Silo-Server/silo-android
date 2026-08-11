@@ -37,7 +37,8 @@ sealed interface VideoPlaybackStartResult {
         val accessToken: String = "",
         val mediaFileId: Int? = null,
         val audioTrackIndex: Int = 0,
-        val durationSeconds: Double = 0.0,
+        /** Full source duration; null when the V3 plan leaves it unknown. */
+        val durationSeconds: Double? = null,
         val subtitleUrls: List<PlayerSubtitleInfo> = emptyList(),
         val preferredAudioLanguage: String? = null,
         val preferredTextLanguage: String? = null,

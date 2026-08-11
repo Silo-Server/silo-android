@@ -1,11 +1,59 @@
 package org.siloserver.silo.common.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SiloLoadControlTest {
+    @Test
+    fun ordinaryPlaybackKeepsTheDeviceBufferBudget() {
+        assertEquals(
+            96 * 1024 * 1024,
+            playbackBufferBudgetBytes(
+                baseBudgetBytes = 96 * 1024 * 1024,
+                hasDolbyVision = false,
+                minimumBytes = SiloLoadControl.MIN_TARGET_BUFFER_BYTES,
+            ),
+        )
+    }
+
+    @Test
+    fun dolbyVisionLeavesHalfOfTheOrdinaryAllocatorBudgetAsHeapHeadroom() {
+        assertEquals(
+            48 * 1024 * 1024,
+            playbackBufferBudgetBytes(
+                baseBudgetBytes = 96 * 1024 * 1024,
+                hasDolbyVision = true,
+                minimumBytes = SiloLoadControl.MIN_TARGET_BUFFER_BYTES,
+            ),
+        )
+    }
+
+    @Test
+    fun dolbyVisionAdjustmentNeverRaisesOrUndercutsAConstrainedBudget() {
+        val constrained = 8 * 1024 * 1024
+
+        assertEquals(
+            constrained,
+            playbackBufferBudgetBytes(
+                baseBudgetBytes = constrained,
+                hasDolbyVision = true,
+                minimumBytes = SiloLoadControl.MIN_TARGET_BUFFER_BYTES,
+            ),
+        )
+    }
+
+    @Test
+    fun dolbyVisionBufferTrackRecognizesMimeAndCodecSignals() {
+        assertTrue(isDolbyVisionBufferTrack("video/dolby-vision", null))
+        listOf("dvhe.08.06", "dvh1.05.06", "dva1.09.01", "dvav.09.01").forEach { codec ->
+            assertTrue(isDolbyVisionBufferTrack("video/hevc", codec))
+        }
+        assertFalse(isDolbyVisionBufferTrack("video/hevc", "hvc1.2.4.L153.B0"))
+    }
+
     @Test
     fun `average bitrate takes precedence over peak bitrate`() {
         val selected =
@@ -52,16 +100,29 @@ class SiloLoadControlTest {
     }
 
     @Test
-    fun `one known media rate suppresses network fallback from metadata-poor tracks`() {
+    fun `known audio cannot hide an unknown high bitrate video track`() {
         val selected =
             selectBufferSizingBitrateBps(
                 listOf(
-                    BufferSizingTrackBitrates(4_000_000, 8_000_000, 100_000_000L),
+                    BufferSizingTrackBitrates(384_000, 384_000, 100_000_000L),
                     BufferSizingTrackBitrates(-1, -1, 100_000_000L),
                 ),
             )
 
-        assertEquals(4_000_000L, selected)
+        assertEquals(100_384_000L, selected)
+    }
+
+    @Test
+    fun `partial media metadata stays unknown until a network estimate exists`() {
+        val selected =
+            selectBufferSizingBitrateBps(
+                listOf(
+                    BufferSizingTrackBitrates(384_000, 384_000, 100_000_000L),
+                    BufferSizingTrackBitrates(-1, -1, -1L),
+                ),
+            )
+
+        assertNull(selected)
     }
 
     @Test

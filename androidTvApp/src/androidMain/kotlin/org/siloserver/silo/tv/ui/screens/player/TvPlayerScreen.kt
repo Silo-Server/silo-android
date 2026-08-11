@@ -115,6 +115,7 @@ import org.siloserver.silo.common.player.SiloPlaybackService
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
+import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
 import org.siloserver.silo.common.player.validatedColorRangeFallback
@@ -122,6 +123,7 @@ import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
 import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
 import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackSourceMetadata
@@ -413,21 +415,9 @@ fun TvPlayerScreen(
     val playWhenReadyReconciliationGate = remember(mediaController, roomId) {
         PlayWhenReadyReconciliationGate()
     }
-    val videoBackend = remember(
-        sessionPlayer,
-        mediaController,
-        backendFactory,
-        contentId,
-        preferredFileId,
-        state.playMethod,
-        state.playbackPlan,
-        state.delivery,
-        state.container,
-        state.streamUrl,
-    ) {
-        val plan = state.playbackPlan
-        val delivery = plan?.delivery ?: state.delivery
-        (sessionPlayer ?: mediaController)?.let { player ->
+    val backendPlayer = sessionPlayer ?: mediaController
+    val videoBackend = remember(backendPlayer, backendFactory) {
+        backendPlayer?.let { player ->
             backendFactory.create(
                 player = player,
                 request = VideoPlaybackBackendRequest(),
@@ -645,7 +635,8 @@ fun TvPlayerScreen(
         ) {
             return true
         }
-        val duration = playerState.duration.takeIf { it > 0.0 } ?: (controller.duration / 1000.0)
+        val duration = playerState.duration.takeIf { it > 0.0 }
+            ?: if (playerState.playbackPlan == null) controller.duration / 1000.0 else 0.0
         val targetSec = if (roomController == null) {
             viewModel.onSkipBy(deltaMs / 1000.0)
         } else {
@@ -1582,15 +1573,24 @@ fun TvPlayerScreen(
             delivery = delivery,
             serverUrl = state.serverUrl,
             container = state.container,
-            subtitles = state.subtitleUrls,
+            subtitles = subtitlesForVideoMediaMount(
+                subtitles = state.subtitleUrls,
+                playbackPlan = plan,
+                subtitleIdentity = state.pendingSubtitleIdentity
+                    ?: state.committedSubtitleIdentity,
+            ),
             title = state.title.ifBlank { null },
             artworkUrl = state.artworkUrl,
             startPositionSeconds = state.startPosition,
             timelineOffsetSeconds = plan?.timeline?.timelineOffsetSeconds ?: 0.0,
             durationSeconds = viewModel.uiState.value.duration.takeIf { it > 0.0 }
-                ?: mediaController?.duration
-                    ?.takeIf { it > 0L }
-                    ?.div(1000.0)
+                ?: if (plan == null) {
+                    mediaController?.duration
+                        ?.takeIf { it > 0L }
+                        ?.div(1000.0)
+                } else {
+                    null
+                }
                 ?: 0.0,
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,
@@ -1608,6 +1608,7 @@ fun TvPlayerScreen(
                 playMethod = method,
                 startPositionMs = mediaSpec.startPositionMs,
                 nowMs = SystemClock.elapsedRealtime(),
+                clientTransformations = mediaSpec.transformations,
             )
             postResumeStallDetector.onMounted(
                 "$sessionId:$url:${plan?.planId.orEmpty()}:" +
@@ -1638,15 +1639,24 @@ fun TvPlayerScreen(
             delivery = delivery,
             serverUrl = state.serverUrl,
             container = state.container,
-            subtitles = state.subtitleUrls,
+            subtitles = subtitlesForVideoMediaMount(
+                subtitles = state.subtitleUrls,
+                playbackPlan = plan,
+                subtitleIdentity = state.pendingSubtitleIdentity
+                    ?: state.committedSubtitleIdentity,
+            ),
             title = state.title.ifBlank { null },
             artworkUrl = state.artworkUrl,
             startPositionSeconds = state.startPosition,
             timelineOffsetSeconds = plan?.timeline?.timelineOffsetSeconds ?: 0.0,
             durationSeconds = viewModel.uiState.value.duration.takeIf { it > 0.0 }
-                ?: mediaController?.duration
-                    ?.takeIf { it > 0L }
-                    ?.div(1000.0)
+                ?: if (plan == null) {
+                    mediaController?.duration
+                        ?.takeIf { it > 0L }
+                        ?.div(1000.0)
+                } else {
+                    null
+                }
                 ?: 0.0,
             audioPassthroughCodecs = plan.validatedPassthroughCodecs(),
             requestHeaders = state.requestHeaders,
@@ -2984,7 +2994,7 @@ internal fun extractTrackEntries(tracks: Tracks, type: Int): List<PlayerTrackEnt
                 val hearingImpaired =
                     format.roleFlags and
                         (C.ROLE_FLAG_CAPTION or C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0 ||
-                        label.indicatesHearingImpairedSubtitle()
+                        subtitleLabelIndicatesHearingImpaired(label)
                 result.add(
                     PlayerTrackEntry(
                         index = media3FlatTextIndex,

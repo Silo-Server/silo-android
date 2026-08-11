@@ -1,7 +1,6 @@
 package org.siloserver.silo.common.player
 
 import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackRouteFamily
 import org.siloserver.silo.model.playback.PlaybackSourceMetadata
@@ -47,7 +46,6 @@ class PlaybackColorRangeFallbackTest {
         PlaybackExecutionPlan(
             planId = "plan",
             delivery = delivery,
-            engine = PlaybackEngineKind.MEDIA3_DIRECT,
             routeFamily = PlaybackRouteFamily.PLATFORM_NATIVE,
             source = PlaybackSourceMetadata(colorRange = colorRange),
         )
