@@ -21,8 +21,13 @@ sealed interface IntroAutoSkipState {
 
 class IntroAutoSkipController(
     private val scope: CoroutineScope,
-    private val countdownSeconds: Int = 5,
+    private val countdownSeconds: Int = DEFAULT_COUNTDOWN_SECONDS,
 ) {
+    companion object {
+        /** Shared by the controller and the UI that renders the countdown, so the two cannot drift. */
+        const val DEFAULT_COUNTDOWN_SECONDS: Int = 5
+    }
+
     private val _state = MutableStateFlow<IntroAutoSkipState>(IntroAutoSkipState.Hidden)
     val state: StateFlow<IntroAutoSkipState> = _state.asStateFlow()
 

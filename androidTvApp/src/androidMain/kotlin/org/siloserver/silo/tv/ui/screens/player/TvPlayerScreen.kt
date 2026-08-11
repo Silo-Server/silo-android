@@ -1022,12 +1022,15 @@ fun TvPlayerScreen(
             // is consumed, so it can't also fall through to exiting playback.
             // Handled here because the banner's own BackHandler loses to the
             // screen's back handling.
-            if (event.action == KeyEvent.ACTION_DOWN &&
-                event.repeatCount == 0 &&
-                latestIntroSkipState is IntroAutoSkipState.CountingDown &&
+            if (latestIntroSkipState is IntroAutoSkipState.CountingDown &&
                 event.keyCode == KeyEvent.KEYCODE_BACK
             ) {
-                viewModel.onDismissIntroAutoSkip()
+                // Both action phases are consumed: leaking the ACTION_UP lets it
+                // reach the activity's back dispatcher and fire whichever
+                // BackHandler happens to be topmost.
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    viewModel.onDismissIntroAutoSkip()
+                }
                 return@handler true
             }
 
@@ -2267,7 +2270,6 @@ fun TvPlayerScreen(
             onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
             onExitPlayback = { stopPlaybackAndExit() },
             onSkipIntroNow = { handleSkipIntroNow() },
-            onCancelIntroAutoSkip = viewModel::onCancelIntroAutoSkip,
             onDismissIntroAutoSkip = viewModel::onDismissIntroAutoSkip,
         )
     }
@@ -3364,7 +3366,6 @@ private fun TvPlayerOverlays(
     onToggleAutoPlayNext: () -> Unit,
     onExitPlayback: () -> Unit,
     onSkipIntroNow: () -> Unit,
-    onCancelIntroAutoSkip: () -> Unit,
     onDismissIntroAutoSkip: () -> Unit,
 ) {
         // Lifecycle-driven notice toast (top-start). Slides in for outage
@@ -3480,7 +3481,6 @@ private fun TvPlayerOverlays(
                     TvIntroAutoSkipBanner(
                         state = introSkipState,
                         onSkipNow = onSkipIntroNow,
-                        onCancelCountdown = onCancelIntroAutoSkip,
                         onDismissCountdown = onDismissIntroAutoSkip,
                     )
                 }

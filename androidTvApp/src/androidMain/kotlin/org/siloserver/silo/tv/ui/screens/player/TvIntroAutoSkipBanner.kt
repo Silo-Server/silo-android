@@ -1,11 +1,9 @@
 package org.siloserver.silo.tv.ui.screens.player
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -27,7 +25,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 
@@ -59,17 +57,17 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 fun TvIntroAutoSkipBanner(
     state: IntroAutoSkipState,
     onSkipNow: () -> Unit,
-    onCancelCountdown: () -> Unit,
     onDismissCountdown: () -> Unit,
     modifier: Modifier = Modifier,
-    totalSeconds: Int = 5,
+    totalSeconds: Int = IntroAutoSkipController.DEFAULT_COUNTDOWN_SECONDS,
 ) {
     // Diagnostic for the fill-sweep timing bug: proves whether this whole
     // banner (and its remembered `fill` Animatable below) leaves and
     // re-enters composition mid-countdown, e.g. via the caller's
     // `!hudOpen && !showNextUp` gate flickering.
-    // Key on the state kind: per-second CountingDown ticks then recompose this
-    // slot instead of recreating the subtree (which would restart the drain).
+    // Keyed on the state kind, not the state: per-second CountingDown ticks then
+    // recompose this slot instead of recreating the subtree, which would restart
+    // the fill sweep every second.
     val slot = when (state) {
         IntroAutoSkipState.Hidden -> 0
         IntroAutoSkipState.ShowingButton -> 1
@@ -135,7 +133,6 @@ fun TvIntroAutoSkipBanner(
                 TvShrinkingFillButton(
                     progress = fill.floatValue,
                     onSkipNow = onSkipNow,
-                    onDismiss = onDismissCountdown,
                 )
             }
         }
@@ -192,15 +189,13 @@ private fun TvSkipIntroButton(
  * Countdown variant: the button's background fill is the timer, creeping
  * left-to-right and landing full as the auto-skip fires. [progress] is driven by
  * the banner so it tracks the live countdown even if this button composes late.
- * Select and D-pad handling live in the player screen's root key handler,
- * because this button is not reliably in the focus tree; Back still works here
- * since it routes through the activity back dispatcher rather than focus.
+ * Select, D-pad cancel, and Back all live in the player screen's root key
+ * handler, because this button is not reliably in the focus tree.
  */
 @Composable
 private fun TvShrinkingFillButton(
     progress: Float,
     onSkipNow: () -> Unit,
-    onDismiss: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -210,7 +205,6 @@ private fun TvShrinkingFillButton(
         contentKey = Unit,
     )
 
-    BackHandler(onBack = onDismiss)
 
     val shape = RoundedCornerShape(28.dp)
     val borderColor = if (isFocused) Color.White else Color.White.copy(alpha = 0.25f)

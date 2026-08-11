@@ -114,8 +114,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -2078,6 +2080,18 @@ class TvPlayerViewModel(
         }
     }
 
+    /**
+     * Delays only the false edges by [graceMs]. isPlaying dips to false on every
+     * ExoPlayer rebuffer, and letting that through cancels the intro countdown
+     * and restarts it from full; a real pause still lands after the grace period.
+     */
+    private fun Flow<Boolean>.settlingFalseEdges(graceMs: Long): Flow<Boolean> = flow {
+        collectLatest { active ->
+            if (!active) delay(graceMs)
+            emit(active)
+        }
+    }
+
     private fun startIntroAutoSkipObserver() {
         // Auto-skip is a local transport action: in a Watch Together room only
         // the host's transport may move position, so never auto-skip in a room
@@ -2110,7 +2124,8 @@ class TvPlayerViewModel(
             onAutoSkipFire = { seekToSec -> seekImmediate(seekToSec) },
             playbackActive = _uiState
                 .map { it.isPlaying && !it.isLoading }
-                .distinctUntilChanged(),
+                .distinctUntilChanged()
+                .settlingFalseEdges(PLAYBACK_STALL_GRACE_MS),
         )
     }
 
@@ -4891,3 +4906,6 @@ internal fun TvPlayerViewModel.UiState.withoutPlaybackClock(): TvPlayerViewModel
 
 internal fun TvPlayerViewModel.UiState.toPlaybackClock(): PlaybackClock =
     PlaybackClock(position = position, duration = duration)
+
+/** Grace period before a dropped isPlaying is treated as a real pause rather than a rebuffer. */
+private const val PLAYBACK_STALL_GRACE_MS = 750L
