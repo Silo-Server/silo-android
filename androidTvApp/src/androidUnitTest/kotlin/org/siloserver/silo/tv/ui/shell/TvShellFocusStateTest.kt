@@ -159,11 +159,13 @@ class TvShellFocusStateTest {
         // Entering does NOT nudge the bar — only a Back-close does.
         assertEquals(menuBefore, s.menuFocusRequest)
 
-        s.closePanel(returnFocusToBar = true)
+        // Closing never moves focus itself: the caller owns that, so a commit's
+        // own content-focus move cannot be raced back to the bar from here.
+        s.closePanel()
         assertNull(s.openPanel)
         assertFalse(s.panelEntersFocus)
-        assertEquals(menuBefore + 1, s.menuFocusRequest)
-        assertEquals(moviesPanel, s.menuFocusTarget)
+        assertEquals(menuBefore, s.menuFocusRequest)
+        assertNull(s.menuFocusTarget)
     }
 
     @Test
@@ -171,9 +173,70 @@ class TvShellFocusStateTest {
         val s = TvShellFocusState()
         s.enterPanel(moviesPanel)
         val menuBefore = s.menuFocusRequest
-        s.closePanel(returnFocusToBar = false)
+        s.closePanel()
         assertEquals(menuBefore, s.menuFocusRequest)
         assertNull(s.menuFocusTarget)
+    }
+
+    /**
+     * A dwell preview opens while focus is still on the bar. Back must dismiss
+     * it and leave the viewer where they are: routing it through ClosePanel
+     * threw them into content from a menu they were still browsing, and cost
+     * them the trip back up to reach Home.
+     */
+    @Test
+    fun backDismissesADwellPreviewWithoutLeavingTheBar() {
+        val s = TvShellFocusState()
+        s.previewPanel(moviesPanel)
+        assertEquals(moviesPanel, s.openPanel)
+        assertFalse(s.panelEntersFocus)
+        val menuBefore = s.menuFocusRequest
+
+        val action = s.onBack(onTabRoot = true)
+
+        assertEquals(TvShellBackAction.ClosePanelPreview, action)
+        assertNull(s.openPanel)
+        assertEquals(menuBefore, s.menuFocusRequest, "focus was already on the bar; nothing to move")
+    }
+
+    /**
+     * The other half: a panel the viewer actually entered still hands focus to
+     * content on Back, rather than stranding them in the chrome.
+     */
+    @Test
+    fun backOutOfAnEnteredPanelStillReturnsToContent() {
+        val s = TvShellFocusState()
+        s.enterPanel(moviesPanel)
+        assertTrue(s.panelEntersFocus)
+
+        val action = s.onBack(onTabRoot = true)
+
+        assertEquals(TvShellBackAction.ClosePanel, action)
+        assertNull(s.openPanel)
+    }
+
+    @Test
+    fun previewAndEnteredRouteDifferentlyFromTheSameOpenPanel() {
+        assertEquals(
+            TvShellBackAction.ClosePanelPreview,
+            tvShellBackAction(
+                panelOpen = true,
+                profileMenuOpen = false,
+                menuFocused = true,
+                onTabRoot = true,
+                panelEntered = false,
+            ),
+        )
+        assertEquals(
+            TvShellBackAction.ClosePanel,
+            tvShellBackAction(
+                panelOpen = true,
+                profileMenuOpen = false,
+                menuFocused = false,
+                onTabRoot = true,
+                panelEntered = true,
+            ),
+        )
     }
 
     @Test
@@ -183,7 +246,7 @@ class TvShellFocusStateTest {
         s.previewPanel(seriesPanel) // ignored while a panel is entered
         assertEquals(moviesPanel, s.openPanel)
 
-        s.closePanel(returnFocusToBar = false)
+        s.closePanel()
         s.previewPanel(seriesPanel) // honored once nothing is entered
         assertEquals(seriesPanel, s.openPanel)
 
