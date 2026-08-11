@@ -42,6 +42,7 @@ import org.siloserver.silo.model.catalog.Season
 @Composable
 fun SeriesDetailContent(
     detail: ItemDetail,
+    similarItems: List<ItemDetail> = emptyList(),
     seasons: List<Season>,
     selectedSeasonNumber: Int,
     episodes: List<EpisodeListItem>,
@@ -271,7 +272,7 @@ fun SeriesDetailContent(
 
         item(contentType = "detail-similar") {
             SimilarRail(
-                contentId = detail.contentId,
+                items = similarItems,
                 onSelect = onItemDetailClick,
             )
         }
