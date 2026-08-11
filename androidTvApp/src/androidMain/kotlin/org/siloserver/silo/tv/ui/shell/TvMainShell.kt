@@ -344,6 +344,11 @@ fun TvMainShell(
     val searchInputFocusRequester = remember { FocusRequester() }
     var searchInputHasFocus by remember { mutableStateOf(false) }
     var searchBackToInputRequest by remember { mutableIntStateOf(0) }
+    // Same failure as the bar handoff: Back asks the search field to take
+    // focus and consumes the press. If the field never reports focus, every
+    // Back repeats that forever and Search cannot be left. Records the attempt
+    // so the next Back falls through to navigation instead.
+    var searchBackToInputAttempted by remember { mutableStateOf(false) }
     // Opening an outer item-detail route pauses/removes this shell. Remember the
     // pending hand-back in the Main back-stack entry so it survives either form,
     // then re-enter the existing content focusRestorer when Main resumes.
@@ -897,7 +902,11 @@ fun TvMainShell(
             // Secondary screens: pop the flat inner NavHost when possible;
             // otherwise let the activity-level callback finish the app.
             TvShellBackAction.DelegateToNav -> {
-                if (currentRoute == TvMainRoute.Search.route && !searchInputHasFocus) {
+                if (currentRoute == TvMainRoute.Search.route &&
+                    !searchInputHasFocus &&
+                    !searchBackToInputAttempted
+                ) {
+                    searchBackToInputAttempted = true
                     searchBackToInputRequest += 1
                     true
                 } else if (nestedNav.previousBackStackEntry != null) {
@@ -933,7 +942,11 @@ fun TvMainShell(
         TvShellBackAction.MoveFocusToMenu -> true
         TvShellBackAction.MenuBack -> selectedRoot != TvRootDestination.Home
         TvShellBackAction.DelegateToNav ->
-            (currentRoute == TvMainRoute.Search.route && !searchInputHasFocus) ||
+            (
+                currentRoute == TvMainRoute.Search.route &&
+                    !searchInputHasFocus &&
+                    !searchBackToInputAttempted
+                ) ||
                 nestedNav.previousBackStackEntry != null
     }
     // NavHost installs its own predictive-back callback before composing the
@@ -1109,7 +1122,11 @@ fun TvMainShell(
                         onOpenLibraryItem = onOpenItemDetail,
                         searchFieldFocusRequester = searchInputFocusRequester,
                         backToSearchFieldRequest = searchBackToInputRequest,
-                        onSearchFieldFocusChanged = { searchInputHasFocus = it },
+                        onSearchFieldFocusChanged = {
+                            searchInputHasFocus = it
+                            // The field answered; the outstanding attempt is settled.
+                            if (it) searchBackToInputAttempted = false
+                        },
                     )
                 }
                 shellComposable(TvMainRoute.Audio.route) {
