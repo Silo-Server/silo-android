@@ -2,13 +2,18 @@ package org.siloserver.silo.tv.ui.screens.detail
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -23,48 +28,36 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.EaseInOut
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.BringIntoViewSpec
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import kotlinx.coroutines.flow.first
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -72,6 +65,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -79,6 +73,11 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,19 +90,29 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import org.koin.compose.koinInject
+import org.koin.compose.viewmodel.koinViewModel
+import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.audiobook.AudioPlaybackTrack
 import org.siloserver.silo.audiobook.AudiobookTimeline
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
 import org.siloserver.silo.common.ui.movieDirectorCredit
+import org.siloserver.silo.metadata.DescriptionTranslationPhase
 import org.siloserver.silo.model.audiobook.AudiobookNarration
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
-import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.isAudiobookItemType
+import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.ebook.MediaRelatedItem
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
+import org.siloserver.silo.model.feature.MetadataAiFeatureStore
+import org.siloserver.silo.model.metadata.MetadataAiOnView
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.tv.ui.components.TvDialogOption
@@ -112,11 +121,14 @@ import org.siloserver.silo.tv.ui.components.TvHeroActionPill
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.TvMediaRow
 import org.siloserver.silo.tv.ui.components.TvOptionDialog
+import org.siloserver.silo.tv.ui.components.TvPillVariant
 import org.siloserver.silo.tv.ui.components.TvPrimaryPillButton
+import org.siloserver.silo.tv.ui.components.TvRowStyle
 import org.siloserver.silo.tv.ui.components.TvSecondaryPillButton
 import org.siloserver.silo.tv.ui.components.TvSquareToggleButton
-import org.siloserver.silo.tv.ui.components.TvPillVariant
-import org.siloserver.silo.tv.ui.components.TvRowStyle
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.screens.audiobook.formatAudiobookTime
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvJoinCodeDialog
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvSuggestToRoomViewModel
@@ -125,15 +137,6 @@ import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherViewModel
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvControlCorner
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
-import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import org.koin.compose.viewmodel.koinViewModel
-import org.koin.compose.koinInject
-import org.siloserver.silo.metadata.DescriptionTranslationPhase
-import org.siloserver.silo.model.feature.MetadataAiFeatureStore
-import org.siloserver.silo.model.metadata.MetadataAiOnView
-import org.koin.core.parameter.parametersOf
 
 @Composable
 fun TvItemDetailScreen(
@@ -293,16 +296,18 @@ private fun TvDetailContent(
             // requestFocus()'s return value defeated the very rollback this
             // loop exists to survive: one transient true skipped the Play
             // fallback even though focus had bounced back off the redirect.
-            var restored = false
-            for (attempt in 0 until 40) {
-                if (castRestoreFocused.value) {
-                    restored = true
-                    break
-                }
-                runCatching { castReturnFocus.requestFocus() }
-                withFrameNanos { }
-                withFrameNanos { }
-            }
+            // This loop was already judging on observed focus, which is why it
+            // worked; it just open-coded the pacing. The policy does the same
+            // thing, and the two-frame cadence is preserved.
+            var restored = requestFocusUntilObserved(
+                maxAttempts = CAST_RESTORE_MAX_ATTEMPTS,
+                awaitAttempt = {
+                    withFrameNanos { }
+                    withFrameNanos { }
+                },
+                requestFocus = castReturnFocus::requestFocus,
+                isFocused = { castRestoreFocused.value },
+            ) == TvObservedFocusResult.Focused
             // The last attempt's request can land after the loop's final check,
             // so re-read before giving up — otherwise Play immediately steals
             // focus from a restore that actually succeeded.
@@ -319,7 +324,7 @@ private fun TvDetailContent(
         // the hero fallback itself if the target never turns up.
         if (pendingSimilarContentId != null) return@LaunchedEffect
         listState.scrollToItem(0)
-        runCatching { playFocus.requestFocus() }
+        playFocus.claimFocusOrReport(target = "detail_play", action = "entry_fallback")
     }
 
     // Returning from a related item: land back on the card that opened it
@@ -360,7 +365,12 @@ private fun TvDetailContent(
             isTargetFocused = { similarRestoreFocused.value },
             // The return value is not evidence: the row's enter redirect can
             // roll an accepted request back. Only its focus callback counts.
-            requestTargetFocus = { runCatching { similarReturnFocus.requestFocus() } },
+            requestTargetFocus = {
+                similarReturnFocus.claimFocusOrReport(
+                    target = "detail_similar_card",
+                    action = "return_restore",
+                )
+            },
             awaitFocusAttempt = {
                 withFrameNanos { }
                 withFrameNanos { }
@@ -369,7 +379,12 @@ private fun TvDetailContent(
             // somewhere usable. The policy holds ownership across this
             // suspension and re-checks it before requesting Play focus.
             scrollToFallback = { listState.scrollToItem(0) },
-            requestFallbackFocus = { runCatching { playFocus.requestFocus() } },
+            requestFallbackFocus = {
+                playFocus.claimFocusOrReport(
+                    target = "detail_play",
+                    action = "similar_restore_fallback",
+                )
+            },
             dataTimeoutMillis = RESTORE_DATA_TIMEOUT_MS,
             attachmentTimeoutMillis = RESTORE_ATTACH_TIMEOUT_MS,
         )
@@ -440,8 +455,18 @@ private fun TvDetailContent(
             // instead of appearing only after it settles; when the hero has
             // been disposed off-screen the requests fail and we re-focus
             // after the scroll composes it again.
-            val focusedImmediately = runCatching { selectorFocus.requestFocus() }.isSuccess ||
-                runCatching { playFocus.requestFocus() }.isSuccess
+            // runCatching{}.isSuccess was true whenever the call did not THROW,
+            // so a requestFocus that returned false still counted as focused —
+            // the scroll then ran as though the highlight had already moved.
+            // These report the request's own answer.
+            val focusedImmediately =
+                selectorFocus.claimFocusOrReport(
+                    target = "detail_selector",
+                    action = "return_to_top",
+                ) || playFocus.claimFocusOrReport(
+                    target = "detail_play",
+                    action = "return_to_top",
+                )
             if (focusedImmediately) {
                 // Let the focus system enqueue its automatic bring-into-view
                 // first, then cancel/replace that scroll with the paced
@@ -450,8 +475,15 @@ private fun TvDetailContent(
             }
             listState.animateScrollToItemPaced(0)
             if (!focusedImmediately) {
-                if (runCatching { selectorFocus.requestFocus() }.isFailure) {
-                    runCatching { playFocus.requestFocus() }
+                if (!selectorFocus.claimFocusOrReport(
+                        target = "detail_selector",
+                        action = "return_to_top_retry",
+                    )
+                ) {
+                    playFocus.claimFocusOrReport(
+                        target = "detail_play",
+                        action = "return_to_top_retry",
+                    )
                 }
             }
         }
@@ -1956,6 +1988,13 @@ private suspend fun LazyListState.animateScrollToItemPaced(index: Int) {
  * Bounds the DATA wait only. Once the target resolves, focus attachment gets a
  * further ~80 frames, so the whole restore can outlast this value.
  */
+/**
+ * Frames the cast return-restore will keep trying for. Was an open-coded
+ * `for (attempt in 0 until 40)`; the number is preserved so the window is the
+ * same length it has always been.
+ */
+private const val CAST_RESTORE_MAX_ATTEMPTS = 40
+
 private const val RESTORE_DATA_TIMEOUT_MS = 1_500L
 
 /**

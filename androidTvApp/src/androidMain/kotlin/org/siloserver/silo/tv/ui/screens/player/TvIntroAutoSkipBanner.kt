@@ -29,7 +29,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.domain.player.IntroAutoSkipState
+import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 
 /**
  * TV variant of the phone's `IntroAutoSkipBanner`. Larger touch targets (TV
@@ -156,13 +156,13 @@ private fun TvSkipIntroButton(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val focusRequester = remember { FocusRequester() }
 
+    // Captured once: after a cancel this pill replaces the countdown, and
+    // claiming focus then would pull it back from wherever the user just moved.
     val shouldFocus = remember { autoFocus }
-    LaunchedEffect(Unit) {
-        if (!shouldFocus) return@LaunchedEffect
-        withFrameNanos { }
-        withFrameNanos { }
-        runCatching { focusRequester.requestFocus() }
-    }
+    val initialFocusModifier = rememberTvContentInitialFocus(
+        target = focusRequester,
+        contentKey = if (shouldFocus) Unit else null,
+    )
 
     val shape = RoundedCornerShape(28.dp)
     val borderColor = if (isFocused) Color.White else Color.White.copy(alpha = 0.25f)
@@ -170,6 +170,7 @@ private fun TvSkipIntroButton(
     val labelColor = if (isFocused) Color.Black else Color.White.copy(alpha = 0.55f)
     Box(
         modifier = Modifier
+            .then(initialFocusModifier)
             .clip(shape)
             .background(containerColor, shape)
             .border(BorderStroke(2.dp, borderColor), shape)
@@ -204,12 +205,10 @@ private fun TvShrinkingFillButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val focusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(Unit) {
-        withFrameNanos { }
-        withFrameNanos { }
-        runCatching { focusRequester.requestFocus() }
-    }
+    val initialFocusModifier = rememberTvContentInitialFocus(
+        target = focusRequester,
+        contentKey = Unit,
+    )
 
     BackHandler(onBack = onDismiss)
 
@@ -217,6 +216,7 @@ private fun TvShrinkingFillButton(
     val borderColor = if (isFocused) Color.White else Color.White.copy(alpha = 0.25f)
     Box(
         modifier = Modifier
+            .then(initialFocusModifier)
             .clip(shape)
             .background(Color.Black.copy(alpha = 0.65f), shape)
             .border(BorderStroke(2.dp, borderColor), shape)
