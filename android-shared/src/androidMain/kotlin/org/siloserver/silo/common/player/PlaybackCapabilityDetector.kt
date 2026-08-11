@@ -121,8 +121,10 @@ class PlaybackCapabilityDetector(
             val passthroughCodecs = audioCapabilityManager.capabilities.value.passthroughCodecs.toSet()
             val maxChannels = audioCapabilityManager.capabilities.value.maxChannels
 
-            val rendererCanDecode = isSoftwareDecodableAudioMime(
+            val rendererCanDecode = canDecodeAudio(
                 mime = mime,
+                channelCount = channels,
+                platformDecoders = detectPlatformSoftwareAudioCodecs().decoders,
                 ffmpegAvailable = FfmpegAudioSupport.isAvailable(),
             )
             val sinkCanPassthrough = when (mime) {
@@ -136,6 +138,11 @@ class PlaybackCapabilityDetector(
             if (!rendererCanDecode && !sinkCanPassthrough) {
                 return Playability.UnsupportedAudioCodec(mime)
             }
+            // rendererCanDecode is now channel-aware, so a decoder that exists
+            // but cannot take this many channels no longer excuses the sink
+            // from having to carry the track. That was the bug: a 5.1 E-AC3
+            // track was declared playable by a two-channel decoder and failed
+            // at the codec once playback had already begun.
             if (channels > 0 && channels > maxChannels && !rendererCanDecode) {
                 return Playability.UnsupportedChannelCount(mime, channels)
             }
@@ -416,38 +423,60 @@ class PlaybackCapabilityDetector(
             ?.takeIf { it.isNotBlank() }
             ?: "unknown"
 
-    /** Returns codecs backed by an Android platform [MediaCodec] decoder. */
+    /**
+     * Returns codecs backed by an Android platform [MediaCodec] decoder,
+     * together with how many channels each decoder will actually accept.
+     *
+     * The channel limit is the point. A device can advertise an E-AC3 decoder
+     * that only takes two channels, and asking it to decode a 5.1 track fails
+     * at the codec with ERROR_CODE_DECODING_FAILED — after playback has already
+     * started. MIME presence alone cannot answer "can this device play this
+     * track", so it is not collected alone.
+     */
     private fun detectPlatformSoftwareAudioCodecs(): PlatformSoftwareAudioProbe {
         cachedPlatformSoftwareAudioProbe?.let { return it }
         val probe = runCatching {
-            val result = mutableSetOf<String>()
+            val decoders = mutableListOf<PlatformAudioDecodeCapability>()
             for (info in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
                 if (info.isEncoder) continue
                 for (type in info.supportedTypes) {
-                    when {
-                        type.equals(MediaFormat.MIMETYPE_AUDIO_AAC, ignoreCase = true) -> result += "aac"
-                        type.equals(MediaFormat.MIMETYPE_AUDIO_AC3, ignoreCase = true) -> result += "ac3"
-                        type.equals(MediaFormat.MIMETYPE_AUDIO_EAC3, ignoreCase = true) -> result += "eac3"
-                        type.equals(MediaFormat.MIMETYPE_AUDIO_EAC3_JOC, ignoreCase = true) -> result += "eac3_joc"
-                        type.equals(MediaFormat.MIMETYPE_AUDIO_FLAC, ignoreCase = true) -> result += "flac"
-                        type.equals(MediaFormat.MIMETYPE_AUDIO_OPUS, ignoreCase = true) -> result += "opus"
-                        type.equals(MediaFormat.MIMETYPE_AUDIO_VORBIS, ignoreCase = true) -> result += "vorbis"
-                        type.equals(MediaFormat.MIMETYPE_AUDIO_MPEG, ignoreCase = true) -> result += "mp3"
-                    }
+                    val codec = platformAudioCodecName(type) ?: continue
+                    // An unreadable limit is recorded as unknown rather than as
+                    // unlimited: a probe that cannot answer must not be the
+                    // reason a track is claimed playable.
+                    val maxChannels = runCatching {
+                        info.getCapabilitiesForType(type).audioCapabilities?.maxInputChannelCount
+                    }.getOrNull()?.takeIf { it > 0 }
+                    decoders += PlatformAudioDecodeCapability(
+                        mimeType = type,
+                        codec = codec,
+                        decoderName = info.name.orEmpty(),
+                        maxInputChannelCount = maxChannels,
+                    )
                 }
             }
-            PlatformSoftwareAudioProbe(codecs = result.toList(), exact = true)
+            PlatformSoftwareAudioProbe(decoders = decoders, exact = true)
         }.getOrElse {
-            PlatformSoftwareAudioProbe(codecs = listOf("aac", "mp3"), exact = false)
+            // A failed probe is a guess, and a guess must never be described as
+            // exact evidence — the server grants passthrough on that word.
+            PlatformSoftwareAudioProbe(
+                decoders = listOf(
+                    PlatformAudioDecodeCapability(MimeTypes.AUDIO_AAC, "aac", "", null),
+                    PlatformAudioDecodeCapability(MimeTypes.AUDIO_MPEG, "mp3", "", null),
+                ),
+                exact = false,
+            )
         }
         cachedPlatformSoftwareAudioProbe = probe
         return probe
     }
 
     private data class PlatformSoftwareAudioProbe(
-        val codecs: List<String>,
+        val decoders: List<PlatformAudioDecodeCapability>,
         val exact: Boolean,
-    )
+    ) {
+        val codecs: List<String> get() = decoders.map { it.codec }.distinct()
+    }
 
     private companion object {
         const val MAX_PLATFORM_DETAIL_CHARS = 128
@@ -581,20 +610,69 @@ internal fun isDirectPlayableDolbyVisionProfile(
     supportedHdr: org.siloserver.silo.model.playback.HdrCapabilities,
 ): Boolean = supportedHdr.dolbyVisionProfiles.contains(profile)
 
-internal fun isSoftwareDecodableAudioMime(
-    mime: String,
-    ffmpegAvailable: Boolean,
-): Boolean =
-    mime in platformSoftwareDecodableAudioMimes ||
-        (ffmpegAvailable && mime in FfmpegAudioSupport.mimeTypes)
-
-private val platformSoftwareDecodableAudioMimes = setOf(
-    MimeTypes.AUDIO_AAC,
-    MimeTypes.AUDIO_AC3,
-    MimeTypes.AUDIO_E_AC3,
-    MimeTypes.AUDIO_E_AC3_JOC,
-    MimeTypes.AUDIO_FLAC,
-    MimeTypes.AUDIO_OPUS,
-    MimeTypes.AUDIO_VORBIS,
-    MimeTypes.AUDIO_MPEG,
+/** One platform decoder's claim about one MIME type. */
+internal data class PlatformAudioDecodeCapability(
+    val mimeType: String,
+    val codec: String,
+    val decoderName: String,
+    /** Null when the device would not say; never treated as unlimited. */
+    val maxInputChannelCount: Int?,
 )
+
+/**
+ * Whether this device can decode [mime] at [channelCount] channels.
+ *
+ * Replaces a hardcoded MIME list that always claimed E-AC3 and E-AC3 JOC were
+ * decodable regardless of the device or the track. A Pixel whose E-AC3 decoder
+ * accepts two channels reported a 5.1 track as playable, and the failure only
+ * surfaced as ERROR_CODE_DECODING_FAILED after playback started — then the
+ * recovery replan made the same claim and chose the same route again.
+ *
+ * Any matching decoder is enough: several can expose the same MIME with
+ * different limits, and the widest one is the one that would be used. A limit
+ * is never borrowed from a different MIME, and JOC stays a separate claim from
+ * plain E-AC3 unless the device actually advertises it.
+ *
+ * An unknown [channelCount] (non-positive) asks only whether the codec exists —
+ * there is nothing to compare against, and refusing on that basis would reject
+ * tracks that play fine.
+ */
+internal fun canDecodeAudio(
+    mime: String,
+    channelCount: Int,
+    platformDecoders: List<PlatformAudioDecodeCapability>,
+    ffmpegAvailable: Boolean,
+): Boolean {
+    val platformForMime = platformDecoders.filter { it.mimeType.equals(mime, ignoreCase = true) }
+    if (platformForMime.isNotEmpty()) {
+        // FFmpeg deliberately does NOT get a vote here. The renderers are built
+        // with EXTENSION_RENDERER_MODE_ON, under which the extension only fills
+        // gaps where the platform has no decoder at all — so when a platform
+        // decoder exists it is the one that runs, and a track it refuses fails
+        // even though FFmpeg could have decoded it. Treating FFmpeg as a
+        // widening OR here is precisely how a 5.1 E-AC3 track on a two-channel
+        // Pixel decoder was reported playable: FFmpeg declares E-AC3, but was
+        // never going to be asked.
+        return platformForMime.any { decoder ->
+            when {
+                channelCount <= 0 -> true
+                decoder.maxInputChannelCount == null -> true
+                else -> decoder.maxInputChannelCount >= channelCount
+            }
+        }
+    }
+    return ffmpegAvailable && mime in FfmpegAudioSupport.mimeTypes
+}
+
+/** The wire name this project uses for a platform audio MIME, if it tracks one. */
+internal fun platformAudioCodecName(mimeType: String): String? = when {
+    mimeType.equals(MimeTypes.AUDIO_AAC, ignoreCase = true) -> "aac"
+    mimeType.equals(MimeTypes.AUDIO_AC3, ignoreCase = true) -> "ac3"
+    mimeType.equals(MimeTypes.AUDIO_E_AC3, ignoreCase = true) -> "eac3"
+    mimeType.equals(MimeTypes.AUDIO_E_AC3_JOC, ignoreCase = true) -> "eac3_joc"
+    mimeType.equals(MimeTypes.AUDIO_FLAC, ignoreCase = true) -> "flac"
+    mimeType.equals(MimeTypes.AUDIO_OPUS, ignoreCase = true) -> "opus"
+    mimeType.equals(MimeTypes.AUDIO_VORBIS, ignoreCase = true) -> "vorbis"
+    mimeType.equals(MimeTypes.AUDIO_MPEG, ignoreCase = true) -> "mp3"
+    else -> null
+}
