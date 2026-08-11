@@ -4055,6 +4055,11 @@ class TvPlayerViewModel(
         introAutoSkipController.cancelCountdown()
     }
 
+    /** Dismiss the intro auto-skip banner entirely for this intro (Back pressed). */
+    fun onDismissIntroAutoSkip() {
+        introAutoSkipController.dismiss()
+    }
+
     /**
      * HUD Chapters pane picked a row. Returns the seek target in seconds;
      * the screen owns the MediaController and performs the actual seek.

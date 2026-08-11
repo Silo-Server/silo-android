@@ -26,6 +26,7 @@ class IntroAutoSkipController(
     val state: StateFlow<IntroAutoSkipState> = _state.asStateFlow()
 
     private val cancelledKeys = mutableSetOf<String>()
+    private val dismissedKeys = mutableSetOf<String>()
     private var countdownJob: Job? = null
     private var activeKey: String? = null
 
@@ -48,13 +49,29 @@ class IntroAutoSkipController(
     fun cancelCountdown() {
         val key = activeKey ?: return
         cancelledKeys.add(key)
+        val wasCounting = countdownJob != null || _state.value is IntroAutoSkipState.CountingDown
         countdownJob?.cancel()
         countdownJob = null
-        _state.value = IntroAutoSkipState.ShowingButton
+        if (!wasCounting) return
+        _state.value = if (key in dismissedKeys) {
+            IntroAutoSkipState.Hidden
+        } else {
+            IntroAutoSkipState.ShowingButton
+        }
+    }
+
+    /** Hide the banner entirely for this intro (Back). Unlike cancel, no manual button remains. */
+    fun dismiss() {
+        val key = activeKey ?: return
+        dismissedKeys.add(key)
+        countdownJob?.cancel()
+        countdownJob = null
+        _state.value = IntroAutoSkipState.Hidden
     }
 
     fun reset() {
         cancelledKeys.clear()
+        dismissedKeys.clear()
         countdownJob?.cancel()
         countdownJob = null
         activeKey = null
@@ -96,6 +113,17 @@ class IntroAutoSkipController(
         activeKey = safeKey
 
         val isCancelled = safeKey in cancelledKeys
+        val isDismissed = safeKey in dismissedKeys
+        if (isDismissed) {
+            if (countdownJob != null) {
+                countdownJob?.cancel()
+                countdownJob = null
+            }
+            if (_state.value !is IntroAutoSkipState.Hidden) {
+                _state.value = IntroAutoSkipState.Hidden
+            }
+            return
+        }
         if (!enabled || isCancelled) {
             if (countdownJob != null) {
                 countdownJob?.cancel()

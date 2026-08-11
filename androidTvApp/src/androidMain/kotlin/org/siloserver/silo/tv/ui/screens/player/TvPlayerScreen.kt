@@ -2219,6 +2219,7 @@ fun TvPlayerScreen(
             onExitPlayback = { stopPlaybackAndExit() },
             onSkipIntroNow = { handleSkipIntroNow() },
             onCancelIntroAutoSkip = viewModel::onCancelIntroAutoSkip,
+            onDismissIntroAutoSkip = viewModel::onDismissIntroAutoSkip,
         )
     }
 }
@@ -3293,6 +3294,7 @@ private fun TvPlayerOverlays(
     onExitPlayback: () -> Unit,
     onSkipIntroNow: () -> Unit,
     onCancelIntroAutoSkip: () -> Unit,
+    onDismissIntroAutoSkip: () -> Unit,
 ) {
         // Lifecycle-driven notice toast (top-start). Slides in for outage
         // recovery, fades out when the lifecycle clears the notice.
@@ -3400,6 +3402,7 @@ private fun TvPlayerOverlays(
                         state = introSkipState,
                         onSkipNow = onSkipIntroNow,
                         onCancelCountdown = onCancelIntroAutoSkip,
+                        onDismissCountdown = onDismissIntroAutoSkip,
                     )
                 }
             }

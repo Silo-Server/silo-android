@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -25,7 +26,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,13 +46,11 @@ import org.siloserver.silo.domain.player.IntroAutoSkipState
  * scale), focus-driven instead of touch-driven, and a focus ring on the
  * actionable controls.
  *
- * The countdown button's background fill drains to empty the moment we enter
- * [IntroAutoSkipState.CountingDown]; it auto-focuses so the user can press
- * D-pad Select to skip without first navigating to the banner. While the
- * button is focused, scrubber / transport focus is unaffected
- * because the banner participates in the same focus tree as the rest of the
- * idle overlay — pressing arrow keys away will move focus back to scrubber /
- * play-pause.
+ * The countdown button's background fill creeps left-to-right while we are in
+ * [IntroAutoSkipState.CountingDown]; it auto-focuses (after two frames, so the
+ * focus system is ready) so D-pad Select skips immediately. Back dismisses the
+ * banner for this intro; moving focus off the button cancels the timer and
+ * leaves the solid manual pill in place.
  *
  * The component itself never positions itself; the parent should anchor it
  * (typically bottom-end above the transport cluster).
@@ -58,6 +60,7 @@ fun TvIntroAutoSkipBanner(
     state: IntroAutoSkipState,
     onSkipNow: () -> Unit,
     onCancelCountdown: () -> Unit,
+    onDismissCountdown: () -> Unit,
     modifier: Modifier = Modifier,
     totalSeconds: Int = 5,
 ) {
@@ -87,8 +90,12 @@ fun TvIntroAutoSkipBanner(
             }
             else -> {
                 TvShrinkingFillButton(
+                    secondsRemaining = (state as? IntroAutoSkipState.CountingDown)
+                        ?.secondsRemaining ?: totalSeconds,
                     totalSeconds = totalSeconds,
                     onSkipNow = onSkipNow,
+                    onCancel = onCancelCountdown,
+                    onDismiss = onDismissCountdown,
                 )
             }
         }
@@ -130,30 +137,57 @@ private fun TvSkipIntroButton(onClick: () -> Unit) {
 
 /**
  * Countdown variant: the button's background fill is the timer. A translucent
- * white fill drains left-to-right over the dark scrim in one continuous
- * [totalSeconds]-long animation; when it empties the auto-skip fires.
- * Auto-focuses on entry so D-pad Select skips immediately. Fill stays
- * translucent so the label reads at every drain level.
+ * white fill creeps left-to-right over the dark scrim in one continuous
+ * animation lasting the countdown's actual remaining seconds; when full, the
+ * auto-skip fires. Auto-focuses on entry so D-pad Select skips immediately;
+ * Back dismisses the banner for this intro; moving focus off cancels the timer
+ * (the controller falls back to the solid manual pill). Fill stays translucent
+ * so the label reads at every level.
  */
 @Composable
 private fun TvShrinkingFillButton(
+    secondsRemaining: Int,
     totalSeconds: Int,
     onSkipNow: () -> Unit,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val focusRequester = remember { FocusRequester() }
 
+    // Two frames before requesting focus: the request fails silently if it
+    // lands before the node is laid out and focusable.
     LaunchedEffect(Unit) {
+        withFrameNanos { }
+        withFrameNanos { }
         runCatching { focusRequester.requestFocus() }
     }
 
-    val fill = remember { Animatable(1f) }
+    // Losing focus after having it means the user D-padded away: stop the
+    // timer, leave the manual pill. Focus never gained (request failed) does
+    // nothing.
+    var hadFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(isFocused) {
+        if (isFocused) hadFocus = true
+        else if (hadFocus) onCancel()
+    }
+
+    BackHandler(onBack = onDismiss)
+
+    // Duration comes from the countdown's own remaining seconds at entry, not
+    // the configured total, so the fill always lands full exactly at the fire.
+    val startRemaining = remember { secondsRemaining.coerceAtLeast(1) }
+    val fill = remember {
+        val initial = if (totalSeconds <= 0) 0f
+        else 1f - startRemaining.toFloat() / totalSeconds.toFloat()
+        Animatable(initial.coerceIn(0f, 1f))
+    }
     LaunchedEffect(Unit) {
         fill.animateTo(
-            targetValue = 0f,
+            targetValue = 1f,
             animationSpec = tween(
-                durationMillis = totalSeconds.coerceAtLeast(1) * 1000,
+                durationMillis = startRemaining * 1000,
                 easing = LinearEasing,
             ),
         )
@@ -183,9 +217,9 @@ private fun TvShrinkingFillButton(
         Text(
             text = "Skip Intro",
             color = Color.White,
-            fontSize = 16.sp,
+            fontSize = 18.sp,
             fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 28.dp, vertical = 14.dp),
+            modifier = Modifier.padding(horizontal = 32.dp, vertical = 18.dp),
         )
     }
 }
