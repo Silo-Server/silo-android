@@ -58,6 +58,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
 import org.siloserver.silo.tv.ui.theme.ChromeSelectedBorder
@@ -411,7 +412,15 @@ fun TvTopMenuBar(
         onInstallAnchorFocus { panel ->
             val target = panel?.let(::focusForPanel)
             val requester = target?.let(::requesterForFocus) ?: selectedEntryRequester()
-            val moved = runCatching { requester.requestFocus() }.isSuccess
+            // requestFocus() RETURNS whether the claim was accepted, so
+            // runCatching{}.isSuccess threw the real answer away — it is true
+            // for any call that merely did not throw. That made a refused
+            // claim look like a move, which armed suppression, closed the
+            // panel and skipped the deferred fallback, leaving focus nowhere.
+            val moved = requester.claimFocusOrReport(
+                target = "menu_anchor",
+                action = "back_close_anchor",
+            )
             // Arm the suppression only if focus actually moved; otherwise the
             // state-request fallback will arm it a frame later.
             if (moved) dwellSuppressedButton = target
