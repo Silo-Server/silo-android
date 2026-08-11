@@ -266,6 +266,57 @@ class TvShellFocusStateTest {
         )
     }
 
+    /**
+     * The stranding bug, reproduced on a Google TV Streamer: Back from content
+     * asks the bar to take focus, the bar never reports taking it, and every
+     * subsequent Back re-evaluates to the same request. Four consecutive
+     * "focus request -> menu" with no "focused -> menu" between them, and Home
+     * and exit unreachable for as long as it lasts.
+     */
+    @Test
+    fun aSecondBackGoesHomeWhenTheBarNeverTookFocus() {
+        val s = TvShellFocusState()
+
+        // First Back climbs toward the bar.
+        assertEquals(TvShellBackAction.MoveFocusToMenu, s.onBack(onTabRoot = true))
+        assertTrue(s.barHandoffAttempted)
+
+        // The bar never answers — updateMenuFocused(true) never arrives.
+        assertEquals(
+            TvShellBackAction.MenuBack,
+            s.onBack(onTabRoot = true),
+            "a repeat request is what stranded the viewer; the second Back must progress",
+        )
+    }
+
+    /** When the bar DOES answer, the ladder is unchanged. */
+    @Test
+    fun aBarThatTakesFocusStillGetsTheNormalLadder() {
+        val s = TvShellFocusState()
+
+        assertEquals(TvShellBackAction.MoveFocusToMenu, s.onBack(onTabRoot = true))
+        s.updateMenuFocused(true)
+        assertFalse(s.barHandoffAttempted, "the bar answered, so nothing is outstanding")
+
+        assertEquals(TvShellBackAction.MenuBack, s.onBack(onTabRoot = true))
+    }
+
+    @Test
+    fun closingAPanelForgetsAnUnansweredHandoff() {
+        val s = TvShellFocusState()
+        s.onBack(onTabRoot = true)
+        assertTrue(s.barHandoffAttempted)
+
+        s.closePanel()
+
+        assertFalse(s.barHandoffAttempted)
+        assertEquals(
+            TvShellBackAction.MoveFocusToMenu,
+            s.onBack(onTabRoot = true),
+            "a fresh Back after a deliberate focus move should climb again, not skip to Home",
+        )
+    }
+
     @Test
     fun dwellPreviewNeverOverridesAnEnteredPanel() {
         val s = TvShellFocusState()

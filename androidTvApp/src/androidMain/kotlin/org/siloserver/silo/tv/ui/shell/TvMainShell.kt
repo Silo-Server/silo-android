@@ -922,6 +922,9 @@ fun TvMainShell(
         // Must match what onBack() will decide, or the shell would decline the
         // press and let navigation take it while handleShellBack expected it.
         panelEntered = focusState.panelHasFocus,
+        // Must match what onBack() will decide, or the shell declines a press
+        // it would then have handled.
+        barHandoffAttempted = focusState.barHandoffAttempted,
     )
     val shellHandlesBack = currentRoute != TvMainRoute.Settings.route && when (pendingShellBackAction) {
         TvShellBackAction.ClosePanel,
