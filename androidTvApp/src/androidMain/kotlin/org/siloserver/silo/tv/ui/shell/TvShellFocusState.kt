@@ -407,8 +407,16 @@ class TvShellFocusState {
                 closePanel()
                 requestMenuFocus(anchor, suppressDwellPreview = true)
             }
-            // Focus never left the bar, so there is nothing to restore.
-            TvShellBackAction.ClosePanelPreview -> closePanel()
+            // Focus is on the bar, but not necessarily on the ANCHOR: without an
+            // explicit request the bar falls back to selectedEntryRequester(),
+            // which is the selected tab (Home) — or the search icon when the
+            // route is Search. Backing out of Movies' cascade therefore landed
+            // on Home. Request the anchor so the viewer stays where they were.
+            TvShellBackAction.ClosePanelPreview -> {
+                val anchor = openPanel
+                closePanel()
+                requestMenuFocus(anchor, suppressDwellPreview = true)
+            }
             TvShellBackAction.CloseProfileMenu -> dismissProfileMenu()
             // Back from content climbs to the bar, and must NOT pop that tab's
             // cascade on arrival: the viewer is leaving, not browsing. Without
