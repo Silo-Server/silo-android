@@ -573,6 +573,36 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             }
             proactiveRefreshFailedTransiently =
                 earlyOutcome == RefreshOutcome.FailedTransient
+
+            // This request's bearer was captured BEFORE the refresh mutex was
+            // waited on. In that window another coroutine can have signed out,
+            // switched server, or had these very credentials repudiated — and
+            // every one of those returns NotAttempted, which says only "no
+            // refresh happened", not "the scope is still alive". Reading it as
+            // permission to proceed is how an invalidated bearer gets spent.
+            //
+            // So verify what is actually installed rather than trusting the
+            // outcome. Checked for every non-Refreshed case: FailedTransient is
+            // meant to spend the existing credentials, but only if they still
+            // exist.
+            if (earlyOutcome != RefreshOutcome.Refreshed) {
+                val installed = tokenManager.getAccessTokenForScope(refreshScope)
+                val serverNow = tokenManager.getCurrentServerId()
+                when {
+                    installed == null || serverNow != activeServerIdBeforeRequest -> {
+                        request.removeSiloCredentialHeaders()
+                        throw SiloAuthUnavailableException(
+                            SiloAuthUnavailableException.CREDENTIALS_REPUDIATED,
+                        )
+                    }
+                    // Someone else rotated them while we waited: spend the
+                    // token that is actually installed, not the stale capture.
+                    "Bearer $installed" != authorizationBeforeRequest -> {
+                        request.headers.remove(HttpHeaders.Authorization)
+                        request.header(HttpHeaders.Authorization, "Bearer $installed")
+                    }
+                }
+            }
         }
 
         val originalCall = proceed(request)

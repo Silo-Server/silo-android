@@ -287,6 +287,97 @@ class SiloAuthPluginProactiveRefreshHazardTest {
         )
     }
 
+    /**
+     * A request captures its bearer before it waits on the refresh mutex. If a
+     * concurrent sign-out clears the credentials in that window, the refresh
+     * reports only "nothing was refreshed" — which must not be read as
+     * permission to spend the bearer that no longer exists.
+     */
+    @Test
+    fun aSignOutWhileWaitingStopsTheRequestBeingSent() = runTest {
+        val tokenManager = TokenManagerImpl().apply {
+            setServerUrl("https://silo.example")
+            saveTokens("live-access", "refresh-token", expiresIn = 0)
+        }
+        val sent = mutableListOf<Pair<String, String?>>()
+        val client = HttpClient(
+            MockEngine { request ->
+                sent += request.url.encodedPath to request.headers[HttpHeaders.Authorization]
+                if (request.url.encodedPath.endsWith("/auth/refresh")) {
+                    // Stand in for a concurrent sign-out landing while this
+                    // request was waiting on the refresh mutex.
+                    tokenManager.clearTokens()
+                    respond(
+                        content = """{"error":"bad_gateway"}""",
+                        status = HttpStatusCode.BadGateway,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                } else {
+                    respond(
+                        content = """{"ok":true}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                }
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { this.tokenManager = tokenManager }
+        }
+
+        assertFailsWith<SiloAuthUnavailableException> {
+            client.post("/api/v1/watch/history")
+        }
+        assertTrue(
+            sent.none { it.first == "/api/v1/watch/history" },
+            "a signed-out session still sent its request: ${sent.map { it.first }}",
+        )
+    }
+
+    /**
+     * The benign half: credentials rotated by someone else while we waited are
+     * still usable, so the request goes out with the token that is actually
+     * installed rather than the stale capture.
+     */
+    @Test
+    fun credentialsRotatedWhileWaitingAreSpentInsteadOfTheStaleCapture() = runTest {
+        val tokenManager = TokenManagerImpl().apply {
+            setServerUrl("https://silo.example")
+            saveTokens("stale-access", "refresh-token", expiresIn = 0)
+        }
+        val sent = mutableListOf<Pair<String, String?>>()
+        val client = HttpClient(
+            MockEngine { request ->
+                sent += request.url.encodedPath to request.headers[HttpHeaders.Authorization]
+                if (request.url.encodedPath.endsWith("/auth/refresh")) {
+                    tokenManager.saveTokens("rotated-access", "rotated-refresh", 3600)
+                    respond(
+                        content = """{"error":"bad_gateway"}""",
+                        status = HttpStatusCode.BadGateway,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                } else {
+                    respond(
+                        content = """{"sections":[]}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                }
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { this.tokenManager = tokenManager }
+        }
+
+        client.get("/api/v1/home/sections")
+
+        assertEquals(
+            "Bearer rotated-access",
+            sent.last { it.first == "/api/v1/home/sections" }.second,
+            "the request spent a token that had already been replaced",
+        )
+    }
+
     private suspend fun repudiatedTokenManager(): TokenManagerImpl =
         TokenManagerImpl().apply {
             setServerUrl("https://silo.example")
