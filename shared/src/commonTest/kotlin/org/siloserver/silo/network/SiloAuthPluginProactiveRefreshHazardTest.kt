@@ -16,6 +16,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.network.api.BrandingApi
+import org.siloserver.silo.network.api.HealthApi
 
 /**
  * The two ways refreshing early can be worse than refreshing late: doing it on
@@ -262,6 +264,29 @@ class SiloAuthPluginProactiveRefreshHazardTest {
         )
     }
 
+    /**
+     * Server-name resolution must survive a dead session. Branding is the
+     * primary source since #192 and health is only its fallback, so if a
+     * repudiated session could fail branding, the app would quietly go back to
+     * the compatibility name that change exists to replace.
+     */
+    @Test
+    fun serverNameProbesSurviveARepudiatedSession() = runTest {
+        val tokenManager = repudiatedTokenManager()
+        val sent = mutableListOf<Pair<String, String?>>()
+        val client = repudiatingClient(tokenManager, sent)
+
+        val branding = BrandingApi(client).getBranding()
+        val health = HealthApi(client).checkHealth()
+
+        assertTrue(branding is ApiResult.Success, "branding failed: $branding")
+        assertTrue(health is ApiResult.Success, "health failed: $health")
+        assertTrue(
+            sent.filter { !it.first.endsWith("/auth/refresh") }.all { it.second == null },
+            "a public identity probe carried a bearer: $sent",
+        )
+    }
+
     private suspend fun repudiatedTokenManager(): TokenManagerImpl =
         TokenManagerImpl().apply {
             setServerUrl("https://silo.example")
@@ -283,8 +308,10 @@ class SiloAuthPluginProactiveRefreshHazardTest {
                     )
                 } else {
                     // Deliberately generous: would accept an anonymous request.
+                    // Body satisfies both HealthStatus and BrandingStatus so
+                    // the same client can stand in for either probe.
                     respond(
-                        content = """{"ok":true}""",
+                        content = """{"status":"ok","server_name":"Living Room"}""",
                         status = HttpStatusCode.OK,
                         headers = headersOf(HttpHeaders.ContentType, "application/json"),
                     )
