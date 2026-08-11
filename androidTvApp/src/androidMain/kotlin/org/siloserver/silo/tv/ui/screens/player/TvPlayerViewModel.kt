@@ -114,8 +114,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOf
@@ -2112,8 +2110,7 @@ class TvPlayerViewModel(
             onAutoSkipFire = { seekToSec -> seekImmediate(seekToSec) },
             playbackActive = _uiState
                 .map { it.isPlaying && !it.isLoading }
-                .distinctUntilChanged()
-                .settlingFalseEdges(PLAYBACK_STALL_GRACE_MS),
+                .distinctUntilChanged(),
         )
     }
 
@@ -4890,18 +4887,3 @@ internal fun TvPlayerViewModel.UiState.withoutPlaybackClock(): TvPlayerViewModel
 internal fun TvPlayerViewModel.UiState.toPlaybackClock(): PlaybackClock =
     PlaybackClock(position = position, duration = duration)
 
-/**
- * Delays only the false edges by [graceMs], so a brief playback stall leaves the
- * intro countdown alone while a real pause still stops it.
- *
- * channelFlow, not flow: collectLatest emits from a child coroutine.
- */
-internal fun Flow<Boolean>.settlingFalseEdges(graceMs: Long): Flow<Boolean> = channelFlow {
-    collectLatest { active ->
-        if (!active) delay(graceMs)
-        send(active)
-    }
-}
-
-/** How long isPlaying must stay false before it counts as a pause rather than a stall. */
-private const val PLAYBACK_STALL_GRACE_MS = 750L

@@ -246,6 +246,24 @@ class IntroAutoSkipControllerTest {
     }
 
     @Test
+    fun `pausing just before the countdown expires stops it instead of skipping`() = runTest {
+        val controller = newController(countdown = 3)
+        position.value = 35.0
+        runCurrent()
+        advanceTimeBy(2_900)
+        runCurrent()
+        assertEquals(IntroAutoSkipState.CountingDown(1), controller.state.value)
+
+        playing.value = false
+        runCurrent()
+        assertEquals(IntroAutoSkipState.ShowingButton, controller.state.value)
+
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertTrue(fired.isEmpty(), "a pause must stop the timer, even close to expiry")
+    }
+
+    @Test
     fun `cancelCountdown outside an active countdown leaves the state alone`() = runTest {
         val controller = newController(countdown = 3)
         position.value = 35.0
