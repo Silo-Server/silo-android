@@ -203,6 +203,11 @@ that #208 has since made false.** It claimed 8 adopters against 44 direct
 callers — 18% — and 107 `runCatching` occurrences in TV screens. As of `main`
 at 7245c0f4:
 
+Method, so these can be re-derived rather than trusted — run against
+`androidTvApp/src/androidMain`:
+`grep -rl 'requestFocusUntilObserved\|claimFocusOrReport'`,
+`grep -rl 'requestFocus()'`, and the intersection of the two.
+
 - **34** files use the shared observed-focus helpers
   (`requestFocusUntilObserved` / `claimFocusOrReport`).
 - **24** still contain a raw `requestFocus()`, of which **9** also use a helper,
@@ -225,27 +230,27 @@ That distinction is a type, expressed as a flag pair.
 **The revised ordering is: shell ownership model first, hold-out migration
 second, and no new enforcement — the existing ratchet is doing its job.**
 
-### Enforcement
+### Enforcement — already done, nothing proposed here
 
-Add a source test that fails on `runCatching { … requestFocus() … }` in
-`androidTvApp/.../ui/screens/`. The repo already uses `*SourceTest.kt` files
-that read source by path and assert on structure, so this is an established
-mechanism rather than a new one. Existing sites are baselined; the gate is that
-the count may only go down.
+An earlier draft proposed adding a source test that fails on
+`runCatching { … requestFocus() … }` in `androidTvApp/.../ui/screens/`, with
+existing sites baselined and the count only allowed to fall.
 
-That gate now exists (#208) and holds the count at zero. The 15 remaining
-hold-out files can be migrated in churn order behind it; nothing new is needed
-to stop regressions.
+**That is #208, which has merged.** The ratchet exists, it holds the count at
+zero, and `TvSilentFocusClaimSourceTest` is the file. This note proposes no new
+enforcement; the 15 remaining hold-out files can be migrated in churn order
+behind the gate that is already there.
 
 ## Scope
 
-**In:** the enforcement gate; migration of the highest-churn screens
-(`detail`, `player`, `audiobook`, `calendar`, `library`); then
-`TvShellFocusState`, `TvMainShell`, `TvTopMenuBar` and the Back/dwell decision
-paths.
+**In:** `TvShellFocusState`, `TvMainShell`, `TvTopMenuBar` and the Back/dwell
+decision paths — the ownership model, which is what a sweep cannot do. Then
+migration of the 15 hold-out files, in churn order.
 
-**Out:** the bounded observed-focus policy itself — it is sound and stays. The
-problem is that it is not used, not that it is wrong.
+**Out:** the enforcement gate, which #208 already shipped. Also out: the
+bounded observed-focus policy itself — it is sound, it stays, and at 69%
+adoption the objection that "nobody uses it" no longer holds. What remains
+wrong is not that policy but the shell inferring ownership from twelve flags.
 
 **Explicitly not** a global focus coordinator. Screens keep resolving their own
 targets. The shell stops guessing what state it is in.
