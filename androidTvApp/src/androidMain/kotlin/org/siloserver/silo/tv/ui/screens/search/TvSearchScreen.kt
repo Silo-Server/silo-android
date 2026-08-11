@@ -383,6 +383,11 @@ fun TvSearchScreen(
             return@LaunchedEffect
         }
 
+        // Observed on the CARD, not the region. A return is a claim on one
+        // specific item, so "some result has focus" is the same too-coarse test
+        // this file just removed everywhere else: any already-focused card in
+        // the region satisfied it and the saved card was never requested, which
+        // is precisely the case a return exists to serve.
         when (located.sectionId) {
             TvSearchCatalogSectionId -> {
                 restoreCatalogIndex = located.itemIndex
@@ -391,7 +396,7 @@ fun TvSearchScreen(
                     maxAttempts = TvFrameRelocationMaxAttempts,
                     awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
                     requestFocus = restoreCatalogFocusRequester::requestFocus,
-                    isFocused = { focusedRegion == TvSearchFocusRegion.CatalogResults },
+                    isFocused = { focusedReturnItemId == located.itemId },
                 )
             }
             TvSearchRequestSectionId -> {
@@ -400,7 +405,7 @@ fun TvSearchScreen(
                     maxAttempts = TvFrameRelocationMaxAttempts,
                     awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
                     requestFocus = restoreRequestFocusRequester::requestFocus,
-                    isFocused = { focusedRegion == TvSearchFocusRegion.RequestResults },
+                    isFocused = { focusedReturnItemId == located.itemId },
                 )
             }
         }
