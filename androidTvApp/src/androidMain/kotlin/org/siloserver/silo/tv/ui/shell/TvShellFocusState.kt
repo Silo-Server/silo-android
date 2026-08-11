@@ -98,6 +98,8 @@ internal fun tvShellBackAction(
     menuFocused: Boolean,
     onTabRoot: Boolean,
     panelEntered: Boolean = true,
+    barHandoffAttempted: Boolean = false,
+    onHome: Boolean = false,
 ): TvShellBackAction = when {
     // A panel the viewer never entered is a dwell preview: focus is still on
     // the bar, so dismissing it must leave focus there. Routing this through
@@ -109,6 +111,17 @@ internal fun tvShellBackAction(
     // the bar; Back on the bar goes Home (or exits from Home). Secondary
     // screens (Settings, Search, …) still pop navigation.
     menuFocused -> TvShellBackAction.MenuBack
+    // The handoff to the bar was already asked for and the bar never reported
+    // taking focus. Asking again is what strands the viewer: every Back
+    // re-evaluates to MoveFocusToMenu, MenuBack is never reached, and Home and
+    // exit become unreachable — observed on a Google TV Streamer as four
+    // consecutive "focus request -> menu" with no "focused -> menu" between
+    // them. Progress matters more than tidiness here, so the second Back goes
+    // Home regardless of where focus actually is.
+    // Escalate only where MenuBack actually NAVIGATES. On Home, MenuBack means
+    // "exit the app", so escalating there turns a Back the viewer expected to
+    // move focus into quitting Silo — which is worse than the loop it fixes.
+    onTabRoot && barHandoffAttempted && !onHome -> TvShellBackAction.MenuBack
     onTabRoot -> TvShellBackAction.MoveFocusToMenu
     else -> TvShellBackAction.DelegateToNav
 }
@@ -177,6 +190,18 @@ class TvShellFocusState {
     var profileFocusRequest by mutableIntStateOf(0)
         private set
 
+    /**
+     * True once Back has asked the bar to take focus and the bar has not yet
+     * reported doing so.
+     *
+     * [requestMenuFocus] only bumps a token — it cannot know whether the claim
+     * landed, and nothing corrected it when it did not. This records the
+     * attempt so a second Back can escalate instead of repeating a request that
+     * is evidently not working.
+     */
+    var barHandoffAttempted by mutableStateOf(false)
+        private set
+
     /** Re-fire the cascade selector's focus-entry effect when a panel is entered. */
     var panelFocusEntryToken by mutableIntStateOf(0)
         private set
@@ -224,6 +249,18 @@ class TvShellFocusState {
 
     // --- Menu-bar focus signals -------------------------------------------------
 
+    /**
+     * Moves bar focus to a panel's anchor RIGHT NOW, installed by the bar.
+     *
+     * Closing a cascade removes the focused node, and Compose recovers focus a
+     * frame before any request of ours can land — it picks the bar's first
+     * child, so Back visibly flashed through the search icon on its way to the
+     * anchor. Nothing written to state can win that frame; the fix is to move
+     * focus while the panel is still composed, leaving no recovery to lose.
+     * Returns whether focus actually moved.
+     */
+    var focusBarAnchorNow: ((TvTopMenuPanel?) -> Boolean)? = null
+
     /** Route focus to the bar's selected tab (content → bar Up, or panel close). */
     fun requestMenuFocus(target: TvTopMenuPanel? = null, suppressDwellPreview: Boolean = false) {
         DiagnosticsFocusLogger.transition(target?.diagnosticsTarget() ?: "menu", "request")
@@ -254,6 +291,8 @@ class TvShellFocusState {
         }
         isMenuFocused = focused
         if (focused) {
+            // The bar answered, so the outstanding handoff is settled.
+            barHandoffAttempted = false
             panelEntersFocus = false
             if (profileMenuOpen && !profileMenuEntered) profileMenuOpen = false
         }
@@ -332,6 +371,9 @@ class TvShellFocusState {
      * raced back to the bar by a focus bump from here.
      */
     fun closePanel() {
+        // Closing hands focus somewhere deliberate, so any stale unanswered
+        // handoff no longer describes the current situation.
+        barHandoffAttempted = false
         val closingPanel = openPanel
         openPanel = null
         panelEntersFocus = false
@@ -350,6 +392,7 @@ class TvShellFocusState {
     fun onBack(
         onTabRoot: Boolean,
         menuFocusTarget: TvTopMenuPanel? = null,
+        onHome: Boolean = false,
     ): TvShellBackAction {
         val action = tvShellBackAction(
             panelOpen = openPanel != null,
@@ -357,14 +400,20 @@ class TvShellFocusState {
             menuFocused = isMenuFocused,
             onTabRoot = onTabRoot,
             panelEntered = panelHasFocus,
+            barHandoffAttempted = barHandoffAttempted,
+            onHome = onHome,
         )
         when (action) {
             // Back out of a cascade the viewer ENTERED hands focus to content,
             // not back to the anchor tab. Parking them one level up in the
             // chrome is what "back doesn't exit the menus" meant.
-            TvShellBackAction.ClosePanel -> closePanel()
-            // Focus never left the bar, so there is nothing to restore.
-            TvShellBackAction.ClosePanelPreview -> closePanel()
+            TvShellBackAction.ClosePanel -> closePanelOntoAnchor()
+            // The preview case looks like focus never left the bar, but it is
+            // not necessarily on the ANCHOR: with no explicit target the bar
+            // falls back to selectedEntryRequester(), which is the selected tab
+            // — Home, or the search icon on the Search route. Backing out of
+            // Movies' cascade therefore landed on Home.
+            TvShellBackAction.ClosePanelPreview -> closePanelOntoAnchor()
             TvShellBackAction.CloseProfileMenu -> dismissProfileMenu()
             // Back from content climbs to the bar, and must NOT pop that tab's
             // cascade on arrival: the viewer is leaving, not browsing. Without
@@ -372,12 +421,35 @@ class TvShellFocusState {
             // content, so Back ping-pongs and never reaches MenuBack — Home and
             // exit become unreachable. Up from content is the browsing case and
             // stays unsuppressed, which is what makes the cascade openable.
-            TvShellBackAction.MoveFocusToMenu ->
+            TvShellBackAction.MoveFocusToMenu -> {
+                barHandoffAttempted = true
                 requestMenuFocus(menuFocusTarget, suppressDwellPreview = true)
+            }
             TvShellBackAction.MenuBack,
             TvShellBackAction.DelegateToNav -> Unit
         }
         return action
+    }
+
+    /**
+     * Close the open panel and leave focus on ITS anchor tab, with that tab's
+     * dwell preview suppressed.
+     *
+     * Order matters: focus moves first, while the panel is still composed, so
+     * removing it never triggers Compose's focus recovery. The state request is
+     * the fallback for when the bar has not installed its hook, or the anchor is
+     * not focusable yet — it lands a frame later, which is exactly the window
+     * that made Back flash through the search icon.
+     *
+     * The suppression is the other half: without it the anchor re-previews its
+     * cascade ~250ms later and the next Back is spent closing that preview
+     * instead of reaching MenuBack, so Home stays unreachable.
+     */
+    private fun closePanelOntoAnchor() {
+        val anchor = openPanel
+        val moved = focusBarAnchorNow?.invoke(anchor) ?: false
+        closePanel()
+        if (!moved) requestMenuFocus(anchor, suppressDwellPreview = true)
     }
 }
 

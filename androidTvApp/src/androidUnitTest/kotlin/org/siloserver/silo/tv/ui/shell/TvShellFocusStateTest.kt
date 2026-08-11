@@ -196,7 +196,57 @@ class TvShellFocusStateTest {
 
         assertEquals(TvShellBackAction.ClosePanelPreview, action)
         assertNull(s.openPanel)
-        assertEquals(menuBefore, s.menuFocusRequest, "focus was already on the bar; nothing to move")
+        // Focus is on the bar, but not necessarily on the ANCHOR: with no
+        // target named, the bar falls back to the SELECTED tab — Home, or the
+        // search icon on the Search route — so backing out of Movies' cascade
+        // landed on Home. Name the anchor, and suppress its dwell so it does
+        // not immediately re-preview the cascade Back just dismissed.
+        assertEquals(menuBefore + 1, s.menuFocusRequest)
+        assertEquals(moviesPanel, s.menuFocusTarget)
+        assertTrue(s.menuFocusSuppressesDwell)
+    }
+
+    /**
+     * When the bar has installed its synchronous hook, focus moves while the
+     * panel is still composed and the state request is not needed. Ordering is
+     * the whole point: closing first lets Compose recover focus onto the bar's
+     * first child (the search icon) a frame before any request of ours lands,
+     * which is a visible flash through search on every Back.
+     */
+    @Test
+    fun theSynchronousAnchorHookReplacesTheDeferredFocusRequest() {
+        val s = TvShellFocusState()
+        val anchors = mutableListOf<TvTopMenuPanel?>()
+        var panelStillOpenWhenFocusMoved: TvTopMenuPanel? = null
+        s.focusBarAnchorNow = { anchor ->
+            anchors += anchor
+            panelStillOpenWhenFocusMoved = s.openPanel
+            true
+        }
+        s.previewPanel(moviesPanel)
+        val menuBefore = s.menuFocusRequest
+
+        assertEquals(TvShellBackAction.ClosePanelPreview, s.onBack(onTabRoot = true))
+
+        assertEquals(listOf<TvTopMenuPanel?>(moviesPanel), anchors)
+        assertEquals(moviesPanel, panelStillOpenWhenFocusMoved)
+        assertNull(s.openPanel)
+        assertEquals(menuBefore, s.menuFocusRequest, "the hook moved focus; no deferred request needed")
+    }
+
+    /** A hook that could not move focus still falls back to the request. */
+    @Test
+    fun aFailedAnchorHookFallsBackToTheDeferredRequest() {
+        val s = TvShellFocusState()
+        s.focusBarAnchorNow = { false }
+        s.previewPanel(moviesPanel)
+        val menuBefore = s.menuFocusRequest
+
+        s.onBack(onTabRoot = true)
+
+        assertEquals(menuBefore + 1, s.menuFocusRequest)
+        assertEquals(moviesPanel, s.menuFocusTarget)
+        assertTrue(s.menuFocusSuppressesDwell)
     }
 
     /**
@@ -263,6 +313,77 @@ class TvShellFocusStateTest {
                 onTabRoot = true,
                 panelEntered = true,
             ),
+        )
+    }
+
+    /**
+     * The stranding bug, reproduced on a Google TV Streamer: Back from content
+     * asks the bar to take focus, the bar never reports taking it, and every
+     * subsequent Back re-evaluates to the same request. Four consecutive
+     * "focus request -> menu" with no "focused -> menu" between them, and Home
+     * and exit unreachable for as long as it lasts.
+     */
+    @Test
+    fun aSecondBackGoesHomeWhenTheBarNeverTookFocus() {
+        val s = TvShellFocusState()
+
+        // First Back climbs toward the bar.
+        assertEquals(TvShellBackAction.MoveFocusToMenu, s.onBack(onTabRoot = true))
+        assertTrue(s.barHandoffAttempted)
+
+        // The bar never answers — updateMenuFocused(true) never arrives.
+        assertEquals(
+            TvShellBackAction.MenuBack,
+            s.onBack(onTabRoot = true),
+            "a repeat request is what stranded the viewer; the second Back must progress",
+        )
+    }
+
+    /**
+     * The escalation must never fire on Home, because MenuBack there means
+     * EXIT. An earlier cut of this branch escalated unconditionally, so a bar
+     * that never answered on Home turned the second Back into a silent app
+     * exit — a worse failure than the stranding it was meant to fix.
+     */
+    @Test
+    fun theEscalationNeverExitsTheAppFromHome() {
+        val s = TvShellFocusState()
+
+        assertEquals(TvShellBackAction.MoveFocusToMenu, s.onBack(onTabRoot = true, onHome = true))
+        assertTrue(s.barHandoffAttempted, "the handoff is outstanding, exactly as off Home")
+
+        assertEquals(
+            TvShellBackAction.MoveFocusToMenu,
+            s.onBack(onTabRoot = true, onHome = true),
+            "on Home the unanswered handoff repeats rather than escalating to exit",
+        )
+    }
+
+    /** When the bar DOES answer, the ladder is unchanged. */
+    @Test
+    fun aBarThatTakesFocusStillGetsTheNormalLadder() {
+        val s = TvShellFocusState()
+
+        assertEquals(TvShellBackAction.MoveFocusToMenu, s.onBack(onTabRoot = true))
+        s.updateMenuFocused(true)
+        assertFalse(s.barHandoffAttempted, "the bar answered, so nothing is outstanding")
+
+        assertEquals(TvShellBackAction.MenuBack, s.onBack(onTabRoot = true))
+    }
+
+    @Test
+    fun closingAPanelForgetsAnUnansweredHandoff() {
+        val s = TvShellFocusState()
+        s.onBack(onTabRoot = true)
+        assertTrue(s.barHandoffAttempted)
+
+        s.closePanel()
+
+        assertFalse(s.barHandoffAttempted)
+        assertEquals(
+            TvShellBackAction.MoveFocusToMenu,
+            s.onBack(onTabRoot = true),
+            "a fresh Back after a deliberate focus move should climb again, not skip to Home",
         )
     }
 
@@ -375,9 +496,8 @@ class TvShellFocusStateTest {
     fun onBackAppliesTheStateHalfAndReportsTheAction() {
         val s = TvShellFocusState()
 
-        // Panel open → ClosePanel, panel cleared, and the bar deliberately NOT
-        // nudged: Back out of a cascade hands focus to content, so the holder
-        // must not claim it for the bar. The caller performs that move.
+        // Panel open → ClosePanel, panel cleared, and focus returned to the
+        // anchor tab.
         s.enterPanel(moviesPanel)
         // Entry INTENT is not entry: routing waits for the panel to report that
         // something inside it actually holds focus.
@@ -385,7 +505,11 @@ class TvShellFocusStateTest {
         val menuBefore = s.menuFocusRequest
         assertEquals(TvShellBackAction.ClosePanel, s.onBack(onTabRoot = true))
         assertNull(s.openPanel)
-        assertEquals(menuBefore, s.menuFocusRequest)
+        // Back out of an ENTERED cascade also returns to the anchor tab rather
+        // than diving into content — the tab the viewer was browsing, with its
+        // dwell suppressed so the cascade does not spring straight back open.
+        assertEquals(menuBefore + 1, s.menuFocusRequest)
+        assertEquals(moviesPanel, s.menuFocusTarget)
 
         // Profile open → CloseProfileMenu, dropdown closed and avatar nudged.
         s.previewProfileMenu()
