@@ -28,21 +28,25 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
+import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleArtifactV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTerminalV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
@@ -146,7 +150,7 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `staged replacement exposes manager derived output route generation`() = runTest {
+    fun stagedReplacementExposesTheOutputContextTheCandidateWasPlannedAgainst() = runTest {
         val harness = Harness(
             replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
         )
@@ -161,12 +165,12 @@ class PlaybackSessionManagerStagedReplanTest {
                 clientPlaybackContext = ClientPlaybackContext(
                     formFactor = "tv",
                     appVersion = "test",
-                    output = PlaybackOutputContext(outputRouteGeneration = 11),
+                    output = PlaybackOutputContext(outputContextId = "11"),
                 ),
             ),
         ).data
 
-        assertEquals(11, staged.outputRouteGeneration)
+        assertEquals("11", staged.outputContextId)
     }
 
     @Test
@@ -207,7 +211,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 response(sidecarPlan(sessionId = if (index == 0) "s2" else "s3"))
             },
         )
-        harness.start()
+        val renderedBase = harness.startReady()
         val replacement = harness.stageSidecar()
 
         assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
@@ -221,7 +225,7 @@ class PlaybackSessionManagerStagedReplanTest {
 
         val reverseMutation = async {
             harness.manager.stageActiveVideoSessionReplan(
-                classification = "output_route_changed",
+                classification = "decoder_failure",
                 positionSeconds = 43.0,
                 audioTrackIndex = 0,
                 subtitleTrackIndex = 4,
@@ -239,6 +243,21 @@ class PlaybackSessionManagerStagedReplanTest {
         assertEquals(listOf("s1", "s1"), harness.replanBaseSessions)
         assertEquals("s1", harness.manager.activeSessionIdForTest())
         assertEquals(mapOf("s2" to 1), harness.stoppedSessions.groupingBy { it }.eachCount())
+
+        val serverCursor = replacement.candidate
+        val secondRequest = harness.replanBodies[1]
+        assertEquals(serverCursor.plan.planId, secondRequest["failed_plan_id"]!!.jsonPrimitive.content)
+        assertEquals(serverCursor.planAttemptId, secondRequest["plan_attempt_id"]!!.jsonPrimitive.content)
+        assertEquals(serverCursor.planAttemptKey, secondRequest["plan_attempt_key"]!!.jsonPrimitive.content)
+        assertEquals(
+            listOf(serverCursor.planAttemptKey),
+            secondRequest["attempted_plan_keys"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals(1, secondRequest["attempt_count"]!!.jsonPrimitive.int)
+
+        val failureEvent = harness.awaitRouteEvent("plan_failed", renderedBase.plan.planId)
+        assertEquals(renderedBase.planAttemptId, failureEvent["plan_attempt_id"]!!.jsonPrimitive.content)
+        assertEquals(renderedBase.planAttemptKey, failureEvent["plan_attempt_key"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -610,6 +629,12 @@ class PlaybackSessionManagerStagedReplanTest {
                         subtitle = PlaybackSubtitleDecisionV3(
                             mode = PlaybackSubtitleModeV3.BURN_IN,
                             trackId = subtitleTrackId(fileId = 42, index = 4),
+                            inventory = subtitleInventory(
+                                fileId = 42,
+                                sessionId = "s2",
+                                maxIndex = 4,
+                                burnInIndex = 4,
+                            ),
                         ),
                     ),
                 )
@@ -636,6 +661,11 @@ class PlaybackSessionManagerStagedReplanTest {
                             mode = PlaybackSubtitleModeV3.CONVERT,
                             trackId = subtitleTrackId(fileId = 42, index = 4),
                             artifact = null,
+                            inventory = subtitleInventory(
+                                fileId = 42,
+                                sessionId = "s2",
+                                maxIndex = 4,
+                            ),
                         ),
                     ),
                 )
@@ -672,6 +702,11 @@ class PlaybackSessionManagerStagedReplanTest {
                             mode = PlaybackSubtitleModeV3.RENDER,
                             trackId = subtitleTrackId(fileId = 42, index = 5),
                             artifact = sidecarArtifact(sessionId = "s2", index = 5),
+                            inventory = subtitleInventory(
+                                fileId = 42,
+                                sessionId = "s2",
+                                maxIndex = 5,
+                            ),
                         ),
                     ),
                 )
@@ -689,6 +724,44 @@ class PlaybackSessionManagerStagedReplanTest {
         assertIs<ApiResult.Error>(staged)
         assertEquals("s1", harness.manager.activeSessionIdForTest())
         assertEquals(listOf("s2"), harness.stoppedSessions)
+    }
+
+    @Test
+    fun `sidecar identity may be remapped when server adapts to another edition`() = runTest {
+        val remapped = sidecarPlan(sessionId = "s2").copy(
+            requestedMediaFileId = 42,
+            effectiveMediaFileId = 84,
+            selectedTracks = SelectedPlaybackTracksV3(
+                audio = audioTrack(fileId = 84),
+                subtitle = PlaybackTrackIdentityV3(
+                    id = subtitleTrackId(fileId = 84, index = 1),
+                    index = 1,
+                ),
+            ),
+            subtitle = PlaybackSubtitleDecisionV3(
+                mode = PlaybackSubtitleModeV3.CONVERT,
+                trackId = subtitleTrackId(fileId = 84, index = 1),
+                artifact = sidecarArtifact(sessionId = "s2", index = 1),
+                inventory = subtitleInventory(
+                    fileId = 84,
+                    sessionId = "s2",
+                    maxIndex = 1,
+                ),
+            ),
+        )
+        val harness = Harness(replanResponse = { _, _ -> response(remapped) })
+        harness.start()
+
+        val staged = harness.manager.stageActiveVideoSessionReplan(
+            classification = "decoder_failure",
+            positionSeconds = 42.0,
+            audioTrackIndex = 0,
+            subtitleTrackIndex = 4,
+        )
+
+        val candidate = assertIs<ApiResult.Success<StagedVideoReplan>>(staged).data.candidate
+        assertEquals(84, candidate.plan.effectiveMediaFileId)
+        assertEquals("file:84:subtitle:1", candidate.plan.selectedTracks.subtitle?.id)
     }
 
     @Test
@@ -818,13 +891,13 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `deferred legacy fresh start terminal replan restores prior active attempt`() = runTest {
+    fun deferredUnexecutableFreshStartTerminalReplanRestoresPriorActiveAttempt() = runTest {
         val harness = Harness(
             startResponses = listOf(
                 response(basePlan(sessionId = "s1", fileId = 42)),
                 response(
                     basePlan(sessionId = "s3", fileId = 84).copy(
-                        engine = PlaybackEngineKind.MPV_DIRECT,
+                        runtimeCorrections = listOf("future_runtime_fix"),
                     ),
                 ),
             ),
@@ -1316,7 +1389,7 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `immediate legacy engine response preserves terminal outcome and cleanup`() = runTest {
+    fun immediateUnexecutableRouteResponsePreservesTerminalOutcomeAndCleanup() = runTest {
         val harness = Harness(
             replanResponse = { index, _ ->
                 if (index == 0) {
@@ -1324,7 +1397,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 } else {
                     response(
                         sidecarPlan(sessionId = "s3").copy(
-                            engine = PlaybackEngineKind.MPV_DIRECT,
+                            runtimeCorrections = listOf("future_runtime_fix"),
                         ),
                     )
                 }
@@ -1343,7 +1416,7 @@ class PlaybackSessionManagerStagedReplanTest {
         val terminal = assertIs<VideoSessionStartV3.Terminal>(
             assertIs<ApiResult.Success<VideoSessionStartV3>>(result).data,
         )
-        assertEquals("unsupported_legacy_engine", terminal.reason)
+        assertEquals(PlaybackSessionManager.UNEXECUTABLE_ROUTE_REASON, terminal.reason)
         assertEquals(null, harness.manager.activeSessionIdForTest())
         assertEquals(
             mapOf("s1" to 1, "s3" to 1),
@@ -1395,8 +1468,10 @@ class PlaybackSessionManagerStagedReplanTest {
         val replanBodies: MutableList<JsonObject> = Collections.synchronizedList(mutableListOf())
         val replanBaseSessions: MutableList<String> =
             Collections.synchronizedList(mutableListOf())
+        val routeEvents: MutableList<JsonObject> = Collections.synchronizedList(mutableListOf())
         private val stoppedEvents = Channel<String>(Channel.UNLIMITED)
         private val stopAttemptEvents = Channel<String>(Channel.UNLIMITED)
+        private val routeEventSignals = Channel<Unit>(Channel.UNLIMITED)
         private val startIndex = AtomicInteger()
         private val replanIndex = AtomicInteger()
         private val client = HttpClient(
@@ -1416,6 +1491,13 @@ class PlaybackSessionManagerStagedReplanTest {
                         ).jsonObject
                         replanBodies += body
                         replanResponse(replanIndex.getAndIncrement(), body)
+                    }
+                    path == "/api/v1/playback/route-events" -> {
+                        routeEvents += SiloJson.parseToJsonElement(
+                            request.body.toByteArray().decodeToString(),
+                        ).jsonObject
+                        routeEventSignals.send(Unit)
+                        null
                     }
                     request.method == HttpMethod.Delete && path.startsWith("/api/v1/playback/") -> {
                         val sessionId = path.substringAfterLast('/')
@@ -1452,7 +1534,24 @@ class PlaybackSessionManagerStagedReplanTest {
             deferPublication: Boolean = false,
         ) {
             assertIs<ApiResult.Success<VideoSessionStartV3>>(
-                manager.startVideoSessionV3(
+                startResult(fileId, deferPublication),
+            )
+        }
+
+        suspend fun startReady(
+            fileId: Int = 42,
+            deferPublication: Boolean = false,
+        ): VideoSessionStartV3.Ready = assertIs(
+            assertIs<ApiResult.Success<VideoSessionStartV3>>(
+                startResult(fileId, deferPublication),
+            ).data,
+        )
+
+        private suspend fun startResult(
+            fileId: Int,
+            deferPublication: Boolean,
+        ): ApiResult<VideoSessionStartV3> =
+            manager.startVideoSessionV3(
                     fileId = fileId,
                     profileId = "profile-1",
                     capabilities = ClientCodecCapabilities(
@@ -1463,7 +1562,7 @@ class PlaybackSessionManagerStagedReplanTest {
                     clientPlaybackContext = ClientPlaybackContext(
                         formFactor = "tv",
                         appVersion = "test",
-                        output = PlaybackOutputContext(outputRouteGeneration = 7),
+                        output = PlaybackOutputContext(outputContextId = "7"),
                     ),
                     audioTrackIndex = 0,
                     subtitleTrackIndex = null,
@@ -1471,9 +1570,7 @@ class PlaybackSessionManagerStagedReplanTest {
                     startPosition = 0.0,
                     subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
                     deferPublication = deferPublication,
-                ),
-            )
-        }
+                )
 
         suspend fun stageSidecar(): StagedVideoReplan = assertIs<ApiResult.Success<StagedVideoReplan>>(
             manager.stageActiveVideoSessionReplan(
@@ -1496,6 +1593,18 @@ class PlaybackSessionManagerStagedReplanTest {
                 stopAttemptEvents.receive()
             }
         }
+
+        suspend fun awaitRouteEvent(event: String, planId: String): JsonObject =
+            withTimeout(AWAIT_POLL_TIMEOUT_MS) {
+                while (true) {
+                    routeEvents.firstOrNull { body ->
+                        body["event"]?.jsonPrimitive?.content == event &&
+                            body["plan_id"]?.jsonPrimitive?.content == planId
+                    }?.let { return@withTimeout it }
+                    routeEventSignals.receive()
+                }
+                error("unreachable")
+            }
     }
 
     private companion object {
@@ -1504,9 +1613,9 @@ class PlaybackSessionManagerStagedReplanTest {
             fileId: Int = 42,
         ): PlaybackPlanV3 = PlaybackPlanV3(
             planId = "plan-$sessionId",
+            planAttemptKey = "v3:test:$sessionId",
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
-            engine = PlaybackEngineKind.MEDIA3_HLS,
             stream = PlaybackStreamV3(
                 url = "/stream/$sessionId/master.m3u8",
                 protocol = PlaybackStreamProtocol.HLS,
@@ -1535,8 +1644,29 @@ class PlaybackSessionManagerStagedReplanTest {
                 mode = PlaybackSubtitleModeV3.CONVERT,
                 trackId = subtitleTrackId(fileId = 42, index = 4),
                 artifact = sidecarArtifact(sessionId = sessionId, index = 4),
+                inventory = subtitleInventory(
+                    fileId = 42,
+                    sessionId = sessionId,
+                    maxIndex = 4,
+                ),
             ),
         )
+
+        fun subtitleInventory(
+            fileId: Int,
+            sessionId: String,
+            maxIndex: Int,
+            burnInIndex: Int? = null,
+        ): List<PlaybackSubtitleInventoryItemV3> = (0..maxIndex).map { index ->
+            val burnIn = index == burnInIndex
+            PlaybackSubtitleInventoryItemV3(
+                trackId = subtitleTrackId(fileId, index),
+                combinedIndex = index,
+                source = "embedded",
+                delivery = if (burnIn) "burn_in_only" else "sidecar",
+                url = if (burnIn) null else "/stream/$sessionId/subtitles/$index.vtt",
+            )
+        }
 
         fun sidecarArtifact(sessionId: String, index: Int): PlaybackSubtitleArtifactV3 =
             PlaybackSubtitleArtifactV3(
@@ -1554,7 +1684,10 @@ class PlaybackSessionManagerStagedReplanTest {
         fun response(plan: PlaybackPlanV3): PlaybackDecisionResponseV3 =
             PlaybackDecisionResponseV3(
                 protocolVersion = 3,
-                serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+                serverFeatures = listOf(
+                    PLAYBACK_PLAN_V3_FEATURE,
+                    NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                ),
                 outcome = PlaybackDecisionOutcome.PLAYABLE,
                 sessionId = plan.sessionId,
                 playbackPlan = plan,
@@ -1566,7 +1699,10 @@ class PlaybackSessionManagerStagedReplanTest {
             message: String,
         ): PlaybackDecisionResponseV3 = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = listOf(
+                PLAYBACK_PLAN_V3_FEATURE,
+                NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+            ),
             outcome = PlaybackDecisionOutcome.ADAPTATION_UNAVAILABLE,
             sessionId = sessionId,
             terminal = PlaybackTerminalV3(

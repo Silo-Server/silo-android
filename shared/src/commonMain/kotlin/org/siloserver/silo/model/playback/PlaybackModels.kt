@@ -66,7 +66,21 @@ data class PlayerSubtitleInfo(
     @SerialName("download_id") val downloadId: Int? = null,
     /** Optional exact Media3 Format.id retained by client-created/local rows. */
     @SerialName("media_track_id") val mediaTrackId: String? = null,
+    /** Exact protocol-v3 server identity from the authoritative subtitle inventory. */
+    @SerialName("server_track_id") val serverTrackId: String? = null,
+    /** Protocol-v3 representation: `sidecar` or `burn_in_only`. */
+    @SerialName("server_delivery") val serverDelivery: String? = null,
 )
+
+/**
+ * Whether this row represents a subtitle artifact downloaded onto this Android
+ * device, rather than a server-managed provider download in the v3 inventory.
+ */
+fun PlayerSubtitleInfo.isLocalDownloadedSubtitle(): Boolean =
+    serverTrackId == null && serverDelivery == null &&
+        (downloadId != null ||
+            source.equals("downloaded", ignoreCase = true) ||
+            catalogSource.equals("downloaded", ignoreCase = true))
 
 /**
  * Granular HDR support advertised by the client. Optional; absent means the
@@ -127,6 +141,15 @@ data class VideoDecodeCapability(
 
 @Serializable
 data class ClientCodecCapabilities(
+    /**
+     * How the video capability list was obtained. Android probes
+     * `MediaCodecList` for concrete profile/level/bit-depth tuples, so it
+     * advertises [CAPABILITY_EVIDENCE_EXACT] — the only tier the server will
+     * strictly validate against, and the only one that earns audio passthrough.
+     */
+    @SerialName("video_evidence") val videoEvidence: String = CAPABILITY_EVIDENCE_EXACT,
+    /** Evidence tier for the audio lists, on the same scale as [videoEvidence]. */
+    @SerialName("audio_evidence") val audioEvidence: String = CAPABILITY_EVIDENCE_EXACT,
     @SerialName("codecs_video") val codecsVideo: List<String> = emptyList(),
     // Hardware-decodable subset. In the Media3-only protocol this currently
     // equals codecsVideo; it remains on the wire for older server readers.
@@ -150,16 +173,6 @@ enum class PlaybackDelivery {
 }
 
 @Serializable
-enum class PlaybackEngineKind {
-    @SerialName("media3_direct") MEDIA3_DIRECT,
-    @SerialName("mpv_direct") MPV_DIRECT,
-    @SerialName("media3_progressive_remux") MEDIA3_PROGRESSIVE_REMUX,
-    @SerialName("media3_hls") MEDIA3_HLS,
-    @SerialName("client_local_loopback") CLIENT_LOCAL_LOOPBACK,
-    @SerialName("external_player") EXTERNAL_PLAYER,
-}
-
-@Serializable
 enum class PlaybackRouteFamily {
     @SerialName("platform_native") PLATFORM_NATIVE,
     @SerialName("compatibility_direct") COMPATIBILITY_DIRECT,
@@ -167,24 +180,27 @@ enum class PlaybackRouteFamily {
     @SerialName("client_normalized") CLIENT_NORMALIZED,
 }
 
+/**
+ * The player-facing projection of a [PlaybackPlanV3], built by
+ * `PlaybackV3Session.toSessionResponse`. It is a UI view of the plan, not a wire
+ * type of its own: the server's neutral contract has no notion of a client
+ * engine or route family, so those are derived here from the plan's delivery.
+ */
 @Serializable
 data class PlaybackExecutionPlan(
     @SerialName("plan_id") val planId: String,
-    @SerialName("protocol_version") val protocolVersion: Int = 2,
+    @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
     val delivery: PlaybackDelivery,
-    val engine: PlaybackEngineKind,
     @SerialName("route_family") val routeFamily: PlaybackRouteFamily,
     val stream: PlaybackStreamRequest = PlaybackStreamRequest(),
     val timeline: PlaybackTimeline = PlaybackTimeline(),
     @SerialName("selected_tracks") val selectedTracks: SelectedPlaybackTracks = SelectedPlaybackTracks(),
     val source: PlaybackSourceMetadata = PlaybackSourceMetadata(),
-    val capabilities: RouteCapabilitySnapshot = RouteCapabilitySnapshot(),
-    val requirements: RouteRequirements = RouteRequirements(),
     val claims: PlaybackValidationClaims = PlaybackValidationClaims(),
     val transformations: List<PlaybackTransformationV3> = emptyList(),
     @SerialName("applied_quirks") val appliedQuirks: List<PlaybackAppliedQuirkV3> = emptyList(),
     @SerialName("runtime_corrections") val runtimeCorrections: List<String> = emptyList(),
-    val fallbacks: List<PlaybackFallbackCandidate> = emptyList(),
+    @SerialName("available_qualities") val availableQualities: List<PlaybackAvailableQualityV3> = emptyList(),
     @SerialName("degradation_warnings") val degradationWarnings: List<PlaybackDegradationWarning> = emptyList(),
     @SerialName("decision_trace") val decisionTrace: List<String> = emptyList(),
     @SerialName("requested_media_file_id") val requestedMediaFileId: Int? = null,
@@ -192,14 +208,12 @@ data class PlaybackExecutionPlan(
 )
 
 /**
- * Deserializes a [PlaybackExecutionPlan] but yields `null` when the server sends
- * a present-but-incomplete/malformed plan (a missing required field such as
- * `plan_id`/`delivery`/`engine`/`route_family`, a malformed `fallbacks[]` /
- * `degradation_warnings[]` entry, or an unknown enum value). Without this, a
- * single missing field throws [SerializationException] and fails the decode of
- * the ENTIRE session-start response — turning an HTTP-200 into a NetworkError so
- * playback never starts. A null plan instead makes the client fall back to the
- * legacy V1 routing, which is the safe degrade.
+ * Deserializes a [PlaybackExecutionPlan] but yields `null` when the value is
+ * present-but-malformed (a missing required field such as
+ * `plan_id`/`delivery`/`route_family`, a malformed `degradation_warnings[]`
+ * entry, or an unknown enum value). Without this, a single missing field throws
+ * [SerializationException] and fails the decode of the ENTIRE session-start
+ * response — turning an HTTP-200 into a NetworkError so playback never starts.
  */
 @OptIn(ExperimentalSerializationApi::class)
 internal object TolerantPlaybackPlanSerializer : KSerializer<PlaybackExecutionPlan?> {
@@ -266,22 +280,6 @@ data class PlaybackSourceMetadata(
 )
 
 @Serializable
-data class RouteCapabilitySnapshot(
-    @SerialName("engine_available") val engineAvailable: Boolean = true,
-    @SerialName("validated_claims") val validatedClaims: List<String> = emptyList(),
-    val blockers: List<String> = emptyList(),
-)
-
-@Serializable
-data class RouteRequirements(
-    @SerialName("requires_hdr_preservation") val requiresHdrPreservation: Boolean = false,
-    @SerialName("requires_dolby_vision_preservation") val requiresDolbyVisionPreservation: Boolean = false,
-    @SerialName("requires_audio_passthrough") val requiresAudioPassthrough: Boolean = false,
-    @SerialName("requires_ass_fidelity") val requiresAssFidelity: Boolean = false,
-    @SerialName("requires_bitmap_subtitles") val requiresBitmapSubtitles: Boolean = false,
-)
-
-@Serializable
 data class PlaybackValidationClaims(
     val video: VideoValidationClaims = VideoValidationClaims(),
     val audio: AudioValidationClaims = AudioValidationClaims(),
@@ -315,50 +313,50 @@ data class SubtitleValidationClaims(
 )
 
 @Serializable
-data class PlaybackFallbackCandidate(
-    val delivery: PlaybackDelivery,
-    val engine: PlaybackEngineKind,
-    val reason: String,
-)
-
-@Serializable
 data class PlaybackDegradationWarning(
     val code: String,
     val message: String,
 )
 
+/**
+ * Everything the server needs to know about *this device and its current
+ * output route*, as opposed to the codec lists in [ClientCodecCapabilities].
+ *
+ * There is deliberately no `platform` field and no second `features` list here:
+ * feature advertisement lives exclusively in the request's top-level
+ * `client_features`, and the platform is inferred by the server from the
+ * capability evidence and delivery classes it is given.
+ */
 @Serializable
 data class ClientPlaybackContext(
     @SerialName("protocol_version") val protocolVersion: Int = PLAYBACK_PROTOCOL_V3,
-    val features: List<String> = listOf(
-        PLAYBACK_PLAN_V3_FEATURE,
-        MEDIA3_ONLY_FEATURE,
-        DETAILED_DECODE_CAPABILITIES_FEATURE,
-        DEVICE_QUIRKS_V3_FEATURE,
-        SEEK_REANCHOR_V3_FEATURE,
-    ),
-    val platform: String = "android",
     @SerialName("form_factor") val formFactor: String,
     @SerialName("app_version") val appVersion: String,
     val device: PlaybackDeviceContext = PlaybackDeviceContext(),
     val output: PlaybackOutputContext = PlaybackOutputContext(),
-    val engines: Map<PlaybackEngineKind, EngineCapabilityEnvelope> = emptyMap(),
+    /**
+     * What this client is willing and able to play, keyed by delivery class
+     * ([DELIVERY_CLASS_ORIGINAL_HTTP], [DELIVERY_CLASS_PROGRESSIVE],
+     * [DELIVERY_CLASS_HLS]). Replaces the old engine self-description: the
+     * server negotiates against transports, not against a client's internal
+     * player component names.
+     */
+    val deliveries: Map<String, DeliveryCapability> = emptyMap(),
 )
 
+/**
+ * Neutral device identity. Everything platform-specific — SoC, build
+ * fingerprint, SDK level, ABIs — goes in [platformDetails] as opaque
+ * string pairs so the server can key device quirks on it without the contract
+ * growing an Android-shaped hole.
+ */
 @Serializable
 data class PlaybackDeviceContext(
+    val platform: String? = null,
+    @SerialName("os_version") val osVersion: String? = null,
     val manufacturer: String? = null,
     val model: String? = null,
-    val brand: String? = null,
-    val device: String? = null,
-    val product: String? = null,
-    @SerialName("soc_manufacturer") val socManufacturer: String? = null,
-    @SerialName("soc_model") val socModel: String? = null,
-    @SerialName("build_id") val buildId: String? = null,
-    @SerialName("build_display") val buildDisplay: String? = null,
-    @SerialName("security_patch") val securityPatch: String? = null,
-    @SerialName("sdk_int") val sdkInt: Int? = null,
-    val abis: List<String> = emptyList(),
+    @SerialName("platform_details") val platformDetails: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -367,13 +365,22 @@ data class PlaybackOutputContext(
     @SerialName("audio_passthrough") val audioPassthrough: AudioPassthroughCapabilities? = null,
     @SerialName("current_sink") val currentSink: String? = null,
     @SerialName("sink_type") val sinkType: String? = null,
-    @SerialName("output_route_generation") val outputRouteGeneration: Long = 0,
+    /**
+     * Opaque token identifying the current output route. The server only ever
+     * compares it for equality — Android supplies its route generation
+     * stringified, Apple a synthetic sink hash, web omits it.
+     */
+    @SerialName("output_context_id") val outputContextId: String? = null,
 )
 
+/** What the client can do with one delivery class. */
 @Serializable
-data class EngineCapabilityEnvelope(
+data class DeliveryCapability(
+    /** Whether the client is *willing* to be routed here. */
     val enabled: Boolean = true,
+    /** Whether the client is *able* to play it at all on this device. */
     @SerialName("supported_on_device") val supportedOnDevice: Boolean = true,
+    /** Diagnostics only; the server never routes on this string. */
     @SerialName("failure_reason") val failureReason: String? = null,
     val containers: List<String> = emptyList(),
     @SerialName("video_codecs") val videoCodecs: List<String> = emptyList(),
@@ -381,7 +388,7 @@ data class EngineCapabilityEnvelope(
     @SerialName("audio_passthrough_codecs") val audioPassthroughCodecs: List<String> = emptyList(),
     @SerialName("max_channels") val maxChannels: Int? = null,
     @SerialName("hdr_details") val hdrDetails: HdrCapabilities? = null,
-    val subtitles: EngineSubtitleCapabilities = EngineSubtitleCapabilities(),
+    val subtitles: DeliverySubtitleCapabilities = DeliverySubtitleCapabilities(),
     val features: List<String> = emptyList(),
     val transformations: List<PlaybackTransformationV3> = emptyList(),
     @SerialName("auth_header_refresh") val authHeaderRefresh: Boolean = false,
@@ -389,7 +396,7 @@ data class EngineCapabilityEnvelope(
 )
 
 @Serializable
-data class EngineSubtitleCapabilities(
+data class DeliverySubtitleCapabilities(
     @SerialName("embedded_text") val embeddedText: Boolean = true,
     @SerialName("sidecar_text") val sidecarText: Boolean = true,
     @SerialName("ass_styling") val assStyling: Boolean = false,
@@ -398,70 +405,8 @@ data class EngineSubtitleCapabilities(
     @SerialName("font_attachments") val fontAttachments: Boolean = false,
 )
 
-/**
- * Body for `POST /api/v1/playback/start`.
- *
- * The server expects codec/container/HDR fields **flat at the top level** —
- * see `Silo/internal/api/handlers/playback.go::startPlaybackRequest`. A
- * previous version of this class nested them under `client_capabilities`,
- * which the Go JSON decoder silently ignored; the server then saw empty codec
- * lists and force-transcoded every stream. Keep this flat.
- */
-@Serializable
-data class StartPlaybackRequest(
-    @SerialName("file_id") val fileId: Int,
-    @SerialName("profile_id") val profileId: String? = null,
-    @SerialName("play_method") val playMethod: String? = null,
-    @SerialName("start_position") val startPosition: Double? = null,
-    @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
-    @SerialName("subtitle_track_index") val subtitleTrackIndex: Int? = null,
-    @SerialName("quality_preference") val qualityPreference: String? = null,
-    @SerialName("preserve_direct_audio_selection") val preserveDirectAudioSelection: Boolean = false,
-    @SerialName("codecs_video") val codecsVideo: List<String> = emptyList(),
-    @SerialName("codecs_audio") val codecsAudio: List<String> = emptyList(),
-    val containers: List<String> = emptyList(),
-    @SerialName("max_resolution") val maxResolution: String? = null,
-    val hdr: Boolean = false,
-    @SerialName("hdr_details") val hdrDetails: HdrCapabilities? = null,
-    @SerialName("audio_passthrough") val audioPassthrough: AudioPassthroughCapabilities? = null,
-    @SerialName("client_playback_context") val clientPlaybackContext: ClientPlaybackContext? = null,
-    @SerialName("disable_progress_persistence") val disableProgressPersistence: Boolean = false,
-    // Set when the stream URL is handed to a device that can only seek via
-    // HTTP Range or an HLS VOD manifest (e.g. a Cast receiver): the server
-    // upgrades a would-be progressive remux (unseekable live pipe) to a
-    // transcode session.
-    @SerialName("seekable_streams_only") val seekableStreamsOnly: Boolean = false,
-)
-
 @Serializable
 data class ProgressRequest(
     val position: Double,
     @SerialName("is_paused") val isPaused: Boolean
-)
-
-@Serializable
-data class TranscodeStartRequest(
-    @SerialName("session_id") val sessionId: String,
-    @SerialName("seek_seconds") val seekSeconds: Double,
-    @SerialName("target_resolution") val targetResolution: String? = null,
-    @SerialName("target_codec_video") val targetCodecVideo: String? = null,
-    @SerialName("target_codec_audio") val targetCodecAudio: String? = null,
-    @SerialName("target_bitrate_kbps") val targetBitrateKbps: Int,
-    @SerialName("segment_duration") val segmentDuration: Int,
-    @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
-    @SerialName("subtitle_track_index") val subtitleTrackIndex: Int? = null,
-    @SerialName("subtitle_burn_in") val subtitleBurnIn: Boolean
-)
-
-@Serializable
-data class TranscodeStartResponse(
-    @SerialName("session_id") val sessionId: String,
-    val status: String,
-    @SerialName("switched_file_id") val switchedFileId: Int? = null,
-    @SerialName("manifest_url") val manifestUrl: String,
-    @SerialName("duration_seconds") val durationSeconds: Double? = null,
-    @SerialName("player_start_seconds") val playerStartSeconds: Double = 0.0,
-    @SerialName("stream_origin_seconds") val streamOriginSeconds: Double = 0.0,
-    @SerialName("timeline_offset_seconds") val timelineOffsetSeconds: Double = 0.0,
-    @SerialName("can_seek_anywhere") val canSeekAnywhere: Boolean = false
 )

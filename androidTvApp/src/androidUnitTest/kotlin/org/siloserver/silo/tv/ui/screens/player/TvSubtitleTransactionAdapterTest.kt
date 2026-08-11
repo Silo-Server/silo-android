@@ -115,7 +115,12 @@ class TvSubtitleTransactionAdapterTest {
 
     @Test
     fun `old server catalog-only sidecar performs one staged replan at current position`() = runTest {
-        val harness = harness(backgroundScope, isLocallyMountable = { false })
+        val adoption = AdoptionControl()
+        val harness = harness(
+            backgroundScope,
+            adoption = adoption,
+            isLocallyMountable = { false },
+        )
 
         harness.adapter.select(sidecar(4))
         runCurrent()
@@ -138,6 +143,7 @@ class TvSubtitleTransactionAdapterTest {
 
         assertEquals(listOf("old-server-sidecar"), harness.port.committed)
         assertEquals(sidecar(4), harness.adapter.snapshot.committedIdentity)
+        assertEquals(listOf(42.0), adoption.requestedSourcePositions)
     }
 
     @Test
@@ -287,6 +293,30 @@ class TvSubtitleTransactionAdapterTest {
 
         assertEquals(sidecar(4), harness.adapter.snapshot.committedIdentity)
         assertEquals(7, harness.adapter.snapshot.transition.committed.audioTrackIndex)
+    }
+
+    @Test
+    fun `adapted edition commits returned audio and subtitle identities`() = runTest {
+        val harness = harness(backgroundScope)
+
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.completeStage(
+            candidate(
+                id = "adapted",
+                selectedIndex = 1,
+                selectedAudioIndex = 5,
+                effectiveMediaFileId = 22,
+                selectedSubtitleIdentity = sidecar(1),
+            ),
+        )
+        runCurrent()
+        confirmPendingPlayerBoundary(harness, "adapted-mounted")
+        runCurrent()
+
+        assertEquals(sidecar(1), harness.adapter.snapshot.committedIdentity)
+        assertEquals(5, harness.adapter.snapshot.transition.committed.audioTrackIndex)
+        assertEquals(22, harness.committedPlaybacks.single().effectiveMediaFileId)
     }
 
     @Test
@@ -1624,6 +1654,36 @@ class TvSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `authoritative downloaded refresh auto selects the exact server sidecar`() = runTest {
+        val harness = harness(backgroundScope)
+        val owner = harness.adapter.beginRefresh()
+        val row = PlayerSubtitleInfo(
+            index = 4,
+            language = "en",
+            codec = "vtt",
+            label = "Downloaded English",
+            source = "downloaded",
+            forced = false,
+            url = "https://silo.test/api/v1/stream/s1/subtitles/4.vtt",
+            downloadId = 91,
+            serverTrackId = "file:22:subtitle:4",
+            serverDelivery = "sidecar",
+        )
+
+        assertTrue(
+            harness.adapter.applyRefresh(
+                owner = owner,
+                subtitleTracks = listOf(row),
+                autoSelectDownloadId = 91,
+            ),
+        )
+        runCurrent()
+
+        assertEquals(tvSubtitleIdentity(row), harness.adapter.snapshot.pendingIdentity)
+        assertEquals(listOf(4), harness.port.requests.map { it.subtitleTrackIndex })
+    }
+
+    @Test
     fun `HUD catalog selection while controls are open enters one transaction`() = runTest {
         val harness = harness(backgroundScope)
 
@@ -2163,6 +2223,7 @@ class TvSubtitleTransactionAdapterTest {
             persistenceCoordinator = persistenceCoordinator,
             onCommittedPlayback = { adoptionRequest ->
                 adoption.started += 1
+                adoption.requestedSourcePositions += adoptionRequest.requestedSourcePositionSeconds
                 if (adoption.suspendAdoption) adoption.completions.receive()
                 adoption.failure?.let { throw it }
                 if (adoption.forceSuperseded || !adoptionRequest.isCurrent()) {
@@ -2243,6 +2304,7 @@ class TvSubtitleTransactionAdapterTest {
         var forceSuperseded: Boolean = false,
     ) {
         var started: Int = 0
+        val requestedSourcePositions = mutableListOf<Double>()
         val completions = Channel<Unit>(Channel.UNLIMITED)
 
         suspend fun complete() {
@@ -2281,6 +2343,8 @@ class TvSubtitleTransactionAdapterTest {
         tracks: List<PlayerSubtitleInfo> = emptyList(),
         qualityPreference: String = "auto",
         outputRouteGeneration: Long = 0L,
+        effectiveMediaFileId: Int? = null,
+        selectedSubtitleIdentity: SubtitleIdentity? = null,
     ): TvStagedSubtitleCandidate = TvStagedSubtitleCandidate(
         id = id,
         sessionId = sessionId,
@@ -2289,6 +2353,8 @@ class TvSubtitleTransactionAdapterTest {
         subtitleMode = mode,
         hasSidecar = hasSidecar,
         subtitleTracks = tracks,
+        effectiveMediaFileId = effectiveMediaFileId,
+        selectedSubtitleIdentity = selectedSubtitleIdentity,
         qualityPreference = qualityPreference,
         outputRouteGeneration = outputRouteGeneration,
     )
@@ -2418,6 +2484,7 @@ class TvSubtitleTransactionAdapterTest {
                 TvSubtitleCommittedPlayback(
                     sessionId = candidate.sessionId,
                     subtitleTracks = candidate.subtitleTracks,
+                    effectiveMediaFileId = candidate.effectiveMediaFileId,
                     outputRouteGeneration = candidate.outputRouteGeneration,
                 ),
             )

@@ -44,4 +44,17 @@ class TvMediaInfoFormattingTest {
         assertEquals("English · 5.1 · DTS · Default", summary.secondary)
         assertTrue(summary.secondary.orEmpty().contains("5.1"))
     }
+
+    @Test
+    fun subtitleSummaryUsesTheSharedAccessibilityClassifier() {
+        val closedCaptions = tvMediaInfoSubtitleSummary(
+            SubtitleTrack(index = 1, codec = "srt", language = "en", title = "English CC"),
+        )
+        val unrelatedHearingText = tvMediaInfoSubtitleSummary(
+            SubtitleTrack(index = 2, codec = "srt", language = "en", title = "Hearing Aid Commentary"),
+        )
+
+        assertTrue(closedCaptions.secondary.orEmpty().contains("SDH"))
+        assertFalse(unrelatedHearingText.secondary.orEmpty().contains("SDH"))
+    }
 }

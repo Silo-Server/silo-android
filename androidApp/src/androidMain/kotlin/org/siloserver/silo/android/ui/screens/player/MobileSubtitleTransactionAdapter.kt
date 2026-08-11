@@ -31,8 +31,10 @@ import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleTransitionEvent
 import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
+import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
+import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 
@@ -69,6 +71,8 @@ internal data class MobileStagedSubtitleCandidate(
     val subtitleMode: PlaybackSubtitleModeV3,
     val hasSidecar: Boolean,
     val subtitleTracks: List<PlayerSubtitleInfo>,
+    val effectiveMediaFileId: Int? = null,
+    val selectedSubtitleIdentity: SubtitleIdentity? = null,
     internal val managerHandle: StagedVideoReplan? = null,
 )
 
@@ -76,6 +80,7 @@ internal data class MobileSubtitleCommittedPlayback(
     val sessionId: String,
     val subtitleTracks: List<PlayerSubtitleInfo>,
     val ready: VideoSessionStartV3.Ready? = null,
+    val effectiveMediaFileId: Int? = null,
 )
 
 internal interface MobileSubtitleStagedReplanPort {
@@ -136,6 +141,7 @@ internal enum class MobileSubtitleAdoptionResult {
 internal class MobileSubtitlePlaybackAdoption internal constructor(
     val playback: MobileSubtitleCommittedPlayback,
     val committed: CommittedSubtitle,
+    val requestedSourcePositionSeconds: Double,
     private val currentOwner: () -> Boolean,
     private val currentPendingIdentity: () -> SubtitleIdentity?,
 ) {
@@ -710,6 +716,7 @@ internal class MobileSubtitleTransactionAdapter(
     ) {
         val validationFailure = candidate.validationFailure(
             requested = requested,
+            requestedMediaFileId = request.mediaFileId,
             expectedSubtitleIndex = request.subtitleTrackIndex,
         )
         if (validationFailure != null) {
@@ -729,6 +736,11 @@ internal class MobileSubtitleTransactionAdapter(
             discardCandidateBestEffort(candidate)
             return
         }
+        val validatedState = candidate.authoritativeValidatedState(
+            requested = requested,
+            requestedMediaFileId = request.mediaFileId,
+            validated = validated.state,
+        )
 
         commitInFlight = true
         val commitResult = try {
@@ -761,7 +773,8 @@ internal class MobileSubtitleTransactionAdapter(
                 val ownerGeneration = adoptionGeneration
                 val adoption = MobileSubtitlePlaybackAdoption(
                     playback = playback,
-                    committed = validated.state.committed,
+                    committed = validatedState.committed,
+                    requestedSourcePositionSeconds = adoptionContext.positionSeconds,
                     currentOwner = {
                         ownerGeneration == adoptionGeneration &&
                             !resetDuringCommit
@@ -789,7 +802,7 @@ internal class MobileSubtitleTransactionAdapter(
                 }
                 when (adoptionOutcome) {
                     AdoptionOutcome.Adopted -> finishSuccessfulAdoption(
-                        validatedState = validated.state,
+                        validatedState = validatedState,
                         playback = playback,
                         adoptionContext = adoptionContext,
                     )
@@ -849,6 +862,11 @@ internal class MobileSubtitleTransactionAdapter(
             }
             ?: adoptionContext
         context = liveContext.copy(
+            mediaFileId = playback.effectiveMediaFileId ?: liveContext.mediaFileId,
+            versionId = playback.effectiveMediaFileId
+                ?.takeIf { it != liveContext.mediaFileId }
+                ?.let { "adapted:$it" }
+                ?: liveContext.versionId,
             sessionId = playback.sessionId,
             subtitleTracks = playback.subtitleTracks,
             audioTrackIndex = transition.committed.audioTrackIndex,
@@ -1165,10 +1183,14 @@ internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
                     id = handle.candidateSessionId,
                     sessionId = handle.candidateSessionId,
                     selectedAudioIndex = ready.plan.selectedTracks.audio?.index,
-                    selectedSubtitleIndex = ready.plan.selectedTracks.subtitle?.index,
+                    selectedSubtitleIndex = ready.plan.resolvedSelectedSubtitleIndex(),
                     subtitleMode = ready.plan.subtitle.mode,
                     hasSidecar = ready.plan.subtitle.artifact?.url?.isNotBlank() == true,
                     subtitleTracks = ready.session.subtitleUrls.orEmpty(),
+                    effectiveMediaFileId = ready.session.mediaFileId.takeIf { it > 0 }
+                        ?: ready.plan.effectiveMediaFileId
+                        ?: request.mediaFileId,
+                    selectedSubtitleIdentity = ready.selectedMobileSubtitleIdentity(),
                     managerHandle = handle,
                 ),
             )
@@ -1191,6 +1213,8 @@ internal class PlaybackSessionManagerMobileSubtitleStagedReplanPort(
                     sessionId = result.data.session.sessionId,
                     subtitleTracks = result.data.session.subtitleUrls.orEmpty(),
                     ready = result.data,
+                    effectiveMediaFileId = result.data.session.mediaFileId.takeIf { it > 0 }
+                        ?: result.data.plan.effectiveMediaFileId,
                 ),
             )
             is ApiResult.Error -> result
@@ -1230,12 +1254,19 @@ private fun SubtitleIdentity.isClientOwnedSubtitle(): Boolean =
 
 private fun MobileStagedSubtitleCandidate.validationFailure(
     requested: org.siloserver.silo.model.playback.PendingSubtitle,
+    requestedMediaFileId: Int,
     expectedSubtitleIndex: Int,
 ): String? {
-    if (requested.audioPreferenceSpecified &&
+    val sameFile = effectiveMediaFileId == null || effectiveMediaFileId == requestedMediaFileId
+    if (sameFile && requested.audioPreferenceSpecified &&
         selectedAudioIndex != requested.audioTrackIndex
     ) {
         return "The candidate did not select the requested audio track."
+    }
+    if (!sameFile) {
+        val returnedIdentity = selectedSubtitleIdentity
+            ?: return "The adapted candidate omitted its selected subtitle identity."
+        return validationFailure(returnedIdentity)
     }
     return when (requested.identity) {
         is SubtitleIdentity.Embedded,
@@ -1252,6 +1283,40 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
         }
         else -> validationFailure(requested.identity)
     }
+}
+
+private fun MobileStagedSubtitleCandidate.authoritativeValidatedState(
+    requested: org.siloserver.silo.model.playback.PendingSubtitle,
+    requestedMediaFileId: Int,
+    validated: SubtitleTransitionState,
+): SubtitleTransitionState {
+    val sameFile = effectiveMediaFileId == null || effectiveMediaFileId == requestedMediaFileId
+    val returnedIdentity = selectedSubtitleIdentity
+    val committedIdentity = if (requested.identity.isClientOwnedSubtitle()) {
+        validated.committed.identity
+    } else {
+        returnedIdentity ?: validated.committed.identity
+    }
+    return validated.copy(
+        committed = validated.committed.copy(
+            identity = committedIdentity,
+            audioTrackIndex = if (sameFile) {
+                validated.committed.audioTrackIndex
+            } else {
+                selectedAudioIndex ?: validated.committed.audioTrackIndex
+            },
+        ),
+    )
+}
+
+private fun VideoSessionStartV3.Ready.selectedMobileSubtitleIdentity(): SubtitleIdentity? {
+    val selected = plan.selectedTracks.subtitle ?: return SubtitleIdentity.Off
+    return session.subtitleUrls.orEmpty()
+        .singleOrNull { row ->
+            row.serverTrackId == selected.id &&
+                (selected.index == null || row.index == selected.index)
+        }
+        ?.let(::mobileSubtitleIdentity)
 }
 
 private fun MobileStagedSubtitleCandidate.validationFailure(
@@ -1291,36 +1356,40 @@ private fun MobileStagedSubtitleCandidate.validationFailure(
 private fun MobileSubtitleCommittedPlayback.withRebasedDownloads(
     oldContext: MobileSubtitlePlaybackContext,
 ): MobileSubtitleCommittedPlayback {
-    val downloadedPredicate: (PlayerSubtitleInfo) -> Boolean = {
-        it.downloadId != null || it.source.equals("downloaded", ignoreCase = true)
+    val downloadedPredicate: (PlayerSubtitleInfo) -> Boolean =
+        PlayerSubtitleInfo::isLocalDownloadedSubtitle
+    val downloaded = if (effectiveMediaFileId == null || effectiveMediaFileId == oldContext.mediaFileId) {
+        oldContext.subtitleTracks
+            .filter(downloadedPredicate)
+            .map { track ->
+                track.copy(url = rebaseDownloadedSubtitleUrl(track.url, sessionId))
+            }
+    } else {
+        emptyList()
     }
-    val downloaded = oldContext.subtitleTracks
-        .filter(downloadedPredicate)
-        .map { track ->
-            track.copy(url = rebaseDownloadedSubtitleUrl(track.url, sessionId))
-        }
-    val candidateByIndex = subtitleTracks
+    val oldByIndex = oldContext.subtitleTracks
         .filterNot(downloadedPredicate)
         .associateBy(PlayerSubtitleInfo::index)
-    val retainedCatalog = oldContext.subtitleTracks
+    // The committed V3 inventory owns membership. Old rows may enrich an exact
+    // server ordinal, but an omitted old catalog row must stay omitted. Local
+    // device downloads are outside the server inventory and remain available.
+    val authoritative = subtitleTracks
         .filterNot(downloadedPredicate)
-        .map { old ->
-            candidateByIndex[old.index]?.let { candidate ->
-                candidate.copy(
-                    language = candidate.language ?: old.language,
-                    codec = candidate.codec ?: old.codec,
-                    label = candidate.label ?: old.label,
-                    forced = candidate.forced ?: old.forced,
-                    catalogLabel = old.catalogLabel ?: candidate.catalogLabel,
-                    catalogSource = old.catalogSource ?: candidate.catalogSource,
-                    isDefault = old.isDefault ?: candidate.isDefault,
-                )
-            } ?: old.copy(url = "")
+        .distinctBy(PlayerSubtitleInfo::index)
+        .map { candidate ->
+            val old = oldByIndex[candidate.index] ?: return@map candidate
+            candidate.copy(
+                language = candidate.language ?: old.language,
+                codec = candidate.codec ?: old.codec,
+                label = candidate.label ?: old.label,
+                forced = candidate.forced ?: old.forced,
+                catalogLabel = old.catalogLabel ?: candidate.catalogLabel,
+                catalogSource = old.catalogSource ?: candidate.catalogSource,
+                isDefault = old.isDefault ?: candidate.isDefault,
+            )
         }
-    val retainedIndexes = retainedCatalog.mapTo(mutableSetOf(), PlayerSubtitleInfo::index)
-    val additionalCandidates = subtitleTracks.filterNot(downloadedPredicate)
-        .filterNot { it.index in retainedIndexes }
+    val authoritativeIndexes = authoritative.mapTo(mutableSetOf(), PlayerSubtitleInfo::index)
     return copy(
-        subtitleTracks = retainedCatalog + additionalCandidates + downloaded,
+        subtitleTracks = authoritative + downloaded.filterNot { it.index in authoritativeIndexes },
     )
 }

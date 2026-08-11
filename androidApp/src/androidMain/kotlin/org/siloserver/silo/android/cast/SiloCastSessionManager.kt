@@ -2,6 +2,7 @@ package org.siloserver.silo.android.cast
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
@@ -23,7 +24,17 @@ import com.google.android.gms.common.images.WebImage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import org.siloserver.silo.common.player.cast.CastSeekResult
 import org.siloserver.silo.common.player.cast.CastMediaSpec
+import org.siloserver.silo.common.player.cast.CastStagedSubtitleChange
+import org.siloserver.silo.common.player.cast.CastSubtitleChangeResult
+import org.siloserver.silo.common.player.cast.castReceiverTrackId
 import org.siloserver.silo.common.diagnostics.DiagnosticsCastLogger
 
 data class SiloCastState(
@@ -34,13 +45,13 @@ data class SiloCastState(
     val duration: Double = 0.0,
     val title: String = "",
     val fileId: Int? = null,
-    /** Text tracks declared on the loaded media, for the phone-side CC picker. */
+    /** Complete authoritative v3 subtitle inventory for the phone-side picker. */
     val subtitleOptions: List<CastSubtitleOption> = emptyList(),
-    /** Track id (from [subtitleOptions]) the receiver is rendering, null = off. */
+    /** Stable option id selected by the active v3 plan, null = off. */
     val activeSubtitleId: Long? = null,
 )
 
-/** A selectable receiver text track (id is the declared MediaTrack id). */
+/** A selectable authoritative subtitle row (id encodes its combined index). */
 data class CastSubtitleOption(
     val id: Long,
     val label: String,
@@ -51,6 +62,11 @@ data class SiloCastRoute(
     val name: String,
     val isConnecting: Boolean = false,
     val isSelected: Boolean = false,
+)
+
+private data class PendingSubtitleLoad(
+    val change: CastStagedSubtitleChange,
+    val predecessor: CastMediaSpec,
 )
 
 /**
@@ -73,11 +89,6 @@ data class SiloCastRoute(
  *     exposed via [getLastPosition] so local playback resumes where casting left.
  */
 class SiloCastSessionManager(private val context: Context) {
-    private companion object {
-        private const val TAG = "SiloCastSessionMgr"
-    }
-
-
     private val playServicesAvailable: Boolean =
         runCatching {
             GoogleApiAvailability.getInstance()
@@ -92,6 +103,7 @@ class SiloCastSessionManager(private val context: Context) {
     private var routeSelector: MediaRouteSelector = MediaRouteSelector.EMPTY
     private var initialized = false
     private var activeScanning = false
+    private val lifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val _castState = MutableStateFlow(SiloCastState())
     val castState: StateFlow<SiloCastState> = _castState.asStateFlow()
@@ -100,22 +112,62 @@ class SiloCastSessionManager(private val context: Context) {
 
     // Pending media set by prepareMedia; loaded when a session connects.
     private var pending: CastMediaSpec? = null
+    private var pendingSubtitleLoad: PendingSubtitleLoad? = null
+    /** Source-time position exposed to the phone UI. */
     private var lastPosition: Double = 0.0
+    /** Receiver-local position used for protocol timeline translation. */
+    private var lastPlayerPosition: Double = 0.0
+    private var lastProgressReportAtMs: Long = 0L
+    private var progressReportJob: Job? = null
     private var listenersAttachedTo: CastSession? = null
 
     private val remoteCallback = object : RemoteMediaClient.Callback() {
-        override fun onStatusUpdated() = syncCastState()
+        override fun onStatusUpdated() {
+            syncCastState()
+            val remoteClient = listenersAttachedTo?.remoteMediaClient
+            if (
+                remoteClient?.playerState == MediaStatus.PLAYER_STATE_IDLE &&
+                remoteClient.idleReason == MediaStatus.IDLE_REASON_FINISHED
+            ) {
+                finalizePending("ended")
+            }
+        }
         override fun onMetadataUpdated() = syncCastState()
     }
 
     // Fix 1: 1s progress ticks drive the live scrubber position while casting.
     private val progressListener = RemoteMediaClient.ProgressListener { progressMs, durationMs ->
         val position = progressMs / 1000.0
-        lastPosition = position
+        val spec = pending
+        lastPlayerPosition = position
+        lastPosition = spec?.playbackSession?.sourcePositionForPlayer(position) ?: position
+        val duration = if (durationMs > 0) durationMs / 1000.0 else 0.0
         _castState.value = _castState.value.copy(
-            position = position,
-            duration = if (durationMs > 0) durationMs / 1000.0 else _castState.value.duration,
+            position = lastPosition,
+            duration = if (duration > 0.0) {
+                spec?.playbackSession?.sourceDurationSeconds() ?: duration
+            } else {
+                _castState.value.duration
+            },
         )
+        val now = SystemClock.elapsedRealtime()
+        if (
+            spec != null &&
+            progressReportJob?.isActive != true &&
+            now - lastProgressReportAtMs >= SERVER_PROGRESS_INTERVAL_MS
+        ) {
+            lastProgressReportAtMs = now
+            val paused = listenersAttachedTo?.remoteMediaClient?.playerState !=
+                MediaStatus.PLAYER_STATE_PLAYING
+            val job = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+                spec.playbackSession.reportProgress(position, paused)
+            }
+            progressReportJob = job
+            job.invokeOnCompletion {
+                if (progressReportJob === job) progressReportJob = null
+            }
+            job.start()
+        }
     }
 
     private val sessionListener = object : SessionManagerListener<CastSession> {
@@ -128,6 +180,7 @@ class SiloCastSessionManager(private val context: Context) {
         }
         override fun onSessionStartFailed(session: CastSession, error: Int) {
             DiagnosticsCastLogger.warning("cast session start failed")
+            finalizePending("session_start_failed")
             detachRemoteListeners()
             _castState.value = SiloCastState()
         }
@@ -138,6 +191,7 @@ class SiloCastSessionManager(private val context: Context) {
         override fun onSessionEnded(session: CastSession, error: Int) {
             DiagnosticsCastLogger.event("cast session ended")
             captureRemotePosition(session)
+            finalizePending("disconnected")
             detachRemoteListeners()
             _castState.value = SiloCastState()
         }
@@ -149,12 +203,18 @@ class SiloCastSessionManager(private val context: Context) {
         }
         override fun onSessionResumeFailed(session: CastSession, error: Int) {
             DiagnosticsCastLogger.warning("cast session resume failed")
+            finalizePending("session_resume_failed")
             detachRemoteListeners()
             _castState.value = SiloCastState()
         }
         override fun onSessionSuspended(session: CastSession, reason: Int) {
             DiagnosticsCastLogger.warning("cast session suspended")
             captureRemotePosition(session)
+            pending?.let { spec ->
+                lifecycleScope.launch {
+                    spec.playbackSession.reportProgress(lastPlayerPosition, isPaused = true)
+                }
+            }
             detachRemoteListeners()
         }
     }
@@ -231,11 +291,32 @@ class SiloCastSessionManager(private val context: Context) {
     fun prepareMedia(spec: CastMediaSpec) {
         DiagnosticsCastLogger.event("cast media prepared")
         ensureInitialized()
-        pending = spec
-        lastPosition = spec.positionSeconds
-        _castState.value = _castState.value.copy(title = spec.title, fileId = spec.fileId)
+        abandonPendingSubtitleLoad(spec)
+        val previous = pending
+        if (previous != null && previous.playbackSession !== spec.playbackSession) {
+            finalizeSpec(previous, "superseded")
+        }
+        publishPendingSpec(spec)
         val session = sessionManager?.currentCastSession
         if (session != null && session.isConnected) loadPendingMedia(session)
+    }
+
+    private fun publishPendingSpec(spec: CastMediaSpec) {
+        progressReportJob?.cancel()
+        progressReportJob = null
+        pending = spec
+        lastPlayerPosition = spec.positionSeconds
+        lastPosition = spec.playbackSession.sourcePositionForPlayer(spec.positionSeconds)
+        lastProgressReportAtMs = 0L
+        _castState.value = _castState.value.copy(
+            title = spec.title,
+            fileId = spec.fileId,
+            subtitleOptions = spec.subtitles.map { subtitle ->
+                CastSubtitleOption(castReceiverTrackId(subtitle.combinedIndex), subtitle.label)
+            },
+            activeSubtitleId = spec.subtitles.firstOrNull { it.selected }
+                ?.let { castReceiverTrackId(it.combinedIndex) },
+        )
     }
 
     private fun loadPendingMedia(session: CastSession) {
@@ -247,18 +328,27 @@ class SiloCastSessionManager(private val context: Context) {
             spec.posterUrl?.let { addImage(WebImage(Uri.parse(it))) }
         }
 
-        // Fix 5: each subtitle track is text/vtt; assign stable ids for activation.
-        val tracks = spec.subtitles.mapIndexed { index, sub ->
-            MediaTrack.Builder((index + 1).toLong(), MediaTrack.TYPE_TEXT)
+        // The phone exposes every authoritative inventory row. Only sidecars
+        // the Default Media Receiver can render become receiver MediaTracks;
+        // burn-in/bitmap choices are represented by the replanned video itself.
+        val tracks = spec.subtitles.mapNotNull { sub ->
+            val receiverUrl = sub.receiverUrl ?: return@mapNotNull null
+            MediaTrack.Builder(castReceiverTrackId(sub.combinedIndex), MediaTrack.TYPE_TEXT)
                 .setSubtype(MediaTrack.SUBTYPE_SUBTITLES)
-                .setContentId(sub.url)
+                .setContentId(receiverUrl)
                 .setContentType("text/vtt")
                 .setName(sub.label)
                 .setLanguage(sub.language ?: "")
                 .build()
         }
         val activeTrackIds = spec.subtitles
-            .mapIndexedNotNull { index, sub -> if (sub.selected) (index + 1).toLong() else null }
+            .mapNotNull { sub ->
+                if (sub.selected && sub.receiverUrl != null) {
+                    castReceiverTrackId(sub.combinedIndex)
+                } else {
+                    null
+                }
+            }
             .toLongArray()
 
         // Fix 4: real container mime + VOD stream type.
@@ -283,17 +373,83 @@ class SiloCastSessionManager(private val context: Context) {
 
         remoteClient.load(loadRequest).setResultCallback { result ->
             Log.i(TAG, "cast load result success=${result.status.isSuccess} code=${result.status.statusCode}")
-            // The MediaInfo-embedded style alone doesn't reach the receiver's
-            // renderer; re-assert via the tracks channel once the load lands.
-            if (result.status.isSuccess) {
-                remoteClient.setTextTrackStyle(castTextTrackStyle()).setResultCallback { styleResult ->
-                    Log.i(
-                        TAG,
-                        "cast setTextTrackStyle result success=${styleResult.status.isSuccess} " +
-                            "code=${styleResult.status.statusCode} msg=${styleResult.status.statusMessage}",
+            val subtitleLoad = pendingSubtitleLoad?.takeIf { it.change.spec === spec }
+            if (subtitleLoad != null) {
+                lifecycleScope.launch {
+                    if (result.status.isSuccess && pending === spec) {
+                        spec.playbackSession.confirmReceiverLoadSucceeded()
+                        val committed = subtitleLoad.change.commit()
+                        if (
+                            committed != null &&
+                            pendingSubtitleLoad === subtitleLoad &&
+                            pending === spec
+                        ) {
+                            pendingSubtitleLoad = null
+                            pending = committed
+                            applyTextTrackStyle(remoteClient)
+                            syncCastState()
+                        } else {
+                            restorePendingSubtitleLoad(subtitleLoad, session)
+                        }
+                    } else {
+                        subtitleLoad.change.discard()
+                        restorePendingSubtitleLoad(subtitleLoad, session)
+                    }
+                }
+            } else if (result.status.isSuccess && pending === spec) {
+                spec.playbackSession.confirmReceiverLoadSucceeded()
+                // The MediaInfo-embedded style alone doesn't reach the
+                // receiver's renderer; re-assert via the tracks channel once
+                // the load lands.
+                applyTextTrackStyle(remoteClient)
+            } else if (!result.status.isSuccess && pending === spec) {
+                lifecycleScope.launch {
+                    val replacement = spec.playbackSession.recoverFromLoadFailure(
+                        playerPositionSeconds = lastPlayerPosition,
+                        message = "Cast load failed (${result.status.statusCode})",
                     )
+                    if (replacement != null && pending === spec) {
+                        prepareMedia(replacement)
+                    } else if (replacement == null && pending === spec) {
+                        pending = null
+                    }
                 }
             }
+        }
+    }
+
+    private fun applyTextTrackStyle(remoteClient: RemoteMediaClient) {
+        remoteClient.setTextTrackStyle(castTextTrackStyle()).setResultCallback { styleResult ->
+            Log.i(
+                TAG,
+                "cast setTextTrackStyle result success=${styleResult.status.isSuccess} " +
+                    "code=${styleResult.status.statusCode} msg=${styleResult.status.statusMessage}",
+            )
+        }
+    }
+
+    private fun abandonPendingSubtitleLoad(incoming: CastMediaSpec) {
+        val subtitleLoad = pendingSubtitleLoad ?: return
+        if (subtitleLoad.change.spec === incoming) return
+        pendingSubtitleLoad = null
+        if (pending === subtitleLoad.change.spec) {
+            pending = subtitleLoad.predecessor
+        }
+        lifecycleScope.launch { subtitleLoad.change.discard() }
+    }
+
+    private fun restorePendingSubtitleLoad(
+        subtitleLoad: PendingSubtitleLoad,
+        session: CastSession,
+    ) {
+        if (pendingSubtitleLoad !== subtitleLoad) return
+        pendingSubtitleLoad = null
+        if (pending !== subtitleLoad.change.spec) return
+        publishPendingSpec(subtitleLoad.predecessor)
+        if (sessionManager?.currentCastSession === session && session.isConnected) {
+            loadPendingMedia(session)
+        } else {
+            syncCastState()
         }
     }
 
@@ -338,7 +494,10 @@ class SiloCastSessionManager(private val context: Context) {
 
     private fun captureRemotePosition(session: CastSession) {
         val position = session.remoteMediaClient?.approximateStreamPosition?.let { it / 1000.0 }
-        if (position != null && position >= 0.0) lastPosition = position
+        if (position != null && position >= 0.0) {
+            lastPlayerPosition = position
+            lastPosition = pending?.playbackSession?.sourcePositionForPlayer(position) ?: position
+        }
     }
 
     /** Fix 6: last known remote position, so local playback resumes there. */
@@ -351,7 +510,10 @@ class SiloCastSessionManager(private val context: Context) {
         val session = sessionManager?.currentCastSession
         if (session != null) {
             captureRemotePosition(session)
+            finalizePending("disconnect_requested")
             sessionManager?.endCurrentSession(true)
+        } else {
+            finalizePending("disconnect_requested")
         }
         syncCastState()
     }
@@ -360,13 +522,27 @@ class SiloCastSessionManager(private val context: Context) {
      * scrubber doesn't snap back while the receiver applies the seek. */
     fun seekTo(seconds: Double) {
         val remoteClient = sessionManager?.currentCastSession?.remoteMediaClient ?: return
-        remoteClient.seek(
-            MediaSeekOptions.Builder()
-                .setPosition((seconds * 1000).toLong())
-                .build(),
-        )
         lastPosition = seconds
         _castState.value = _castState.value.copy(position = seconds)
+        val spec = pending
+        if (spec == null) {
+            seekRemotePlayer(remoteClient, seconds)
+            return
+        }
+        lifecycleScope.launch {
+            when (val result = spec.playbackSession.seekToSource(seconds)) {
+                is CastSeekResult.Native -> {
+                    if (pending !== spec) return@launch
+                    lastPlayerPosition = result.playerPositionSeconds
+                    seekRemotePlayer(remoteClient, result.playerPositionSeconds)
+                }
+                is CastSeekResult.Replanned -> {
+                    if (pending !== spec) return@launch
+                    prepareMedia(result.spec)
+                }
+                CastSeekResult.Failed -> if (pending === spec) syncCastState()
+            }
+        }
     }
 
     fun togglePlayback() {
@@ -376,21 +552,54 @@ class SiloCastSessionManager(private val context: Context) {
         _castState.value = _castState.value.copy(isPlaying = !isPlayingNow)
     }
 
-    /** Activates a declared receiver text track; null turns captions off. */
+    /** Applies subtitle intent through protocol v3, then reloads the returned plan. */
     fun selectSubtitleTrack(trackId: Long?) {
         val remoteClient = sessionManager?.currentCastSession?.remoteMediaClient ?: return
-        remoteClient.setActiveMediaTracks(
-            if (trackId == null) longArrayOf() else longArrayOf(trackId),
-        )
-        if (trackId != null) remoteClient.setTextTrackStyle(castTextTrackStyle())
+        val spec = pending ?: return
+        val combinedIndex = trackId?.let { selectedId ->
+            spec.subtitles.singleOrNull {
+                castReceiverTrackId(it.combinedIndex) == selectedId
+            }?.combinedIndex ?: return
+        }
+        val playerPosition = remoteClient.approximateStreamPosition
+            .takeIf { it >= 0 }
+            ?.div(1000.0)
+            ?: lastPlayerPosition
         _castState.value = _castState.value.copy(activeSubtitleId = trackId)
+        lifecycleScope.launch {
+            when (
+                val result = spec.playbackSession.selectSubtitleTrack(
+                    playerPositionSeconds = playerPosition,
+                    combinedIndex = combinedIndex,
+                )
+            ) {
+                is CastSubtitleChangeResult.Staged -> {
+                    val session = sessionManager?.currentCastSession
+                    if (pending !== spec || session == null || !session.isConnected) {
+                        result.change.discard()
+                        if (pending === spec) syncCastState()
+                        return@launch
+                    }
+                    val subtitleLoad = PendingSubtitleLoad(
+                        change = result.change,
+                        predecessor = spec.copy(positionSeconds = playerPosition),
+                    )
+                    pendingSubtitleLoad = subtitleLoad
+                    publishPendingSpec(result.change.spec)
+                    loadPendingMedia(session)
+                }
+                CastSubtitleChangeResult.Failed -> if (pending === spec) syncCastState()
+            }
+        }
     }
 
     /** Relative seek from the receiver's live position, clamped to the item. */
     fun skipBy(deltaSeconds: Double) {
         val remoteClient = sessionManager?.currentCastSession?.remoteMediaClient ?: return
-        val current = remoteClient.approximateStreamPosition
+        val playerPosition = remoteClient.approximateStreamPosition
             .takeIf { it > 0 }?.let { it / 1000.0 }
+        val current = playerPosition
+            ?.let { pending?.playbackSession?.sourcePositionForPlayer(it) ?: it }
             ?: _castState.value.position
         val duration = _castState.value.duration
         var target = current + deltaSeconds
@@ -414,6 +623,7 @@ class SiloCastSessionManager(private val context: Context) {
     }
 
     fun release() {
+        finalizePending("released")
         detachRemoteListeners()
         mediaRouter?.removeCallback(routeCallback)
         sessionManager?.removeSessionManagerListener(sessionListener, CastSession::class.java)
@@ -449,7 +659,10 @@ class SiloCastSessionManager(private val context: Context) {
         _castState.value = if (session != null && session.isConnected) {
             val textTracks = remoteClient?.mediaInfo?.mediaTracks.orEmpty()
                 .filter { it.type == MediaTrack.TYPE_TEXT }
-            val subtitleOptions = textTracks.mapIndexed { index, track ->
+            val plannedSubtitles = pending?.subtitles
+            val subtitleOptions = plannedSubtitles?.map { subtitle ->
+                CastSubtitleOption(castReceiverTrackId(subtitle.combinedIndex), subtitle.label)
+            } ?: textTracks.mapIndexed { index, track ->
                 CastSubtitleOption(
                     id = track.id,
                     label = track.name?.takeIf { it.isNotBlank() }
@@ -462,8 +675,14 @@ class SiloCastSessionManager(private val context: Context) {
                 isConnected = true,
                 deviceName = session.castDevice?.friendlyName,
                 isPlaying = remoteClient?.playerState == MediaStatus.PLAYER_STATE_PLAYING,
-                position = remoteClient?.approximateStreamPosition?.div(1000.0) ?: lastPosition,
-                duration = remoteClient?.mediaInfo?.streamDuration?.takeIf { it > 0 }?.div(1000.0)
+                position = remoteClient?.approximateStreamPosition
+                    ?.div(1000.0)
+                    ?.let { player -> pending?.playbackSession?.sourcePositionForPlayer(player) ?: player }
+                    ?: lastPosition,
+                duration = remoteClient?.mediaInfo?.streamDuration
+                    ?.takeIf { it > 0 }
+                    ?.div(1000.0)
+                    ?.let { player -> pending?.playbackSession?.sourceDurationSeconds() ?: player }
                     ?: _castState.value.duration,
                 title = pending?.title ?: _castState.value.title,
                 // Preserve the staged file id: rebuilding without it re-arms
@@ -472,12 +691,52 @@ class SiloCastSessionManager(private val context: Context) {
                 // their server sessions, and burns the start rate limit.
                 fileId = pending?.fileId ?: _castState.value.fileId,
                 subtitleOptions = subtitleOptions,
-                activeSubtitleId = subtitleOptions
-                    .firstOrNull { option -> activeIds?.contains(option.id) == true }
-                    ?.id,
+                activeSubtitleId = if (plannedSubtitles != null) {
+                    plannedSubtitles
+                        .firstOrNull { it.selected }
+                        ?.let { castReceiverTrackId(it.combinedIndex) }
+                } else {
+                    subtitleOptions
+                        .firstOrNull { option -> activeIds?.contains(option.id) == true }
+                        ?.id
+                },
             )
         } else {
             _castState.value.copy(isConnected = false, deviceName = null, isPlaying = false)
         }
+    }
+
+    private fun seekRemotePlayer(remoteClient: RemoteMediaClient, playerSeconds: Double) {
+        remoteClient.seek(
+            MediaSeekOptions.Builder()
+                .setPosition((playerSeconds * 1000).toLong())
+                .build(),
+        )
+    }
+
+    private fun finalizePending(event: String) {
+        val spec = pending ?: return
+        progressReportJob?.cancel()
+        progressReportJob = null
+        pendingSubtitleLoad = null
+        pending = null
+        finalizeSpec(spec, event)
+    }
+
+    private fun finalizeSpec(spec: CastMediaSpec, event: String) {
+        val paused = listenersAttachedTo?.remoteMediaClient?.playerState !=
+            MediaStatus.PLAYER_STATE_PLAYING
+        lifecycleScope.launch {
+            spec.playbackSession.stop(
+                playerPositionSeconds = lastPlayerPosition,
+                isPaused = paused,
+                reason = event,
+            )
+        }
+    }
+
+    private companion object {
+        private const val TAG = "SiloCastSessionMgr"
+        private const val SERVER_PROGRESS_INTERVAL_MS = 10_000L
     }
 }

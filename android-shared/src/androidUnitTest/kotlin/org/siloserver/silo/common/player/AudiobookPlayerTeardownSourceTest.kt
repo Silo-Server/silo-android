@@ -15,24 +15,45 @@ class AudiobookPlayerTeardownSourceTest {
         .substringAfter("override fun onCleared() {")
         .substringBefore("\n    companion object")
 
+    private val singleFileStartSource = viewModelSource
+        .substringAfter("private suspend fun startSingleFileSession(")
+        .substringBefore("private suspend fun startPartSession(")
+
+    private val partStartSource = viewModelSource
+        .substringAfter("private suspend fun startPartSession(")
+        .substringBefore("private suspend fun retireActiveSession(")
+
     @Test
-    fun `onCleared captures and submits external session finalization without blocking`() {
+    fun `onCleared reports both timelines through the retained lifecycle without blocking`() {
         assertFalse(onClearedSource.contains("runBlocking"))
         assertTrue(onClearedSource.contains("val state = _uiState.value"))
         assertTrue(onClearedSource.contains("val sessionId = state.sessionId"))
         assertTrue(
             onClearedSource.contains(
-                "val positionSeconds = sessionLocalPosition(state)",
+                "positionSec = sessionLocalPosition(state)",
             ),
         )
-        assertTrue(onClearedSource.contains("val isPaused = true"))
         assertTrue(
             onClearedSource.contains(
-                "playbackSessionLifecycle.reportAndStopExternalSessionAsync(",
+                "playbackSessionLifecycle.reportPosition(",
             ),
         )
-        assertTrue(onClearedSource.contains("sessionId = sessionId"))
-        assertTrue(onClearedSource.contains("positionSeconds = positionSeconds"))
-        assertTrue(onClearedSource.contains("isPaused = isPaused"))
+        assertTrue(onClearedSource.contains("persistencePositionSec = state.positionSeconds"))
+        assertTrue(onClearedSource.contains("expectedSessionId = sessionId"))
+        assertTrue(onClearedSource.contains("playbackSessionLifecycle.stopAsync("))
+    }
+
+    @Test
+    fun `single file start cannot publish after stop or teardown invalidates it`() {
+        assertTrue(singleFileStartSource.contains("generation != startGeneration || isClosing"))
+        assertTrue(singleFileStartSource.contains("playbackSessionManager.stopSession"))
+        assertTrue(singleFileStartSource.indexOf("generation != startGeneration || isClosing") <
+            singleFileStartSource.indexOf("applyStartedSession("))
+    }
+
+    @Test
+    fun `audiobook starts delegate durable progress to the client timeline`() {
+        assertTrue(partStartSource.contains("startPosition = startPosition"))
+        assertTrue(partStartSource.contains("progressPersistence = ProgressPersistenceV3.CLIENT"))
     }
 }

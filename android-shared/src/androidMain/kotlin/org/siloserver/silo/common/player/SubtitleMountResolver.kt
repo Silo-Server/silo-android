@@ -3,13 +3,14 @@ package org.siloserver.silo.common.player
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
+import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.playback.canonicalSubtitleCodecFamily
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
+import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.playback.isTextSubtitleCodecFamily
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
 private const val SUBTITLE_ARTIFACT_TRACK_ID_PREFIX = "silo-subtitle:"
-private const val DOWNLOADED_SUBTITLE_ARTIFACT_TRACK_ID_PREFIX =
-    "silo-downloaded-subtitle:"
 
 /**
  * Stable Media3 identity for a server-authored subtitle artifact.
@@ -18,10 +19,6 @@ private const val DOWNLOADED_SUBTITLE_ARTIFACT_TRACK_ID_PREFIX =
  */
 fun subtitleArtifactTrackId(serverIndex: Int): String =
     "$SUBTITLE_ARTIFACT_TRACK_ID_PREFIX$serverIndex"
-
-/** Stable Media3 identity derived only from the persistent downloaded-subtitle row ID. */
-fun downloadedSubtitleArtifactTrackId(downloadId: Int): String =
-    "$DOWNLOADED_SUBTITLE_ARTIFACT_TRACK_ID_PREFIX$downloadId"
 
 /**
  * True when a mounted Media3 `Format.id` denotes [expected].
@@ -242,11 +239,12 @@ private fun String?.normalizedNonServerTrackId(): String? =
 
 private fun String?.isReservedArtifactTrackId(): Boolean =
     this?.startsWith(SUBTITLE_ARTIFACT_TRACK_ID_PREFIX) == true ||
-        this?.startsWith(DOWNLOADED_SUBTITLE_ARTIFACT_TRACK_ID_PREFIX) == true
+        this?.startsWith(
+            org.siloserver.silo.playback.DOWNLOADED_SUBTITLE_ARTIFACT_TRACK_ID_PREFIX,
+        ) == true
 
 internal fun PlayerSubtitleInfo.isDownloadedSubtitleArtifact(): Boolean =
-    source.normalizedValue().equals("downloaded", ignoreCase = true) ||
-        catalogSource.normalizedValue().equals("downloaded", ignoreCase = true)
+    isLocalDownloadedSubtitle()
 
 private fun PlayerSubtitleInfo.effectiveSubtitleSource(): String? =
     source.normalizedValue() ?: catalogSource.normalizedValue()
@@ -256,16 +254,4 @@ private fun normalizedLabel(label: String?): String? =
 
 fun normalizedSubtitleCodecFamily(codecOrMime: String?): String? {
     return canonicalSubtitleCodecFamily(codecOrMime)
-}
-
-fun subtitleLabelIndicatesHearingImpaired(label: String?): Boolean {
-    val value = label?.lowercase() ?: return false
-    if (
-        value.contains("closed caption") ||
-        value.contains("hearing impaired") ||
-        value.contains("hearing-impaired")
-    ) {
-        return true
-    }
-    return Regex("""(^|[^a-z0-9])(cc|sdh|hi)([^a-z0-9]|$)""").containsMatchIn(value)
 }

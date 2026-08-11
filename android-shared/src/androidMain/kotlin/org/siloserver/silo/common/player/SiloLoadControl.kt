@@ -1,11 +1,14 @@
 package org.siloserver.silo.common.player
 
+import android.util.Log
 import androidx.media3.common.C
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.trackselection.ExoTrackSelection
 import androidx.media3.exoplayer.upstream.DefaultAllocator
+import org.siloserver.silo.player.DolbyVisionDetection
 
 /**
  * Media3 load control with a bitrate-scaled, heap-bounded allocation target.
@@ -43,60 +46,125 @@ class SiloLoadControl(
         parameters: LoadControl.Parameters,
         trackSelections: Array<out ExoTrackSelection?>,
     ): Int {
-        val selectedBitrateBps =
-            selectBufferSizingBitrateBps(
-                trackSelections.mapNotNull { selection ->
-                    selection?.let {
-                        BufferSizingTrackBitrates(
-                            averageBitrateBps = it.selectedFormat.averageBitrate,
-                            peakBitrateBps = it.selectedFormat.peakBitrate,
-                            latestNetworkEstimateBps = it.latestBitrateEstimate,
-                        )
-                    }
-                },
-            )
+        val sizingTracks = trackSelections.mapNotNull { selection ->
+            selection?.let {
+                val format = it.selectedFormat
+                val trackType = MimeTypes.getTrackType(format.sampleMimeType)
+                if (trackType == C.TRACK_TYPE_VIDEO || trackType == C.TRACK_TYPE_AUDIO) {
+                    BufferSizingTrackBitrates(
+                        averageBitrateBps = format.averageBitrate,
+                        peakBitrateBps = format.peakBitrate,
+                        latestNetworkEstimateBps = it.latestBitrateEstimate,
+                        isDolbyVision = isDolbyVisionBufferTrack(
+                            sampleMimeType = format.sampleMimeType,
+                            codecs = format.codecs,
+                        ),
+                    )
+                } else {
+                    null
+                }
+            }
+        }
+        val selectedBitrateBps = selectBufferSizingBitrateBps(sizingTracks)
+        val hasDolbyVision = sizingTracks.any(BufferSizingTrackBitrates::isDolbyVision)
+        val budgetBytes = playbackBufferBudgetBytes(
+            baseBudgetBytes = policy.targetBufferBytes,
+            hasDolbyVision = hasDolbyVision,
+            minimumBytes = MIN_TARGET_BUFFER_BYTES,
+        )
         val fallback = super.calculateTargetBufferBytes(parameters, trackSelections)
         val result =
             computeBufferSizing(
                 selectedBitrateBps = selectedBitrateBps,
                 desiredDepthMs = policy.minBufferMs,
                 minimumDepthMs = PlaybackBufferPolicy.MIN_DEPTH_MS,
-                budgetBytes = policy.targetBufferBytes,
+                budgetBytes = budgetBytes,
                 minimumBytes = MIN_TARGET_BUFFER_BYTES,
                 unknownBitrateFallbackBytes = fallback,
             )
         depthMs = result.depth.ms
+        Log.d(
+            TAG,
+            "target_bytes=${result.target.bytes} budget_bytes=$budgetBytes " +
+                "depth_ms=${result.depth.ms} dolby_vision=$hasDolbyVision",
+        )
         return result.target.bytes
     }
 
     companion object {
+        private const val TAG = "SiloLoadControl"
         internal const val MIN_TARGET_BUFFER_BYTES = 16 * 1024 * 1024
     }
 }
+
+internal fun isDolbyVisionBufferTrack(
+    sampleMimeType: String?,
+    codecs: String?,
+): Boolean = sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION ||
+    DolbyVisionDetection.isDolbyVision(videoCodec = codecs)
 
 internal data class BufferSizingTrackBitrates(
     val averageBitrateBps: Int,
     val peakBitrateBps: Int,
     val latestNetworkEstimateBps: Long,
+    val isDolbyVision: Boolean = false,
 )
+
+/**
+ * Leaves extra Java-heap headroom while decoding Dolby Vision.
+ *
+ * Media3's allocator target is not the process's complete playback cost. The
+ * extractor, codec bridge and OkHttp all need live Java allocations beside
+ * that target. A real Shield with a 192 MiB growth limit reached 192/192 MiB
+ * and crashed while the ordinary half-heap policy allowed a 96 MiB target for
+ * a DV profile-5 stream. Halving only the Dolby Vision target keeps the
+ * established buffer policy for every other route while leaving the decoder
+ * path enough room to keep reading and reporting playback.
+ */
+internal fun playbackBufferBudgetBytes(
+    baseBudgetBytes: Int,
+    hasDolbyVision: Boolean,
+    minimumBytes: Int,
+): Int {
+    require(baseBudgetBytes > 0)
+    require(minimumBytes > 0)
+    if (!hasDolbyVision) return baseBudgetBytes
+    return (baseBudgetBytes / DOLBY_VISION_BUDGET_DIVISOR)
+        .coerceAtLeast(minimumBytes.coerceAtMost(baseBudgetBytes))
+}
+
+private const val DOLBY_VISION_BUDGET_DIVISOR = 2
 
 internal fun selectBufferSizingBitrateBps(
     tracks: List<BufferSizingTrackBitrates>,
 ): Long? {
-    val mediaBitrateBps =
-        tracks.mapNotNull { track ->
-            track.averageBitrateBps.takeIf { it > 0 }?.toLong()
-                ?: track.peakBitrateBps.takeIf { it > 0 }?.toLong()
-        }
-
-    if (mediaBitrateBps.isNotEmpty()) {
-        return mediaBitrateBps.sum()
+    if (tracks.isEmpty()) return null
+    val mediaBitrates = tracks.map { track ->
+        track.averageBitrateBps.takeIf { it > 0 }?.toLong()
+            ?: track.peakBitrateBps.takeIf { it > 0 }?.toLong()
     }
+    val knownMediaBitrate = mediaBitrates.filterNotNull().sum()
+    if (mediaBitrates.all { it != null }) return knownMediaBitrate
 
-    return tracks
+    // A partial sum is not the stream bitrate. Single-rendition HLS commonly
+    // carries no video BANDWIDTH metadata while its AAC track does expose a
+    // bitrate. Treating that audio-only number as the complete route sized an
+    // 84 Mbps 4K stream to the 16 MiB floor: one segment filled the allocator,
+    // DefaultLoadControl stopped loading, and playback remained buffering at
+    // two seconds even though the server had produced the following segments.
+    // Use one live estimate for the unknown media portion; when it is not yet
+    // available, keep the result unknown so Media3's renderer-aware fallback
+    // controls the target instead of an incomplete sum.
+    val unknownMediaEstimate = tracks
+        .filterIndexed { index, _ -> mediaBitrates[index] == null }
         .maxOfOrNull { it.latestNetworkEstimateBps }
         ?.takeIf { it > 0L }
+        ?: return null
+    return saturatingAdd(knownMediaBitrate, unknownMediaEstimate)
 }
+
+private fun saturatingAdd(left: Long, right: Long): Long =
+    if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
 
 /**
  * The forward buffer this device can actually hold at this bitrate.
