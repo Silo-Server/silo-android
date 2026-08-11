@@ -542,9 +542,17 @@ class TvItemDetailViewModel(
         // Coming back from an episode's own screen: the favourite may have been
         // toggled in there, and this view model still holds the old answer. Only
         // the items actually changed are re-asked about.
-        val favoritesToRecheck = TvFavoriteRevalidationSession.consumeChanged()
+        val favoritesVersion = TvFavoriteRevalidationSession.currentVersion()
+        val favoritesToRecheck =
+            TvFavoriteRevalidationSession.changedSince(favoritesRevalidatedThrough)
         if (seriesId != null && season != null) {
-            loadEpisodes(seriesId, season, quiet = true, revalidateFavorites = favoritesToRecheck)
+            loadEpisodes(
+                seriesId,
+                season,
+                quiet = true,
+                revalidateFavorites = favoritesToRecheck,
+                favoritesVersion = favoritesVersion,
+            )
         }
     }
 
@@ -810,6 +818,13 @@ class TvItemDetailViewModel(
     }
 
     private var episodeLoadJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * How far through [TvFavoriteRevalidationSession] this screen has caught up.
+     * Starts at the current version: anything toggled before this screen existed
+     * is already reflected in the data it is about to load.
+     */
+    private var favoritesRevalidatedThrough: Long = TvFavoriteRevalidationSession.currentVersion()
     private var moreLikeThisJob: Job? = null
     private var nextUpDetailJob: Job? = null
     // The season number the currently-shown episodes/next-up actually belong to.
@@ -855,6 +870,7 @@ class TvItemDetailViewModel(
         seasonNumber: Int,
         quiet: Boolean = false,
         revalidateFavorites: Set<String> = emptySet(),
+        favoritesVersion: Long? = null,
     ) {
         // Cancel any in-flight episode load so a slower response for a
         // previously-selected season can't overwrite episodes/next-up for the
@@ -871,6 +887,9 @@ class TvItemDetailViewModel(
                     _uiState.update { it.copy(episodesLoading = false, episodes = episodes) }
                     refreshNextUp(episodes)
                     refreshEpisodeFavoriteStates(episodes, revalidate = revalidateFavorites)
+                    // Caught up only now: advancing on read would drop the
+                    // signal whenever this reload failed or was cancelled.
+                    favoritesVersion?.let { favoritesRevalidatedThrough = it }
                 }
                 else -> {
                     // Quiet-failure contract (T15): a failed season load must NOT
@@ -1613,30 +1632,59 @@ private fun BrowseItem.toSectionItem(): SectionItem = SectionItem(
  * durable per-playback preferences are recorded by the player itself.
  */
 /**
- * Favourites toggled on one detail screen that a retained detail screen further
- * up may still be showing the old answer for.
+ * Favourites toggled on one detail screen that other retained detail screens
+ * may still be showing the old answer for.
  *
- * Process-scoped and consume-once, mirroring [TvDetailTrackSelectionSession]:
- * the child writes, the parent reads on resume. A targeted set is the point —
- * re-asking about every visible episode on every resume would restore the
- * request volume the probe window exists to prevent, and ON_RESUME fires for
- * returning from playback and for foregrounding the app too, not just for
- * coming back from an episode.
+ * Versioned rather than consume-once. Consume-once loses the signal whenever
+ * more than one screen can read it, and more than one always can: every detail
+ * screen refreshes on resume, so an episode screen returning from playback
+ * would swallow the marker meant for the series rail behind it. It also loses
+ * the signal when the read succeeds but the reload meant to act on it fails.
+ *
+ * So nothing is consumed. Each change gets a monotonically increasing version,
+ * and each reader remembers the version it has caught up to, advancing that
+ * mark only once a revalidation has actually succeeded. Any number of readers
+ * each see every change, and a failed reload simply tries again next resume.
+ *
+ * A targeted set remains the point: re-asking about every visible episode on
+ * every resume would restore the request volume the probe window exists to
+ * prevent, and ON_RESUME also fires for returning from playback and for
+ * foregrounding the app.
  */
 internal object TvFavoriteRevalidationSession {
-    private val changed = LinkedHashSet<String>()
+    private val lock = Any()
+    private var version = 0L
+    private val changedAt = LinkedHashMap<String, Long>()
+
+    /** Ample for any one visit; oldest entries fall off rather than grow forever. */
+    private const val MAX_TRACKED = 256
 
     fun markChanged(contentId: String) {
         if (contentId.isBlank()) return
-        synchronized(changed) { changed += contentId }
+        synchronized(lock) {
+            version += 1
+            changedAt.remove(contentId)
+            changedAt[contentId] = version
+            while (changedAt.size > MAX_TRACKED) {
+                changedAt.remove(changedAt.keys.first())
+            }
+        }
     }
 
-    /** Everything changed since the last read, cleared as it is handed over. */
-    fun consumeChanged(): Set<String> = synchronized(changed) {
-        if (changed.isEmpty()) emptySet() else changed.toSet().also { changed.clear() }
+    /** The mark a reader stores once it has caught up. */
+    fun currentVersion(): Long = synchronized(lock) { version }
+
+    /** Ids changed after [sinceVersion]; readers pass the mark they last stored. */
+    fun changedSince(sinceVersion: Long): Set<String> = synchronized(lock) {
+        changedAt.entries
+            .filter { it.value > sinceVersion }
+            .mapTo(LinkedHashSet()) { it.key }
     }
 
-    fun reset() = synchronized(changed) { changed.clear() }
+    fun reset() = synchronized(lock) {
+        version = 0L
+        changedAt.clear()
+    }
 }
 
 internal object TvDetailTrackSelectionSession {

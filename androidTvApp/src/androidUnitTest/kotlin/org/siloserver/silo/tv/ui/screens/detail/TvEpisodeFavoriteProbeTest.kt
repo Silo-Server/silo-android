@@ -202,27 +202,77 @@ class TvEpisodeFavoriteProbeTest {
     }
 }
 
-/** The consume-once channel the child detail screen uses to tell the parent. */
+/** The versioned channel a child detail screen uses to tell every other screen. */
 class TvFavoriteRevalidationSessionTest {
 
     @Test
-    fun handsOverEachChangeExactlyOnce() {
+    fun reportsChangesAfterAReadersMark() {
         TvFavoriteRevalidationSession.reset()
+        val start = TvFavoriteRevalidationSession.currentVersion()
         TvFavoriteRevalidationSession.markChanged("ep-7")
         TvFavoriteRevalidationSession.markChanged("ep-9")
 
-        assertEquals(setOf("ep-7", "ep-9"), TvFavoriteRevalidationSession.consumeChanged())
+        assertEquals(setOf("ep-7", "ep-9"), TvFavoriteRevalidationSession.changedSince(start))
+    }
+
+    /**
+     * The failure that made consume-once wrong: an episode screen resuming from
+     * playback would swallow the marker meant for the series rail behind it.
+     * Every reader must see it.
+     */
+    @Test
+    fun oneReaderCatchingUpDoesNotHideTheChangeFromAnother() {
+        TvFavoriteRevalidationSession.reset()
+        val episodeScreenMark = TvFavoriteRevalidationSession.currentVersion()
+        val seriesScreenMark = TvFavoriteRevalidationSession.currentVersion()
+        TvFavoriteRevalidationSession.markChanged("ep-7")
+
+        // The episode screen resumes first and catches up.
         assertEquals(
-            emptySet(),
-            TvFavoriteRevalidationSession.consumeChanged(),
-            "a second resume must not re-probe what the first already settled",
+            setOf("ep-7"),
+            TvFavoriteRevalidationSession.changedSince(episodeScreenMark),
         )
+        // The series rail behind it must still be told.
+        assertEquals(
+            setOf("ep-7"),
+            TvFavoriteRevalidationSession.changedSince(seriesScreenMark),
+        )
+    }
+
+    /**
+     * A reader advances its mark only after a successful revalidation, so a
+     * failed reload retries rather than losing the change forever.
+     */
+    @Test
+    fun aReaderThatHasNotCaughtUpKeepsSeeingTheChange() {
+        TvFavoriteRevalidationSession.reset()
+        val mark = TvFavoriteRevalidationSession.currentVersion()
+        TvFavoriteRevalidationSession.markChanged("ep-7")
+
+        assertEquals(setOf("ep-7"), TvFavoriteRevalidationSession.changedSince(mark))
+        assertEquals(
+            setOf("ep-7"),
+            TvFavoriteRevalidationSession.changedSince(mark),
+            "reading must not clear anything",
+        )
+
+        val caughtUp = TvFavoriteRevalidationSession.currentVersion()
+        assertEquals(emptySet(), TvFavoriteRevalidationSession.changedSince(caughtUp))
     }
 
     @Test
     fun ignoresABlankId() {
         TvFavoriteRevalidationSession.reset()
+        val start = TvFavoriteRevalidationSession.currentVersion()
         TvFavoriteRevalidationSession.markChanged("")
-        assertEquals(emptySet(), TvFavoriteRevalidationSession.consumeChanged())
+        assertEquals(emptySet(), TvFavoriteRevalidationSession.changedSince(start))
+    }
+
+    @Test
+    fun doesNotGrowWithoutBound() {
+        TvFavoriteRevalidationSession.reset()
+        val start = TvFavoriteRevalidationSession.currentVersion()
+        repeat(400) { TvFavoriteRevalidationSession.markChanged("ep-$it") }
+        assertTrue(TvFavoriteRevalidationSession.changedSince(start).size <= 256)
     }
 }
