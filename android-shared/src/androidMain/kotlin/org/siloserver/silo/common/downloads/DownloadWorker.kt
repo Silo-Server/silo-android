@@ -22,6 +22,7 @@ import androidx.work.workDataOf
 import org.siloserver.silo.model.download.DownloadStatus
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.repository.DownloadsRepository
+import org.siloserver.silo.network.SiloAuthUnavailableException
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.timeout
@@ -325,7 +326,13 @@ class DownloadWorker(
                 Result.retry()
             }
         } catch (e: Throwable) {
-            failPermanently(e, downloadId, serverId, profileId, fileId, activeUri)
+            if (downloadAuthFailureIsRetriable(e)) {
+                Log.i(TAG, "doWork auth unavailable id=$downloadId")
+                DiagnosticsDownloadLogger.event("download auth unavailable")
+                Result.retry()
+            } else {
+                failPermanently(e, downloadId, serverId, profileId, fileId, activeUri)
+            }
         }
         } finally {
             lifetimeLease.close()
@@ -676,3 +683,20 @@ private fun String.decodeRfc5987(): String {
     val encoded = substringAfter("''", missingDelimiterValue = this)
     return runCatching { URLDecoder.decode(encoded, Charsets.UTF_8.name()) }.getOrDefault(encoded)
 }
+
+/**
+ * A request the auth plugin refused to send because there were no usable
+ * credentials — the session was repudiated mid-download, or the token for this
+ * scope is gone.
+ *
+ * Retriable, matching how a 401 response is already classified: the user can
+ * sign back in and a part-downloaded file of several gigabytes is worth
+ * keeping. Treating it as permanent deletes that partial and paints the
+ * download Failed.
+ *
+ * Deliberately narrow rather than `is IllegalStateException`, which
+ * [SiloAuthUnavailableException] extends — widening it that far would also make
+ * a genuine 404 look retriable.
+ */
+internal fun downloadAuthFailureIsRetriable(e: Throwable): Boolean =
+    e is SiloAuthUnavailableException

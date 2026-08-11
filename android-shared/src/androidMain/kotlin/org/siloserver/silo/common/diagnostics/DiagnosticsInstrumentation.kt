@@ -72,13 +72,21 @@ internal fun safeDiagnosticsNetworkPath(rawPath: String): String {
     if ('?' in rawPath || '#' in rawPath) return "/api/${segments[1]}/other"
     val resource = segments[2].lowercase()
     val tail = segments.drop(3)
-    val template = API_ROUTE_TEMPLATES[resource]
+    val known = API_ROUTE_TEMPLATES[resource]
+    val template = known
         ?.firstOrNull { candidate ->
             candidate.size == tail.size && candidate.indices.all { index ->
                 candidate[index] == DYNAMIC_ROUTE_SEGMENT || candidate[index] == tail[index].lowercase()
             }
         }
-        ?: return "/api/${segments[1]}/other"
+        // An allowlisted resource whose tail matches no template still names the
+        // resource: it already appears in every other path logged for it, so
+        // nothing new is disclosed, and a bare "/other" made the largest error
+        // signal on a tester's device unactionable — 52 404s in eight minutes
+        // with no way to tell which endpoint produced them. An UNRECOGNISED
+        // resource stays anonymous, deliberately: that name is not allowlisted
+        // and could itself be sensitive.
+        ?: return if (known != null) "/api/${segments[1]}/$resource/other" else "/api/${segments[1]}/other"
     return (listOf("", "api", segments[1], resource) + template).joinToString("/")
 }
 
@@ -354,7 +362,9 @@ private val API_ROUTE_TEMPLATES: Map<String, List<List<String>>> = mapOf(
         listOf(DYNAMIC_ROUTE_SEGMENT, "files", DYNAMIC_ROUTE_SEGMENT, "read"),
         listOf(DYNAMIC_ROUTE_SEGMENT, "progress")),
     "events" to listOf(listOf("ws"), listOf("ws-ticket")),
+    "favorites" to listOf(emptyList(), listOf(DYNAMIC_ROUTE_SEGMENT)),
     "health" to listOf(emptyList()),
+    "history" to listOf(emptyList()),
     "home" to listOf(listOf("layout"), listOf("sections"),
         listOf("sections", DYNAMIC_ROUTE_SEGMENT, "items"),
         listOf("dismissals", "continue_watching", DYNAMIC_ROUTE_SEGMENT),
@@ -364,9 +374,12 @@ private val API_ROUTE_TEMPLATES: Map<String, List<List<String>>> = mapOf(
     "library" to listOf(listOf(DYNAMIC_ROUTE_SEGMENT, "sections"),
         listOf(DYNAMIC_ROUTE_SEGMENT, "sections", DYNAMIC_ROUTE_SEGMENT, "items"),
         listOf(DYNAMIC_ROUTE_SEGMENT, "collections")),
+    "library-playback-prefs" to listOf(emptyList(), listOf(DYNAMIC_ROUTE_SEGMENT)),
+    "metadata" to listOf(listOf("ai", "status")),
     "notifications" to listOf(emptyList(), listOf("sync"), listOf("unread-count"), listOf("read-all"),
         listOf("preferences"), listOf("capability"), listOf(DYNAMIC_ROUTE_SEGMENT),
         listOf(DYNAMIC_ROUTE_SEGMENT, "read"), listOf("push", "devices")),
+    "onboarding" to listOf(listOf("flow"), listOf("state"), listOf("progress")),
     "people" to listOf(listOf(DYNAMIC_ROUTE_SEGMENT)),
     "playback" to listOf(listOf("start"), listOf("route-events"), listOf("transcode", "start"),
         listOf(DYNAMIC_ROUTE_SEGMENT), listOf(DYNAMIC_ROUTE_SEGMENT, "progress"),
@@ -394,7 +407,9 @@ private val API_ROUTE_TEMPLATES: Map<String, List<List<String>>> = mapOf(
     "sync" to listOf(listOf("progress")),
     "user" to listOf(listOf("libraries")),
     "users" to listOf(listOf(DYNAMIC_ROUTE_SEGMENT), listOf(DYNAMIC_ROUTE_SEGMENT, "avatar.png")),
+    "watch" to listOf(listOf(DYNAMIC_ROUTE_SEGMENT)),
     "watched" to listOf(listOf(DYNAMIC_ROUTE_SEGMENT)),
+    "watchlist" to listOf(emptyList(), listOf(DYNAMIC_ROUTE_SEGMENT)),
     "watch-together" to listOf(listOf("rooms"), listOf("join"), listOf("rooms", DYNAMIC_ROUTE_SEGMENT),
         listOf("rooms", DYNAMIC_ROUTE_SEGMENT, "selection"), listOf("rooms", DYNAMIC_ROUTE_SEGMENT, "policy"),
         listOf("rooms", DYNAMIC_ROUTE_SEGMENT, "suggestions"),
