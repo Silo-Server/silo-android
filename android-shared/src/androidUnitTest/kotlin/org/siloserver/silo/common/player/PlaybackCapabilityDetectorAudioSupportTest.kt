@@ -60,11 +60,16 @@ class PlaybackCapabilityDetectorAudioSupportTest {
         )
     }
 
-    /** JOC is its own claim: E-AC3 support does not imply it. */
+    /** A limit is still never borrowed from an unrelated codec. */
     @Test
-    fun `plain E-AC3 support does not advertise JOC`() {
+    fun `AAC support does not vouch for E-AC3`() {
         assertFalse(
-            canDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, sixChannelEac3, ffmpegAvailable = false),
+            canDecodeAudio(
+                MimeTypes.AUDIO_E_AC3,
+                6,
+                listOf(decoder(MimeTypes.AUDIO_AAC, "aac", 8)),
+                ffmpegAvailable = false,
+            ),
         )
     }
 
@@ -104,25 +109,63 @@ class PlaybackCapabilityDetectorAudioSupportTest {
     }
 
     /**
-     * The subtle one. FFmpeg DOES declare E-AC3, so an "or FFmpeg" rule would
-     * call this playable — but renderers are built with
-     * EXTENSION_RENDERER_MODE_ON, where the extension only fills gaps with no
-     * platform decoder. A platform E-AC3 decoder exists, so it is the one that
-     * runs, and it refuses six channels. FFmpeg is never asked.
+     * EXTENSION_RENDERER_MODE_ON puts the platform renderer first, but order is
+     * only the tie-break: the track selector takes whichever renderer reports
+     * the greatest format support. MediaCodecAudioRenderer answers
+     * FORMAT_EXCEEDS_CAPABILITIES for a channel count its decoder will not
+     * take, and FfmpegAudioRenderer answers FORMAT_HANDLED — so FFmpeg wins
+     * this one and the track really does play.
      */
     @Test
-    fun `FFmpeg does not rescue a codec the platform already claims`() {
-        assertFalse(
+    fun `FFmpeg rescues a channel count the platform decoder refuses`() {
+        assertTrue(
             canDecodeAudio(MimeTypes.AUDIO_E_AC3, 6, stereoOnlyEac3, ffmpegAvailable = true),
-            "FFmpeg cannot save a track the platform decoder will be handed first",
         )
     }
 
-    /** Where the platform has nothing at all, FFmpeg genuinely does fill the gap. */
+    /** Without it, the same device cannot play the track. */
+    @Test
+    fun `without FFmpeg the platform channel limit stands`() {
+        assertFalse(
+            canDecodeAudio(MimeTypes.AUDIO_E_AC3, 6, stereoOnlyEac3, ffmpegAvailable = false),
+        )
+    }
+
     @Test
     fun `FFmpeg fills a gap the platform cannot cover`() {
         assertTrue(
             canDecodeAudio(MimeTypes.AUDIO_E_AC3, 6, emptyList(), ffmpegAvailable = true),
+        )
+    }
+
+    /**
+     * Media3 soft-matches JOC onto a plain E-AC3 decoder
+     * (MediaCodecUtil.getAlternativeCodecMimeType), so refusing it here would
+     * reject content the player would happily have handled.
+     */
+    @Test
+    fun `JOC is accepted by a plain E-AC3 decoder, as Media3 does`() {
+        assertTrue(
+            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, sixChannelEac3),
+        )
+    }
+
+    @Test
+    fun `JOC still respects that decoders channel limit`() {
+        assertFalse(
+            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, stereoOnlyEac3),
+        )
+    }
+
+    /** Codec absence and an unusable layout are different verdicts. */
+    @Test
+    fun `a channel-limited decoder still counts as having the codec`() {
+        assertTrue(
+            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3, 0, stereoOnlyEac3),
+            "asking with no channel count answers only whether the codec exists",
+        )
+        assertFalse(
+            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3, 6, stereoOnlyEac3),
         )
     }
 

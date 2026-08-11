@@ -12,10 +12,10 @@ package org.siloserver.silo.common.player.route
 enum class PlaybackRoute(val displayName: String) {
     /**
      * ProgressiveMediaSource + RenderersFactory with the FFmpeg audio extension
-     * enabled (`EXTENSION_RENDERER_MODE_ON`). The extension fills gaps where
-     * the platform has no decoder; it does NOT take precedence over one that
-     * exists, so a codec the platform claims is decoded by the platform even
-     * when FFmpeg could also carry it.
+     * enabled (`EXTENSION_RENDERER_MODE_ON`). The platform renderer is ordered
+     * first, but order only breaks ties: the track selector takes whichever
+     * renderer reports the greatest format support, so FFmpeg still wins a
+     * format the platform decoder reports as exceeding its capabilities.
      */
     SiloPlayer("SiloPlayer"),
 

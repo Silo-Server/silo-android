@@ -127,16 +127,41 @@ class PlaybackCapabilityDetector(
                 platformDecoders = detectPlatformSoftwareAudioCodecs().decoders,
                 ffmpegAvailable = FfmpegAudioSupport.isAvailable(),
             )
+            // A sink that carries the encoded stream bypasses the decoder
+            // entirely, so its channel limit is irrelevant. AC-3/E-AC-3/JOC were
+            // missing here: harmless while the decoder was assumed able to take
+            // anything, but a false refusal the moment that assumption is
+            // dropped — an E-AC-3-capable receiver plays 5.1 fine behind a
+            // stereo-only decoder.
             val sinkCanPassthrough = when (mime) {
                 MimeTypes.AUDIO_TRUEHD -> "truehd" in passthroughCodecs
                 MimeTypes.AUDIO_DTS_HD -> "dts_hd" in passthroughCodecs
                 MimeTypes.AUDIO_DTS -> "dts" in passthroughCodecs
                 MimeTypes.AUDIO_AC4 -> "ac4" in passthroughCodecs
+                MimeTypes.AUDIO_AC3 -> "ac3" in passthroughCodecs
+                MimeTypes.AUDIO_E_AC3 -> "eac3" in passthroughCodecs
+                MimeTypes.AUDIO_E_AC3_JOC ->
+                    "eac3_joc" in passthroughCodecs || "eac3" in passthroughCodecs
                 else -> false
             }
 
-            if (!rendererCanDecode && !sinkCanPassthrough) {
+            // Absent codec and unusable channel layout are different verdicts:
+            // the first tells the viewer their device cannot play this format at
+            // all, the second that it cannot play this LAYOUT — and the server
+            // picks a different fallback for each. Deciding on the
+            // channel-aware answer alone reported every Pixel channel failure
+            // as an unsupported encoding.
+            val codecKnownAtAll = platformCanDecodeAudio(
+                mime = mime,
+                channelCount = 0,
+                platformDecoders = detectPlatformSoftwareAudioCodecs().decoders,
+            ) || (FfmpegAudioSupport.isAvailable() && mime in FfmpegAudioSupport.mimeTypes)
+
+            if (!codecKnownAtAll && !sinkCanPassthrough) {
                 return Playability.UnsupportedAudioCodec(mime)
+            }
+            if (!rendererCanDecode && !sinkCanPassthrough) {
+                return Playability.UnsupportedChannelCount(mime, channels)
             }
             // rendererCanDecode is now channel-aware, so a decoder that exists
             // but cannot take this many channels no longer excuses the sink
@@ -643,25 +668,52 @@ internal fun canDecodeAudio(
     platformDecoders: List<PlatformAudioDecodeCapability>,
     ffmpegAvailable: Boolean,
 ): Boolean {
-    val platformForMime = platformDecoders.filter { it.mimeType.equals(mime, ignoreCase = true) }
-    if (platformForMime.isNotEmpty()) {
-        // FFmpeg deliberately does NOT get a vote here. The renderers are built
-        // with EXTENSION_RENDERER_MODE_ON, under which the extension only fills
-        // gaps where the platform has no decoder at all — so when a platform
-        // decoder exists it is the one that runs, and a track it refuses fails
-        // even though FFmpeg could have decoded it. Treating FFmpeg as a
-        // widening OR here is precisely how a 5.1 E-AC3 track on a two-channel
-        // Pixel decoder was reported playable: FFmpeg declares E-AC3, but was
-        // never going to be asked.
-        return platformForMime.any { decoder ->
+    if (platformCanDecodeAudio(mime, channelCount, platformDecoders)) return true
+    // FFmpeg genuinely rescues a format the platform decoder cannot take.
+    // EXTENSION_RENDERER_MODE_ON puts the platform renderer FIRST, but order is
+    // only the tie-break: MappingTrackSelector picks the renderer reporting the
+    // greatest format support, and MediaCodecAudioRenderer answers
+    // FORMAT_EXCEEDS_CAPABILITIES for a channel count its decoder will not take
+    // while FfmpegAudioRenderer answers FORMAT_HANDLED. So the extension is not
+    // limited to codecs the platform lacks entirely.
+    return ffmpegAvailable && mime in FfmpegAudioSupport.mimeTypes
+}
+
+/**
+ * Whether a platform decoder alone can take [mime] at [channelCount].
+ *
+ * Separate from [canDecodeAudio] so a caller can tell "this device has no
+ * decoder for this codec at all" from "it has one that will not take this many
+ * channels" — those are different answers for the viewer and different
+ * fallbacks for the server.
+ *
+ * Media3 soft-matches E-AC3 JOC onto a plain E-AC3 decoder
+ * (`MediaCodecUtil.getAlternativeCodecMimeType`), so a JOC track is accepted by
+ * an E-AC3 decoder here too; refusing it would reject content Media3 plays.
+ */
+internal fun platformCanDecodeAudio(
+    mime: String,
+    channelCount: Int,
+    platformDecoders: List<PlatformAudioDecodeCapability>,
+): Boolean {
+    val acceptable = buildSet {
+        add(mime.lowercase())
+        if (mime.equals(MimeTypes.AUDIO_E_AC3_JOC, ignoreCase = true)) {
+            add(MimeTypes.AUDIO_E_AC3.lowercase())
+        }
+    }
+    return platformDecoders.any { decoder ->
+        decoder.mimeType.lowercase() in acceptable &&
             when {
                 channelCount <= 0 -> true
+                // The device would not state a limit. Not a claim of an
+                // unlimited one, but refusing every such decoder would reject a
+                // great deal that plays; the preflight is a filter, and the
+                // decoder-init failure path still exists behind it.
                 decoder.maxInputChannelCount == null -> true
                 else -> decoder.maxInputChannelCount >= channelCount
             }
-        }
     }
-    return ffmpegAvailable && mime in FfmpegAudioSupport.mimeTypes
 }
 
 /** The wire name this project uses for a platform audio MIME, if it tracks one. */

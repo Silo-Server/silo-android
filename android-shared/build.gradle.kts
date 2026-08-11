@@ -137,7 +137,7 @@ android {
         // Gate for preferring FFmpeg audio decoders over platform decoders.
         // The AAR is always on the classpath (see dependencies above); this
         // flag only controls whether DefaultRenderersFactory is set to
-        // EXTENSION_RENDERER_MODE_PREFER (true) or _MODE_OFF (false).
+        // EXTENSION_RENDERER_MODE_ON (true) or _MODE_OFF (false).
         // Flip to false at compile time to bisect regressions — with _MODE_OFF
         // FFmpeg renderers are not even instantiated, so any FFmpeg-related
         // bug can't manifest regardless of classpath presence.
