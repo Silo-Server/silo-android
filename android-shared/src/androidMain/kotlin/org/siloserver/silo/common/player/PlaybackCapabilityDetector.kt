@@ -31,6 +31,8 @@ import org.siloserver.silo.model.playback.PlaybackDeviceContext
 import org.siloserver.silo.model.playback.PlaybackTransformationExecutor
 import org.siloserver.silo.model.playback.PlaybackTransformationV3
 import org.siloserver.silo.model.playback.PlaybackOutputContext
+import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
+import org.siloserver.silo.model.playback.AudioPassthroughEntry
 import kotlinx.coroutines.flow.StateFlow
 import org.siloserver.silo.libass.LibassBridge
 
@@ -133,17 +135,22 @@ class PlaybackCapabilityDetector(
             // anything, but a false refusal the moment that assumption is
             // dropped — an E-AC-3-capable receiver plays 5.1 fine behind a
             // stereo-only decoder.
-            val sinkCanPassthrough = when (mime) {
-                MimeTypes.AUDIO_TRUEHD -> "truehd" in passthroughCodecs
-                MimeTypes.AUDIO_DTS_HD -> "dts_hd" in passthroughCodecs
-                MimeTypes.AUDIO_DTS -> "dts" in passthroughCodecs
-                MimeTypes.AUDIO_AC4 -> "ac4" in passthroughCodecs
-                MimeTypes.AUDIO_AC3 -> "ac3" in passthroughCodecs
-                MimeTypes.AUDIO_E_AC3 -> "eac3" in passthroughCodecs
+            val routeCaps = audioCapabilityManager.capabilities.value
+            val passthroughCodec = when (mime) {
+                MimeTypes.AUDIO_TRUEHD -> "truehd"
+                MimeTypes.AUDIO_DTS_HD -> "dts_hd"
+                MimeTypes.AUDIO_DTS -> "dts"
+                MimeTypes.AUDIO_AC4 -> "ac4"
+                MimeTypes.AUDIO_AC3 -> "ac3"
+                MimeTypes.AUDIO_E_AC3 -> "eac3"
                 MimeTypes.AUDIO_E_AC3_JOC ->
-                    "eac3_joc" in passthroughCodecs || "eac3" in passthroughCodecs
-                else -> false
+                    if ("eac3_joc" in passthroughCodecs) "eac3_joc" else "eac3"
+                else -> null
             }
+            // Asked per codec AND per layout: the sink carrying this codec says
+            // nothing about it carrying this many channels of it.
+            val sinkCanPassthrough = passthroughCodec != null &&
+                sinkCanPassthrough(passthroughCodec, channels, routeCaps)
 
             // Absent codec and unusable channel layout are different verdicts:
             // the first tells the viewer their device cannot play this format at
@@ -466,9 +473,11 @@ class PlaybackCapabilityDetector(
                 if (info.isEncoder) continue
                 for (type in info.supportedTypes) {
                     val codec = platformAudioCodecName(type) ?: continue
-                    // An unreadable limit is recorded as unknown rather than as
-                    // unlimited: a probe that cannot answer must not be the
-                    // reason a track is claimed playable.
+                    // An unreadable limit is recorded as unknown, distinct from
+                    // a stated one. The preflight then treats unknown as
+                    // permissive (see canDecodeAudio) — a filter that refused
+                    // every device which will not state a limit would reject a
+                    // great deal that plays.
                     val maxChannels = runCatching {
                         info.getCapabilitiesForType(type).audioCapabilities?.maxInputChannelCount
                     }.getOrNull()?.takeIf { it > 0 }
@@ -635,12 +644,38 @@ internal fun isDirectPlayableDolbyVisionProfile(
     supportedHdr: org.siloserver.silo.model.playback.HdrCapabilities,
 ): Boolean = supportedHdr.dolbyVisionProfiles.contains(profile)
 
+/**
+ * Whether the connected sink will carry [codec] as an encoded stream at
+ * [channelCount] channels.
+ *
+ * Uses the exact per-codec entries when the route probe produced them, because
+ * the aggregate `maxChannels` is a maximum across ALL codecs: a receiver taking
+ * eight-channel TrueHD but only six-channel E-AC-3 reports eight, which would
+ * wave through an eight-channel E-AC-3 track its own E-AC-3 entry excludes.
+ *
+ * Falls back to the aggregate where no entries exist — pre-API-29 routes cannot
+ * be probed per format, and refusing everything there would be worse than the
+ * imprecision.
+ */
+internal fun sinkCanPassthrough(
+    codec: String,
+    channelCount: Int,
+    capabilities: AudioPassthroughCapabilities,
+): Boolean {
+    if (codec !in capabilities.passthroughCodecs) return false
+    if (channelCount <= 0) return true
+    val entry = capabilities.entries.firstOrNull { it.codec == codec }
+    val exactCounts = entry?.channelCounts?.takeIf { it.isNotEmpty() }
+        ?: return channelCount <= capabilities.maxChannels
+    return channelCount in exactCounts
+}
+
 /** One platform decoder's claim about one MIME type. */
 internal data class PlatformAudioDecodeCapability(
     val mimeType: String,
     val codec: String,
     val decoderName: String,
-    /** Null when the device would not say; never treated as unlimited. */
+    /** Null when the device would not say — recorded as unknown, not as a limit. */
     val maxInputChannelCount: Int?,
 )
 

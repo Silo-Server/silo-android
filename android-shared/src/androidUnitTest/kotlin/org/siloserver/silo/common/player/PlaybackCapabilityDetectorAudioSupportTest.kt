@@ -5,6 +5,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
+import org.siloserver.silo.model.playback.AudioPassthroughEntry
 
 class PlaybackCapabilityDetectorAudioSupportTest {
 
@@ -181,5 +183,63 @@ class PlaybackCapabilityDetectorAudioSupportTest {
         assertEquals("eac3", platformAudioCodecName(MimeTypes.AUDIO_E_AC3))
         assertEquals("eac3_joc", platformAudioCodecName(MimeTypes.AUDIO_E_AC3_JOC))
         assertEquals(null, platformAudioCodecName(MimeTypes.AUDIO_DTS_HD))
+    }
+}
+
+/**
+ * The sink carrying a codec says nothing about it carrying that many channels
+ * of it. maxChannels is a maximum across ALL codecs, so a receiver taking
+ * 8-channel TrueHD but only 6-channel E-AC-3 reports 8 — and would wave through
+ * an 8-channel E-AC-3 track its own entry excludes.
+ */
+class SinkPassthroughLayoutTest {
+
+    private val receiver = AudioPassthroughCapabilities(
+        passthroughCodecs = listOf("truehd", "eac3"),
+        maxChannels = 8,
+        entries = listOf(
+            AudioPassthroughEntry("truehd", channelCounts = listOf(2, 6, 8)),
+            AudioPassthroughEntry("eac3", channelCounts = listOf(2, 6)),
+        ),
+    )
+
+    @Test
+    fun `a layout the codec entry excludes is refused even under the aggregate maximum`() {
+        assertFalse(
+            sinkCanPassthrough("eac3", 8, receiver),
+            "8 <= maxChannels of 8, but this receiver's E-AC-3 entry stops at 6",
+        )
+    }
+
+    @Test
+    fun `a layout the codec entry lists is accepted`() {
+        assertTrue(sinkCanPassthrough("eac3", 6, receiver))
+        assertTrue(sinkCanPassthrough("truehd", 8, receiver))
+    }
+
+    @Test
+    fun `a codec the sink does not carry is refused`() {
+        assertFalse(sinkCanPassthrough("dts_hd", 6, receiver))
+    }
+
+    /**
+     * Pre-API-29 routes cannot be probed per format. Refusing everything there
+     * would be worse than the imprecision, so the aggregate still decides.
+     */
+    @Test
+    fun `without entries the aggregate maximum decides`() {
+        val old = AudioPassthroughCapabilities(
+            passthroughCodecs = listOf("eac3"),
+            maxChannels = 6,
+            entries = emptyList(),
+        )
+        assertTrue(sinkCanPassthrough("eac3", 6, old))
+        assertFalse(sinkCanPassthrough("eac3", 8, old))
+    }
+
+    @Test
+    fun `an unknown channel count asks only whether the codec is carried`() {
+        assertTrue(sinkCanPassthrough("eac3", 0, receiver))
+        assertFalse(sinkCanPassthrough("dts", 0, receiver))
     }
 }
