@@ -66,6 +66,7 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
+import org.siloserver.silo.domain.player.settlingFalseEdges
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.TimeRange
@@ -135,6 +136,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+
+/**
+ * How long `isPlaying` must stay false before it counts as a pause rather than
+ * a rebuffer, for the intro countdown's purposes.
+ *
+ * Long enough to cover an ordinary network stall on a TV box, short enough that
+ * a viewer who actually pressed pause does not watch the countdown keep running
+ * afterwards.
+ */
+private const val PLAYBACK_PAUSE_GRACE_MS = 1_500L
 
 /** Reduced to the fields that can identify the track across index spaces. */
 internal fun PlayerTrackEntry.toMountedAudioTrack(): MountedAudioTrack = MountedAudioTrack(
@@ -2172,9 +2184,14 @@ class TvPlayerViewModel(
                 }
                 .distinctUntilChanged(),
             onAutoSkipFire = { seekToSec -> seekImmediate(seekToSec) },
+            // Filtered, not raw: isPlaying dips for a rebuffer exactly as it
+            // does for a deliberate pause, and the controller restarts the
+            // countdown from full whenever it sees a pause. Unfiltered, a
+            // stuttering stream renews its own countdown on every hiccup and
+            // the prompt can sit there without ever firing.
             playbackActive = _uiState
                 .map { it.isPlaying && !it.isLoading }
-                .distinctUntilChanged(),
+                .settlingFalseEdges(PLAYBACK_PAUSE_GRACE_MS),
         )
     }
 

@@ -46,6 +46,20 @@ class IntroAutoSkipController(
     private var countdownJob: Job? = null
     private var activeKey: String? = null
 
+    /**
+     * Increments each time a countdown STARTS, so a progress indicator can tell
+     * a run that merely ticked from one that restarted — the two are
+     * indistinguishable from [state] alone, since both just show a number.
+     *
+     * Carried separately rather than inside [IntroAutoSkipState.CountingDown]
+     * so that state stays comparable by value.
+     */
+    private val _countdownRun = MutableStateFlow(0)
+    val countdownRun: StateFlow<Int> = _countdownRun.asStateFlow()
+
+    /** Where a fresh countdown starts, for a caller drawing progress against it. */
+    val totalCountdownSeconds: Int get() = countdownSeconds
+
     /** Stops any in-flight countdown without changing the visible state. */
     private fun cancelJob() {
         countdownJob?.cancel()
@@ -80,8 +94,7 @@ class IntroAutoSkipController(
         val key = activeKey ?: return
         cancelledKeys.add(key)
         val wasCounting = countdownJob != null || _state.value is IntroAutoSkipState.CountingDown
-        countdownJob?.cancel()
-        countdownJob = null
+        cancelJob()
         if (!wasCounting) return
         _state.value = IntroAutoSkipState.ShowingButton
     }
@@ -89,8 +102,7 @@ class IntroAutoSkipController(
     /** Clears all per-intro state, for when playback moves to different content. */
     fun reset() {
         cancelledKeys.clear()
-        countdownJob?.cancel()
-        countdownJob = null
+        cancelJob()
         activeKey = null
         _state.value = IntroAutoSkipState.Hidden
     }
@@ -135,7 +147,9 @@ class IntroAutoSkipController(
         }
 
         // Hold the countdown until playback is actually running, so the prompt
-        // and the timer start together.
+        // and the timer start together. A deliberate pause restarts the
+        // countdown on resume; transient rebuffering is filtered out upstream
+        // (see settlingFalseEdges) so it never reaches this branch.
         if (!playbackActive) {
             cancelJob()
             if (_state.value !is IntroAutoSkipState.ShowingButton) {
@@ -146,6 +160,7 @@ class IntroAutoSkipController(
 
         // Auto-skip enabled, key not cancelled — start countdown if not already running for this key.
         if (countdownJob?.isActive == true) return
+        _countdownRun.value += 1
         countdownJob = scope.launch {
             var remaining = countdownSeconds
             while (remaining > 0) {

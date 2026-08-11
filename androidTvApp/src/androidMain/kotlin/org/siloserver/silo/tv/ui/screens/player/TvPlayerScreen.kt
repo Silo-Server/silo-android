@@ -843,6 +843,14 @@ fun TvPlayerScreen(
         when {
             cleanSeekRate != 0 -> stopCleanPlaybackSeek()
             state.isScrubbing -> viewModel.cancelScrub()
+            // Below the seek/scrub entries deliberately: a Back during a scrub
+            // belongs to the scrub. Above the overlays because the countdown is
+            // the most transient thing on screen. Handled HERE and not only in
+            // the legacy key bridge — on API 36 Back never reaches
+            // dispatchKeyEvent, so a countdown Back would otherwise fall
+            // through to hiding the controls or exiting the player.
+            latestIntroSkipState is IntroAutoSkipState.CountingDown ->
+                viewModel.onCancelIntroAutoSkip()
             showQuickSubtitlePicker -> showQuickSubtitlePicker = false
             state.showSubtitleStyleDialog -> viewModel.closeSubtitleStyleDialog()
             state.showSubtitleMenu -> viewModel.closeSubtitleMenu()
@@ -1012,8 +1020,13 @@ fun TvPlayerScreen(
             // Back stops the timer and leaves the prompt up, like a D-pad nudge.
             // Consumed so the press cannot also exit playback; afterwards the
             // state is no longer CountingDown, so Back behaves normally.
+            // Mirrors the BackHandler ladder's priority: a scrub or clean seek
+            // owns Back first, so the countdown must not swallow it here on
+            // older Android and leave the scrub running.
             if (latestIntroSkipState is IntroAutoSkipState.CountingDown &&
-                event.keyCode == KeyEvent.KEYCODE_BACK
+                event.keyCode == KeyEvent.KEYCODE_BACK &&
+                cleanSeekRate == 0 &&
+                !state.isScrubbing
             ) {
                 // Both phases are consumed: a leaked ACTION_UP would reach the
                 // activity's back dispatcher.
@@ -2261,6 +2274,9 @@ fun TvPlayerScreen(
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
             autoPlayNextEnabled = autoPlayNextEnabled,
             introSkipState = introSkipState,
+            // The scrubber commits its seek on focus loss, so the prompt must
+            // not take focus out from under an active scrub.
+            introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0,
             showSpinner = shouldShowReconnectSpinner(
                 isReconnecting = sessionState is SessionState.Reconnecting,
                 showNextUp = state.showNextUp,
@@ -3364,6 +3380,8 @@ private fun TvPlayerOverlays(
     nextUpCountdownTotalSeconds: Int,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
+    /** False while a scrub owns focus — see TvIntroAutoSkipBanner.mayTakeFocus. */
+    introBannerMayTakeFocus: Boolean,
     showSpinner: Boolean,
     onCloseRoom: () -> Unit,
     onCancelLeaveDialog: () -> Unit,
@@ -3485,6 +3503,10 @@ private fun TvPlayerOverlays(
                     TvIntroAutoSkipBanner(
                         state = introSkipState,
                         onSkipNow = onSkipIntroNow,
+                        // Not while the viewer is working the timeline: the
+                        // scrubber commits its seek on focus loss, so taking
+                        // focus here would land a seek they never confirmed.
+                        mayTakeFocus = introBannerMayTakeFocus,
                     )
                 }
             }

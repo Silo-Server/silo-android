@@ -57,6 +57,16 @@ fun TvIntroAutoSkipBanner(
     onSkipNow: () -> Unit,
     modifier: Modifier = Modifier,
     totalSeconds: Int = IntroAutoSkipController.DEFAULT_COUNTDOWN_SECONDS,
+    /**
+     * False while something else owns focus for a reason the viewer would not
+     * want interrupted — a timeline scrub in particular.
+     *
+     * The scrubber treats losing focus as COMMIT, not cancel, so a prompt that
+     * appears mid-scrub and claims focus commits a seek the viewer never
+     * confirmed. The button still appears and is still reachable; it simply
+     * does not take focus out from under them.
+     */
+    mayTakeFocus: Boolean = true,
 ) {
     // Diagnostic for the fill-sweep timing bug: proves whether this whole
     // banner (and its remembered `fill` Animatable below) leaves and
@@ -116,13 +126,14 @@ fun TvIntroAutoSkipBanner(
             1 -> {
                 TvSkipIntroButton(
                     onClick = onSkipNow,
-                    autoFocus = previousSlot.value != 2,
+                    autoFocus = mayTakeFocus && previousSlot.value != 2,
                 )
             }
             else -> {
                 TvShrinkingFillButton(
                     progress = fill.floatValue,
                     onSkipNow = onSkipNow,
+                    autoFocus = mayTakeFocus,
                 )
             }
         }
@@ -185,13 +196,17 @@ private fun TvSkipIntroButton(
 private fun TvShrinkingFillButton(
     progress: Float,
     onSkipNow: () -> Unit,
+    autoFocus: Boolean,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val focusRequester = remember { FocusRequester() }
+    // Captured once, like the manual button: a later recomposition must not
+    // re-claim focus the viewer has since moved elsewhere.
+    val shouldFocus = remember { autoFocus }
     val initialFocusModifier = rememberTvContentInitialFocus(
         target = focusRequester,
-        contentKey = Unit,
+        contentKey = if (shouldFocus) Unit else null,
     )
 
 
