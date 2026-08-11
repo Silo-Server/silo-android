@@ -13,12 +13,23 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
+/** What the intro skip prompt should be showing. */
 sealed interface IntroAutoSkipState {
+    /** No prompt: playback is outside an intro, or the prompt was stopped for this one. */
     data object Hidden : IntroAutoSkipState
+
+    /** A manual Skip Intro button with no timer running. */
     data object ShowingButton : IntroAutoSkipState
+
+    /** A timer is running and will skip the intro when it reaches zero. */
     data class CountingDown(val secondsRemaining: Int) : IntroAutoSkipState
 }
 
+/**
+ * Decides whether the intro skip prompt is shown, and runs the countdown that
+ * skips the intro automatically. Emits state through [state]; the caller drives
+ * it with playback inputs via [observe].
+ */
 class IntroAutoSkipController(
     private val scope: CoroutineScope,
     private val countdownSeconds: Int = DEFAULT_COUNTDOWN_SECONDS,
@@ -35,11 +46,17 @@ class IntroAutoSkipController(
     private var countdownJob: Job? = null
     private var activeKey: String? = null
 
+    /** Stops any in-flight countdown without changing the visible state. */
     private fun cancelJob() {
         countdownJob?.cancel()
         countdownJob = null
     }
 
+    /**
+     * Drives the prompt from playback state, returning the job that does so.
+     * [onAutoSkipFire] is invoked with the position to seek to when a countdown
+     * completes; countdowns only run while [playbackActive] is true.
+     */
     fun observe(
         position: Flow<Double>,
         introRange: Flow<TimeRange?>,
@@ -58,6 +75,7 @@ class IntroAutoSkipController(
         }
     }
 
+    /** Stops the countdown for the current intro, leaving the manual button in place. */
     fun cancelCountdown() {
         val key = activeKey ?: return
         cancelledKeys.add(key)
@@ -68,6 +86,7 @@ class IntroAutoSkipController(
         _state.value = IntroAutoSkipState.ShowingButton
     }
 
+    /** Clears all per-intro state, for when playback moves to different content. */
     fun reset() {
         cancelledKeys.clear()
         countdownJob?.cancel()
