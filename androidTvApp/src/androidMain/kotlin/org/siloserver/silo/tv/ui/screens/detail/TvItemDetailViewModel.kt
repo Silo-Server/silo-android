@@ -223,6 +223,28 @@ internal fun shouldApplyNextUpTrackRestore(
 internal const val EPISODE_FAVORITE_PROBE_CONCURRENCY = 6
 
 /**
+ * Whether a revalidation pass answered everything it was asked to.
+ *
+ * Only ids this season actually shows count: the signal is process-wide, so it
+ * routinely names episodes from a season that is not on screen, and waiting for
+ * those would mean never catching up.
+ *
+ * [requested] of null means the signal could not produce a delta, so every
+ * visible episode had to answer. A caller that records itself caught up while
+ * one of its probes failed leaves that row stale with nothing left to retry it,
+ * which is why this is separate from "the reload succeeded".
+ */
+internal fun revalidationSatisfied(
+    requested: Set<String>?,
+    visibleIds: List<String>,
+    answered: Set<String>,
+): Boolean {
+    val visible = visibleIds.toSet()
+    val required = requested?.intersect(visible) ?: visible
+    return required.all { it in answered }
+}
+
+/**
  * Resolves the favourite flag for the episodes whose state is not already
  * known, at most [concurrency] probes in flight at once.
  *
@@ -543,6 +565,7 @@ class TvItemDetailViewModel(
         // toggled in there, and this view model still holds the old answer. Only
         // the items actually changed are re-asked about.
         val favoritesVersion = TvFavoriteRevalidationSession.currentVersion()
+        // Null: too far behind to be given a delta, so re-check the lot.
         val favoritesToRecheck =
             TvFavoriteRevalidationSession.changedSince(favoritesRevalidatedThrough)
         if (seriesId != null && season != null) {
@@ -869,7 +892,7 @@ class TvItemDetailViewModel(
         seriesContentId: String,
         seasonNumber: Int,
         quiet: Boolean = false,
-        revalidateFavorites: Set<String> = emptySet(),
+        revalidateFavorites: Set<String>? = emptySet(),
         favoritesVersion: Long? = null,
     ) {
         // Cancel any in-flight episode load so a slower response for a
@@ -886,10 +909,16 @@ class TvItemDetailViewModel(
                     episodeListGeneration += 1
                     _uiState.update { it.copy(episodesLoading = false, episodes = episodes) }
                     refreshNextUp(episodes)
-                    refreshEpisodeFavoriteStates(episodes, revalidate = revalidateFavorites)
-                    // Caught up only now: advancing on read would drop the
-                    // signal whenever this reload failed or was cancelled.
-                    favoritesVersion?.let { favoritesRevalidatedThrough = it }
+                    val revalidationComplete =
+                        refreshEpisodeFavoriteStates(episodes, revalidate = revalidateFavorites)
+                    // Caught up only now, and only if every id we were asked to
+                    // re-check actually answered. Advancing on read would drop
+                    // the signal when the reload failed; advancing after a
+                    // FAILED probe would drop it just as permanently, leaving
+                    // that one episode stale with nothing left to retry it.
+                    if (revalidationComplete) {
+                        favoritesVersion?.let { favoritesRevalidatedThrough = it }
+                    }
                 }
                 else -> {
                     // Quiet-failure contract (T15): a failed season load must NOT
@@ -941,16 +970,21 @@ class TvItemDetailViewModel(
      */
     private suspend fun refreshEpisodeFavoriteStates(
         episodes: List<EpisodeListItem>,
-        revalidate: Set<String> = emptySet(),
-    ) {
+        revalidate: Set<String>? = emptySet(),
+    ): Boolean {
         // An empty season leaves the accumulated answers alone: rendering is
         // keyed by the visible episode ids, so nothing stale can show, and
         // clearing would make returning to a populated season re-probe it.
-        if (episodes.isEmpty()) return
+        if (episodes.isEmpty()) return true
         val generation = episodeListGeneration
-        probeEpisodeFavorites(
-            episodeIds = episodes.map { it.contentId },
-            knownIds = _uiState.value.episodeFavoriteStates.keys - revalidate,
+        val episodeIds = episodes.map { it.contentId }
+        // A null delta means the signal could not tell us what changed, so
+        // nothing is treated as already known.
+        val knownIds =
+            if (revalidate == null) emptySet() else _uiState.value.episodeFavoriteStates.keys - revalidate
+        val resolved = probeEpisodeFavorites(
+            episodeIds = episodeIds,
+            knownIds = knownIds,
             onResolved = { id, favorite ->
                 // Publish per answer rather than per batch. Guarded by the
                 // generation the probes were started for, so a season the
@@ -962,6 +996,12 @@ class TvItemDetailViewModel(
                 }
             },
         ) { personalDataRepository.isFavorite(it) }
+
+        return revalidationSatisfied(
+            requested = revalidate,
+            visibleIds = episodeIds,
+            answered = resolved.mapTo(mutableSetOf()) { it.first },
+        )
     }
 
     fun onSetEpisodeWatched(episodeContentId: String, watched: Boolean) {
@@ -1656,6 +1696,13 @@ internal object TvFavoriteRevalidationSession {
     private var version = 0L
     private val changedAt = LinkedHashMap<String, Long>()
 
+    /**
+     * Highest version dropped by the cap. A reader behind this cannot be told
+     * what it missed, so it is told to re-check everything instead of being
+     * silently handed an incomplete delta.
+     */
+    private var evictedThrough = 0L
+
     /** Ample for any one visit; oldest entries fall off rather than grow forever. */
     private const val MAX_TRACKED = 256
 
@@ -1666,7 +1713,9 @@ internal object TvFavoriteRevalidationSession {
             changedAt.remove(contentId)
             changedAt[contentId] = version
             while (changedAt.size > MAX_TRACKED) {
-                changedAt.remove(changedAt.keys.first())
+                val oldest = changedAt.entries.first()
+                evictedThrough = maxOf(evictedThrough, oldest.value)
+                changedAt.remove(oldest.key)
             }
         }
     }
@@ -1674,8 +1723,16 @@ internal object TvFavoriteRevalidationSession {
     /** The mark a reader stores once it has caught up. */
     fun currentVersion(): Long = synchronized(lock) { version }
 
-    /** Ids changed after [sinceVersion]; readers pass the mark they last stored. */
-    fun changedSince(sinceVersion: Long): Set<String> = synchronized(lock) {
+    /**
+     * Ids changed after [sinceVersion]; readers pass the mark they last stored.
+     *
+     * Null means "cannot say": this reader is behind entries the cap has since
+     * dropped, so a delta would be incomplete. Callers re-check everything
+     * visible rather than trusting a partial answer — being slow must cost a
+     * round of extra probes, never a silently missed change.
+     */
+    fun changedSince(sinceVersion: Long): Set<String>? = synchronized(lock) {
+        if (sinceVersion < evictedThrough) return null
         changedAt.entries
             .filter { it.value > sinceVersion }
             .mapTo(LinkedHashSet()) { it.key }
@@ -1683,6 +1740,7 @@ internal object TvFavoriteRevalidationSession {
 
     fun reset() = synchronized(lock) {
         version = 0L
+        evictedThrough = 0L
         changedAt.clear()
     }
 }

@@ -9,6 +9,7 @@ import org.siloserver.silo.network.ApiResult
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -271,8 +272,96 @@ class TvFavoriteRevalidationSessionTest {
     @Test
     fun doesNotGrowWithoutBound() {
         TvFavoriteRevalidationSession.reset()
-        val start = TvFavoriteRevalidationSession.currentVersion()
+        val recent = TvFavoriteRevalidationSession.currentVersion()
         repeat(400) { TvFavoriteRevalidationSession.markChanged("ep-$it") }
-        assertTrue(TvFavoriteRevalidationSession.changedSince(start).size <= 256)
+        // A reader caught up to just before the last change still gets a delta.
+        val nearlyCurrent = TvFavoriteRevalidationSession.currentVersion() - 1
+        assertTrue((TvFavoriteRevalidationSession.changedSince(nearlyCurrent)?.size ?: 0) <= 256)
+        assertTrue(recent >= 0)
+    }
+
+    /**
+     * Capping the map must not silently lose a change. A reader behind the
+     * evicted entries is told it cannot be given a delta, so it re-checks
+     * everything rather than being handed a partial answer that looks complete.
+     */
+    @Test
+    fun aReaderBehindTheEvictedEntriesIsToldToRecheckEverything() {
+        TvFavoriteRevalidationSession.reset()
+        val slowReader = TvFavoriteRevalidationSession.currentVersion()
+
+        repeat(300) { TvFavoriteRevalidationSession.markChanged("ep-$it") }
+
+        assertNull(
+            TvFavoriteRevalidationSession.changedSince(slowReader),
+            "a delta that dropped 44 changes would look complete and hide them",
+        )
+    }
+
+    @Test
+    fun aReaderInsideTheCapStillGetsANormalDelta() {
+        TvFavoriteRevalidationSession.reset()
+        repeat(300) { TvFavoriteRevalidationSession.markChanged("old-$it") }
+        val caughtUp = TvFavoriteRevalidationSession.currentVersion()
+
+        TvFavoriteRevalidationSession.markChanged("fresh")
+
+        assertEquals(setOf("fresh"), TvFavoriteRevalidationSession.changedSince(caughtUp))
+    }
+}
+
+/**
+ * Whether a screen may record itself as caught up. Getting this wrong leaves a
+ * row permanently stale: the change is marked handled while its probe failed.
+ */
+class TvFavoriteRevalidationSatisfiedTest {
+
+    @Test
+    fun everyRequestedVisibleIdMustAnswer() {
+        assertTrue(
+            revalidationSatisfied(
+                requested = setOf("ep2"),
+                visibleIds = listOf("ep1", "ep2", "ep3"),
+                answered = setOf("ep2"),
+            ),
+        )
+    }
+
+    @Test
+    fun aFailedProbeMeansNotCaughtUp() {
+        assertFalse(
+            revalidationSatisfied(
+                requested = setOf("ep2"),
+                visibleIds = listOf("ep1", "ep2", "ep3"),
+                answered = emptySet(),
+            ),
+            "advancing here would mark the change handled while the row stays stale",
+        )
+    }
+
+    /**
+     * The signal is process-wide, so it names episodes from seasons that are not
+     * on screen. Waiting for those would mean never catching up at all.
+     */
+    @Test
+    fun idsFromAnotherSeasonDoNotBlockCatchingUp() {
+        assertTrue(
+            revalidationSatisfied(
+                requested = setOf("ep2", "some-other-season-ep"),
+                visibleIds = listOf("ep1", "ep2"),
+                answered = setOf("ep2"),
+            ),
+        )
+    }
+
+    @Test
+    fun aNullDeltaRequiresEveryVisibleEpisodeToAnswer() {
+        assertTrue(
+            revalidationSatisfied(null, listOf("ep1", "ep2"), setOf("ep1", "ep2")),
+        )
+        assertFalse(
+            revalidationSatisfied(null, listOf("ep1", "ep2"), setOf("ep1")),
+            "a full re-check that half failed is not a full re-check",
+        )
     }
 }
