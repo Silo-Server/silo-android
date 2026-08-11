@@ -87,7 +87,12 @@ panelEntersFocus        Boolean
 openPanel               TvTopMenuPanel?
 ```
 
-PR #204 adds two more (`barFocusFromPanelClose`, `menuFocusSuppressesDwell`).
+As merged, PR #204 added `menuFocusSuppressesDwell` and `panelHasFocus`, and
+**deleted** `barFocusFromPanelClose` — review found it unreachable from
+production UI, because the only caller that armed it was a cascade `onClose`
+callback the selector never invoked. That deletion is itself evidence for this
+document's argument: a flag existed, was carried through routing and tests, and
+described a state the app could not actually reach.
 
 Nothing in that list says *who owns focus*. Ownership is inferred by reading
 several flags together, and every combination is representable — including the
@@ -139,11 +144,19 @@ owner or an arrival reason breaks compilation everywhere a decision is made.**
 That is the enforcement the previous design lacked: the compiler, not a
 convention.
 
-`#204`'s two new flags collapse into this directly. `barFocusFromPanelClose`
-becomes `Bar(tab) + PanelDismissed`. `menuFocusSuppressesDwell` stops existing:
-`dwellEligible` returns false for `PanelDismissed` and `Leaving`, true for
-`Browsing`. The bug where an ordinary Up armed the Back-close suppression
-becomes unrepresentable rather than excluded by a flag.
+`#204`'s flags collapse into this directly. `menuFocusSuppressesDwell` stops
+existing: `dwellEligible` returns false for `PanelDismissed` and `Leaving`,
+true for `Browsing`. The bug where an ordinary Up armed the Back-close
+suppression becomes unrepresentable rather than excluded by a flag.
+
+`panelHasFocus` is the more interesting case, because it is the one flag #204
+added that this model would *keep* — under a different name. It exists because
+`panelEntersFocus` records entry INTENT, and routing that asked the intent flag
+sent the viewer into content from a bar they had never left. In these terms
+that is not a flag at all: it is the difference between `Panel(tab)` being the
+owner and `Bar(tab)` still being the owner with a preview showing. An ownership
+type makes the distinction structural; a boolean pair makes it a rule someone
+has to remember. #204 shipped the boolean because the type does not exist yet.
 
 ### Focus entry is a shell concern
 
