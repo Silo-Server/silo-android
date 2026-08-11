@@ -27,7 +27,8 @@ The rate of focus defects went **up** after it landed.
 | 2026-08 (to the 11th) | **48** |
 
 Method, so these can be re-derived rather than trusted:
-`git log main --format=%s --since=… | grep -ci focus` — commit SUBJECTS only.
+`git log main --format=%s --since=2026-06-01 --until=2026-06-30 | grep -ci focus`
+— commit SUBJECTS only, one month per row.
 
 Of the 81 focus-subject commits in the last 90 days, **49 are `fix:` and 7 are
 `feat:`**. That ratio is the finding. This is not a feature being built out;
@@ -37,11 +38,13 @@ Churn is concentrated, not spread:
 
 | File | times touched by a focus commit (90d) |
 |---|---|
-| `TvMainShell.kt` | **15** |
+| `TvMainShell.kt` | **14** |
 | `TvRecommendationsScreen.kt` | 9 |
-| `TvLibraryDetailScreen.kt` | 8 |
-| `TvCalendarScreen.kt` | 8 |
-| `TvRecommendationsFocusBridge.kt` | 7 |
+| `TvLibraryDetailScreen.kt` | 7 |
+| `TvCalendarScreen.kt` | 7 |
+| `TvRecommendationsFocusBridge.kt` | 6 |
+
+Method: `git log main --since=2026-05-13 --format=%s -- '*/<file>.kt' | grep -ci focus`
 
 There are already 19 production focus files, 22 focus test files and 8 focus
 design documents. The infrastructure is not missing. Something else is wrong.
@@ -168,9 +171,11 @@ has to remember. #204 shipped the boolean because the type does not exist yet.
 `#202` says a subtree-level fix cannot beat a `focusRestorer` on an ancestor.
 So the model must state where restorers may live: a restorer belongs to a
 **content region**, never to a container that also hosts modals or chrome.
-Modals get their own window. This is a rule about the composition tree, and it
-needs a source test to hold — the same class of check the repo already uses in
-`*SourceTest.kt`.
+Modals get their own window. This is a rule about the composition tree, so it
+needs its own check to hold — a restorer-placement source test, in the same
+style as `*SourceTest.kt`. That is a DIFFERENT check from #208's silent-claim
+ratchet, which is why the retraction above says no further enforcement is
+needed for silent focus claims specifically, rather than none at all.
 
 ### Failure must be loud
 
@@ -190,10 +195,14 @@ Focus churn by area over 90 days, counted as file-touches by focus commits:
 
 | Area | touches |
 |---|---|
-| `ui/screens/` | **150** |
-| `ui/components/` | 71 |
-| `ui/focus/` | 42 |
-| `ui/shell/` | **31** |
+| `ui/screens/` | **126** |
+| `ui/components/` | 34 |
+| `ui/focus/` | 14 |
+| `ui/shell/` | **16** |
+
+Method: file-touches by focus-subject commits since 2026-05-13 —
+`git log main --since=2026-05-13 --format='COMMIT %s' --name-only -- <dir>`,
+counting filenames under commits whose subject matches `focus`.
 
 The shell is the most-edited single *file*, but screens are five times the
 churn.
@@ -214,7 +223,9 @@ Method, so these can be re-derived rather than trusted — run against
   leaving **15** genuine hold-outs.
 - That is **69%** adoption, not 18%.
 - **31** `runCatching` occurrences remain in TV screens, and exactly **1**
-  wraps a `requestFocus()`.
+  wraps a `requestFocus()` —
+  `grep -ro runCatching …/tv/ui/screens | wc -l`, and the same grep with `-n`
+  filtered to lines also containing `requestFocus`.
 
 Cause #1 of the 08-04 audit — *"a focus request executing without exception is
 treated as focus acquisition"* — has therefore been substantially worked off,
@@ -228,7 +239,9 @@ boolean added because `panelEntersFocus` records intent rather than arrival.
 That distinction is a type, expressed as a flag pair.
 
 **The revised ordering is: shell ownership model first, hold-out migration
-second, and no new enforcement — the existing ratchet is doing its job.**
+second, and no further enforcement against silent focus claims — #208's
+ratchet is doing that job. The one check this note does still ask for is
+unrelated to it: a restorer-placement test, described below.**
 
 ### Enforcement — already done, nothing proposed here
 
