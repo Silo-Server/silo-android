@@ -266,16 +266,25 @@ class SinkPassthroughPartialEntriesTest {
     }
 
     @Test
-    fun `an unprobed layout falls back to the aggregate rather than being refused`() {
+    fun `an unprobed layout under this codecs own ceiling is allowed`() {
         assertTrue(
             sinkCanPassthrough("eac3", 5, receiver),
-            "5 channels is never probed, so the entry cannot be read as refusing it",
+            "5 channels is never probed and sits under the 6 this codec proved",
         )
-        assertTrue(sinkCanPassthrough("eac3", 7, receiver))
     }
 
+    /**
+     * The aggregate maxChannels is 8 here, but that 8 belongs to another codec.
+     * This sink was ASKED for 8-channel E-AC-3 and said no, so its E-AC-3
+     * ceiling is 6 — borrowing the aggregate would accept 7 on a path that
+     * cannot carry it, and broken audio costs more than a transcode.
+     */
     @Test
-    fun `an unprobed layout beyond the aggregate is still refused`() {
+    fun `an unprobed layout above this codecs own ceiling is refused`() {
+        assertFalse(
+            sinkCanPassthrough("eac3", 7, receiver),
+            "7 would only pass by borrowing another codec's limit",
+        )
         assertFalse(sinkCanPassthrough("eac3", 9, receiver))
     }
 
@@ -303,8 +312,17 @@ class SinkPassthroughPartialEntriesTest {
         )
     }
 
+    /**
+     * Derived from the probe list, not restated, so this asserts the value
+     * rather than a duplicate declaration. If the probe gains a layout, the
+     * reader learns about it automatically and this test is what notices.
+     */
     @Test
-    fun `the probed set matches what the capability manager probes`() {
+    fun `the probed set is exactly what the capability manager probes`() {
         assertEquals(setOf(2, 6, 8), PROBED_PASSTHROUGH_CHANNEL_COUNTS)
+        assertEquals(
+            PASSTHROUGH_LAYOUT_PROBES.map { it.channelCount }.toSet(),
+            PROBED_PASSTHROUGH_CHANNEL_COUNTS,
+        )
     }
 }

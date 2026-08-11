@@ -676,23 +676,32 @@ internal fun sinkCanPassthrough(
 
     if (channelCount in exactCounts) return true
     // An entry lists what was PROBED, not everything the sink accepts: only
-    // 2/6/8 are ever tried. Absence is a refusal for those three, because they
-    // were asked and said no. For any other layout the probe simply never
-    // asked, so falling back to the aggregate is the honest answer rather than
-    // refusing a 5- or 7-channel stream the receiver would have carried.
-    return if (channelCount in PROBED_PASSTHROUGH_CHANNEL_COUNTS) {
-        false
-    } else {
-        channelCount <= capabilities.maxChannels
-    }
+    // 2/6/8 are ever tried. Absence is a refusal for those three — they were
+    // asked and said no. Any other layout was never put to the sink, so it is
+    // judged against THIS codec's highest known-good count.
+    //
+    // Deliberately not the aggregate maxChannels: that is a maximum across all
+    // codecs, so a receiver doing 8-channel TrueHD would have vouched for
+    // 7-channel E-AC-3 on a sink whose own E-AC-3 probe stopped at 6. Erring
+    // toward refusal here costs a transcode; erring the other way costs broken
+    // audio after playback has started.
+    if (channelCount in PROBED_PASSTHROUGH_CHANNEL_COUNTS) return false
+    return channelCount <= exactCounts.max()
 }
 
 /**
  * Channel counts [AudioCapabilityManager] actually probes per encoded format.
  * Only for these does an entry's silence mean "no"; anything else was never
- * asked. Kept in step with the probe by a check() at its call site.
+ * asked.
+ *
+ * DERIVED from the probe list rather than restated, so reader and writer cannot
+ * drift. The previous version asserted the match with a check() in the probe
+ * itself — which would have thrown inside capability detection on any API 29+
+ * device if the two ever disagreed. A structural invariant is not worth
+ * crashing playback setup over.
  */
-internal val PROBED_PASSTHROUGH_CHANNEL_COUNTS = setOf(2, 6, 8)
+internal val PROBED_PASSTHROUGH_CHANNEL_COUNTS: Set<Int> =
+    PASSTHROUGH_LAYOUT_PROBES.mapTo(mutableSetOf()) { it.channelCount }
 
 /** One platform decoder's claim about one MIME type. */
 internal data class PlatformAudioDecodeCapability(
