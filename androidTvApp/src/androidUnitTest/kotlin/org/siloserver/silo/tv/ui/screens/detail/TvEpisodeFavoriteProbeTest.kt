@@ -76,7 +76,91 @@ class TvEpisodeFavoriteProbeTest {
         val resolved = probing.await()
 
         assertEquals(25, resolved.size, "every episode still gets an answer")
+        assertEquals(
+            // Value derived from the id so identity and answer stay correlated:
+            // a helper that returned 25 pairs all labelled ep1 would pass a
+            // bare size check.
+            episodes.associateWith { false },
+            resolved.toMap(),
+            "each episode must get ITS OWN answer, not a duplicate of another's",
+        )
         assertEquals(6, peak.get(), "the window holds for the whole season, not just the first batch")
+    }
+
+    /**
+     * One slow probe must not hold back answers that already landed. Bounding
+     * the requests spreads a season over several waves, so waiting for the last
+     * one is a longer wait than it used to be, not a shorter one.
+     */
+    @Test
+    fun publishesEachAnswerAsItArrivesRatherThanWaitingForTheSlowest() = runTest(UnconfinedTestDispatcher()) {
+        val published = mutableListOf<Pair<String, Boolean>>()
+        val slow = CompletableDeferred<Unit>()
+
+        val probing = async {
+            probeEpisodeFavorites(
+                episodeIds = listOf("fast-1", "fast-2", "slow"),
+                knownIds = emptySet(),
+                onResolved = { id, favorite -> published += id to favorite },
+            ) { id ->
+                if (id == "slow") slow.await()
+                ApiResult.Success(id != "slow")
+            }
+        }
+
+        assertEquals(
+            listOf("fast-1" to true, "fast-2" to true),
+            published.toList(),
+            "the quick answers should already be published while one probe is still open",
+        )
+
+        slow.complete(Unit)
+        probing.await()
+        assertEquals(3, published.size)
+    }
+
+    /**
+     * A failed probe publishes nothing, so a transient error cannot be
+     * mistaken for "not a favourite".
+     */
+    @Test
+    fun doesNotPublishAnythingForAFailedProbe() = runTest(UnconfinedTestDispatcher()) {
+        val published = mutableListOf<String>()
+
+        probeEpisodeFavorites(
+            episodeIds = listOf("ok", "boom"),
+            knownIds = emptySet(),
+            onResolved = { id, _ -> published += id },
+        ) { id ->
+            if (id == "boom") {
+                ApiResult.Error(code = 500, error = "server_error", message = "boom")
+            } else {
+                ApiResult.Success(true)
+            }
+        }
+
+        assertEquals(listOf("ok"), published)
+    }
+
+    /**
+     * Revalidation is how a favourite toggled on an episode's own screen gets
+     * back to the rail: the parent view model is retained, so its answer for
+     * that episode is stale but present.
+     */
+    @Test
+    fun anEmptyKnownSetReProbesEpisodesAnAnswerIsAlreadyHeldFor() = runTest(UnconfinedTestDispatcher()) {
+        val asked = mutableListOf<String>()
+
+        val resolved = probeEpisodeFavorites(
+            episodeIds = listOf("ep1", "ep2"),
+            knownIds = emptySet(),
+        ) { id ->
+            asked += id
+            ApiResult.Success(true)
+        }
+
+        assertEquals(listOf("ep1", "ep2"), asked)
+        assertEquals(mapOf("ep1" to true, "ep2" to true), resolved.toMap())
     }
 
     @Test

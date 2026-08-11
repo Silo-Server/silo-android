@@ -226,15 +226,22 @@ internal const val EPISODE_FAVORITE_PROBE_CONCURRENCY = 6
  * Resolves the favourite flag for the episodes whose state is not already
  * known, at most [concurrency] probes in flight at once.
  *
- * Returns only the episodes that answered successfully: a failed probe is left
- * out entirely rather than reported as `false`, so a transient error does not
- * stick as a cached "not a favourite" for the rest of the visit. Callers merge
- * the result onto what they already hold.
+ * [onResolved] fires for each episode the moment its own probe answers, so the
+ * rail fills as results arrive. Waiting for the whole set would mean one slow
+ * probe holding back every answer that already landed — and bounding the
+ * requests makes that wait longer, not shorter, because the work is now spread
+ * over several waves instead of one burst.
+ *
+ * Reports only episodes that answered successfully: a failed probe is left out
+ * entirely rather than reported as `false`, so a transient error does not stick
+ * as a cached "not a favourite" for the rest of the visit. The returned list is
+ * every pair that resolved, for callers that want the whole outcome.
  */
 internal suspend fun probeEpisodeFavorites(
     episodeIds: List<String>,
     knownIds: Set<String>,
     concurrency: Int = EPISODE_FAVORITE_PROBE_CONCURRENCY,
+    onResolved: (String, Boolean) -> Unit = { _, _ -> },
     probe: suspend (String) -> ApiResult<Boolean>,
 ): List<Pair<String, Boolean>> {
     val unknown = episodeIds.filterNot { it in knownIds }
@@ -244,7 +251,10 @@ internal suspend fun probeEpisodeFavorites(
         unknown.map { id ->
             async {
                 val favorite = gate.withPermit { probe(id) }
-                (favorite as? ApiResult.Success)?.let { id to it.data }
+                (favorite as? ApiResult.Success)?.let { success ->
+                    onResolved(id, success.data)
+                    id to success.data
+                }
             }
         }.awaitAll()
     }.filterNotNull()
@@ -529,7 +539,11 @@ class TvItemDetailViewModel(
             else -> null
         }
         val season = _uiState.value.selectedSeason
-        if (seriesId != null && season != null) loadEpisodes(seriesId, season, quiet = true)
+        // Coming back from an episode's own screen: the favourite may have been
+        // toggled in there, and this view model still holds the old answer.
+        if (seriesId != null && season != null) {
+            loadEpisodes(seriesId, season, quiet = true, revalidateFavorites = true)
+        }
     }
 
     fun onToggleFavorite() {
@@ -830,7 +844,12 @@ class TvItemDetailViewModel(
      * used by [refreshOnReturn], whose contract is a no-flash background refresh
      * of the season already on screen.
      */
-    private fun loadEpisodes(seriesContentId: String, seasonNumber: Int, quiet: Boolean = false) {
+    private fun loadEpisodes(
+        seriesContentId: String,
+        seasonNumber: Int,
+        quiet: Boolean = false,
+        revalidateFavorites: Boolean = false,
+    ) {
         // Cancel any in-flight episode load so a slower response for a
         // previously-selected season can't overwrite episodes/next-up for the
         // season the user is now on (rapid season switches / the initial
@@ -845,7 +864,7 @@ class TvItemDetailViewModel(
                     episodeListGeneration += 1
                     _uiState.update { it.copy(episodesLoading = false, episodes = episodes) }
                     refreshNextUp(episodes)
-                    refreshEpisodeFavoriteStates(episodes)
+                    refreshEpisodeFavoriteStates(episodes, revalidate = revalidateFavorites)
                 }
                 else -> {
                     // Quiet-failure contract (T15): a failed season load must NOT
@@ -882,20 +901,38 @@ class TvItemDetailViewModel(
      * favourite toggled on another device is picked up on the next visit
      * rather than being cached indefinitely.
      */
-    private suspend fun refreshEpisodeFavoriteStates(episodes: List<EpisodeListItem>) {
+    /**
+     * @param revalidate re-asks about every visible episode even when an answer
+     * is already held. Returning from an episode's own detail screen is the
+     * case that needs it: this view model is retained, so the favourite the
+     * viewer just toggled in there is still in the map and would never be
+     * re-read. The existing entries stay until a fresh answer replaces them —
+     * clearing first would render every episode as "not a favourite" for the
+     * length of a round trip, and permanently so for any probe that fails.
+     */
+    private suspend fun refreshEpisodeFavoriteStates(
+        episodes: List<EpisodeListItem>,
+        revalidate: Boolean = false,
+    ) {
         if (episodes.isEmpty()) {
             _uiState.update { it.copy(episodeFavoriteStates = emptyMap()) }
             return
         }
-        val resolved = probeEpisodeFavorites(
+        val generation = episodeListGeneration
+        probeEpisodeFavorites(
             episodeIds = episodes.map { it.contentId },
-            knownIds = _uiState.value.episodeFavoriteStates.keys,
+            knownIds = if (revalidate) emptySet() else _uiState.value.episodeFavoriteStates.keys,
+            onResolved = { id, favorite ->
+                // Publish per answer rather than per batch. Guarded by the
+                // generation the probes were started for, so a season the
+                // viewer has already left cannot write into the one on screen.
+                if (episodeListGeneration == generation) {
+                    _uiState.update {
+                        it.copy(episodeFavoriteStates = it.episodeFavoriteStates + (id to favorite))
+                    }
+                }
+            },
         ) { personalDataRepository.isFavorite(it) }
-
-        val currentIds = _uiState.value.episodes.mapTo(mutableSetOf()) { it.contentId }
-        if (currentIds != episodes.mapTo(mutableSetOf()) { it.contentId }) return
-        if (resolved.isEmpty()) return
-        _uiState.update { it.copy(episodeFavoriteStates = it.episodeFavoriteStates + resolved) }
     }
 
     fun onSetEpisodeWatched(episodeContentId: String, watched: Boolean) {
