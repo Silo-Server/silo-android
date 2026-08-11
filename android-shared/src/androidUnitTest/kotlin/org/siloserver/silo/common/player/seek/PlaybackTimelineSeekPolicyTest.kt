@@ -1,12 +1,55 @@
 package org.siloserver.silo.common.player.seek
 
 import org.siloserver.silo.model.playback.PlaybackTimeline
+import org.siloserver.silo.model.playback.PlaybackTimelineV3
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 class PlaybackTimelineSeekPolicyTest {
+    @Test
+    fun `replan remount restores current source position on reused transport timeline`() {
+        val timeline = PlaybackTimelineV3(
+            sourceStartSeconds = 4_946.708,
+            playerStartSeconds = 0.001,
+            timelineOffsetSeconds = 4_946.708,
+        )
+
+        val mount = timeline.replanMountPositionForSource(5_103.58)
+
+        assertEquals(156.872, mount.playerPositionSeconds, absoluteTolerance = 0.000_001)
+        assertEquals(5_103.58, mount.sourcePositionSeconds)
+    }
+
+    @Test
+    fun `replan remount maps a newly anchored transport to its local start`() {
+        val timeline = PlaybackTimeline(
+            sourceStartSeconds = 321.25,
+            playerStartSeconds = 0.0,
+            timelineOffsetSeconds = 321.25,
+        )
+
+        val mount = timeline.replanMountPositionForSource(321.25)
+
+        assertEquals(0.0, mount.playerPositionSeconds)
+        assertEquals(321.25, mount.sourcePositionSeconds)
+    }
+
+    @Test
+    fun `replan remount falls back to plan start for invalid source position`() {
+        val timeline = PlaybackTimeline(
+            sourceStartSeconds = 90.0,
+            playerStartSeconds = 0.5,
+            timelineOffsetSeconds = 89.5,
+        )
+
+        val mount = timeline.replanMountPositionForSource(Double.NaN)
+
+        assertEquals(0.5, mount.playerPositionSeconds)
+        assertEquals(90.0, mount.sourcePositionSeconds)
+    }
+
     @Test
     fun offsetMapsBetweenPlayerAndSourceCoordinates() {
         val timeline = PlaybackTimeline(timelineOffsetSeconds = 120.0)

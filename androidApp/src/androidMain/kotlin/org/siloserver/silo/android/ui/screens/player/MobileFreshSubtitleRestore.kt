@@ -22,9 +22,10 @@ internal suspend fun prepareMobileFreshSubtitleRestore(
     sessionId: String,
     serverUrl: String,
     persistedPreference: String?,
+    authoritativeInventory: Boolean = false,
     loadDownloadedSubtitles: suspend (Int) -> ApiResult<DownloadedSubtitlesResponse>,
 ): MobileFreshSubtitleRestore {
-    val downloaded = if (mediaFileId == null) {
+    val downloaded = if (authoritativeInventory || mediaFileId == null) {
         emptyList()
     } else {
         try {
@@ -38,12 +39,16 @@ internal suspend fun prepareMobileFreshSubtitleRestore(
             emptyList()
         }
     }
-    val subtitleTracks = mergeDownloadedSubtitles(
-        existing = mountedSubtitles,
-        downloaded = downloaded,
-        sessionId = sessionId,
-        serverUrl = serverUrl,
-    )
+    val subtitleTracks = if (authoritativeInventory) {
+        mountedSubtitles
+    } else {
+        mergeDownloadedSubtitles(
+            existing = mountedSubtitles,
+            downloaded = downloaded,
+            sessionId = sessionId,
+            serverUrl = serverUrl,
+        )
+    }
     val preference = persistedPreference?.trim()?.takeIf(String::isNotEmpty)
     val persistedIdentity = decodeSubtitleIdentityPreference(preference)
     val persistedOrdinal = persistedIdentity

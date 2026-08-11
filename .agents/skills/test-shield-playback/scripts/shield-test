@@ -285,7 +285,7 @@ show_logs() {
   adb_cmd logcat -d -v time -t "$lines" \
     SiloDeepLink:I TvPlayerScreen:I TvPlayerViewModel:I AudioCapabilityMgr:I \
     PlaybackSessionMgr:I Media3Analytics:I HdrDisplayController:I \
-    RefreshRateMatcher:I SiloDovi:I '*:S'
+    RefreshRateMatcher:I SiloDovi:I SiloLoadControl:I AndroidRuntime:E '*:S'
 }
 
 show_display() {
@@ -372,9 +372,9 @@ show_plan() {
 SELECT
   a.created_at,
   COALESCE(mf.episode_id, mf.content_id) AS content_id,
+  mf.id AS file_id,
   COALESCE(e.title, mi.title) AS title,
   a.current_plan->>'delivery' AS delivery,
-  a.current_plan->>'engine' AS engine,
   a.current_plan->>'decision_reason' AS reason,
   a.current_plan->'effective_recipe' AS effective_recipe,
   a.normalized_request#>'{client_capabilities,audio_passthrough,passthrough_codecs}' AS passthrough_codecs,
@@ -387,8 +387,9 @@ WHERE a.normalized_request#>>'{client_playback_context,device,manufacturer}' =
         convert_from(decode('$manufacturer_hex', 'hex'), 'UTF8')
   AND a.normalized_request#>>'{client_playback_context,device,model}' =
         convert_from(decode('$model_hex', 'hex'), 'UTF8')
-  AND a.normalized_request#>>'{client_playback_context,device,device}' =
-        convert_from(decode('$codename_hex', 'hex'), 'UTF8')
+  AND COALESCE(a.normalized_request#>>'{client_playback_context,device,platform_details,device}', '') IN (
+        '', convert_from(decode('$codename_hex', 'hex'), 'UTF8')
+      )
   $content_clause
 ORDER BY a.created_at DESC
 LIMIT $count;"
@@ -406,7 +407,7 @@ SELECT
   a.created_at,
   a.normalized_request#>'{client_capabilities,hdr_details}' AS client_hdr,
   a.normalized_request#>'{client_playback_context,output,hdr_details}' AS output_hdr,
-  a.normalized_request#>'{client_playback_context,engines,media3_direct,hdr_details}' AS media3_direct_hdr,
+  a.normalized_request#>'{client_playback_context,deliveries,original_http,hdr_details}' AS original_http_hdr,
   (
     SELECT COALESCE(jsonb_agg(decoder ORDER BY decoder->>'codec'), '[]'::jsonb)
     FROM jsonb_array_elements(
@@ -419,8 +420,9 @@ WHERE a.normalized_request#>>'{client_playback_context,device,manufacturer}' =
         convert_from(decode('$manufacturer_hex', 'hex'), 'UTF8')
   AND a.normalized_request#>>'{client_playback_context,device,model}' =
         convert_from(decode('$model_hex', 'hex'), 'UTF8')
-  AND a.normalized_request#>>'{client_playback_context,device,device}' =
-        convert_from(decode('$codename_hex', 'hex'), 'UTF8')
+  AND COALESCE(a.normalized_request#>>'{client_playback_context,device,platform_details,device}', '') IN (
+        '', convert_from(decode('$codename_hex', 'hex'), 'UTF8')
+      )
 ORDER BY a.created_at DESC
 LIMIT 1;"
 }

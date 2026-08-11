@@ -72,6 +72,7 @@ import org.siloserver.silo.common.player.RefreshRateMatcher
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
+import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
@@ -158,7 +159,8 @@ private fun media3TextTrackSnapshotKey(tracks: androidx.media3.common.Tracks): S
 }
 
 private fun SubtitleIdentity.requiresMountedMobileSelection(): Boolean =
-    this is SubtitleIdentity.LocalMedia3 ||
+    this is SubtitleIdentity.ServerSidecar ||
+        this is SubtitleIdentity.LocalMedia3 ||
         this is SubtitleIdentity.Downloaded ||
         this is SubtitleIdentity.Embedded
 
@@ -380,27 +382,19 @@ fun PlayerScreen(
     // (surfaceCreated/Changed/Destroyed) and recovers across seek/recreate/rotation
     // underlying player). Re-binds automatically when the engine swaps.
     val sessionPlayer by activePlayerHolder.player.collectAsState()
-    val videoBackend = remember(
-        sessionPlayer,
-        mediaController,
-        backendFactory,
-        contentId,
-        initialFileId,
-        uiState.playMethod,
-        uiState.playbackPlan,
-        uiState.delivery,
-        uiState.container,
-        uiState.streamUrl,
-    ) {
-        val plan = uiState.playbackPlan
-        val delivery = plan?.delivery ?: uiState.delivery
-        (sessionPlayer ?: mediaController)?.let { player ->
+    val backendPlayer = sessionPlayer ?: mediaController
+    val videoBackend = remember(backendPlayer, backendFactory) {
+        backendPlayer?.let { player ->
             backendFactory.create(
                 player = player,
                 request = VideoPlaybackBackendRequest(),
             )
         }
     }
+    // A neutral-v3 replan publishes replacement route state before the
+    // corresponding Compose mount effect runs. Subtitle restoration must wait
+    // for that exact media generation rather than racing a newly mounted route.
+    var mountedMediaGeneration by remember(videoBackend) { mutableStateOf<Long?>(null) }
     // False until presets have been applied once for the current backend, so
     // only later capability changes wait for the route to settle.
     var trackPresetsApplied by remember(videoBackend) { mutableStateOf(false) }
@@ -703,7 +697,12 @@ fun PlayerScreen(
             delivery = delivery,
             serverUrl = serverUrl,
             container = uiState.container,
-            subtitles = uiState.subtitleTracks,
+            subtitles = subtitlesForVideoMediaMount(
+                subtitles = uiState.subtitleTracks,
+                playbackPlan = plan,
+                subtitleIdentity = uiState.localSubtitleMountIdentity
+                    ?: uiState.committedSubtitleIdentity,
+            ),
             title = uiState.title.ifBlank { null },
             subtitle = uiState.subtitle.ifBlank { null },
             artworkUrl = uiState.artworkUrl,
@@ -726,6 +725,7 @@ fun PlayerScreen(
                 playMethod = playMethod,
                 startPositionMs = mediaSpec.startPositionMs,
                 nowMs = SystemClock.elapsedRealtime(),
+                clientTransformations = mediaSpec.transformations,
             )
             postResumeStallDetector.onMounted(
                 "${uiState.sessionId}:$effectiveStreamUrl:${plan?.planId.orEmpty()}:" +
@@ -733,6 +733,7 @@ fun PlayerScreen(
             )
         }
         backend.mount(mediaSpec, playWhenReady = !viewModel.uiState.value.isPaused)
+        mountedMediaGeneration = uiState.mediaMountGeneration
         viewModel.onMediaMountApplied(uiState.mediaMountGeneration)
     }
 
@@ -762,7 +763,12 @@ fun PlayerScreen(
             delivery = delivery,
             serverUrl = uiState.serverUrl,
             container = uiState.container,
-            subtitles = uiState.subtitleTracks,
+            subtitles = subtitlesForVideoMediaMount(
+                subtitles = uiState.subtitleTracks,
+                playbackPlan = plan,
+                subtitleIdentity = uiState.localSubtitleMountIdentity
+                    ?: uiState.committedSubtitleIdentity,
+            ),
             title = uiState.title.ifBlank { null },
             subtitle = uiState.subtitle.ifBlank { null },
             artworkUrl = uiState.artworkUrl,
@@ -818,7 +824,7 @@ fun PlayerScreen(
     }
 
     // Player event listener to feed state back to ViewModel + track video size for PiP
-    DisposableEffect(mediaController, playWhenReadyReconciliationGate) {
+    DisposableEffect(mediaController, videoBackend, playWhenReadyReconciliationGate) {
         val controller = mediaController
         if (controller == null) {
             onDispose { }
@@ -1092,8 +1098,11 @@ fun PlayerScreen(
         uiState.selectedSubtitleIndex,
         uiState.committedSubtitleIdentity,
         uiState.localSubtitleMountIdentity,
+        uiState.mediaMountGeneration,
+        mountedMediaGeneration,
     ) {
         val backend = videoBackend ?: return@LaunchedEffect
+        if (mountedMediaGeneration != uiState.mediaMountGeneration) return@LaunchedEffect
         val pendingIdentity = uiState.localSubtitleMountIdentity
         val targetIdentity = pendingIdentity ?: uiState.committedSubtitleIdentity
         val selectedIndex = resolveMobileSubtitleOrdinal(targetIdentity, uiState.subtitleTracks)

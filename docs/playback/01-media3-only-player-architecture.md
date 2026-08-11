@@ -1,5 +1,12 @@
 # Media3-Only Player Architecture
 
+> Neutral-v3 note (2026-08-06): this document remains authoritative for the
+> Android Media3 runtime, but its wire examples predate the platform-neutral
+> contract. The server repository's `docs/architecture/playback-protocol-v3.md`
+> owns wire semantics. Android now receives neutral delivery capabilities,
+> stores server-minted opaque plan-attempt keys, and uses opaque
+> `output_context_id` values.
+
 Status: **implemented in Android and validated against the dev-server v3 flow;
 the published minimum server revision and named hardware validation remain
 gated**.
@@ -27,9 +34,8 @@ The following terms are distinct throughout these specifications:
 - **Playback attempt**: the complete user start action across any replans,
   identified before `/start` by `playback_attempt_id`.
 - **Plan attempt**: one execution of a plan, identified by `plan_attempt_id` and
-  an idempotent `plan_attempt_key`. Android derives the key deterministically
-  from `plan_id`, delivery, normalized effective recipe,
-  `output_route_generation`, and local recovery mutations.
+  an idempotent, opaque `plan_attempt_key` minted by the server. Android stores
+  and echoes that key unchanged; it never derives or interprets one locally.
 - **Replan**: a new server decision after a classified failure, capability
   change, track change, or quality change.
 

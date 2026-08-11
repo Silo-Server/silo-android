@@ -953,7 +953,7 @@ class TvSubtitleSettlementOwnershipTest {
             formFactor = "tv",
             appVersion = "test",
             output = PlaybackOutputContext(
-                outputRouteGeneration = outputRouteGeneration,
+                outputContextId = outputRouteGeneration.toString(),
             ),
         )
         return TvSubtitlePlaybackContext(

@@ -1,17 +1,17 @@
 package org.siloserver.silo.common.player
 
 import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleArtifactV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
-import org.siloserver.silo.model.playback.PlaybackSubtitleSidecarV3
 import org.siloserver.silo.model.playback.PlaybackTimelineV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
+import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.network.SiloJson
 import kotlin.test.Test
@@ -21,76 +21,103 @@ import kotlin.test.assertTrue
 
 class PlaybackV3SessionTest {
     @Test
-    fun negotiatedSidecarsBecomeMountableAndOverrideDuplicateSelectedArtifact() {
-        val response = plan(
-            mode = PlaybackSubtitleModeV3.CONVERT,
-            format = "vtt",
-            url = "/stream/session/subtitles/2.vtt",
-            sidecars = listOf(
-                PlaybackSubtitleSidecarV3(
-                    trackId = "file:482:subtitle:0",
-                    index = 0,
-                    url = "/stream/session/subtitles/0.srt?file_id=482",
-                    mimeType = "application/x-subrip",
-                    format = "srt",
-                ),
-                PlaybackSubtitleSidecarV3(
-                    trackId = "file:482:subtitle:2",
-                    index = 2,
-                    url = "/stream/session/subtitles/2.srt?file_id=482",
-                    mimeType = "application/x-subrip",
-                    format = "srt",
-                ),
-            ),
-        ).toSessionResponse("session", "profile", 482)
-
-        assertEquals(listOf(0, 2), response.subtitleUrls.orEmpty().map { it.index })
-        assertEquals(
-            "/stream/session/subtitles/2.srt?file_id=482",
-            response.subtitleUrls.orEmpty().single { it.index == 2 }.url,
-        )
-        assertEquals("external", response.subtitleUrls.orEmpty().single { it.index == 2 }.source)
-    }
-
-    @Test
-    fun offPlanPreloadsOnlyValidExternalTextSidecars() {
+    fun offPlanProjectsTheCompleteAuthoritativeInventoryForPhoneAndTv() {
         val response = plan(
             mode = PlaybackSubtitleModeV3.OFF,
             format = "",
             url = "",
-            sidecars = listOf(
-                PlaybackSubtitleSidecarV3("valid", 1, "/subtitles/1.vtt", "text/vtt", "webvtt"),
-                PlaybackSubtitleSidecarV3("negative", -1, "/subtitles/-1.srt", "application/x-subrip", "srt"),
-                PlaybackSubtitleSidecarV3("blank", 2, "", "application/x-subrip", "srt"),
-                PlaybackSubtitleSidecarV3("ass", 3, "/subtitles/3.ass", "text/x-ssa", "ass"),
-                PlaybackSubtitleSidecarV3("mime", 4, "/subtitles/4.srt", "text/plain", "srt"),
+            inventory = listOf(
+                PlaybackSubtitleInventoryItemV3(
+                    trackId = "external",
+                    combinedIndex = 0,
+                    source = "external",
+                    codec = "srt",
+                    language = "eng",
+                    label = "English",
+                    delivery = "sidecar",
+                    url = "/subtitles/0.vtt",
+                ),
+                PlaybackSubtitleInventoryItemV3(
+                    trackId = "bitmap",
+                    combinedIndex = 1,
+                    source = "embedded",
+                    codec = "dvd_subtitle",
+                    language = "fra",
+                    label = "French",
+                    delivery = "burn_in_only",
+                ),
+                PlaybackSubtitleInventoryItemV3(
+                    trackId = "provider",
+                    combinedIndex = 2,
+                    source = "downloaded",
+                    codec = "ass",
+                    language = "spa",
+                    label = "Spanish",
+                    forced = true,
+                    delivery = "sidecar",
+                    url = "/subtitles/2.ass",
+                ),
             ),
         ).toSessionResponse("session", "profile", 482)
 
-        val subtitle = response.subtitleUrls.orEmpty().single()
-        assertEquals(1, subtitle.index)
-        assertEquals("/subtitles/1.vtt", subtitle.url)
-        assertEquals("webvtt", subtitle.codec)
+        val rows = response.subtitleUrls.orEmpty()
+        assertEquals(listOf(0, 1, 2), rows.map(PlayerSubtitleInfo::index))
+        assertEquals(listOf("/subtitles/0.vtt", "", "/subtitles/2.ass"), rows.map(PlayerSubtitleInfo::url))
+        assertEquals("bitmap", rows[1].serverTrackId)
+        assertEquals("burn_in_only", rows[1].serverDelivery)
+        assertEquals("downloaded", rows[2].source)
+        assertTrue(rows[2].forced == true)
+        assertTrue(!rows[2].isDownloadedSubtitleArtifact())
     }
 
     @Test
-    fun burnInPlanDoesNotMountAlternativesOverCaptionsAlreadyInTheVideo() {
+    fun unknownSubtitleDeliveriesStayOutOfTheNativePicker() {
         val response = plan(
-            mode = PlaybackSubtitleModeV3.BURN_IN,
+            mode = PlaybackSubtitleModeV3.OFF,
             format = "",
             url = "",
-            sidecars = listOf(
-                PlaybackSubtitleSidecarV3(
-                    trackId = "file:482:subtitle:0",
-                    index = 0,
-                    url = "/stream/session/subtitles/0.srt?file_id=482",
-                    mimeType = "application/x-subrip",
-                    format = "srt",
+            inventory = listOf(
+                PlaybackSubtitleInventoryItemV3(
+                    trackId = "future",
+                    combinedIndex = 0,
+                    source = "embedded",
+                    codec = "future_codec",
+                    delivery = "future_delivery",
                 ),
             ),
         ).toSessionResponse("session", "profile", 482)
 
         assertTrue(response.subtitleUrls.orEmpty().isEmpty())
+    }
+
+    @Test
+    fun burnInPlanKeepsInventorySelectableButDoesNotMountAlternatives() {
+        val response = plan(
+            mode = PlaybackSubtitleModeV3.BURN_IN,
+            format = "",
+            url = "",
+            inventory = listOf(
+                PlaybackSubtitleInventoryItemV3(
+                    trackId = "text",
+                    combinedIndex = 0,
+                    source = "external",
+                    codec = "srt",
+                    delivery = "sidecar",
+                    url = "/subtitles/0.srt",
+                ),
+                PlaybackSubtitleInventoryItemV3(
+                    trackId = "bitmap",
+                    combinedIndex = 1,
+                    source = "embedded",
+                    codec = "dvd_subtitle",
+                    delivery = "burn_in_only",
+                ),
+            ),
+        ).toSessionResponse("session", "profile", 482)
+
+        val rows = response.subtitleUrls.orEmpty()
+        assertEquals(listOf(0, 1), rows.map(PlayerSubtitleInfo::index))
+        assertTrue(rows.all { it.url.isEmpty() })
     }
 
     @Test
@@ -109,6 +136,31 @@ class PlaybackV3SessionTest {
     }
 
     @Test
+    fun unresolvedArtifactDoesNotCollideWithAuthoritativeIndexZero() {
+        val inventory = listOf(
+            PlaybackSubtitleInventoryItemV3(
+                trackId = "catalog-zero",
+                combinedIndex = 0,
+                source = "external",
+                codec = "srt",
+                delivery = "sidecar",
+                url = "/subtitles/0.vtt",
+            ),
+        )
+        val incomplete = plan(
+            mode = PlaybackSubtitleModeV3.CONVERT,
+            format = "vtt",
+            url = "/artifact.vtt",
+            inventory = inventory,
+        ).copy(selectedTracks = SelectedPlaybackTracksV3(subtitle = null))
+
+        val rows = incomplete.toSessionResponse("session", "profile", 482).subtitleUrls.orEmpty()
+
+        assertEquals(listOf("catalog-zero"), rows.mapNotNull(PlayerSubtitleInfo::serverTrackId))
+        assertTrue(rows.none { it.source == "server_artifact" })
+    }
+
+    @Test
     fun convertedTextArtifactRemainsAMountableServerSidecar() {
         val response = plan(
             mode = PlaybackSubtitleModeV3.CONVERT,
@@ -119,6 +171,35 @@ class PlaybackV3SessionTest {
         val subtitle = response.subtitleUrls.orEmpty().single()
         assertEquals("server_artifact", subtitle.source)
         assertEquals("/stream/session/subtitles/2.vtt", subtitle.url)
+    }
+
+    @Test
+    fun stableSubtitleIdentityRestoresItsAuthoritativeOrdinal() {
+        val inventory = listOf(
+            PlaybackSubtitleInventoryItemV3(
+                trackId = "stable-track",
+                combinedIndex = 7,
+                source = "external",
+                codec = "srt",
+                delivery = "sidecar",
+                url = "/subtitles/7.vtt",
+            ),
+        )
+        val plan = plan(
+            mode = PlaybackSubtitleModeV3.CONVERT,
+            format = "webvtt",
+            url = "/subtitles/7.vtt",
+            inventory = inventory,
+        ).copy(
+            selectedTracks = SelectedPlaybackTracksV3(
+                subtitle = PlaybackTrackIdentityV3("stable-track", index = null),
+            ),
+        )
+
+        val response = plan.toSessionResponse("session", "profile", 482)
+
+        assertEquals(7, response.playbackPlan?.selectedTracks?.subtitleIndex)
+        assertEquals(7, response.subtitleUrls.orEmpty().single().index)
     }
 
     @Test
@@ -189,7 +270,6 @@ class PlaybackV3SessionTest {
             {
               "plan_id": "plan",
               "delivery": "original_http",
-              "engine": "media3_direct",
               "stream": {"url": "/stream/session", "protocol": "http_progressive"},
               "decision_reason": "test"
             }
@@ -206,31 +286,50 @@ class PlaybackV3SessionTest {
         url: String,
         timeline: PlaybackTimelineV3 = PlaybackTimelineV3(),
         source: PlaybackSourceDescriptorV3 = PlaybackSourceDescriptorV3(),
-        sidecars: List<PlaybackSubtitleSidecarV3> = emptyList(),
-    ) = PlaybackPlanV3(
-        source = source,
-        planId = "plan",
-        delivery = PlaybackDelivery.ORIGINAL_HTTP,
-        engine = PlaybackEngineKind.MEDIA3_DIRECT,
-        stream = PlaybackStreamV3(
-            url = "/stream/session",
-            protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
-            container = "mkv",
-        ),
-        timeline = timeline,
-        selectedTracks = SelectedPlaybackTracksV3(
-            subtitle = PlaybackTrackIdentityV3("subtitle", 2),
-        ),
-        subtitle = PlaybackSubtitleDecisionV3(
-            mode = mode,
-            trackId = "subtitle",
-            artifact = PlaybackSubtitleArtifactV3(
+        inventory: List<PlaybackSubtitleInventoryItemV3> = emptyList(),
+    ): PlaybackPlanV3 {
+        val inventorySelection = inventory.firstOrNull {
+            mode != PlaybackSubtitleModeV3.OFF &&
+                (mode != PlaybackSubtitleModeV3.BURN_IN || it.delivery == "burn_in_only")
+        }
+        val selectedSubtitle = when {
+            mode == PlaybackSubtitleModeV3.OFF -> null
+            inventorySelection != null -> PlaybackTrackIdentityV3(
+                inventorySelection.trackId,
+                inventorySelection.combinedIndex,
+            )
+            else -> PlaybackTrackIdentityV3("subtitle", 2)
+        }
+        val selectedArtifact = if (
+            mode == PlaybackSubtitleModeV3.CONVERT || mode == PlaybackSubtitleModeV3.RENDER
+        ) {
+            PlaybackSubtitleArtifactV3(
                 url = url,
                 mimeType = "text/vtt",
                 format = format,
+            )
+        } else {
+            null
+        }
+        return PlaybackPlanV3(
+            source = source,
+            planId = "plan",
+            planAttemptKey = "v3:test:plan",
+            delivery = PlaybackDelivery.ORIGINAL_HTTP,
+            stream = PlaybackStreamV3(
+                url = "/stream/session",
+                protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
+                container = "mkv",
             ),
-            sidecars = sidecars,
-        ),
-        decisionReason = "test",
-    )
+            timeline = timeline,
+            selectedTracks = SelectedPlaybackTracksV3(subtitle = selectedSubtitle),
+            subtitle = PlaybackSubtitleDecisionV3(
+                mode = mode,
+                trackId = selectedSubtitle?.id,
+                artifact = selectedArtifact,
+                inventory = inventory,
+            ),
+            decisionReason = "test",
+        )
+    }
 }

@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player.video
 
 import org.siloserver.silo.common.player.Playability
+import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
 import org.siloserver.silo.model.playback.PlayMethod
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -357,6 +358,138 @@ class PlaybackStartupStallDetectorTest {
 
         assertNull(detector.sample("session", 900, true, false, true, 1_000, 6_000))
         assertNotNull(detector.sample("session", 1_101, true, false, true, 1_000, 7_000))
+    }
+
+    @Test
+    fun dv7ClientTransformStallUsesDedicatedDeadlineAndClassification() {
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 20_000,
+            clientTransformGraceMs = 10_000,
+        )
+        detector.onMounted(
+            sessionKey = "dv7",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+            clientTransformations = listOf(CLIENT_DV7_TO_HDR10),
+        )
+        detector.onFirstFrameRendered()
+
+        assertNull(
+            detector.sample(
+                sessionKey = "dv7",
+                nowMs = 100,
+                playWhenReady = true,
+                isPlaying = false,
+                isBuffering = true,
+                currentPositionMs = 0,
+                bufferedPositionMs = 0,
+                decoderInputBufferCount = 1,
+                decoderRenderedOutputBufferCount = 1,
+            ),
+        )
+        assertNull(detector.sample("dv7", 10_100, true, false, true, 0, 0, 1, 1))
+        assertEquals(
+            PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
+            detector.sample("dv7", 10_101, true, false, true, 0, 0, 1, 1)?.classification,
+        )
+    }
+
+    @Test
+    fun dv7ClientTransformProgressReanchorsDedicatedDeadline() {
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 30_000,
+            clientTransformGraceMs = 10_000,
+        )
+        detector.onMounted(
+            sessionKey = "dv7-progress",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+            clientTransformations = listOf(CLIENT_DV7_TO_HDR10),
+        )
+        detector.onFirstFrameRendered()
+
+        assertNull(detector.sample("dv7-progress", 100, true, false, true, 0, 0, 1, 1))
+        assertNull(detector.sample("dv7-progress", 5_000, true, true, false, 1_600, 5_000, 5, 5))
+        assertNull(detector.sample("dv7-progress", 15_000, true, false, true, 1_600, 1_600, 5, 5))
+        assertEquals(
+            PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
+            detector.sample("dv7-progress", 15_001, true, false, true, 1_600, 1_600, 5, 5)
+                ?.classification,
+        )
+    }
+
+    @Test
+    fun dv7AudioPositionProgressDoesNotReanchorTransformDeadline() {
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 30_000,
+            clientTransformGraceMs = 10_000,
+        )
+        detector.onMounted(
+            sessionKey = "dv7-audio-only",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+            clientTransformations = listOf(CLIENT_DV7_TO_HDR10),
+        )
+        detector.onFirstFrameRendered()
+
+        assertNull(detector.sample("dv7-audio-only", 100, true, true, false, 0, 5_000, 1, 1))
+        assertNull(detector.sample("dv7-audio-only", 5_000, true, true, false, 1_600, 6_000, 1, 1))
+        assertNull(detector.sample("dv7-audio-only", 10_100, true, true, false, 3_200, 7_000, 1, 1))
+        assertEquals(
+            PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
+            detector.sample("dv7-audio-only", 10_101, true, true, false, 4_800, 8_000, 1, 1)
+                ?.classification,
+        )
+    }
+
+    @Test
+    fun dv7BackwardSeekReanchorsTransformDeadlineWithoutDecoderProgress() {
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 30_000,
+            clientTransformGraceMs = 10_000,
+        )
+        detector.onMounted(
+            sessionKey = "dv7-backward-seek",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+            clientTransformations = listOf(CLIENT_DV7_TO_HDR10),
+        )
+        detector.onFirstFrameRendered()
+
+        assertNull(detector.sample("dv7-backward-seek", 100, true, true, false, 5_000, 8_000, 1, 1))
+        assertNull(detector.sample("dv7-backward-seek", 9_000, true, true, false, 10_000, 13_000, 1, 1))
+        assertNull(detector.sample("dv7-backward-seek", 9_001, true, true, false, 2_000, 5_000, 1, 1))
+        assertNull(detector.sample("dv7-backward-seek", 19_001, true, true, false, 2_000, 5_000, 1, 1))
+        assertEquals(
+            PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
+            detector.sample("dv7-backward-seek", 19_002, true, true, false, 2_000, 5_000, 1, 1)
+                ?.classification,
+        )
+    }
+
+    @Test
+    fun dv7RouteWithoutDecoderEvidenceKeepsTransportDeadline() {
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 20_000,
+            clientTransformGraceMs = 10_000,
+        )
+        detector.onMounted(
+            sessionKey = "dv7-no-input",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+            clientTransformations = listOf(CLIENT_DV7_TO_HDR10),
+        )
+
+        assertNull(detector.sample("dv7-no-input", 10_001, true, false, true, 0, 0))
+        assertEquals(
+            "transport_stall",
+            detector.sample("dv7-no-input", 20_001, true, false, true, 0, 0)?.classification,
+        )
     }
 
     @Test

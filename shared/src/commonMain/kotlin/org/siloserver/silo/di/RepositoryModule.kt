@@ -44,11 +44,19 @@ import kotlinx.coroutines.SupervisorJob
  * and TokenManager, so sharing instances is safe and efficient.
  */
 val repositoryModule = module {
-    // Repositories — `getOrNull()` for ServerRegistry / HealthApi keeps these
+    // Repositories — optional multi-server identity dependencies keep these
     // working when the multi-server platform binding isn't installed
     // (commonMain tests, hypothetical iOS reuse). Both repos no-op the
     // multi-server side effects when the registry is null.
-    single { AuthRepository(get(), get(), getOrNull(), getOrNull()) }
+    single {
+        AuthRepository(
+            authApi = get(),
+            tokenManager = get(),
+            serverRegistry = getOrNull(),
+            healthApi = getOrNull(),
+            brandingApi = getOrNull(),
+        )
+    }
     single { OnboardingRepository(get()) }
     single { DeviceLoginRepository(get()) }
     single {

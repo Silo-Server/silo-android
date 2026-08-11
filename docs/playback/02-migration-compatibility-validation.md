@@ -1,5 +1,10 @@
 # Migration, Compatibility, and Validation
 
+> Historical migration note: the A/B sequence below describes the completed
+> Media3-only migration and the pre-neutral v3 compatibility window. The
+> platform-neutral protocol is a breaking contract and has no fallback to the
+> older engine-shaped request/plan model.
+
 Status: **Release B target and dev-server v3 flow implemented; rollout remains
 blocked on a published minimum server revision and the remaining Phase 0
 hardware fixtures**.

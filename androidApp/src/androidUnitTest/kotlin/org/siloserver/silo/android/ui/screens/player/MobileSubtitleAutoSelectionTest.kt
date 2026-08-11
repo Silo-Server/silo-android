@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.player
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
+import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -86,6 +87,39 @@ class MobileSubtitleAutoSelectionTest {
         )
 
         assertEquals(null, resolveMobileSubtitleOrdinal(persisted, duplicates))
+    }
+
+    @Test
+    fun legacyDownloadedPreferenceMigratesToAUniqueAuthoritativePlanRow() {
+        val persisted = SubtitleIdentity.Downloaded(
+            downloadId = 312,
+            media = SubtitleMediaIdentity(
+                trackId = "silo-downloaded-subtitle:312",
+                label = "English",
+                language = "en",
+                codecFamily = "webvtt",
+                forced = false,
+                hearingImpaired = false,
+            ),
+        )
+        val authoritative = subtitle(
+            index = 4,
+            label = "English",
+            language = "en",
+            codec = "vtt",
+            forced = false,
+        ).copy(
+            source = "downloaded",
+            downloadId = null,
+            serverTrackId = "file:22:subtitle:4",
+            serverDelivery = "sidecar",
+        )
+
+        assertEquals(0, resolveMobileSubtitleOrdinal(persisted, listOf(authoritative)))
+        assertEquals(
+            "file:22:subtitle:4",
+            (mobileSubtitleIdentity(authoritative) as SubtitleIdentity.ServerSidecar).media?.trackId,
+        )
     }
 
     @Test
@@ -448,6 +482,26 @@ class MobileSubtitleAutoSelectionTest {
     fun autoSubtitlePreferenceDoesNotTreatCcInsideWordsAsClosedCaption() {
         val subtitles = listOf(
             subtitle(index = 4, label = "Soccer Cut", language = "en"),
+            subtitle(index = 7, label = "English", language = "en"),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+            ),
+        )
+    }
+
+    @Test
+    fun autoSubtitlePreferenceDoesNotTreatHindiCodeAsHearingImpaired() {
+        val subtitles = listOf(
+            subtitle(index = 4, label = "EN - HI", language = "en"),
             subtitle(index = 7, label = "English", language = "en"),
         )
 

@@ -138,4 +138,24 @@ class PlaybackSubtitleChoicesTest {
         assertEquals(listOf(0), choices.map(PlayerSubtitleInfo::index))
         assertEquals("/a.vtt", choices.single().url)
     }
+
+    @Test
+    fun authoritativeInventoryNeverSynthesizesCatalogOnlyRows() {
+        val catalog = listOf(
+            SubtitleTrack(index = 3, language = "en", title = "English"),
+            SubtitleTrack(index = 7, language = "ja", title = "Signs"),
+        )
+
+        assertEquals(
+            emptyList(),
+            enrichAuthoritativePlaybackSubtitleChoices(catalog, plannedTracks = emptyList()),
+        )
+
+        val authoritative = enrichAuthoritativePlaybackSubtitleChoices(
+            catalogTracks = catalog,
+            plannedTracks = listOf(PlayerSubtitleInfo(index = 1, url = "/signs.vtt")),
+        )
+        assertEquals(listOf(1), authoritative.map(PlayerSubtitleInfo::index))
+        assertEquals("Signs", authoritative.single().catalogLabel)
+    }
 }

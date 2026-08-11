@@ -6,6 +6,7 @@ import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
+import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.audioTrackFingerprint
@@ -13,7 +14,9 @@ import org.siloserver.silo.playback.SUBTITLE_OFF_FINGERPRINT
 import org.siloserver.silo.playback.decodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.encodeCatalogSubtitlePreference
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
+import org.siloserver.silo.playback.matchesSubtitleMediaIdentity
 import org.siloserver.silo.playback.resolveCatalogSubtitlePreferenceOrdinal
+import org.siloserver.silo.playback.resolveDownloadedSubtitlePreferenceOrdinal
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 import org.siloserver.silo.playback.subtitleTrackFingerprint
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
@@ -55,6 +58,14 @@ internal fun resolveTvFreshSubtitlePreference(
         typed is SubtitleIdentity.ServerBurnIn ||
         typed is SubtitleIdentity.Embedded
     ) {
+        val authoritativeMatches = hydratedRows.filter { row ->
+            tvSubtitleIdentity(row) == typed
+        }
+        if (authoritativeMatches.size == 1) {
+            return TvFreshSubtitlePreferenceResolution(
+                tvSubtitleIdentity(authoritativeMatches.single()),
+            )
+        }
         val ordinal = resolveCatalogSubtitlePreferenceOrdinal(catalogTracks, saved) ?: return null
         val rebuilt = encodeCatalogSubtitlePreference(catalogTracks, ordinal)
             ?.let(::decodeSubtitleIdentityPreference)
@@ -63,13 +74,14 @@ internal fun resolveTvFreshSubtitlePreference(
     }
 
     if (typed is SubtitleIdentity.Downloaded) {
-        val row = hydratedRows
-            .filter { it.downloadId == typed.downloadId }
-            .singleOrNull()
+        val ordinal = resolveDownloadedSubtitlePreferenceOrdinal(typed, hydratedRows)
             ?: return null
-        val rebuilt = tvSubtitleIdentity(row)
-        return (rebuilt as? SubtitleIdentity.Downloaded)
-            ?.let(::TvFreshSubtitlePreferenceResolution)
+        val rebuilt = tvSubtitleIdentity(hydratedRows[ordinal])
+        return TvFreshSubtitlePreferenceResolution(
+            identity = rebuilt,
+            migratedPreference = encodeSubtitleIdentityPreference(rebuilt)
+                .takeIf { rebuilt != typed },
+        )
     }
 
     if (typed is SubtitleIdentity.LocalMedia3) {
@@ -83,7 +95,7 @@ internal fun resolveTvFreshSubtitlePreference(
             return TvFreshSubtitlePreferenceResolution(typed)
         }
         val candidates = localRows.filter { row ->
-            row.tvMediaIdentity().matchesPersisted(typed.media)
+            row.tvMediaIdentity().matchesSubtitleMediaIdentity(typed.media)
         }
         if (candidates.size != 1) return null
         return TvFreshSubtitlePreferenceResolution(typed)
@@ -274,9 +286,7 @@ internal fun resolveTvRemoteAudioIntent(
 ): Int? = playerOrdinal.takeIf { it in audioTracks.indices }
 
 private fun PlayerSubtitleInfo.isDownloadedTvPolicyRow(): Boolean =
-    downloadId != null ||
-        source.equals("downloaded", ignoreCase = true) ||
-        catalogSource.equals("downloaded", ignoreCase = true)
+    isLocalDownloadedSubtitle()
 
 private fun PlayerSubtitleInfo.tvMediaIdentity(): SubtitleMediaIdentity = when (
     val identity = tvSubtitleIdentity(this)
@@ -287,16 +297,4 @@ private fun PlayerSubtitleInfo.tvMediaIdentity(): SubtitleMediaIdentity = when (
     is SubtitleIdentity.Downloaded -> identity.media
     is SubtitleIdentity.LocalMedia3 -> identity.media
     SubtitleIdentity.Off -> SubtitleMediaIdentity()
-}
-
-private fun SubtitleMediaIdentity.matchesPersisted(saved: SubtitleMediaIdentity): Boolean {
-    val discriminators = listOf(
-        saved.trackId?.let { trackId == it },
-        saved.label?.let { label == it },
-        saved.language?.let { language == it },
-        saved.codecFamily?.let { codecFamily == it },
-        saved.forced?.let { forced == it },
-        saved.hearingImpaired?.let { hearingImpaired == it },
-    ).filterNotNull()
-    return discriminators.isNotEmpty() && discriminators.all { it }
 }

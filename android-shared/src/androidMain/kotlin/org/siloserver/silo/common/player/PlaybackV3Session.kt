@@ -2,7 +2,6 @@ package org.siloserver.silo.common.player
 
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackRouteFamily
@@ -14,6 +13,10 @@ import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTimeline
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SelectedPlaybackTracks
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
+import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
+import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 
 sealed interface VideoSessionStartV3 {
     data class Ready(
@@ -22,6 +25,10 @@ sealed interface VideoSessionStartV3 {
         val playbackAttemptId: String,
         val planAttemptId: String,
         val planAttemptKey: String,
+        /** Exact evidence snapshot used to negotiate this plan. */
+        val capabilities: org.siloserver.silo.model.playback.ClientCodecCapabilities,
+        /** Exact output/delivery context used to negotiate this plan. */
+        val clientPlaybackContext: org.siloserver.silo.model.playback.ClientPlaybackContext,
     ) : VideoSessionStartV3
 
     data class Terminal(
@@ -39,6 +46,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
     mediaFileId: Int,
 ): PlaybackSessionResponse {
     val effectiveFileId = effectiveMediaFileId ?: mediaFileId
+    val selectedSubtitleIndex = resolvedSelectedSubtitleIndex()
     val playMethod = when (delivery) {
         PlaybackDelivery.ORIGINAL_HTTP -> PlayMethod.DIRECT
         PlaybackDelivery.SERVER_REMUX_PROGRESSIVE,
@@ -50,6 +58,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
     val selectedSubtitle = subtitle.artifact?.takeIf {
         subtitle.mode == PlaybackSubtitleModeV3.CONVERT || subtitle.mode == PlaybackSubtitleModeV3.RENDER
     }?.let { artifact ->
+        val artifactIndex = selectedSubtitleIndex ?: return@let null
         // A bitmap RENDER artifact describes the subtitle stream already
         // embedded in ORIGINAL_HTTP media. It is not a WebVTT sidecar: trying
         // to mount its descriptive `/subtitles/{index}.vtt` URL makes the
@@ -58,10 +67,10 @@ internal fun PlaybackPlanV3.toSessionResponse(
         val rendersEmbeddedBitmap =
             subtitle.mode == PlaybackSubtitleModeV3.RENDER &&
                 delivery == PlaybackDelivery.ORIGINAL_HTTP &&
-                isBitmapSubtitleCodecOrMime(artifact.format)
+                isBitmapSubtitleCodecFamily(artifact.format)
         listOf(
             PlayerSubtitleInfo(
-                index = selectedTracks.subtitle?.index ?: 0,
+                index = artifactIndex,
                 codec = artifact.format,
                 label = if (rendersEmbeddedBitmap) null else "Server subtitle",
                 source = if (rendersEmbeddedBitmap) "embedded" else "server_artifact",
@@ -69,28 +78,47 @@ internal fun PlaybackPlanV3.toSessionResponse(
             ),
         )
     }
-    val sidecarSubtitles = subtitle.sidecars.asSequence()
-        .takeUnless { subtitle.mode == PlaybackSubtitleModeV3.BURN_IN }
-        .orEmpty()
-        .filter { sidecar ->
-            sidecar.index >= 0 &&
-                sidecar.url.isNotBlank() &&
-                sidecar.format.lowercase() in setOf("srt", "subrip", "vtt", "webvtt") &&
-                sidecar.mimeType.lowercase().substringBefore(';') in
-                setOf("application/x-subrip", "text/vtt")
+    // Neutral v3 publishes the complete subtitle inventory on every plan,
+    // including plans with subtitles off. Project it into native phone/TV UI
+    // state so both menus retain every authoritative ordinal. The player mount
+    // separately filters this inventory to the artifact selected by the active
+    // plan; inventory URLs are choices, not a preload list. During a burn-in
+    // plan the URLs are still deliberately blanked so no caller can mount a
+    // sidecar over captions already baked into the video.
+    val inventorySubtitles = subtitle.inventory.asSequence()
+        .filter { it.combinedIndex >= 0 && it.trackId.isNotBlank() }
+        .filter {
+            it.delivery == SUBTITLE_DELIVERY_SIDECAR ||
+                it.delivery == SUBTITLE_DELIVERY_BURN_IN_ONLY
         }
-        .map { sidecar ->
+        .map { item ->
             PlayerSubtitleInfo(
-                index = sidecar.index,
-                codec = sidecar.format,
-                source = "external",
-                url = sidecar.url,
+                index = item.combinedIndex,
+                language = item.language,
+                codec = item.codec,
+                label = item.label,
+                source = item.source,
+                forced = item.forced,
+                url = if (
+                    subtitle.mode != PlaybackSubtitleModeV3.BURN_IN &&
+                    item.delivery == SUBTITLE_DELIVERY_SIDECAR
+                ) item.url.orEmpty() else "",
+                catalogLabel = item.label,
+                catalogSource = item.source,
+                isDefault = item.isDefault,
+                serverTrackId = item.trackId,
+                serverDelivery = item.delivery.takeIf {
+                    it == SUBTITLE_DELIVERY_SIDECAR ||
+                        it == SUBTITLE_DELIVERY_BURN_IN_ONLY
+                },
             )
         }
         .distinctBy(PlayerSubtitleInfo::index)
+        .sortedBy(PlayerSubtitleInfo::index)
         .toList()
-    val mountedIndexes = sidecarSubtitles.mapTo(mutableSetOf(), PlayerSubtitleInfo::index)
-    val subtitles = (sidecarSubtitles + selectedSubtitle.orEmpty().filterNot { it.index in mountedIndexes })
+    val plannedSubtitles = inventorySubtitles
+    val plannedIndexes = plannedSubtitles.mapTo(mutableSetOf(), PlayerSubtitleInfo::index)
+    val subtitles = (plannedSubtitles + selectedSubtitle.orEmpty().filterNot { it.index in plannedIndexes })
         .takeIf(List<PlayerSubtitleInfo>::isNotEmpty)
     val routeFamily = when (delivery) {
         PlaybackDelivery.ORIGINAL_HTTP -> PlaybackRouteFamily.PLATFORM_NATIVE
@@ -104,7 +132,6 @@ internal fun PlaybackPlanV3.toSessionResponse(
         planId = planId,
         protocolVersion = protocolVersion,
         delivery = delivery,
-        engine = engine,
         routeFamily = routeFamily,
         stream = PlaybackStreamRequest(
             url = stream.url,
@@ -126,7 +153,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
         ),
         selectedTracks = SelectedPlaybackTracks(
             audioIndex = selectedTracks.audio?.index,
-            subtitleIndex = selectedTracks.subtitle?.index,
+            subtitleIndex = selectedSubtitleIndex,
         ),
         source = PlaybackSourceMetadata(
             mediaFileId = effectiveFileId,
@@ -144,6 +171,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
         transformations = transformations,
         appliedQuirks = appliedQuirks,
         runtimeCorrections = runtimeCorrections,
+        availableQualities = availableQualities,
         degradationWarnings = degradationWarnings,
         decisionTrace = listOf(decisionReason),
         requestedMediaFileId = requestedMediaFileId ?: mediaFileId,

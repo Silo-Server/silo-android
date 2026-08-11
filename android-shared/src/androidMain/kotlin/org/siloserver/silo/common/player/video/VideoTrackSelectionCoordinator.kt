@@ -26,7 +26,7 @@ class VideoTrackSelectionCoordinator(
     fun selectSubtitle(
         player: Player,
         playerFactory: SiloPlayerFactory,
-        mediaSpec: VideoPlayerMediaSpec,
+        mediaSpec: VideoPlayerMediaSpec?,
         selectedTrack: VideoPlayerTrackEntry?,
     ): Boolean {
         if (selectedTrack == null) {
@@ -35,10 +35,11 @@ class VideoTrackSelectionCoordinator(
 
         val subtitle = selectedTrack.subtitle
         if (subtitle != null) {
+            val mountedMediaSpec = mediaSpec ?: return false
             refreshMountedVideoMedia(
                 player = player,
                 playerFactory = playerFactory,
-                spec = mediaSpec.copy(subtitles = listOf(subtitle)),
+                spec = mountedMediaSpec.copy(subtitles = listOf(subtitle)),
             )
             return subtitleManager.selectSubtitle(player, listOf(subtitle), 0)
         }
