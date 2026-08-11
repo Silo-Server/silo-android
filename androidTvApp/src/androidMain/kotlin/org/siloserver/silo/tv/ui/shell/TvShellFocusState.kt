@@ -395,7 +395,18 @@ class TvShellFocusState {
             // Back out of a cascade the viewer ENTERED hands focus to content,
             // not back to the anchor tab. Parking them one level up in the
             // chrome is what "back doesn't exit the menus" meant.
-            TvShellBackAction.ClosePanel -> closePanel()
+            TvShellBackAction.ClosePanel -> {
+                // Focus returns to the anchor tab whether we ask for it or not
+                // — Compose restores it when the panel leaves composition, and
+                // the telemetry shows "focused -> menu" with no preceding
+                // "request". Requesting it explicitly is what ARMS dwell
+                // suppression: without it the anchor re-previews ~250ms later
+                // and the next Back is spent closing that preview instead of
+                // reaching MenuBack, so Home stays unreachable.
+                val anchor = openPanel
+                closePanel()
+                requestMenuFocus(anchor, suppressDwellPreview = true)
+            }
             // Focus never left the bar, so there is nothing to restore.
             TvShellBackAction.ClosePanelPreview -> closePanel()
             TvShellBackAction.CloseProfileMenu -> dismissProfileMenu()

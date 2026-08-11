@@ -879,7 +879,9 @@ fun TvMainShell(
             // onBack() closed the panel without claiming focus; put the viewer
             // back where they came from in the same press.
             TvShellBackAction.ClosePanel -> {
-                moveFocusToContent(currentRoute)
+                // onBack() already put focus on the anchor tab with dwell
+                // suppressed. Claiming content here fought that and lost —
+                // focus ended up on the bar anyway, just without suppression.
                 true
             }
             // Preview only: focus never left the bar, so dismissing it must not
