@@ -46,9 +46,9 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
  *
  * The countdown button's background fill creeps left-to-right while we are in
  * [IntroAutoSkipState.CountingDown]; it auto-focuses (after two frames, so the
- * focus system is ready) so D-pad Select skips immediately. Back dismisses the
- * banner for this intro; moving focus off the button cancels the timer and
- * leaves the solid manual pill in place.
+ * focus system is ready) so D-pad Select skips immediately. A D-pad nudge or
+ * Back stops the timer and leaves the solid manual pill in place; both are
+ * handled by the player screen's root key handler.
  *
  * The component itself never positions itself; the parent should anchor it
  * (typically bottom-end above the transport cluster).
@@ -57,7 +57,6 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 fun TvIntroAutoSkipBanner(
     state: IntroAutoSkipState,
     onSkipNow: () -> Unit,
-    onDismissCountdown: () -> Unit,
     modifier: Modifier = Modifier,
     totalSeconds: Int = IntroAutoSkipController.DEFAULT_COUNTDOWN_SECONDS,
 ) {

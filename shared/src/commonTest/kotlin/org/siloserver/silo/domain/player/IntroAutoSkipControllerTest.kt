@@ -190,46 +190,13 @@ class IntroAutoSkipControllerTest {
     }
 
     @Test
-    fun `dismiss hides the prompt and keeps it hidden while still inside the same intro`() = runTest {
+    fun `cancel applies only to its own intro - a new key counts down again`() = runTest {
         val controller = newController(countdown = 3)
         position.value = 35.0
-        runCurrent()
-        assertEquals(IntroAutoSkipState.CountingDown(3), controller.state.value)
-
-        controller.dismiss()
-        runCurrent()
-        assertEquals(IntroAutoSkipState.Hidden, controller.state.value)
-
-        // Still inside the range: further position updates must not resurrect it.
-        position.value = 40.0
-        advanceTimeBy(5_000)
-        runCurrent()
-        assertEquals(IntroAutoSkipState.Hidden, controller.state.value)
-        assertTrue(fired.isEmpty(), "dismissed intro must never auto-skip")
-    }
-
-    @Test
-    fun `cancel after dismiss does not resurrect the manual button`() = runTest {
-        val controller = newController(countdown = 3)
-        position.value = 35.0
-        runCurrent()
-
-        controller.dismiss()
         runCurrent()
         controller.cancelCountdown()
         runCurrent()
-
-        assertEquals(IntroAutoSkipState.Hidden, controller.state.value)
-    }
-
-    @Test
-    fun `dismiss applies only to its own intro - a new key counts down again`() = runTest {
-        val controller = newController(countdown = 3)
-        position.value = 35.0
-        runCurrent()
-        controller.dismiss()
-        runCurrent()
-        assertEquals(IntroAutoSkipState.Hidden, controller.state.value)
+        assertEquals(IntroAutoSkipState.ShowingButton, controller.state.value)
 
         introKey.value = "session-1:file-2:30:90"
         runCurrent()

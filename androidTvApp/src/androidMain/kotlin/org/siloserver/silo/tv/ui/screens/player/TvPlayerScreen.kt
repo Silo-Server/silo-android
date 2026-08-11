@@ -1018,10 +1018,10 @@ fun TvPlayerScreen(
                 return@handler false
             }
 
-            // Back during the countdown dismisses the prompt for this intro and
-            // is consumed, so it can't also fall through to exiting playback.
-            // Handled here because the banner's own BackHandler loses to the
-            // screen's back handling.
+            // Back during the countdown stops the timer and leaves the prompt in
+            // place, same as a D-pad nudge. It is consumed so this press cannot
+            // also exit playback; once the timer is stopped the state is no longer
+            // CountingDown, so a second Back behaves normally.
             if (latestIntroSkipState is IntroAutoSkipState.CountingDown &&
                 event.keyCode == KeyEvent.KEYCODE_BACK
             ) {
@@ -1029,7 +1029,7 @@ fun TvPlayerScreen(
                 // reach the activity's back dispatcher and fire whichever
                 // BackHandler happens to be topmost.
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    viewModel.onDismissIntroAutoSkip()
+                    viewModel.onCancelIntroAutoSkip()
                 }
                 return@handler true
             }
@@ -2270,7 +2270,6 @@ fun TvPlayerScreen(
             onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
             onExitPlayback = { stopPlaybackAndExit() },
             onSkipIntroNow = { handleSkipIntroNow() },
-            onDismissIntroAutoSkip = viewModel::onDismissIntroAutoSkip,
         )
     }
 }
@@ -3366,7 +3365,6 @@ private fun TvPlayerOverlays(
     onToggleAutoPlayNext: () -> Unit,
     onExitPlayback: () -> Unit,
     onSkipIntroNow: () -> Unit,
-    onDismissIntroAutoSkip: () -> Unit,
 ) {
         // Lifecycle-driven notice toast (top-start). Slides in for outage
         // recovery, fades out when the lifecycle clears the notice.
@@ -3481,7 +3479,6 @@ private fun TvPlayerOverlays(
                     TvIntroAutoSkipBanner(
                         state = introSkipState,
                         onSkipNow = onSkipIntroNow,
-                        onDismissCountdown = onDismissIntroAutoSkip,
                     )
                 }
             }
