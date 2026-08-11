@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player.seek
 
 import org.siloserver.silo.model.playback.PlaybackTimeline
+import org.siloserver.silo.model.playback.PlaybackTimelineV3
 
 /**
  * Coordinate to retain when a player item is replaced or the server must
@@ -46,6 +47,16 @@ sealed interface PlaybackSeekDecision {
     ) : PlaybackSeekDecision
 }
 
+/**
+ * Coordinates to use when a protocol-v3 replan replaces the mounted Media3
+ * item. The replan request carries a source/movie position, while Media3
+ * seeks within the returned plan's local timeline.
+ */
+data class PlaybackReplanMountPosition(
+    val playerPositionSeconds: Double,
+    val sourcePositionSeconds: Double,
+)
+
 /** Maps a Media3-local position onto the source/movie timeline. */
 fun PlaybackTimeline.sourcePositionForPlayer(playerPositionSeconds: Double): Double? =
     mapNonNegativePosition(playerPositionSeconds, timelineOffsetSeconds, Double::plus)
@@ -53,6 +64,69 @@ fun PlaybackTimeline.sourcePositionForPlayer(playerPositionSeconds: Double): Dou
 /** Maps a source/movie position onto the currently mounted Media3 timeline. */
 fun PlaybackTimeline.playerPositionForSource(sourcePositionSeconds: Double): Double? =
     mapNonNegativePosition(sourcePositionSeconds, timelineOffsetSeconds, Double::minus)
+
+/**
+ * Restores the source position sent with a replan on the returned timeline.
+ *
+ * A subtitle-only replan may deliberately reuse an append-only HLS transport
+ * whose origin predates the current playhead. In that case
+ * [playerStartSeconds] describes the transport's default entry point, not the
+ * viewer's requested position. Falling back to it unconditionally rewinds the
+ * movie to the beginning of the retained manifest window.
+ */
+fun PlaybackTimeline.replanMountPositionForSource(
+    sourcePositionSeconds: Double,
+): PlaybackReplanMountPosition = resolveReplanMountPosition(
+    requestedSourcePositionSeconds = sourcePositionSeconds,
+    sourceStartSeconds = sourceStartSeconds,
+    playerStartSeconds = playerStartSeconds,
+    timelineOffsetSeconds = timelineOffsetSeconds,
+)
+
+/** Protocol-v3 wire-timeline counterpart used before the plan is projected. */
+fun PlaybackTimelineV3.replanMountPositionForSource(
+    sourcePositionSeconds: Double,
+): PlaybackReplanMountPosition = resolveReplanMountPosition(
+    requestedSourcePositionSeconds = sourcePositionSeconds,
+    sourceStartSeconds = sourceStartSeconds,
+    playerStartSeconds = playerStartSeconds,
+    timelineOffsetSeconds = timelineOffsetSeconds,
+)
+
+private fun resolveReplanMountPosition(
+    requestedSourcePositionSeconds: Double,
+    sourceStartSeconds: Double,
+    playerStartSeconds: Double,
+    timelineOffsetSeconds: Double,
+): PlaybackReplanMountPosition {
+    val restoredPlayerPosition = mapNonNegativePosition(
+        requestedSourcePositionSeconds,
+        timelineOffsetSeconds,
+        Double::minus,
+    )
+    if (restoredPlayerPosition != null) {
+        return PlaybackReplanMountPosition(
+            playerPositionSeconds = restoredPlayerPosition,
+            sourcePositionSeconds = requestedSourcePositionSeconds,
+        )
+    }
+
+    val fallbackPlayerPosition = playerStartSeconds
+        .takeIf { it.isFinite() && it >= 0.0 }
+        ?: 0.0
+    val fallbackSourcePosition = sourceStartSeconds
+        .takeIf { it.isFinite() && it >= 0.0 }
+        ?: mapNonNegativePosition(
+            fallbackPlayerPosition,
+            timelineOffsetSeconds,
+            Double::plus,
+        )
+        ?: 0.0
+    return PlaybackReplanMountPosition(
+        playerPositionSeconds = fallbackPlayerPosition,
+        sourcePositionSeconds = fallbackSourcePosition,
+    )
+}
 
 /** Parses the closed protocol-V3 restoration vocabulary conservatively. */
 fun PlaybackTimeline.seekRestorationMode(): PlaybackSeekRestoration = when (seekRestoration) {

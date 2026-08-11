@@ -10,7 +10,8 @@ import kotlinx.serialization.Serializable
  * the same value share an id, so re-adding the same server upserts rather
  * than duplicates.
  *
- * Names: [fetchedName] is what the server reports via `/api/v1/health`;
+ * Names: [fetchedName] is the server's native branding identity, with the
+ * legacy health name used only when branding is unavailable;
  * [userOverrideName] is whatever the user types in the rename dialog and
  * always wins when both are present.
  */

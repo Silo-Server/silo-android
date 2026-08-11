@@ -1,5 +1,10 @@
 # Media3-only implementation status and Dolby Vision handoff
 
+> Superseded wire-status note (2026-08-06): the original validation recorded
+> below predates the platform-neutral v3 contract. Its Media3 and hardware
+> evidence remains useful; its server compatibility claims do not establish
+> compatibility with the neutral server revision.
+
 Status date: 2026-07-12
 
 This file records proof and remaining gates. It does not redefine the

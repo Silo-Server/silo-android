@@ -29,6 +29,8 @@ import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
+import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
 import kotlin.math.roundToInt
@@ -1000,18 +1002,6 @@ private fun Format.isHearingImpairedSubtitle(): Boolean =
  * (`MimeTypes.APPLICATION_PGS` / `APPLICATION_DVBSUBS`) all classify
  * identically — Apple parity with `ApplePlaybackRoutePlanner`'s token set.
  */
-fun isBitmapSubtitleCodecOrMime(codecOrMime: String?): Boolean {
-    val normalized = codecOrMime
-        ?.filter { it.isLetterOrDigit() }
-        ?.lowercase()
-        ?.takeIf { it.isNotEmpty() }
-        ?: return false
-    return normalized.contains("pgs") ||
-        normalized.contains("dvd") ||
-        normalized.contains("dvbsub") ||
-        normalized.contains("vobsub")
-}
-
 private fun Format.subtitleCodecOrMime(): String? =
     if (sampleMimeType == MEDIA3_CUES_MIME_TYPE) {
         codecs ?: sampleMimeType

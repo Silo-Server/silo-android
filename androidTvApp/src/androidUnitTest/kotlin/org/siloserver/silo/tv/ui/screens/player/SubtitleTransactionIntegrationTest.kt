@@ -42,7 +42,6 @@ import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.StartParams
 import org.siloserver.silo.common.player.VideoSessionStartV3
-import org.siloserver.silo.common.player.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.common.player.subtitleArtifactTrackId
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.personal.SyncProgressItem
@@ -50,26 +49,30 @@ import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
+import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleArtifactV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleDecisionV3
+import org.siloserver.silo.model.playback.PlaybackSubtitleInventoryItemV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleModeV3
 import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_BURN_IN_ONLY
+import org.siloserver.silo.model.playback.SUBTITLE_DELIVERY_SIDECAR
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
@@ -77,10 +80,8 @@ import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.PlaybackApi
-import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
-import org.siloserver.silo.repository.ProfileRepository
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -157,7 +158,11 @@ class SubtitleTransactionIntegrationTest {
         assertEquals(listOf(Harness.MountedSelection("s2", 9)), harness.media3Selections)
         harness.assertActiveSession("s2")
         assertEquals(mapOf("s1" to 1), harness.stopCounts())
-        assertEquals(listOf(sidecarB), harness.persistence.map { it.first.identity })
+        val persistedSidecar = assertIs<SubtitleIdentity.ServerSidecar>(
+            harness.persistence.single().first.identity,
+        )
+        assertEquals(B_INDEX, persistedSidecar.serverIndex)
+        assertEquals("file:$FILE_ID:subtitle:$B_INDEX", persistedSidecar.media?.trackId)
         assertEquals("s2", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
     }
@@ -300,7 +305,11 @@ class SubtitleTransactionIntegrationTest {
         assertEquals(mapOf("s1" to 1), harness.stopCounts())
         assertTrue(harness.media3Selections.isEmpty())
         assertNull(harness.adapter.snapshot.localMountIdentity)
-        assertEquals(listOf(burnIn), harness.persistence.map { it.first.identity })
+        val persistedBurnIn = assertIs<SubtitleIdentity.ServerBurnIn>(
+            harness.persistence.single().first.identity,
+        )
+        assertEquals(B_INDEX, persistedBurnIn.serverIndex)
+        assertEquals("file:$FILE_ID:subtitle:$B_INDEX", persistedBurnIn.media?.trackId)
         assertEquals("s2", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
     }
@@ -538,7 +547,6 @@ class SubtitleTransactionIntegrationTest {
         )
         val lifecycle = PlaybackSessionLifecycle(
             sessionManager = manager,
-            profileRepository = IntegrationProfileRepository(),
             healthApi = IntegrationHealthApi(),
             personalDataRepository = IntegrationPersonalDataRepository(),
             scope = scope,
@@ -585,7 +593,6 @@ class SubtitleTransactionIntegrationTest {
                 ),
                 session = ready.session,
                 manageProgress = false,
-                renewMissingSessionWithLegacyStart = false,
             )
             mountedSubtitleIdentity = committedIdentity
             adapter = TvSubtitleTransactionAdapter(
@@ -615,7 +622,6 @@ class SubtitleTransactionIntegrationTest {
                         ),
                         session = candidate.session,
                         manageProgress = false,
-                        renewMissingSessionWithLegacyStart = false,
                         deferPublication = true,
                         isCurrent = adoption::isCurrent,
                     )
@@ -670,7 +676,6 @@ class SubtitleTransactionIntegrationTest {
                 ),
                 session = ready.session,
                 manageProgress = false,
-                renewMissingSessionWithLegacyStart = false,
             )
             assertIs<ApiResult.Success<Unit>>(manager.stopSession("s1"))
             return context(
@@ -735,7 +740,9 @@ class SubtitleTransactionIntegrationTest {
             playerIndex: Int,
         ): PlayerTrackEntry {
             val row = mountedRow(expectedSessionId) {
-                it.index == serverIndex && it.source == "server_artifact"
+                it.index == serverIndex &&
+                    it.serverTrackId == "file:$FILE_ID:subtitle:$serverIndex" &&
+                    it.serverDelivery == SUBTITLE_DELIVERY_SIDECAR
             }
             assertEquals("/stream/$expectedSessionId/subtitles/$serverIndex.vtt", row.url)
             val artifactTrackId = subtitleArtifactTrackId(row.index)
@@ -853,6 +860,7 @@ class SubtitleTransactionIntegrationTest {
         const val B_INDEX = 4
         const val DOWNLOAD_ID = 312
         const val OUTPUT_GENERATION = 7L
+        const val OUTPUT_CONTEXT_ID = "7"
 
         val sidecarA = SubtitleIdentity.ServerSidecar(A_INDEX)
         val sidecarB = SubtitleIdentity.ServerSidecar(
@@ -867,7 +875,7 @@ class SubtitleTransactionIntegrationTest {
         val playbackContext = ClientPlaybackContext(
             formFactor = "tv",
             appVersion = "integration-test",
-            output = PlaybackOutputContext(outputRouteGeneration = OUTPUT_GENERATION),
+            output = PlaybackOutputContext(outputContextId = OUTPUT_CONTEXT_ID),
         )
 
         fun startParams(
@@ -888,7 +896,10 @@ class SubtitleTransactionIntegrationTest {
 
         fun response(plan: PlaybackPlanV3) = PlaybackDecisionResponseV3(
             protocolVersion = 3,
-            serverFeatures = listOf(PLAYBACK_PLAN_V3_FEATURE),
+            serverFeatures = listOf(
+                PLAYBACK_PLAN_V3_FEATURE,
+                NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+            ),
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             sessionId = plan.sessionId,
             playbackPlan = plan,
@@ -900,9 +911,9 @@ class SubtitleTransactionIntegrationTest {
             audioIndex: Int,
         ) = PlaybackPlanV3(
             planId = "plan-$sessionId",
+            planAttemptKey = "v3:test:$sessionId",
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
-            engine = PlaybackEngineKind.MEDIA3_HLS,
             stream = PlaybackStreamV3(
                 url = "/stream/$sessionId/master.m3u8",
                 protocol = PlaybackStreamProtocol.HLS,
@@ -941,6 +952,11 @@ class SubtitleTransactionIntegrationTest {
                     mimeType = "text/vtt",
                     format = "webvtt",
                 ),
+                inventory = subtitleInventory(
+                    sessionId = sessionId,
+                    fileId = fileId,
+                    lastIndex = subtitleIndex,
+                ),
             ),
         )
 
@@ -959,8 +975,50 @@ class SubtitleTransactionIntegrationTest {
             subtitle = PlaybackSubtitleDecisionV3(
                 mode = PlaybackSubtitleModeV3.BURN_IN,
                 trackId = "file:$fileId:subtitle:$subtitleIndex",
+                inventory = subtitleInventory(
+                    sessionId = sessionId,
+                    fileId = fileId,
+                    lastIndex = subtitleIndex,
+                    burnInIndex = subtitleIndex,
+                ),
             ),
         )
+
+        private fun subtitleInventory(
+            sessionId: String,
+            fileId: Int,
+            lastIndex: Int,
+            burnInIndex: Int? = null,
+        ): List<PlaybackSubtitleInventoryItemV3> = (0..lastIndex).map { index ->
+            val burnIn = index == burnInIndex
+            PlaybackSubtitleInventoryItemV3(
+                trackId = "file:$fileId:subtitle:$index",
+                combinedIndex = index,
+                source = "external",
+                codec = if (burnIn) "pgs" else "webvtt",
+                language = "en",
+                label = "Subtitle $index",
+                delivery = if (burnIn) {
+                    SUBTITLE_DELIVERY_BURN_IN_ONLY
+                } else {
+                    SUBTITLE_DELIVERY_SIDECAR
+                },
+                url = if (burnIn) null else "/stream/$sessionId/subtitles/$index.vtt",
+            )
+        }
+
+        /**
+         * Output identity is nested under the playback context in the neutral
+         * contract: there is no top-level output field on either request.
+         */
+        fun assertOutputContext(body: JsonObject) {
+            assertEquals(
+                OUTPUT_CONTEXT_ID,
+                body.getValue("client_playback_context").jsonObject
+                    .getValue("output").jsonObject
+                    .getValue("output_context_id").jsonPrimitive.content,
+            )
+        }
 
         fun assertReplan(body: JsonObject, audioIndex: Int, subtitleIndex: Int) {
             val selected = body.getValue("selected_tracks").jsonObject
@@ -973,7 +1031,7 @@ class SubtitleTransactionIntegrationTest {
                     selected.getValue("subtitle").jsonObject.getValue("index").jsonPrimitive.int,
                 )
             }
-            assertEquals(OUTPUT_GENERATION, body.getValue("output_route_generation").jsonPrimitive.content.toLong())
+            assertOutputContext(body)
         }
 
         fun assertStart(body: JsonObject, audioIndex: Int, subtitleIndex: Int) {
@@ -982,10 +1040,7 @@ class SubtitleTransactionIntegrationTest {
                 subtitleIndex,
                 body["subtitle_track_index"]?.jsonPrimitive?.intOrNull ?: -1,
             )
-            assertEquals(
-                OUTPUT_GENERATION,
-                body.getValue("output_route_generation").jsonPrimitive.content.toLong(),
-            )
+            assertOutputContext(body)
         }
 
         fun downloadedIdentity(downloadId: Int) = SubtitleIdentity.Downloaded(
@@ -1034,13 +1089,6 @@ private fun SubtitleIdentity.serverTrackIndex(): Int = when (this) {
     is SubtitleIdentity.Downloaded,
     is SubtitleIdentity.LocalMedia3,
     -> -1
-}
-
-private class IntegrationProfileRepository : ProfileRepository(
-    profileApi = ProfileApi(HttpClient()),
-    tokenManager = IntegrationTokenManager,
-) {
-    override suspend fun getActiveProfileId(): String = "profile-1"
 }
 
 private class IntegrationHealthApi : HealthApi(HttpClient()) {

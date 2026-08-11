@@ -1,5 +1,11 @@
 # Instant External SRT Switching Android Implementation Plan
 
+> Superseded protocol note (2026-08-06): the platform-neutral v3 contract no
+> longer defines `external_text_sidecar_set_v1`. Subtitle support is advertised
+> per delivery through `subtitles.sidecar_text`, and the server publishes the
+> authoritative `playback_plan.subtitle.inventory`. The feature-token steps
+> below are retained only as pre-neutral implementation history.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Mount a negotiated server-provided external SRT/VTT set in Media3 while preserving the current selected-artifact and staged-replan behavior against older servers.

@@ -389,9 +389,9 @@ class SubtitleRemountReselectionTest {
             .substringAfter("private suspend fun adoptSeekRecoveryDecision(")
             .substringBefore("private fun isCurrentSeekRecovery(")
 
-        assertTrue(seekRecoveryBlock.contains("val selectedSubtitle = selectedSubtitleTrackIndex(before)"))
-        assertTrue(seekRecoveryBlock.contains("subtitleTrackIndex = selectedSubtitle"))
-        assertTrue(seekRecoveryBlock.contains("nextTransportMountNonce(selectedSubtitle)"))
+        assertTrue(seekRecoveryBlock.contains("val returnedSubtitleIndex = decision.plan.resolvedSelectedSubtitleIndex()"))
+        assertTrue(seekRecoveryBlock.contains("subtitleTrackIndex = returnedSubtitleIndex ?: -1"))
+        assertTrue(seekRecoveryBlock.contains("nextTypedSubtitleMountNonce(returnedSubtitleIdentity)"))
     }
 
     private fun media(

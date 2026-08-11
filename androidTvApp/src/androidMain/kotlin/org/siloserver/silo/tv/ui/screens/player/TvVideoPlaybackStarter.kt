@@ -26,6 +26,7 @@ import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
+import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.isExplicitStartOver
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
@@ -115,12 +116,15 @@ class TvVideoPlaybackStarter(
                 )
 
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
-            val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
-            val playbackContext = capabilityDetector.detectPlaybackContext(
-                formFactor = "tv",
-                appVersion = BuildConfig.VERSION_NAME,
-                dolbyVision = dolbyVision,
-            )
+            val capabilities = request.recoveryStartParams?.capabilities
+                ?: capabilityDetector.detect(dolbyVision = dolbyVision)
+            val playbackContext = request.recoveryStartParams?.clientPlaybackContext
+                ?: capabilityDetector.detectPlaybackContext(
+                    formFactor = "tv",
+                    appVersion = BuildConfig.VERSION_NAME,
+                    dolbyVision = dolbyVision,
+                    capabilities = capabilities,
+                )
             // Skip-back-on-resume — see MobileVideoPlaybackStarter for the rationale.
             // Suppressed for Start Over / retry (request flag) and Watch Together
             // (roomId); the one rewound value drives both the server seek and the
@@ -231,7 +235,7 @@ class TvVideoPlaybackStarter(
                 params = StartParams(
                     contentId = request.contentId,
                     fileId = effectiveFileId,
-                    capabilities = capabilities,
+                    capabilities = readyV3.capabilities,
                     audioTrackIndex = resolved.audioTrackIndex,
                     subtitleTrackIndex = if (request.episodeSelectionHandoff != null) {
                         serverSubtitleTrackIndex
@@ -240,10 +244,9 @@ class TvVideoPlaybackStarter(
                     },
                     qualityPreference = playbackQualityIntent,
                     startPosition = sourceStartPos,
-                    clientPlaybackContext = playbackContext,
+                    clientPlaybackContext = readyV3.clientPlaybackContext,
                 ),
                 session = resolved,
-                renewMissingSessionWithLegacyStart = false,
                 deferPublication = true,
                 expectedOwnershipEpoch = ownershipEpoch,
             )
@@ -278,8 +281,10 @@ class TvVideoPlaybackStarter(
                 serverUrl = serverUrl,
                 accessToken = accessToken,
                 mediaFileId = effectiveFileId,
-                durationSeconds = resolved.durationSeconds ?: effectiveVersion?.duration ?: 0.0,
-                subtitleUrls = buildPlaybackSubtitleChoices(
+                // Protocol v3 source duration is authoritative. Unknown stays
+                // unknown; catalog/player runtimes must not fill this field.
+                durationSeconds = resolved.durationSeconds,
+                subtitleUrls = enrichAuthoritativePlaybackSubtitleChoices(
                     catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
                 ),

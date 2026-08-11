@@ -20,6 +20,7 @@ import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PLAYBACK_START_CLIENT_FEATURES_V3
 import org.siloserver.silo.model.playback.PlaybackFailureV3
+import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
@@ -54,22 +55,26 @@ class PlaybackApiTest {
         return PlaybackApi(client)
     }
 
-    private fun context() = ClientPlaybackContext(formFactor = "tv", appVersion = "test")
+    private fun context(outputContextId: String? = null) = ClientPlaybackContext(
+        formFactor = "tv",
+        appVersion = "test",
+        output = PlaybackOutputContext(outputContextId = outputContextId),
+    )
 
     @Test
     fun `v3 start uses canonical endpoint and negotiation fields`() = runTest {
         val captured = Captured()
         api(captured).startPlaybackV3(
             PlaybackStartRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 fileId = 42,
                 profileId = "profile",
                 playbackAttemptId = "attempt",
                 subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
                 audioTrackId = "file:42:audio:2",
                 audioTrackIndex = 2,
-                outputRouteGeneration = 7,
                 capabilities = ClientCodecCapabilities(),
-                clientPlaybackContext = context(),
+                clientPlaybackContext = context(outputContextId = "tv:hdmi:primary"),
             ),
         )
 
@@ -82,6 +87,12 @@ class PlaybackApiTest {
             PLAYBACK_START_CLIENT_FEATURES_V3,
             body["client_features"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
+        assertEquals(
+            "tv:hdmi:primary",
+            body["client_playback_context"]!!.jsonObject["output"]!!.jsonObject[
+                "output_context_id"
+            ]!!.jsonPrimitive.content,
+        )
     }
 
     @Test
@@ -90,6 +101,7 @@ class PlaybackApiTest {
         api(captured).replanPlaybackV3(
             "session-1",
             PlaybackReplanRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
                 playbackAttemptId = "attempt",
                 replanRequestId = "request",
                 failedPlanId = "plan-1",
@@ -99,7 +111,6 @@ class PlaybackApiTest {
                 attemptCount = 2,
                 qualityPreference = "720p",
                 positionSeconds = 12.5,
-                outputRouteGeneration = 8,
                 metered = true,
                 bandwidthEstimateKbps = 18_500,
                 bandwidthCapKbps = 12_000,
@@ -128,7 +139,7 @@ class PlaybackApiTest {
                 playbackAttemptId = "attempt",
                 sessionId = "session",
                 event = "plan_failed",
-                outputRouteGeneration = 9,
+                outputContextId = "tv:hdmi:primary",
             ),
         )
 
@@ -137,5 +148,6 @@ class PlaybackApiTest {
         val body = SiloJson.parseToJsonElement(captured.body).jsonObject
         assertEquals("attempt", body["playback_attempt_id"]!!.jsonPrimitive.content)
         assertEquals("plan_failed", body["event"]!!.jsonPrimitive.content)
+        assertEquals("tv:hdmi:primary", body["output_context_id"]!!.jsonPrimitive.content)
     }
 }
