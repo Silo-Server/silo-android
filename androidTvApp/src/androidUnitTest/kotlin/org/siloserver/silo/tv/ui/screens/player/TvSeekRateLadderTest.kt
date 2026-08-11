@@ -39,19 +39,58 @@ class TvSeekRateLadderTest {
 
     /**
      * The point of deriving the ceiling from runtime: holding to the end costs
-     * about the same whether the item is twenty minutes or three hours. A fixed
-     * 32× ceiling took 41s for a short episode and 338s for a long film.
+     * roughly the same whether the item is twenty minutes or three hours. A
+     * fixed 32x ceiling took 41s for a short episode and 338s for a long film.
+     *
+     * Asserted against [TvSeekRateLadder.traverseSeconds], which models the
+     * ramp the implementation actually performs. The previous version computed
+     * `duration / topRate` — steady-state arithmetic the code never does — and
+     * so reported 10.55s for a three-hour film that really takes 17.75s,
+     * passing a 15s tolerance it should have failed.
      */
     @Test
     fun holdingToTheEndCostsAboutTheSameAtAnyRuntime() {
-        listOf(SHORT_EPISODE, EPISODE, 5_400.0, LONG_FILM).forEach { duration ->
-            val top = TvSeekRateLadder.maxRateFor(duration)
-            val traverseSeconds = duration / top
+        val durations = listOf(SHORT_EPISODE, EPISODE, 5_400.0, LONG_FILM)
+        val costs = durations.map { TvSeekRateLadder.traverseSeconds(it) }
+
+        costs.forEachIndexed { index, seconds ->
             assertTrue(
-                traverseSeconds <= TvSeekRateLadder.TRAVERSE_TARGET_SECONDS * 1.5,
-                "a ${duration}s item takes ${traverseSeconds}s to cross at ${top}x",
+                seconds <= 20.0,
+                "a ${durations[index]}s item takes ${seconds}s to cross",
             )
         }
+        assertTrue(
+            costs.max() / costs.min() <= 2.0,
+            "runtimes should cost within 2x of each other, got $costs",
+        )
+    }
+
+    /**
+     * The honest envelope, pinned. If a ladder or cadence change moves these,
+     * the numbers in TRAVERSE_TARGET_SECONDS' documentation are wrong too.
+     */
+    @Test
+    fun traversalCostIncludesTheRampNotJustTheCeiling() {
+        assertEquals(10.56, TvSeekRateLadder.traverseSeconds(SHORT_EPISODE), 0.01)
+        assertEquals(17.75, TvSeekRateLadder.traverseSeconds(LONG_FILM), 0.01)
+        assertTrue(
+            TvSeekRateLadder.traverseSeconds(LONG_FILM) >
+                LONG_FILM / TvSeekRateLadder.maxRateFor(LONG_FILM),
+            "the ramp must cost something; steady-state division understates it",
+        )
+    }
+
+    /**
+     * Protocol v3 declares duration server-side and deliberately does not fall
+     * back to Media3/catalog, so an omitted duration reaches the ladder as 0.
+     * That lands on the MIN_TOP_RATE floor rather than a derived ceiling —
+     * slow for a long item, but the alternative is guessing a ceiling for
+     * content of unknown length.
+     */
+    @Test
+    fun anUnknownDurationFallsBackToTheFloorRatherThanGuessing() {
+        assertEquals(TvSeekRateLadder.MIN_TOP_RATE, TvSeekRateLadder.maxRateFor(0.0))
+        assertEquals(TvSeekRateLadder.MIN_TOP_RATE, TvSeekRateLadder.maxRateFor(Double.NaN))
     }
 
     @Test

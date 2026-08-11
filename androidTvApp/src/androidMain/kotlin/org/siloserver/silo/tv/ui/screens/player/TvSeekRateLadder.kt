@@ -38,9 +38,14 @@ internal object TvSeekRateLadder {
     const val BASE_RATE = 2
 
     /**
-     * Roughly how long holding should take to travel the entire item. Short
-     * enough that reaching the end is a decision rather than a commitment;
-     * long enough that the last stretch can still be released into.
+     * Steady-state crossing target: the ceiling is derived so that holding at
+     * it crosses the item in about this long.
+     *
+     * NOT the end-to-end figure. A hold ramps up to the ceiling rather than
+     * starting there, and the early rungs cover almost nothing, so the real
+     * cost runs ~10.5s for a 22-minute episode to ~17.8s for a three-hour
+     * film. [traverseSeconds] computes the honest number; that spread is the
+     * thing being kept small, not the absolute value.
      */
     const val TRAVERSE_TARGET_SECONDS = 10.0
 
@@ -81,6 +86,37 @@ internal object TvSeekRateLadder {
             steps++
         }
         return steps
+    }
+
+    /**
+     * Wall-clock seconds a sustained hold needs to cross an item of
+     * [durationSeconds] — INCLUDING the ramp, which is the part
+     * [TRAVERSE_TARGET_SECONDS] does not describe.
+     *
+     * The ceiling is derived so the STEADY-STATE crossing is about
+     * [TRAVERSE_TARGET_SECONDS], but a hold does not start at the ceiling: it
+     * doubles every [RAMP_STEP_MILLIS] to get there, and those early rungs
+     * cover very little. A three-hour item spends 8.1s ramping and covers only
+     * ~920s of it, so the honest end-to-end figure is ~17.8s, not ~10.5s.
+     *
+     * Exposed so the tests can assert what a viewer actually experiences
+     * rather than re-deriving `duration / topRate`, which is the arithmetic the
+     * implementation does NOT perform.
+     */
+    fun traverseSeconds(durationSeconds: Double): Double {
+        if (!durationSeconds.isFinite() || durationSeconds <= 0.0) return 0.0
+        val ceiling = maxRateFor(durationSeconds)
+        val rampStepSeconds = RAMP_STEP_MILLIS / 1000.0
+        var covered = 0.0
+        var elapsed = 0.0
+        var rate = BASE_RATE
+        while (rate < ceiling && covered < durationSeconds) {
+            covered += rate * rampStepSeconds
+            elapsed += rampStepSeconds
+            rate *= 2
+        }
+        if (covered >= durationSeconds) return elapsed
+        return elapsed + (durationSeconds - covered) / ceiling
     }
 
     /** Content seconds to advance for one tick at [rate]. */
