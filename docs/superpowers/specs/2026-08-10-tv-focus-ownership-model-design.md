@@ -23,10 +23,13 @@ The rate of focus defects went **up** after it landed.
 | Month | focus-titled commits on `main` |
 |---|---|
 | 2026-06 | 8 |
-| 2026-07 | 26 |
-| 2026-08 (to the 10th) | **49** |
+| 2026-07 | 22 |
+| 2026-08 (to the 11th) | **48** |
 
-Of the 83 focus commits in the last 90 days, **49 are `fix:` and 9 are
+Method, so these can be re-derived rather than trusted:
+`git log main --format=%s --since=… | grep -ci focus` — commit SUBJECTS only.
+
+Of the 81 focus-subject commits in the last 90 days, **49 are `fix:` and 7 are
 `feat:`**. That ratio is the finding. This is not a feature being built out;
 it is one problem being re-cut repeatedly.
 
@@ -72,7 +75,7 @@ Neither is an acquisition bug. Both are **ownership** bugs.
 
 ## Root cause
 
-`TvShellFocusState` on `main` carries ten mutable fields:
+`TvShellFocusState` on `main` carries twelve mutable fields:
 
 ```
 menuFocusRequest        Int token
@@ -84,6 +87,8 @@ isMenuFocused           Boolean
 profileMenuOpen         Boolean
 profileMenuEntered      Boolean
 panelEntersFocus        Boolean
+panelHasFocus           Boolean
+menuFocusSuppressesDwell Boolean
 openPanel               TvTopMenuPanel?
 ```
 
@@ -191,23 +196,34 @@ Focus churn by area over 90 days, counted as file-touches by focus commits:
 | `ui/shell/` | **31** |
 
 The shell is the most-edited single *file*, but screens are five times the
-churn. And the reason is not a missing model — it is a model nobody adopted:
+churn.
 
-- **8** files use the shared bounded observed-focus policy.
-- **44** files still call `requestFocus()` directly.
-- **107** `runCatching` occurrences remain in TV screens.
+**An earlier draft of this note argued the cause was non-adoption, on figures
+that #208 has since made false.** It claimed 8 adopters against 44 direct
+callers — 18% — and 107 `runCatching` occurrences in TV screens. As of `main`
+at 7245c0f4:
 
-That is 18% adoption. Cause #1 of the 08-04 audit — *"a focus request executing
-without exception is treated as focus acquisition"* — is not a historical
-finding being worked off. It is the majority of the current code, and it is the
-same failure mode as #199 and #202.
+- **34** files use the shared observed-focus helpers
+  (`requestFocusUntilObserved` / `claimFocusOrReport`).
+- **24** still contain a raw `requestFocus()`, of which **9** also use a helper,
+  leaving **15** genuine hold-outs.
+- That is **69%** adoption, not 18%.
+- **31** `runCatching` occurrences remain in TV screens, and exactly **1**
+  wraps a `requestFocus()`.
 
-Screen churn concentrates too: `detail` 30, `player` 29, `audiobook` 21,
-`calendar` 14, `library` 12 — 106 of the 150.
+Cause #1 of the 08-04 audit — *"a focus request executing without exception is
+treated as focus acquisition"* — has therefore been substantially worked off,
+by #208's sweep of 78 sites and by the ratchet that keeps them at zero.
 
-**So the ordering is: enforcement first, migration second, shell model third.**
-A better rule that 18% of the code follows is worth less than the existing rule
-made impossible to violate.
+**So the ordering this note originally proposed is wrong, and the argument it
+leans on is gone.** Enforcement exists and adoption followed it. What remains
+is the part the sweep could not do: the shell still infers ownership by reading
+twelve flags together, and #204's `panelHasFocus` is the newest example — a
+boolean added because `panelEntersFocus` records intent rather than arrival.
+That distinction is a type, expressed as a flag pair.
+
+**The revised ordering is: shell ownership model first, hold-out migration
+second, and no new enforcement — the existing ratchet is doing its job.**
 
 ### Enforcement
 
@@ -217,8 +233,9 @@ that read source by path and assert on structure, so this is an established
 mechanism rather than a new one. Existing sites are baselined; the gate is that
 the count may only go down.
 
-That stops new instances appearing while the 36 hold-out files are migrated in
-churn order.
+That gate now exists (#208) and holds the count at zero. The 15 remaining
+hold-out files can be migrated in churn order behind it; nothing new is needed
+to stop regressions.
 
 ## Scope
 
@@ -247,7 +264,8 @@ targets. The shell stops guessing what state it is in.
 
 ## How we will know it worked
 
-- Focus `fix:` commits per month on `main` — currently 49 and rising.
+- Focus-subject `fix:` commits per month on `main` — 49 across the last 90
+  days, against 48 focus-subject commits of all types in August alone.
 - Edits to `TvMainShell.kt` per month.
 - `focus trap suspected` and `navigation struggle` per tester session in
   GlitchTip, which is where the real evidence has been coming from.
