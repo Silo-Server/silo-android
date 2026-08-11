@@ -234,6 +234,32 @@ internal const val EPISODE_FAVORITE_PROBE_CONCURRENCY = 6
  * one of its probes failed leaves that row stale with nothing left to retry it,
  * which is why this is separate from "the reload succeeded".
  */
+/**
+ * Cached favourite answers that must be forgotten because they changed
+ * elsewhere and are not on screen to be re-probed.
+ *
+ * The cache spans seasons but a refresh only probes the visible one, so a
+ * changed episode belonging to another season would otherwise keep its stale
+ * answer for the life of this screen — the visible season's refresh would
+ * record the change as handled and move on. Dropping the entry instead means
+ * the season that does show it probes it when it next loads.
+ *
+ * Only OFF-SCREEN entries are dropped. A visible one is revalidated in place,
+ * because removing it would render that row as "not a favourite" until its
+ * probe answered.
+ *
+ * [requested] of null means the change list could not be produced, so every
+ * cached answer that is not on screen is suspect.
+ */
+internal fun staleOffScreenFavorites(
+    requested: Set<String>?,
+    cachedIds: Set<String>,
+    visibleIds: Set<String>,
+): Set<String> = when (requested) {
+    null -> cachedIds - visibleIds
+    else -> requested.intersect(cachedIds) - visibleIds
+}
+
 internal fun revalidationSatisfied(
     requested: Set<String>?,
     visibleIds: List<String>,
@@ -975,9 +1001,25 @@ class TvItemDetailViewModel(
         // An empty season leaves the accumulated answers alone: rendering is
         // keyed by the visible episode ids, so nothing stale can show, and
         // clearing would make returning to a populated season re-probe it.
+        val episodeIds = episodes.map { it.contentId }
+        val visibleIds = episodeIds.toSet()
+
+        // Apply the change list to entries this screen holds but is not showing,
+        // before deciding anything else. Recording those as handled without
+        // acting on them is how a stale answer survives a season switch.
+        val stale = staleOffScreenFavorites(
+            requested = revalidate,
+            cachedIds = _uiState.value.episodeFavoriteStates.keys,
+            visibleIds = visibleIds,
+        )
+        if (stale.isNotEmpty()) {
+            _uiState.update { it.copy(episodeFavoriteStates = it.episodeFavoriteStates - stale) }
+        }
+
+        // Now safe: the only changes left to account for are visible ones, and
+        // an empty season has none.
         if (episodes.isEmpty()) return true
         val generation = episodeListGeneration
-        val episodeIds = episodes.map { it.contentId }
         // A null delta means the signal could not tell us what changed, so
         // nothing is treated as already known.
         val knownIds =

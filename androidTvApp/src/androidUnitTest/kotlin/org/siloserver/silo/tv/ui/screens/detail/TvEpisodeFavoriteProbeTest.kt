@@ -365,3 +365,68 @@ class TvFavoriteRevalidationSatisfiedTest {
         )
     }
 }
+
+/**
+ * The cache spans seasons but a refresh probes only the visible one, so a
+ * change to an episode of another season has to be applied by forgetting the
+ * cached answer — otherwise the visible season records the change as handled
+ * and the other season keeps showing the stale value.
+ */
+class TvStaleOffScreenFavoritesTest {
+
+    @Test
+    fun forgetsAChangedEpisodeFromAnotherSeason() {
+        assertEquals(
+            setOf("s2e1"),
+            staleOffScreenFavorites(
+                requested = setOf("s2e1"),
+                cachedIds = setOf("s1e1", "s1e2", "s2e1"),
+                visibleIds = setOf("s1e1", "s1e2"),
+            ),
+        )
+    }
+
+    /**
+     * A visible one is revalidated in place instead: dropping it would render
+     * that row as "not a favourite" until its probe answered.
+     */
+    @Test
+    fun leavesAVisibleEpisodeAlone() {
+        assertEquals(
+            emptySet(),
+            staleOffScreenFavorites(
+                requested = setOf("s1e2"),
+                cachedIds = setOf("s1e1", "s1e2"),
+                visibleIds = setOf("s1e1", "s1e2"),
+            ),
+        )
+    }
+
+    @Test
+    fun ignoresChangedIdsThisScreenNeverCached() {
+        assertEquals(
+            emptySet(),
+            staleOffScreenFavorites(
+                requested = setOf("never-seen"),
+                cachedIds = setOf("s1e1"),
+                visibleIds = setOf("s1e1"),
+            ),
+        )
+    }
+
+    /**
+     * A null change list means the signal could not say what changed, so every
+     * cached answer that is not on screen is suspect.
+     */
+    @Test
+    fun aNullChangeListForgetsEveryOffScreenAnswer() {
+        assertEquals(
+            setOf("s2e1", "s3e1"),
+            staleOffScreenFavorites(
+                requested = null,
+                cachedIds = setOf("s1e1", "s2e1", "s3e1"),
+                visibleIds = setOf("s1e1"),
+            ),
+        )
+    }
+}
