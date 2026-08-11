@@ -174,6 +174,7 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
                     JSON.parseToJsonElement(decoded)
                         .redact(tokens)
                         .stripHostedDeviceIdentifiersIf(hosted && path == DEVICE_FILE)
+                        .normalizeHostedDeviceDecodersIf(hosted && path == DEVICE_FILE)
                         .sanitizeHostedStringsIf(hosted),
                 )
                 path.endsWith(".jsonl") -> redactJsonLines(decoded, tokens, hosted)
@@ -211,10 +212,12 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         val filteredAttributes = (output["attrs"] as? JsonObject)
             ?.filterKeys(allowedAttributes::contains)
             ?.mapValues { (key, value) ->
-                if (category == "network" && key == "path" && value is JsonPrimitive && value.isString) {
-                    JsonPrimitive(checkNotNull(value.contentOrNull).templateHostedPrivatePathSegments())
-                } else {
-                    value
+                when {
+                    category == "network" && key == "path" && value is JsonPrimitive && value.isString ->
+                        JsonPrimitive(checkNotNull(value.contentOrNull).templateHostedPrivatePathSegments())
+                    category == "playback" && key == "decoder" && value is JsonPrimitive && value.isString ->
+                        JsonPrimitive(checkNotNull(value.contentOrNull).hostedDecoderFamily())
+                    else -> value
                 }
             }
             .orEmpty()
@@ -238,6 +241,27 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
     private fun JsonElement.stripHostedDeviceIdentifiersIf(strip: Boolean): JsonElement =
         if (strip) stripHostedDeviceIdentifiers() else this
 
+    private fun JsonElement.normalizeHostedDeviceDecodersIf(normalize: Boolean): JsonElement =
+        if (normalize) normalizeHostedDeviceDecoders() else this
+
+    private fun JsonElement.normalizeHostedDeviceDecoders(): JsonElement {
+        if (this !is JsonObject) return this
+        val videoCodecs = this["video_codecs"] as? JsonArray ?: return this
+        val normalizedCodecs = videoCodecs.map { codec ->
+            if (codec !is JsonObject) return@map codec
+            val decoderName = codec["decoder_name"] as? JsonPrimitive
+            if (decoderName?.isString != true) return@map codec
+            JsonObject(
+                codec.toMutableMap().also { fields ->
+                    fields["decoder_name"] = JsonPrimitive(
+                        checkNotNull(decoderName.contentOrNull).hostedDecoderFamily(),
+                    )
+                },
+            )
+        }
+        return JsonObject(toMutableMap().also { it["video_codecs"] = JsonArray(normalizedCodecs) })
+    }
+
     private fun JsonElement.stripHostedDeviceIdentifiers(): JsonElement = when (this) {
         is JsonObject -> JsonObject(
             entries
@@ -250,6 +274,19 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
 
     private fun String.normalizedPrivacyKey(): String =
         lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
+
+    private fun String.hostedDecoderFamily(): String {
+        val normalized = lowercase(Locale.ROOT)
+        return when {
+            normalized in HOSTED_DECODER_FAMILIES -> normalized
+            normalized.startsWith("c2.android.") -> HOSTED_C2_PLATFORM_DECODER
+            normalized.startsWith("c2.") -> HOSTED_C2_VENDOR_DECODER
+            normalized.startsWith("omx.google.") || normalized.startsWith("omx.android.") ->
+                HOSTED_OMX_PLATFORM_DECODER
+            normalized.startsWith("omx.") -> HOSTED_OMX_VENDOR_DECODER
+            else -> HOSTED_GENERIC_DECODER
+        }
+    }
 
     private fun JsonElement.sanitizeHostedStrings(): JsonElement = when (this) {
         is JsonObject -> JsonObject(mapValues { (_, value) -> value.sanitizeHostedStrings() })
@@ -400,6 +437,11 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         const val CRASH_TOMBSTONE_FILE = "crash/tombstone.pb"
         const val REDACTED_VALUE = "[REDACTED]"
         const val REDACTED_HOST_VALUE = "redacted.invalid"
+        const val HOSTED_C2_PLATFORM_DECODER = "android-c2-platform-decoder"
+        const val HOSTED_C2_VENDOR_DECODER = "android-c2-vendor-decoder"
+        const val HOSTED_OMX_PLATFORM_DECODER = "android-omx-platform-decoder"
+        const val HOSTED_OMX_VENDOR_DECODER = "android-omx-vendor-decoder"
+        const val HOSTED_GENERIC_DECODER = "android-decoder"
         val REDACTION_FAILURE_SENTINEL = "{\"redaction_failure\":true}\n".encodeToByteArray()
         val TEXT_ENTRIES = CANONICAL_ARCHIVE_ORDER.toSet() - MANIFEST_FILE - "crash/tombstone.pb"
         val HOSTED_V1_LOG_ATTRIBUTES = mapOf(
@@ -418,6 +460,13 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             "network" to setOf("method", "path", "status", "duration_ms"),
             "lifecycle" to setOf("state"),
             "crash" to setOf("fingerprint", "source"),
+        )
+        val HOSTED_DECODER_FAMILIES = setOf(
+            HOSTED_C2_PLATFORM_DECODER,
+            HOSTED_C2_VENDOR_DECODER,
+            HOSTED_OMX_PLATFORM_DECODER,
+            HOSTED_OMX_VENDOR_DECODER,
+            HOSTED_GENERIC_DECODER,
         )
         val HOSTED_DEVICE_IDENTIFIER_KEYS = setOf(
             "id",

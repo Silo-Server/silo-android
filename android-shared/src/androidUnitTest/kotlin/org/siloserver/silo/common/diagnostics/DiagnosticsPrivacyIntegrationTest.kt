@@ -129,7 +129,7 @@ class DiagnosticsPrivacyIntegrationTest {
         assertEquals(DiagnosticsDestinationKind.HOSTED, report.binding.destinationKind)
         assertEquals(null, bundle.manifest.report.profileId)
         assertEquals(HOSTED_DIAGNOSTICS_COLLECTOR_ID, bundle.manifest.destination.serverInstanceId)
-        assertTrue(archive.contains("safe-decoder"), "collector-v1 playback attributes must remain")
+        assertTrue(archive.contains("android-decoder"), "collector-v1 playback decoder family must remain")
         assertFalse(archive.contains("buffered_ms"), "extended Android attributes must not ship hosted")
         listOf(
             SOURCE_SERVER_URL,

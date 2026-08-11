@@ -5,6 +5,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.zip.GZIPInputStream
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Rule
@@ -140,7 +141,10 @@ class DiagnosticsBundleBuilderTest {
             hostedEntries.getValue("breadcrumbs.jsonl").bytes.decodeToString().trim(),
         ).jsonObject
 
-        assertEquals("c2.android.avc", hostedLogs[0].getValue("attrs").jsonObject.getValue("decoder").jsonPrimitive.content)
+        assertEquals(
+            "android-c2-platform-decoder",
+            hostedLogs[0].getValue("attrs").jsonObject.getValue("decoder").jsonPrimitive.content,
+        )
         assertFalse(hostedLogs[0].getValue("attrs").jsonObject.containsKey("buffered_ms"))
         assertFalse(hostedLogs[0].getValue("attrs").jsonObject.containsKey("failure_code"))
         assertFalse(hostedLogs[0].getValue("msg").jsonPrimitive.content.contains("private-playback-correlation"))
@@ -166,6 +170,86 @@ class DiagnosticsBundleBuilderTest {
             "opaque-private-native-trace".encodeToByteArray(),
             selfHostedEntries.getValue("crash/tombstone.pb").bytes,
         )
+    }
+
+    @Test
+    fun hostedBundleNormalizesDecoderNamesOnLogsBreadcrumbsAndDeviceOnly() {
+        val decoderFamilies = listOf(
+            "c2.android.avc.decoder" to "android-c2-platform-decoder",
+            "c2.vendor.avc.decoder" to "android-c2-vendor-decoder",
+            "c2.qti.hevc.decoder" to "android-c2-vendor-decoder",
+            "OMX.google.h264.decoder" to "android-omx-platform-decoder",
+            "OMX.android.hevc.decoder" to "android-omx-platform-decoder",
+            "OMX.Nvidia.h264.decode" to "android-omx-vendor-decoder",
+            "OMX.qcom.video.decoder.avc" to "android-omx-vendor-decoder",
+            "OMX.vendor.video.decoder.hevc" to "android-omx-vendor-decoder",
+            "com.example.super.decoder" to "android-decoder",
+            "android-c2-platform-decoder" to "android-c2-platform-decoder",
+            "android-c2-vendor-decoder" to "android-c2-vendor-decoder",
+            "android-omx-platform-decoder" to "android-omx-platform-decoder",
+            "android-omx-vendor-decoder" to "android-omx-vendor-decoder",
+            "android-decoder" to "android-decoder",
+        )
+        val logs = decoderFamilies.mapIndexed { index, (raw, _) ->
+            """{"ts":"2026-08-11T00:00:${index.toString().padStart(2, '0')}Z","run":"run-1","lvl":"I","cat":"playback","tag":"Player","msg":"decoder","attrs":{"decoder":"$raw"}}"""
+        }.joinToString(separator = "\n", postfix = "\n").encodeToByteArray()
+        val breadcrumbs = decoderFamilies.mapIndexed { index, (raw, _) ->
+            """{"ts":"2026-08-11T00:01:${index.toString().padStart(2, '0')}Z","run":"run-1","lvl":"I","cat":"playback","tag":"Breadcrumb","msg":"decoder","attrs":{"decoder":"$raw"}}"""
+        }.joinToString(separator = "\n", postfix = "\n").encodeToByteArray()
+        val device = decoderFamilies.mapIndexed { index, (raw, _) ->
+            """{"codec":"codec-$index","decoder_name":"$raw","hardware":true}"""
+        }.joinToString(prefix = "{\"video_codecs\":[", separator = ",", postfix = "]}")
+            .encodeToByteArray()
+        val artifacts = mapOf(
+            "device.json" to device,
+            "logs.jsonl" to logs,
+            "breadcrumbs.jsonl" to breadcrumbs,
+        )
+
+        val hostedEntries = builder.build(
+            report(artifacts, DiagnosticsDestinationKind.HOSTED),
+            redactionTokens = emptyList(),
+        ).sanitizedEntries
+        val expected = decoderFamilies.map { (_, family) -> family }
+        assertEquals(
+            setOf(
+                "android-c2-platform-decoder",
+                "android-c2-vendor-decoder",
+                "android-omx-platform-decoder",
+                "android-omx-vendor-decoder",
+                "android-decoder",
+            ),
+            expected.toSet(),
+        )
+
+        listOf("logs.jsonl", "breadcrumbs.jsonl").forEach { path ->
+            val actual = hostedEntries.getValue(path).decodeToString()
+                .lineSequence()
+                .filter(String::isNotBlank)
+                .map { line ->
+                    Json.parseToJsonElement(line).jsonObject
+                        .getValue("attrs").jsonObject
+                        .getValue("decoder").jsonPrimitive.content
+                }
+                .toList()
+            assertEquals(expected, actual, path)
+            assertTrue(actual.none { '.' in it }, path)
+        }
+        val hostedDeviceDecoders = Json.parseToJsonElement(
+            hostedEntries.getValue("device.json").decodeToString(),
+        ).jsonObject.getValue("video_codecs").jsonArray.map { codec ->
+            codec.jsonObject.getValue("decoder_name").jsonPrimitive.content
+        }
+        assertEquals(expected, hostedDeviceDecoders)
+        assertTrue(hostedDeviceDecoders.none { '.' in it })
+
+        val selfHostedEntries = builder.build(
+            report(artifacts, DiagnosticsDestinationKind.SELF_HOSTED),
+            redactionTokens = emptyList(),
+        ).sanitizedEntries
+        artifacts.forEach { (path, bytes) ->
+            assertContentEquals(bytes, selfHostedEntries.getValue(path), path)
+        }
     }
 
     @Test
