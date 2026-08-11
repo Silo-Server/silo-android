@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +58,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
 import org.siloserver.silo.tv.ui.theme.ChromeSelectedBorder
@@ -69,6 +71,17 @@ import org.siloserver.silo.tv.ui.theme.navRailLabel
 
 private const val TopMenuInitialPreviewDelayMillis = 180L
 private const val TopMenuPanelSwitchDelayMillis = 80L
+
+/**
+ * How long a non-anchor focus must hold before it disarms dwell suppression.
+ * Shorter than [TopMenuInitialPreviewDelayMillis] so a real move still previews
+ * promptly, long enough to outlast the one-frame focus blip Compose emits while
+ * an explicit bar focus request is being applied.
+ */
+private const val TopMenuSuppressionHandoffGraceMillis = 120L
+
+/** Upper bound on the single-focusable handoff window. */
+private const val TopMenuHandoffTimeoutMillis = 500L
 
 
 /**
@@ -166,6 +179,12 @@ fun TvTopMenuBar(
      * TvShellFocusState.menuFocusSuppressesDwell.
      */
     focusRequestSuppressesDwell: Boolean = false,
+    /**
+     * Receives a hook that moves bar focus to a panel's anchor synchronously,
+     * so a closing cascade never leaves focus for Compose to recover. See
+     * TvShellFocusState.focusBarAnchorNow.
+     */
+    onInstallAnchorFocus: ((TvTopMenuPanel?) -> Boolean) -> Unit = {},
     profileFocusRequest: Int = 0,
     isSearchActive: Boolean = false,
     visibility: Float = 1f,
@@ -195,6 +214,26 @@ fun TvTopMenuBar(
     // that tab's dwell preview until focus leaves it. Android additionally
     // uses the first Down from that state as a direct handoff to content.
     var dwellSuppressedButton by remember { mutableStateOf<TvTopMenuFocus?>(null) }
+
+    // While a Back-close handoff is in flight, the anchor is the ONLY focusable
+    // bar element. Compose recovers focus the instant the cascade's node leaves
+    // composition and picks the bar's FIRST child — the search icon — a frame
+    // before the explicit request lands, so Back visibly flashed through search
+    // on its way to the anchor. Taking the other buttons out of focus search for
+    // that one window leaves the recovery nowhere to go but the anchor itself.
+    val handoffAnchor = dwellSuppressedButton?.takeIf { it != focusedButton }
+    fun canFocusButton(focus: TvTopMenuFocus): Boolean =
+        !isFocusSuppressed && (handoffAnchor == null || handoffAnchor == focus)
+
+    // The anchor focusing clears handoffAnchor and cancels this. If the request
+    // never lands, release the restriction rather than leaving the bar with a
+    // single focusable button.
+    LaunchedEffect(handoffAnchor) {
+        if (handoffAnchor != null) {
+            delay(TopMenuHandoffTimeoutMillis)
+            if (dwellSuppressedButton == handoffAnchor) dwellSuppressedButton = null
+        }
+    }
 
     fun focusForRoot(root: TvRootDestination): TvTopMenuFocus = when (root) {
         TvRootDestination.Home -> TvTopMenuFocus.Home
@@ -253,9 +292,17 @@ fun TvTopMenuBar(
             requestIdentity = focusRequestIdentity,
             lastHandledRequest = lastHandledFocusRequest,
             isFocusSuppressed = isFocusSuppressed,
-            isTargetAvailable = focusRequestTargetAvailable,
+            // Availability gates only the EXPLICIT target, never the request
+            // itself. Skipping the whole request left nothing focused, so
+            // Compose's default search landed on the first bar element — the
+            // search icon — and Back out of a cascade appeared to "go to
+            // search". Falling back to the selected entry keeps the viewer on
+            // the tab they came from.
+            isTargetAvailable = true,
             requestFocus = {
-                val explicitFocus = focusRequestTarget?.let(::focusForPanel)
+                val explicitFocus = focusRequestTarget
+                    ?.takeIf { focusRequestTargetAvailable }
+                    ?.let(::focusForPanel)
                 // The target names which bar element to land on; it does NOT by
                 // itself mean the preview should be suppressed. Only a panel
                 // Back-close wants that. Arming it for every targeted request
@@ -313,6 +360,15 @@ fun TvTopMenuBar(
             // so an ordinary content-to-bar Up arrives unsuppressed and opens
             // the cascade.
             if (focus == null || focus == suppressed) return@LaunchedEffect
+            // A DIFFERENT button may still be the handoff in flight rather than
+            // a real move: while the requested anchor is being applied, Compose
+            // briefly focuses the bar's first child (the Search icon). Clearing
+            // on that blip disarmed the suppression, so the anchor re-previewed
+            // the moment it actually landed — Back out of a cascade reopened it
+            // and the viewer was left one Back short of Home. Wait out the blip;
+            // this effect is keyed on focusedButton, so the anchor arriving
+            // cancels the delay and leaves the suppression armed.
+            delay(TopMenuSuppressionHandoffGraceMillis)
             // Moving anywhere else re-arms normal dwell behavior, matching
             // tvOS's dwellSuppressedElement lifecycle.
             dwellSuppressedButton = null
@@ -350,6 +406,31 @@ fun TvTopMenuBar(
     // trailing cluster). On non-tab routes (Search) we enter the search icon.
     val barEntryRequester = selectedEntryRequester()
 
+    // Publish the synchronous anchor-focus hook. This runs on the composition
+    // thread, so a Back handler can move focus BEFORE it removes the panel.
+    SideEffect {
+        onInstallAnchorFocus { panel ->
+            val target = panel?.let(::focusForPanel)
+            val requester = target?.let(::requesterForFocus) ?: selectedEntryRequester()
+            // requestFocus() RETURNS whether the claim was accepted, so
+            // runCatching{}.isSuccess threw the real answer away — it is true
+            // for any call that merely did not throw. That made a refused
+            // claim look like a move, which armed suppression, closed the
+            // panel and skipped the deferred fallback, leaving focus nowhere.
+            val accepted = requester.claimFocusOrReport(
+                target = "menu_anchor",
+                action = "back_close_anchor",
+            )
+            // Accepted is not arrival — the helper says so itself — but it
+            // does separate a claim that took from one that definitely needs
+            // the deferred retry. Arm the suppression only on acceptance;
+            // otherwise the state-request fallback arms it a frame later.
+            if (accepted) dwellSuppressedButton = target
+            accepted
+        }
+    }
+
+
     // Single full-width Row (wordmark · flexible gap · search+centered tabs ·
     // flexible gap · trailing profile) so D-pad Left/Right traverse the whole bar
     // in one ordered focus group — the three-zone `align` layout couldn't be
@@ -377,7 +458,15 @@ fun TvTopMenuBar(
                 // ignore explicit requester bumps. Otherwise Android's initial
                 // focus pass can still choose Home while content is composing.
                 canFocus = !isFocusSuppressed
-                enter = { barEntryRequester }
+                // While a Back-close handoff is in flight, the anchor is the
+                // entry point — not the selected tab. Closing a cascade removes
+                // the focused node and Compose recovers focus into the bar; if
+                // that recovery uses the group's first child it lands on the
+                // search icon and Back visibly flashes through search before the
+                // explicit request lands.
+                enter = {
+                    dwellSuppressedButton?.let(::requesterForFocus) ?: barEntryRequester
+                }
             }
             .onPreviewKeyEvent { event ->
                 val focus = focusedButton
@@ -443,7 +532,7 @@ fun TvTopMenuBar(
                 icon = Icons.Outlined.Search,
                 contentDescription = "Search",
                 isFocused = focusedButton == TvTopMenuFocus.Search,
-                canFocus = !isFocusSuppressed,
+                canFocus = canFocusButton(TvTopMenuFocus.Search),
                 focusRequester = searchFocusRequester,
                 onFocusChanged = { hasFocus ->
                     focusedButton = if (hasFocus) {
@@ -461,7 +550,7 @@ fun TvTopMenuBar(
                         label = "Home",
                         isSelected = selectedRoot == TvRootDestination.Home,
                         isFocused = focusedButton == TvTopMenuFocus.Home,
-                        canFocus = !isFocusSuppressed,
+                        canFocus = canFocusButton(TvTopMenuFocus.Home),
                         focusRequester = homeFocusRequester,
                         onFocusChanged = { hasFocus ->
                             focusedButton = if (hasFocus) {
@@ -480,7 +569,7 @@ fun TvTopMenuBar(
                             label = type.title,
                             isSelected = selectedRoot == destination,
                             isFocused = focusedButton == TvTopMenuFocus.Tab(type),
-                            canFocus = !isFocusSuppressed,
+                            canFocus = canFocusButton(TvTopMenuFocus.Tab(type)),
                             focusRequester = tabFocusRequesters[type] ?: homeFocusRequester,
                             onFocusChanged = { hasFocus ->
                                 focusedButton = if (hasFocus) {
@@ -504,7 +593,7 @@ fun TvTopMenuBar(
                         label = "For You",
                         isSelected = selectedRoot == TvRootDestination.ForYou,
                         isFocused = focusedButton == TvTopMenuFocus.ForYou,
-                        canFocus = !isFocusSuppressed,
+                        canFocus = canFocusButton(TvTopMenuFocus.ForYou),
                         focusRequester = forYouFocusRequester,
                         onFocusChanged = { hasFocus ->
                             focusedButton = if (hasFocus) {
@@ -526,7 +615,7 @@ fun TvTopMenuBar(
                         label = "Calendar",
                         isSelected = selectedRoot == TvRootDestination.Calendar,
                         isFocused = focusedButton == TvTopMenuFocus.Calendar,
-                        canFocus = !isFocusSuppressed,
+                        canFocus = canFocusButton(TvTopMenuFocus.Calendar),
                         focusRequester = calendarFocusRequester,
                         onFocusChanged = { hasFocus ->
                             focusedButton = if (hasFocus) {
@@ -558,7 +647,7 @@ fun TvTopMenuBar(
             TvTopMenuProfileButton(
                 accountState = accountState,
                 isFocused = focusedButton == TvTopMenuFocus.Profile,
-                canFocus = !isFocusSuppressed,
+                canFocus = canFocusButton(TvTopMenuFocus.Profile),
                 focusRequester = profileFocusRequester,
                 onFocusChanged = { hasFocus ->
                     focusedButton = if (hasFocus) TvTopMenuFocus.Profile else focusedButton.takeUnless { it == TvTopMenuFocus.Profile }

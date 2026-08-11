@@ -97,7 +97,18 @@ fun TvRequestsScreen(
     val visibleSearchResults = searchState.results.filterTvRequestResults()
     val visibleDiscoverSections = state.sections.filterTvRequestSections()
     val searchFieldFocusRequester = remember { FocusRequester() }
-    var requestsScreenHasFocus by remember { mutableStateOf(false) }
+    // Observed per REGION. requestFocusUntilObserved tests isFocused() before
+    // it requests anything, so a screen-wide flag meant the post-search claim
+    // was skipped outright: you are in the search field when the results land,
+    // the flag is already true, and focus never moves to them.
+    var focusedRegion by remember { mutableStateOf<TvRequestsFocusRegion?>(null) }
+    val setFocusedRegion: (TvRequestsFocusRegion, Boolean) -> Unit = { region, focused ->
+        if (focused) {
+            focusedRegion = region
+        } else if (focusedRegion == region) {
+            focusedRegion = null
+        }
+    }
     val firstFilterChipFocusRequester = remember { FocusRequester() }
     val firstResultFocusRequester = remember { FocusRequester() }
     val hasSubmittedQuery = searchState.hasSubmittedQuery
@@ -140,7 +151,7 @@ fun TvRequestsScreen(
             maxAttempts = TvContentInitialFocusMaxAttempts,
             awaitAttempt = { withFrameNanos { } },
             requestFocus = searchFieldFocusRequester::requestFocus,
-            isFocused = { requestsScreenHasFocus },
+            isFocused = { focusedRegion == TvRequestsFocusRegion.Field },
         )
         if (landed == TvObservedFocusResult.Focused) onInitialContentFocus()
         initialFocusRequested = true
@@ -153,11 +164,16 @@ fun TvRequestsScreen(
             } else {
                 firstFilterChipFocusRequester
             }
+            val targetRegion = if (hasSearchResults) {
+                TvRequestsFocusRegion.Results
+            } else {
+                TvRequestsFocusRegion.Chips
+            }
             requestFocusUntilObserved(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
                 requestFocus = target::requestFocus,
-                isFocused = { requestsScreenHasFocus },
+                isFocused = { focusedRegion == targetRegion },
             )
             focusResultsAfterSearch = false
         }
@@ -213,7 +229,6 @@ fun TvRequestsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .onFocusChanged { requestsScreenHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -231,6 +246,8 @@ fun TvRequestsScreen(
                 firstFilterChipFocusRequester = firstFilterChipFocusRequester,
                 firstResultFocusRequester = firstResultFocusRequester,
                 hasFocusableResult = hasFocusableResult,
+                onFieldFocusChanged = { setFocusedRegion(TvRequestsFocusRegion.Field, it) },
+                onChipsFocusChanged = { setFocusedRegion(TvRequestsFocusRegion.Chips, it) },
                 onQueryChanged = { query -> searchViewModel.onQueryChanged(query) },
                 onSearch = {
                     focusResultsAfterSearch = searchState.query.isNotBlank()
@@ -255,7 +272,11 @@ fun TvRequestsScreen(
                     message = state.error ?: "Search movies and series to request them.",
                 )
                 else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onFocusChanged {
+                            setFocusedRegion(TvRequestsFocusRegion.Results, it.hasFocus)
+                        },
                     verticalArrangement = Arrangement.spacedBy(24.dp),
                     contentPadding = PaddingValues(bottom = 56.dp),
                 ) {
@@ -396,6 +417,9 @@ private fun RequestSearchEmptyItem(message: String) {
     )
 }
 
+/** Focus regions a claim on this screen can aim at. */
+private enum class TvRequestsFocusRegion { Field, Chips, Results }
+
 @Composable
 private fun RequestsHeader(
     query: String,
@@ -406,6 +430,8 @@ private fun RequestsHeader(
     firstFilterChipFocusRequester: FocusRequester,
     firstResultFocusRequester: FocusRequester,
     hasFocusableResult: Boolean,
+    onFieldFocusChanged: (Boolean) -> Unit,
+    onChipsFocusChanged: (Boolean) -> Unit,
     onQueryChanged: (String) -> Unit,
     onSearch: () -> Unit,
     onMediaTypeChanged: (String?) -> Unit,
@@ -466,11 +492,13 @@ private fun RequestsHeader(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
+                    .onFocusChanged { onFieldFocusChanged(it.isFocused) }
                     .focusRequester(searchFieldFocusRequester)
                     .focusProperties { down = firstFilterChipFocusRequester },
                 colors = tvOutlinedTextFieldColors(),
             )
             LazyRow(
+                modifier = Modifier.onFocusChanged { onChipsFocusChanged(it.hasFocus) },
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(end = Spacing.xs),
                 verticalAlignment = Alignment.CenterVertically,

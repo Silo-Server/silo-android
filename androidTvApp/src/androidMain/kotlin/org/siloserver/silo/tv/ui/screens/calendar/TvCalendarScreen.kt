@@ -380,7 +380,16 @@ fun TvCalendarScreen(
 
     CompositionLocalProvider(LocalAmbientBackdropTint provides tintState) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                // The zone callbacks only fire when a calendar control or shelf
+                // GAINS focus, so moving Up from the filter into the top menu
+                // left the flag true with focus outside the screen entirely.
+                // A later shell handoff then read that stale true, skipped both
+                // claims, and still reported initial content focus — and only
+                // another calendar zone gaining focus could clear it, which the
+                // skipped handoff could never cause.
+                .onFocusChanged { if (!it.hasFocus) calendarFilterHasFocus = false },
         ) {
             TvRootHeroBackdrop(
                 content = null,
@@ -436,7 +445,16 @@ fun TvCalendarScreen(
                 listState = listState,
                 controls = controls,
                 activeFilterFocusRequester = filterFocusRequesters[state.filter] ?: filterFocusRequester,
-                onControlFocused = snapControlsToInitialPosition,
+                onControlFocused = { zone ->
+                    // The flag this screen's filter claim is observed on. It was
+                    // declared and never assigned, so it read false forever: the
+                    // claim burned every attempt and reported Exhausted even when
+                    // focus had landed, which meant the reconfirm after Android's
+                    // delayed focus pass, the bar-suppression release and
+                    // onInitialContentFocus() never ran.
+                    calendarFilterHasFocus = zone == CalendarControlFocusZone.Filter
+                    if (zone != null) snapControlsToInitialPosition()
+                },
                 onFocusRequestAcknowledged = {
                     if (lastAppliedFocusRequest != focusRequest) {
                         lastAppliedFocusRequest = focusRequest
@@ -943,7 +961,14 @@ private fun CalendarList(
     listState: LazyListState,
     controls: @Composable ((CalendarControlFocusZone) -> Unit) -> Unit,
     activeFilterFocusRequester: FocusRequester,
-    onControlFocused: () -> Unit,
+    /**
+     * Which control zone holds focus, or null when the controls lose it.
+     *
+     * The zone matters: the screen's filter claim is observed on the filter row
+     * specifically, and a caller that only hears "some control took focus"
+     * cannot tell that apart from the week strip.
+     */
+    onControlFocused: (CalendarControlFocusZone?) -> Unit,
     onFocusRequestAcknowledged: () -> Unit,
     onRefresh: () -> Unit,
     onShowEverything: () -> Unit,
@@ -961,7 +986,10 @@ private fun CalendarList(
     var selectedDayHasFocus by remember { mutableStateOf(false) }
     var isReturningToControls by remember { mutableStateOf(false) }
     var focusedControlZone by remember { mutableStateOf<CalendarControlFocusZone?>(null) }
-    val clearControlFocusZone: () -> Unit = { focusedControlZone = null }
+    val clearControlFocusZone: () -> Unit = {
+        focusedControlZone = null
+        onControlFocused(null)
+    }
     val firstFocusableDayIndex = state.weekDates.indexOfFirst { state.itemsFor(it).isNotEmpty() }
     val onShelfFocused: (Int) -> Unit = { index ->
         // Item zero is the filter/week control shell.
@@ -1000,7 +1028,7 @@ private fun CalendarList(
     var focusedShelfIndex by remember { mutableStateOf<Int?>(null) }
     val onCalendarControlFocused: (CalendarControlFocusZone) -> Unit = { zone ->
         focusedControlZone = zone
-        onControlFocused()
+        onControlFocused(zone)
         onFocusRequestAcknowledged()
     }
     val currentCalendarUpFallback = rememberUpdatedState<(Boolean) -> Boolean> { isRepeat ->
