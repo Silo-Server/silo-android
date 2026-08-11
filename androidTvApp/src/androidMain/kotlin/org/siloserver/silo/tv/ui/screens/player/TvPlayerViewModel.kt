@@ -114,10 +114,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -2077,18 +2077,6 @@ class TvPlayerViewModel(
                     fail(message)
                 }
             }
-        }
-    }
-
-    /**
-     * Delays only the false edges by [graceMs]. isPlaying dips to false on every
-     * ExoPlayer rebuffer, and letting that through cancels the intro countdown
-     * and restarts it from full; a real pause still lands after the grace period.
-     */
-    private fun Flow<Boolean>.settlingFalseEdges(graceMs: Long): Flow<Boolean> = flow {
-        collectLatest { active ->
-            if (!active) delay(graceMs)
-            emit(active)
         }
     }
 
@@ -4906,6 +4894,22 @@ internal fun TvPlayerViewModel.UiState.withoutPlaybackClock(): TvPlayerViewModel
 
 internal fun TvPlayerViewModel.UiState.toPlaybackClock(): PlaybackClock =
     PlaybackClock(position = position, duration = duration)
+
+/**
+ * Delays only the false edges by [graceMs]. isPlaying dips to false on every
+ * ExoPlayer rebuffer, and letting that through cancels the intro countdown and
+ * restarts it from full; a real pause still lands after the grace period.
+ *
+ * channelFlow rather than flow: collectLatest runs each value's block in a child
+ * coroutine, and emitting into a plain flow collector from a child violates the
+ * flow invariant and throws at runtime.
+ */
+internal fun Flow<Boolean>.settlingFalseEdges(graceMs: Long): Flow<Boolean> = channelFlow {
+    collectLatest { active ->
+        if (!active) delay(graceMs)
+        send(active)
+    }
+}
 
 /** Grace period before a dropped isPlaying is treated as a real pause rather than a rebuffer. */
 private const val PLAYBACK_STALL_GRACE_MS = 750L
