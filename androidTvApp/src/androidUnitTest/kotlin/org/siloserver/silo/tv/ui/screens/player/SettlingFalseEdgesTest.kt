@@ -10,12 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * The intro countdown is gated on this operator, and an earlier `flow {}` version
- * of it crashed at runtime with "Flow invariant is violated" the first time
- * playback reported not-playing. These cases pin both the timing contract and the
- * fact that collection does not throw.
- */
+/** Timing contract for the playback-stall debounce that gates the intro countdown. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SettlingFalseEdgesTest {
 
@@ -42,16 +37,15 @@ class SettlingFalseEdgesTest {
         runCurrent()
         assertEquals(listOf(true), seen)
 
-        // A rebuffer: isPlaying drops and recovers well inside the grace window.
+        // A stall: isPlaying drops and recovers inside the grace window.
         source.value = false
         testScheduler.advanceTimeBy(grace / 3)
         source.value = true
         testScheduler.advanceTimeBy(grace * 2)
         runCurrent()
 
-        // A repeated true is fine and is what production sees collapsed: the
-        // controller applies distinctUntilChanged to the combined inputs. What
-        // matters is that no false ever reaches the collector.
+        // Repeated trues are collapsed downstream; what matters is that no false
+        // reaches the collector.
         assertTrue(seen.none { !it }, "a rebuffer must not surface as a pause: $seen")
         job.cancel()
     }

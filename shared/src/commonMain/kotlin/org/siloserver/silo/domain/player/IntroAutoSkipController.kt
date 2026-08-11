@@ -24,7 +24,7 @@ class IntroAutoSkipController(
     private val countdownSeconds: Int = DEFAULT_COUNTDOWN_SECONDS,
 ) {
     companion object {
-        /** Shared by the controller and the UI that renders the countdown, so the two cannot drift. */
+        /** Shared with the UI that renders the countdown so the timer and the bar cannot drift. */
         const val DEFAULT_COUNTDOWN_SECONDS: Int = 5
     }
 
@@ -115,9 +115,8 @@ class IntroAutoSkipController(
             return
         }
 
-        // Hold the countdown until the video is actually playing. Otherwise it
-        // starts while the player is still coming up, and the prompt only
-        // appears partway through an already-elapsed timer.
+        // Hold the countdown until playback is actually running, so the prompt
+        // and the timer start together.
         if (!playbackActive) {
             cancelJob()
             if (_state.value !is IntroAutoSkipState.ShowingButton) {

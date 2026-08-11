@@ -4891,13 +4891,10 @@ internal fun TvPlayerViewModel.UiState.toPlaybackClock(): PlaybackClock =
     PlaybackClock(position = position, duration = duration)
 
 /**
- * Delays only the false edges by [graceMs]. isPlaying dips to false on every
- * ExoPlayer rebuffer, and letting that through cancels the intro countdown and
- * restarts it from full; a real pause still lands after the grace period.
+ * Delays only the false edges by [graceMs], so a brief playback stall leaves the
+ * intro countdown alone while a real pause still stops it.
  *
- * channelFlow rather than flow: collectLatest runs each value's block in a child
- * coroutine, and emitting into a plain flow collector from a child violates the
- * flow invariant and throws at runtime.
+ * channelFlow, not flow: collectLatest emits from a child coroutine.
  */
 internal fun Flow<Boolean>.settlingFalseEdges(graceMs: Long): Flow<Boolean> = channelFlow {
     collectLatest { active ->
@@ -4906,5 +4903,5 @@ internal fun Flow<Boolean>.settlingFalseEdges(graceMs: Long): Flow<Boolean> = ch
     }
 }
 
-/** Grace period before a dropped isPlaying is treated as a real pause rather than a rebuffer. */
+/** How long isPlaying must stay false before it counts as a pause rather than a stall. */
 private const val PLAYBACK_STALL_GRACE_MS = 750L

@@ -44,11 +44,9 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
  * scale), focus-driven instead of touch-driven, and a focus ring on the
  * actionable controls.
  *
- * The countdown button's background fill creeps left-to-right while we are in
- * [IntroAutoSkipState.CountingDown]; it auto-focuses (after two frames, so the
- * focus system is ready) so D-pad Select skips immediately. A D-pad nudge or
- * Back stops the timer and leaves the solid manual pill in place; both are
- * handled by the player screen's root key handler.
+ * The countdown button's fill tracks the time left before the auto-skip fires,
+ * and it claims focus when it appears. Select, D-pad and Back are handled by the
+ * player screen's root key handler.
  *
  * The component itself never positions itself; the parent should anchor it
  * (typically bottom-end above the transport cluster).
@@ -64,27 +62,20 @@ fun TvIntroAutoSkipBanner(
     // banner (and its remembered `fill` Animatable below) leaves and
     // re-enters composition mid-countdown, e.g. via the caller's
     // `!hudOpen && !showNextUp` gate flickering.
-    // Keyed on the state kind, not the state: per-second CountingDown ticks then
-    // recompose this slot instead of recreating the subtree, which would restart
-    // the fill sweep every second.
+    // Keyed on the state kind so the per-second ticks recompose this slot rather
+    // than recreating the subtree, which would restart the fill.
     val slot = when (state) {
         IntroAutoSkipState.Hidden -> 0
         IntroAutoSkipState.ShowingButton -> 1
         is IntroAutoSkipState.CountingDown -> 2
     }
-    // The manual pill auto-focuses when it appears fresh, but not when it
-    // appears because the countdown was cancelled — that would yank focus
-    // straight back from wherever the user just moved it.
+    // The manual pill claims focus when it appears on its own, but not when it
+    // replaces a stopped countdown: focus has deliberately moved elsewhere.
     val previousSlot = remember { mutableStateOf(-1) }
     LaunchedEffect(slot) { previousSlot.value = slot }
-    // Driven off the frame clock, not an AnimationSpec, on purpose: this bar
-    // reports wall-clock time remaining before the auto-skip fires, and Compose
-    // scales spec durations by the device's animator_duration_scale via
-    // MotionDurationScale. Measured on a Shield set to 0.5x, a 5s tween finished
-    // in 2508ms and the fill sat full for the last 2.5s; at scale 0 it would
-    // jump straight to full. withFrameMillis is unscaled, so progress here
-    // always matches real elapsed time. Decorative transitions below still
-    // honor the setting.
+    // The fill shows time remaining, so it runs off the frame clock: Compose
+    // scales AnimationSpec durations by the device animation setting, which would
+    // let the bar disagree with the timer. Transitions below still honor it.
     val fill = remember { mutableFloatStateOf(0f) }
     val secondsRemaining = (state as? IntroAutoSkipState.CountingDown)?.secondsRemaining
     val countdownStart = remember(secondsRemaining == null) { secondsRemaining }
@@ -109,8 +100,8 @@ fun TvIntroAutoSkipBanner(
     AnimatedContent(
         targetState = slot,
         transitionSpec = {
-            // Instant exit and no SizeTransform: the default shrinks the pill
-            // into nothing, which reads as a "minimize" after a skip press.
+            // Instant exit, no SizeTransform: the default shrink reads as the
+            // button minimizing away after a skip press.
             fadeIn(animationSpec = tween(durationMillis = 200)) togetherWith
                 ExitTransition.None using null
         },
@@ -152,8 +143,7 @@ private fun TvSkipIntroButton(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val focusRequester = remember { FocusRequester() }
 
-    // Captured once: after a cancel this pill replaces the countdown, and
-    // claiming focus then would pull it back from wherever the user just moved.
+    // Captured once so a later recomposition cannot re-claim focus.
     val shouldFocus = remember { autoFocus }
     val initialFocusModifier = rememberTvContentInitialFocus(
         target = focusRequester,
@@ -216,8 +206,8 @@ private fun TvShrinkingFillButton(
             .focusRequester(focusRequester)
             .clickable(interactionSource = interactionSource, indication = null) { onSkipNow() },
     ) {
-        // matchParentSize sizes the fill layer to the pill; plain fillMaxWidth /
-        // fillMaxHeight here would grab the screen's max constraints and balloon it.
+        // Sized to the pill via matchParentSize; plain fillMaxWidth/Height would
+        // take the screen's constraints instead.
         Box(Modifier.matchParentSize()) {
             Box(
                 modifier = Modifier

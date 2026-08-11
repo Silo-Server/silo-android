@@ -1018,26 +1018,23 @@ fun TvPlayerScreen(
                 return@handler false
             }
 
-            // Back during the countdown stops the timer and leaves the prompt in
-            // place, same as a D-pad nudge. It is consumed so this press cannot
-            // also exit playback; once the timer is stopped the state is no longer
-            // CountingDown, so a second Back behaves normally.
+            // Back stops the timer and leaves the prompt up, like a D-pad nudge.
+            // Consumed so the press cannot also exit playback; afterwards the
+            // state is no longer CountingDown, so Back behaves normally.
             if (latestIntroSkipState is IntroAutoSkipState.CountingDown &&
                 event.keyCode == KeyEvent.KEYCODE_BACK
             ) {
-                // Both action phases are consumed: leaking the ACTION_UP lets it
-                // reach the activity's back dispatcher and fire whichever
-                // BackHandler happens to be topmost.
+                // Both phases are consumed: a leaked ACTION_UP would reach the
+                // activity's back dispatcher.
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     viewModel.onCancelIntroAutoSkip()
                 }
                 return@handler true
             }
 
-            // A D-pad direction press during the countdown stops the timer but
-            // leaves the prompt in place. Handled here, not on the button: the
-            // banner is not reliably in the focus tree, so a key modifier on it
-            // never sees these events. Falls through so navigation/seek still run.
+            // A D-pad direction stops the timer but leaves the prompt up. Handled
+            // here rather than on the button, which is not reliably in the focus
+            // tree. Falls through so navigation and seek still run.
             if (event.action == KeyEvent.ACTION_DOWN &&
                 event.repeatCount == 0 &&
                 latestIntroSkipState is IntroAutoSkipState.CountingDown &&
@@ -3462,9 +3459,8 @@ private fun TvPlayerOverlays(
         // Bottom inset (200dp) clears the transport cluster + scrubber column.
         if (!isInPictureInPictureMode) {
             if (!hudOpen && !showNextUp) {
-                // Drops toward the corner once the transport cluster fades out,
-                // and lifts back above it when controls return. Decorative
-                // motion, so it intentionally honors the device animation scale.
+                // Sits above the transport cluster while controls are up and
+                // drops toward the corner when they hide.
                 val introSkipBottomInset by animateDpAsState(
                     targetValue = if (showControls) 200.dp else 56.dp,
                     animationSpec = tween(durationMillis = 220),
