@@ -12,10 +12,12 @@ import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.DownloadsApi
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
+import org.siloserver.silo.network.api.RecommendationApi
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.DownloadsRepository
 import org.siloserver.silo.repository.EbookReaderRepository
 import org.siloserver.silo.repository.PersonalDataRepository
+import org.siloserver.silo.repository.RecommendationRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -159,6 +161,7 @@ class MobileDetailActionsSourceTest {
             downloadsRepository = DownloadsRepository(EmptyDownloadsApi()),
             downloadEnqueuer = unsafeInstance(),
             ebookReaderRepository = EbookReaderRepository(EbookReaderApi(dummyHttpClient())),
+            recommendationRepository = RecommendationRepository(RecommendationApi(dummyHttpClient())),
             metadataAiRepository = org.siloserver.silo.repository.MetadataAiRepository(
                 org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient()),
             ),

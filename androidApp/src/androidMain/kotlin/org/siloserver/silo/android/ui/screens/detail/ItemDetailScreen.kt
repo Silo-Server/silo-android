@@ -556,6 +556,7 @@ fun ItemDetailScreen(
                         SeriesDetailContent(
                             translation = translationSlot,
                             detail = detail,
+                            similarItems = state.similarItems,
                             seasons = state.seasons,
                             selectedSeasonNumber = state.selectedSeasonNumber,
                             episodes = state.episodes,
@@ -754,6 +755,7 @@ fun ItemDetailScreen(
                         MovieDetailContent(
                             translation = translationSlot,
                             detail = detail,
+                            similarItems = state.similarItems,
                             portraitArtwork = portraitArtwork,
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,
