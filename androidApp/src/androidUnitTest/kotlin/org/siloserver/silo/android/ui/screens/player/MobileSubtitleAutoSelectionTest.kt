@@ -499,6 +499,26 @@ class MobileSubtitleAutoSelectionTest {
     }
 
     @Test
+    fun autoSubtitlePreferenceDoesNotTreatHindiCodeAsHearingImpaired() {
+        val subtitles = listOf(
+            subtitle(index = 4, label = "EN - HI", language = "en"),
+            subtitle(index = 7, label = "English", language = "en"),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+            ),
+        )
+    }
+
+    @Test
     fun autoSubtitleResolverDisablesWhenAudioAlreadyMatchesPreferredLanguage() {
         assertEquals(
             MobileSubtitleAutoSelection.Disable,

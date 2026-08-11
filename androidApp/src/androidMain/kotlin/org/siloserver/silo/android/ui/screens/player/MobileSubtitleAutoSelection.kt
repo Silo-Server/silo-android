@@ -10,12 +10,8 @@ import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.matchesSubtitleMediaIdentity
 import org.siloserver.silo.playback.playbackSubtitleIdentity
 import org.siloserver.silo.playback.resolveDownloadedSubtitlePreferenceOrdinal
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.playback.subtitleMediaIdentityOrNull
-
-private val hearingImpairedSubtitleTokenRegex = Regex(
-    pattern = """(^|[^a-z0-9])(cc|sdh|hi)([^a-z0-9]|$)""",
-    option = RegexOption.IGNORE_CASE,
-)
 
 internal sealed class MobileSubtitleAutoSelection {
     data object NoChange : MobileSubtitleAutoSelection()
@@ -263,19 +259,9 @@ private fun bestForcedAutoSubtitleOrdinal(
 }
 
 private fun PlayerSubtitleInfo.isEffectivelyHearingImpaired(): Boolean =
-    label.indicatesHearingImpairedSubtitle() ||
-        source.indicatesHearingImpairedSubtitle() ||
-        url.indicatesHearingImpairedSubtitle()
-
-private fun String?.indicatesHearingImpairedSubtitle(): Boolean {
-    val value = this?.takeIf { it.isNotBlank() } ?: return false
-    val lower = value.lowercase()
-    return lower.contains("closed caption") ||
-        lower.contains("hearing impaired") ||
-        lower.contains("hearing-impaired") ||
-        lower.contains("hearing") ||
-        hearingImpairedSubtitleTokenRegex.containsMatchIn(value)
-}
+    subtitleLabelIndicatesHearingImpaired(label) ||
+        subtitleLabelIndicatesHearingImpaired(source) ||
+        subtitleLabelIndicatesHearingImpaired(url)
 
 private fun PlayerSubtitleInfo.isBitmap(): Boolean =
     isBitmapSubtitleCodecFamily(codec ?: subtitleCodecFromUrl(url))

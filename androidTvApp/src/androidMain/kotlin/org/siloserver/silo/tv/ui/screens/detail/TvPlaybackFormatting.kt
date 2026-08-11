@@ -5,6 +5,7 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
 import org.siloserver.silo.player.DolbyVisionDetection
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import java.util.Locale
 
 internal fun automaticTrackLabel(resolvedLabel: String?): String =
@@ -625,18 +626,9 @@ object TvPlaybackFormatting {
         }
     }
 
-    private val hearingImpairedSubtitleTokenRegex =
-        Regex("""(^|[^a-z0-9])(cc|sdh|hi)([^a-z0-9]|$)""", RegexOption.IGNORE_CASE)
-
-    /** Title-based HI/CC/SDH detection mirroring the player's `indicatesHearingImpairedSubtitle`. */
+    /** Title-based CC/SDH detection shared with player identity and auto-selection. */
     private fun isHearingImpairedSubtitle(track: SubtitleTrack): Boolean {
-        val title = track.title ?: return false
-        val lower = title.lowercase(Locale.US)
-        return lower.contains("closed caption") ||
-            lower.contains("hearing impaired") ||
-            lower.contains("hearing-impaired") ||
-            lower.contains("hearing") ||
-            hearingImpairedSubtitleTokenRegex.containsMatchIn(title)
+        return subtitleLabelIndicatesHearingImpaired(track.title)
     }
 
     /**
@@ -702,7 +694,7 @@ object TvPlaybackFormatting {
         if (title.length > 28 || '[' in title || SUBTITLE_FILENAME_SUFFIXES.any(lowered::endsWith)) {
             return null
         }
-        if (lowered == "forced" || lowered in listOf("sdh", "cc", "hi", "hearing impaired")) {
+        if (lowered == "forced" || lowered in listOf("sdh", "cc", "hearing impaired")) {
             return null
         }
         return displayTitle(title)
@@ -719,10 +711,7 @@ object TvPlaybackFormatting {
     /** Mirrors tvOS `containsAccessibilityMarker` — keeps the pill from
      *  doubling up markers a custom title already carries. */
     private fun containsAccessibilityMarker(value: String): Boolean {
-        val lowered = value.lowercase(Locale.US)
-        val words = lowered.split(Regex("[^a-z]+")).filter { it.isNotEmpty() }
-        return "sdh" in words || "cc" in words || "hi" in words ||
-            lowered.contains("hearing impaired")
+        return subtitleLabelIndicatesHearingImpaired(value)
     }
 
     // --- Editions (Android model has no edition data) --------------------

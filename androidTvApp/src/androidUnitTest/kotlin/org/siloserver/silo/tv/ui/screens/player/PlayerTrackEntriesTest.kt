@@ -292,6 +292,44 @@ class PlayerTrackEntriesTest {
     }
 
     @Test
+    fun autoSubtitleResolverDoesNotTreatHindiCodeAsHearingImpaired() {
+        val subtitles = listOf(
+            PlayerTrackEntry(
+                index = 1,
+                label = "EN - HI",
+                language = "en",
+                isSelected = false,
+                codecOrMime = MimeTypes.TEXT_VTT,
+            ),
+            PlayerTrackEntry(
+                index = 2,
+                label = "English VTT",
+                language = "en",
+                isSelected = false,
+                codecOrMime = MimeTypes.TEXT_VTT,
+            ),
+        )
+
+        assertEquals(
+            SubtitleAutoSelection.Select(1),
+            resolveAutoSubtitleSelection(
+                audioTracks = listOf(
+                    PlayerTrackEntry(
+                        index = 0,
+                        label = "Japanese AAC",
+                        language = "ja",
+                        isSelected = true,
+                    ),
+                ),
+                subtitleTracks = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForced = true,
+            ),
+        )
+    }
+
+    @Test
     fun initialSubtitleOrdinalResolvesThroughMountedSubtitleMetadata() {
         val tracks = listOf(
             PlayerTrackEntry(

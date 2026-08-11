@@ -11,6 +11,7 @@ import org.siloserver.silo.model.playback.playbackClientFeaturesV3
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class CastPlaybackPreparerTest {
     @Test
@@ -54,6 +55,24 @@ class CastPlaybackPreparerTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun successfulReceiverLoadResetsTheRecoveryBudget() {
+        val budget = CastLoadRecoveryBudget(maxAttempts = 3)
+
+        repeat(5) {
+            assertTrue(budget.tryConsume())
+            budget.resetAfterSuccess()
+        }
+    }
+
+    @Test
+    fun consecutiveReceiverLoadFailuresExhaustTheRecoveryBudget() {
+        val budget = CastLoadRecoveryBudget(maxAttempts = 3)
+
+        repeat(3) { assertTrue(budget.tryConsume()) }
+        assertFalse(budget.tryConsume())
     }
 
     private fun plan(

@@ -123,6 +123,7 @@ import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
 import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
 import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackSourceMetadata
@@ -2993,7 +2994,7 @@ internal fun extractTrackEntries(tracks: Tracks, type: Int): List<PlayerTrackEnt
                 val hearingImpaired =
                     format.roleFlags and
                         (C.ROLE_FLAG_CAPTION or C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0 ||
-                        label.indicatesHearingImpairedSubtitle()
+                        subtitleLabelIndicatesHearingImpaired(label)
                 result.add(
                     PlayerTrackEntry(
                         index = media3FlatTextIndex,

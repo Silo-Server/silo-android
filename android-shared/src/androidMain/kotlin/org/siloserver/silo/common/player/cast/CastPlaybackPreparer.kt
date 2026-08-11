@@ -3,6 +3,7 @@ package org.siloserver.silo.common.player.cast
 import android.util.Log
 import java.net.URLEncoder
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -416,7 +417,9 @@ class CastPlaybackSessionHandle internal constructor(
     private val terminal = AtomicBoolean(false)
     private val recoveryMutex = Mutex()
     private val pendingSubtitleChange = AtomicReference<CastStagedSubtitleChange?>(null)
-    private var loadFailureRecoveryAttempts = 0
+    private val loadFailureRecoveryBudget = CastLoadRecoveryBudget(
+        maxAttempts = MAX_LOAD_FAILURE_RECOVERY_ATTEMPTS,
+    )
 
     val sessionId: String
         get() = ready.get().session.sessionId
@@ -450,11 +453,10 @@ class CastPlaybackSessionHandle internal constructor(
         message: String,
     ): CastMediaSpec? = recoveryMutex.withLock {
         if (terminal.get() || pendingSubtitleChange.get() != null) return@withLock null
-        if (loadFailureRecoveryAttempts >= MAX_LOAD_FAILURE_RECOVERY_ATTEMPTS) {
+        if (!loadFailureRecoveryBudget.tryConsume()) {
             stopLocked(playerPositionSeconds, isPaused = true, reason = "load_recovery_exhausted")
             return@withLock null
         }
-        loadFailureRecoveryAttempts += 1
         val snapshot = ready.get()
         val sourcePosition = sourcePositionForPlayer(snapshot, playerPositionSeconds)
         when (
@@ -487,6 +489,11 @@ class CastPlaybackSessionHandle internal constructor(
                 null
             }
         }
+    }
+
+    /** A receiver-acknowledged load ends the current consecutive-failure run. */
+    fun confirmReceiverLoadSucceeded() {
+        loadFailureRecoveryBudget.resetAfterSuccess()
     }
 
     suspend fun selectSubtitleTrack(
@@ -660,6 +667,24 @@ class CastPlaybackSessionHandle internal constructor(
 
     private companion object {
         const val MAX_LOAD_FAILURE_RECOVERY_ATTEMPTS = 3
+    }
+}
+
+internal class CastLoadRecoveryBudget(
+    private val maxAttempts: Int,
+) {
+    private val attempts = AtomicInteger(0)
+
+    fun tryConsume(): Boolean {
+        while (true) {
+            val current = attempts.get()
+            if (current >= maxAttempts) return false
+            if (attempts.compareAndSet(current, current + 1)) return true
+        }
+    }
+
+    fun resetAfterSuccess() {
+        attempts.set(0)
     }
 }
 

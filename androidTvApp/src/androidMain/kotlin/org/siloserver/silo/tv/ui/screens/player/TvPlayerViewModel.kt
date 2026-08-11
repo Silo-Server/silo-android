@@ -103,6 +103,7 @@ import org.siloserver.silo.playback.nextEpisodeAfter
 import org.siloserver.silo.playback.resolveMountedSubtitleOrdinal
 import org.siloserver.silo.playback.subtitleTrackFingerprint
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.player.DolbyVisionPolicy
 import org.siloserver.silo.repository.SubtitlesRepository
 import org.siloserver.silo.repository.port.PlaybackWriteScope
@@ -385,24 +386,10 @@ internal fun resolveTvEpisodeInitialSubtitleSelection(
     )
 }
 
-private val hearingImpairedSubtitleTokenRegex = Regex(
-    pattern = """(^|[^a-z0-9])(cc|sdh|hi)([^a-z0-9]|$)""",
-    option = RegexOption.IGNORE_CASE,
-)
-
-internal fun String.indicatesHearingImpairedSubtitle(): Boolean {
-    val lower = lowercase()
-    return lower.contains("closed caption") ||
-        lower.contains("hearing impaired") ||
-        lower.contains("hearing-impaired") ||
-        lower.contains("hearing") ||
-        hearingImpairedSubtitleTokenRegex.containsMatchIn(this)
-}
-
 private fun PlayerTrackEntry.isEffectivelyHearingImpaired(): Boolean =
     isHearingImpaired ||
-        label.indicatesHearingImpairedSubtitle() ||
-        displayLabel.indicatesHearingImpairedSubtitle()
+        subtitleLabelIndicatesHearingImpaired(label) ||
+        subtitleLabelIndicatesHearingImpaired(displayLabel)
 
 internal fun subtitleTracksWithSelection(
     tracks: List<PlayerTrackEntry>,

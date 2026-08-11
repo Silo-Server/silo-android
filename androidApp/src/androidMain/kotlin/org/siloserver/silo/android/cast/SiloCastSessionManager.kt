@@ -377,6 +377,7 @@ class SiloCastSessionManager(private val context: Context) {
             if (subtitleLoad != null) {
                 lifecycleScope.launch {
                     if (result.status.isSuccess && pending === spec) {
+                        spec.playbackSession.confirmReceiverLoadSucceeded()
                         val committed = subtitleLoad.change.commit()
                         if (
                             committed != null &&
@@ -396,6 +397,7 @@ class SiloCastSessionManager(private val context: Context) {
                     }
                 }
             } else if (result.status.isSuccess && pending === spec) {
+                spec.playbackSession.confirmReceiverLoadSucceeded()
                 // The MediaInfo-embedded style alone doesn't reach the
                 // receiver's renderer; re-assert via the tracks channel once
                 // the load lands.
