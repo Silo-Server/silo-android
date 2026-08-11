@@ -83,8 +83,7 @@ class DiagnosticsViewModel(
 
     fun delete(reportId: String, onDeleted: () -> Unit = {}) {
         viewModelScope.launch {
-            coordinator.delete(reportId)
-            onDeleted()
+            if (coordinator.delete(reportId)) onDeleted()
         }
     }
 

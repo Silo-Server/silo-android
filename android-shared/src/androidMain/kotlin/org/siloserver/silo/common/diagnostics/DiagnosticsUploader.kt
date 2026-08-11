@@ -96,6 +96,19 @@ class DefaultDiagnosticsUploader(
         expectedNoticeVersion: Int?,
     ): DiagnosticsUploadDecision {
         val report = reports.load(reportId) ?: return DiagnosticsUploadDecision.KeptInvalid
+        if (
+            report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED &&
+            report.state.hostedRemoteShortId != null
+        ) {
+            return try {
+                pollHostedStatus(report)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                markRetryable(report.id, "status_unavailable")
+                DiagnosticsUploadDecision.KeptRetryable
+            }
+        }
         val retryDeadline = reports.retryAfterDeadline(report.binding.binding)
         if (retryDeadline != null && retryDeadline > nowMs()) return DiagnosticsUploadDecision.KeptRetryable
         if (requireAlwaysConsent && report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED) {
@@ -134,20 +147,66 @@ class DefaultDiagnosticsUploader(
             return consentBefore.rejectedUploadDecision(requireAlwaysConsent)
         }
         val framedReport = report.withCurrentConsent(consentBefore, before.noticeVersion)
-
-        val tokens = try {
-            redactionTokens.tokens(report.binding.destinationKind)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Throwable) {
-            markRetryable(report.id, "redaction_tokens_unavailable")
-            return DiagnosticsUploadDecision.KeptRetryable
+        var hostedEnvelopeMustBePersisted = false
+        val bundle = if (report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+            when (val cached = reports.loadHostedEnvelope(report.id)) {
+                HostedEnvelopeLoadResult.Corrupt -> {
+                    markPermanent(report.id, "invalid_hosted_envelope")
+                    return DiagnosticsUploadDecision.KeptInvalid
+                }
+                is HostedEnvelopeLoadResult.Available -> {
+                    if (report.state.hostedConsentRefreshRequired) {
+                        hostedEnvelopeMustBePersisted = true
+                        runCatching {
+                            bundleBuilder.reframeHosted(cached.bundle, framedReport.manifest.consent)
+                        }.getOrElse {
+                            markPermanent(report.id, "invalid_hosted_envelope")
+                            return DiagnosticsUploadDecision.KeptInvalid
+                        }
+                    } else {
+                        // Once the first create envelope is committed locally,
+                        // every ambiguous retry must replay its exact manifest,
+                        // length and SHA even if tokens or collector policy rotate.
+                        cached.bundle
+                    }
+                }
+                HostedEnvelopeLoadResult.Missing -> {
+                    val tokens = try {
+                        redactionTokens.tokens(report.binding.destinationKind)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        markRetryable(report.id, "redaction_tokens_unavailable")
+                        return DiagnosticsUploadDecision.KeptRetryable
+                    }
+                    hostedEnvelopeMustBePersisted = true
+                    runCatching { bundleBuilder.build(framedReport, tokens) }.getOrElse {
+                        markPermanent(report.id, "invalid_bundle")
+                        return DiagnosticsUploadDecision.KeptInvalid
+                    }
+                }
+            }
+        } else {
+            val tokens = try {
+                redactionTokens.tokens(report.binding.destinationKind)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                markRetryable(report.id, "redaction_tokens_unavailable")
+                return DiagnosticsUploadDecision.KeptRetryable
+            }
+            runCatching { bundleBuilder.build(framedReport, tokens) }.getOrElse {
+                markPermanent(report.id, "invalid_bundle")
+                return DiagnosticsUploadDecision.KeptInvalid
+            }
         }
-        val bundle = runCatching { bundleBuilder.build(framedReport, tokens) }.getOrElse {
-            markPermanent(report.id, "invalid_bundle")
-            return DiagnosticsUploadDecision.KeptInvalid
-        }
-        if (bundle.bytes.size.toLong() > before.maxBundleBytes || bundle.manifestBytes.size.toLong() > before.maxManifestBytes) {
+        val enforceAdvertisedSizeLimits =
+            report.binding.destinationKind != DiagnosticsDestinationKind.HOSTED || hostedEnvelopeMustBePersisted
+        if (
+            enforceAdvertisedSizeLimits &&
+            (bundle.bytes.size.toLong() > before.maxBundleBytes ||
+                bundle.manifestBytes.size.toLong() > before.maxManifestBytes)
+        ) {
             markPermanent(report.id, "too_large")
             return DiagnosticsUploadDecision.KeptTooLarge
         }
@@ -175,11 +234,26 @@ class DefaultDiagnosticsUploader(
             return DiagnosticsUploadDecision.KeptConsentReviewRequired
         }
         if (
-            bundle.bytes.size.toLong() > after.maxBundleBytes ||
-            bundle.manifestBytes.size.toLong() > after.maxManifestBytes
+            enforceAdvertisedSizeLimits &&
+            (bundle.bytes.size.toLong() > after.maxBundleBytes ||
+                bundle.manifestBytes.size.toLong() > after.maxManifestBytes)
         ) {
             markPermanent(report.id, "too_large")
             return DiagnosticsUploadDecision.KeptTooLarge
+        }
+
+        if (hostedEnvelopeMustBePersisted) {
+            try {
+                // This durable local commit is the send boundary. Never make a
+                // create request unless the exact sanitized envelope can be
+                // replayed after process death or a lost response.
+                reports.saveHostedEnvelope(report.id, bundle)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                markRetryable(report.id, "hosted_envelope_unavailable")
+                return DiagnosticsUploadDecision.KeptRetryable
+            }
         }
 
         val decision = try {
@@ -303,6 +377,10 @@ class DefaultDiagnosticsUploader(
             markPermanent(report.id, "invalid_response")
             return DiagnosticsUploadDecision.KeptInvalid
         }
+        // Persist the remote identity immediately after the first validated
+        // durable receipt so an eventual rejection can still be deleted from
+        // the collector before local evidence is removed.
+        reports.markHostedProcessing(report.id, uploadShortId)
 
         val state = when (
             val status = hostedApi.reportStatus(credentials.installationToken, wireReportId)
@@ -323,7 +401,7 @@ class DefaultDiagnosticsUploader(
                         markPermanent(report.id, status.value.errorCode ?: status.value.state.wireValue)
                         return DiagnosticsUploadDecision.KeptInvalid
                     }
-                    in HOSTED_DURABLY_ACCEPTED_STATES -> status.value.state.wireValue
+                    in HOSTED_DURABLY_ACCEPTED_STATES -> status.value.state
                     else -> {
                         markPermanent(report.id, "invalid_response")
                         return DiagnosticsUploadDecision.KeptInvalid
@@ -333,11 +411,73 @@ class DefaultDiagnosticsUploader(
             // Only a validated durable-acceptance receipt permits this fallback.
             is HostedDiagnosticsApiResult.Failure,
             is HostedDiagnosticsApiResult.NetworkError,
-            -> uploadReceipt.state.wireValue
+            -> uploadReceipt.state
         }
-        reports.delete(report.id)
-        runCatching { sentRecorder.record(report.binding.binding, uploadShortId, nowMs(), state) }
-        return DiagnosticsUploadDecision.Uploaded(uploadShortId, state)
+        if (state == HostedDiagnosticsReportState.READY) {
+            reports.delete(report.id)
+            runCatching { sentRecorder.record(report.binding.binding, uploadShortId, nowMs(), state.wireValue) }
+            return DiagnosticsUploadDecision.Uploaded(uploadShortId, state.wireValue)
+        }
+        return DiagnosticsUploadDecision.KeptRetryable
+    }
+
+    private suspend fun pollHostedStatus(report: PendingReport): DiagnosticsUploadDecision {
+        val expectedShortId = report.state.hostedRemoteShortId ?: return DiagnosticsUploadDecision.KeptRetryable
+        val wireReportId = report.id.toHostedWireReportIdOrNull() ?: run {
+            markPermanent(report.id, "invalid_report_id")
+            return DiagnosticsUploadDecision.KeptInvalid
+        }
+        val credentials = hostedInstallations?.current() ?: run {
+            markRetryable(report.id, "installation_unavailable")
+            return DiagnosticsUploadDecision.KeptRetryable
+        }
+        val api = hostedApi ?: return DiagnosticsUploadDecision.KeptUnavailable
+        return when (val result = api.reportStatus(credentials.installationToken, wireReportId)) {
+            is HostedDiagnosticsApiResult.NetworkError -> {
+                markRetryable(report.id, "network")
+                DiagnosticsUploadDecision.KeptRetryable
+            }
+            is HostedDiagnosticsApiResult.Failure -> {
+                markRetryable(report.id, result.errorCode.ifBlank { "status_unavailable" })
+                DiagnosticsUploadDecision.KeptRetryable
+            }
+            is HostedDiagnosticsApiResult.Success -> {
+                val status = result.value
+                if (
+                    status.reportId != wireReportId ||
+                    status.shortId?.takeIf(String::isNotBlank) != expectedShortId
+                ) {
+                    markPermanent(report.id, "invalid_response")
+                    return DiagnosticsUploadDecision.KeptInvalid
+                }
+                when (status.state) {
+                    HostedDiagnosticsReportState.READY -> {
+                        reports.delete(report.id)
+                        runCatching {
+                            sentRecorder.record(report.binding.binding, expectedShortId, nowMs(), "ready")
+                        }
+                        DiagnosticsUploadDecision.Uploaded(expectedShortId, "ready")
+                    }
+                    HostedDiagnosticsReportState.PROCESSING -> {
+                        reports.markHostedProcessing(report.id, expectedShortId)
+                        DiagnosticsUploadDecision.KeptRetryable
+                    }
+                    HostedDiagnosticsReportState.REJECTED,
+                    HostedDiagnosticsReportState.DELETING,
+                    HostedDiagnosticsReportState.DELETED,
+                    -> {
+                        // Keep the last local evidence copy. The collector may
+                        // have removed its unvalidated raw object already.
+                        markPermanent(report.id, status.errorCode ?: status.state.wireValue)
+                        DiagnosticsUploadDecision.KeptInvalid
+                    }
+                    else -> {
+                        markPermanent(report.id, "invalid_response")
+                        DiagnosticsUploadDecision.KeptInvalid
+                    }
+                }
+            }
+        }
     }
 
     private suspend fun replaceHostedCredentials(): HostedDiagnosticsCredentials? {
@@ -359,6 +499,7 @@ class DefaultDiagnosticsUploader(
         val code = error.errorCode.ifBlank { "unknown" }
         if (code == "stale_consent") {
             return try {
+                reports.markHostedConsentRefreshRequired(report.id)
                 staleConsentHandler.demote(report.binding.binding, report.manifest.consent.noticeVersion)
                 markRetryable(report.id, code)
                 DiagnosticsUploadDecision.KeptConsentReviewRequired
@@ -370,11 +511,13 @@ class DefaultDiagnosticsUploader(
             }
         }
         val decision = when {
-            code == "bundle_too_large" -> DiagnosticsUploadDecision.KeptTooLarge
+            code in HOSTED_TOO_LARGE_ERRORS -> DiagnosticsUploadDecision.KeptTooLarge
             code == "unsupported_schema" -> DiagnosticsUploadDecision.KeptServerUpdateRequired
             code == "disabled" || code == "storage_unavailable" -> DiagnosticsUploadDecision.KeptUnavailable
             code in HOSTED_PERMANENT_ERRORS -> DiagnosticsUploadDecision.KeptInvalid
-            code in HOSTED_RETRYABLE_ERRORS || error.httpStatus == 429 || error.httpStatus >= 500 -> {
+            code in HOSTED_RETRYABLE_ERRORS ||
+                (code == "invalid_response" && error.httpStatus == 202) ||
+                error.httpStatus == 429 || error.httpStatus >= 500 -> {
                 DiagnosticsUploadDecision.KeptRetryable
             }
             else -> DiagnosticsUploadDecision.KeptInvalid
@@ -490,9 +633,20 @@ class DefaultDiagnosticsUploader(
 
     private companion object {
         const val MAX_RETRY_AFTER_SECONDS = 7L * 24 * 60 * 60
-        val HOSTED_RETRYABLE_ERRORS = setOf("busy", "quota_exceeded", "rate_limited", "internal_error")
+        val HOSTED_RETRYABLE_ERRORS = setOf(
+            "busy",
+            "quota_exceeded",
+            "rate_limited",
+            "internal_error",
+            "invalid_upload_token",
+            "upload_cancelled",
+        )
+        val HOSTED_TOO_LARGE_ERRORS = setOf(
+            "bundle_too_large",
+            "manifest_too_large",
+            "compression_ratio_exceeded",
+        )
         val HOSTED_DURABLY_ACCEPTED_STATES = setOf(
-            HostedDiagnosticsReportState.UPLOADED,
             HostedDiagnosticsReportState.PROCESSING,
             HostedDiagnosticsReportState.READY,
         )
@@ -503,11 +657,14 @@ class DefaultDiagnosticsUploader(
             "invalid_bundle_size",
             "invalid_bundle_sha256",
             "invalid_manifest",
+            "hosted_consent_required",
             "privacy_field_rejected",
             "privacy_value_rejected",
+            "privacy_artifact_rejected",
             "wrong_destination",
             "archive_metadata_mismatch",
             "report_conflict",
+            "upload_attempt_limit_exceeded",
             "unsupported_media_type",
             "size_mismatch",
             "invalid_installation_token",

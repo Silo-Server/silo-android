@@ -1,6 +1,8 @@
 package org.siloserver.silo.common.diagnostics
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermission
 import kotlinx.serialization.json.Json
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
@@ -139,6 +141,149 @@ class PendingReportStoreTest {
         assertEquals(day(11), store.retryAfterDeadline(binding))
         store.purge(binding)
         assertNull(store.retryAfterDeadline(binding))
+    }
+
+    @Test
+    fun interruptedHostedEnvelopeStagingIsDiscardedAndTreatedAsMissing() {
+        val store = newStore(nowMs = { day(10) })
+        val hostedBinding = PendingReportBinding(
+            serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            accountUserId = "anonymous-hosted-device",
+            profileId = null,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val report = store.save(capture(day = 10, fingerprint = "hosted", binding = hostedBinding))
+        val staging = report.directory.resolve(".hosted-envelope-staging-${"a".repeat(32)}")
+        assertTrue(staging.mkdirs())
+        staging.resolve("manifest.json").writeText("partial")
+
+        assertEquals(HostedEnvelopeLoadResult.Missing, store.loadHostedEnvelope(report.id))
+        assertFalse(staging.exists(), "an uncommitted generation must never become the retry envelope")
+        assertNull(store.load(report.id)?.state?.hostedEnvelopeGeneration)
+    }
+
+    @Test
+    fun tamperedPublishedHostedMemberMakesTheCommittedEnvelopeCorrupt() {
+        val store = newStore(nowMs = { day(10) })
+        val hostedBinding = PendingReportBinding(
+            serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            accountUserId = "anonymous-hosted-device",
+            profileId = null,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val report = store.save(capture(day = 10, fingerprint = "hosted-tamper", binding = hostedBinding))
+        val bundle = FileDiagnosticsBundleBuilder().build(report, redactionTokens = emptyList())
+        store.saveHostedEnvelope(report.id, bundle)
+        val generation = assertNotNull(store.load(report.id)?.state?.hostedEnvelopeGeneration)
+        report.directory.resolve(".hosted-envelope-$generation/entries/device.json").writeText("{\"tampered\":true}")
+
+        assertEquals(HostedEnvelopeLoadResult.Corrupt, store.loadHostedEnvelope(report.id))
+    }
+
+    @Test
+    fun hostedDeletionIntentIsDurableForEnvelopeOrRemoteIdentity() {
+        val store = newStore(nowMs = { day(10) })
+        val hostedBinding = PendingReportBinding(
+            serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            accountUserId = "anonymous-hosted-device",
+            profileId = null,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val envelopeReport = store.save(capture(day = 8, fingerprint = "hosted-envelope", binding = hostedBinding))
+        val bundle = FileDiagnosticsBundleBuilder().build(envelopeReport, redactionTokens = emptyList())
+        store.saveHostedEnvelope(envelopeReport.id, bundle)
+        val interruptedCopy = temporaryFolder.newFolder("hosted-delete-interrupted")
+        envelopeReport.directory.copyRecursively(interruptedCopy, overwrite = true)
+        val remoteReport = store.save(capture(day = 9, fingerprint = "hosted-remote", binding = hostedBinding))
+        store.markHostedProcessing(remoteReport.id, "ABC123")
+        val localOnly = store.save(capture(day = 10, fingerprint = "hosted-local", binding = hostedBinding))
+
+        store.stageHostedDeletionAndDelete(envelopeReport.id)
+        store.stageHostedDeletionAndDelete(remoteReport.id)
+        store.stageHostedDeletionAndDelete(localOnly.id)
+
+        assertNull(store.load(envelopeReport.id))
+        assertNull(store.load(remoteReport.id))
+        assertNull(store.load(localOnly.id))
+        assertEquals(
+            listOf(envelopeReport.id, remoteReport.id).sorted(),
+            store.hostedDeletionIntents(),
+        )
+
+        // Simulate a process stopping after the atomic intent write but before
+        // local evidence removal by restoring the report bytes while leaving
+        // the durable UUID intent in place.
+        interruptedCopy.copyRecursively(envelopeReport.directory, overwrite = true)
+        assertTrue(envelopeReport.directory.isDirectory)
+
+        val restarted = newStore(nowMs = { day(11) })
+        assertFalse(envelopeReport.directory.exists())
+        assertEquals(
+            listOf(envelopeReport.id, remoteReport.id).sorted(),
+            restarted.hostedDeletionIntents(),
+        )
+        restarted.completeHostedDeletion(envelopeReport.id)
+        assertEquals(listOf(remoteReport.id), restarted.hostedDeletionIntents())
+        restarted.completeHostedDeletion(remoteReport.id)
+        assertTrue(restarted.hostedDeletionIntents().isEmpty())
+    }
+
+    @Test
+    fun hostedDeletionIntentCannotCompleteWhileLocalRemovalKeepsFailing() {
+        val store = newStore(nowMs = { day(10) })
+        val hostedBinding = PendingReportBinding(
+            serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            accountUserId = "anonymous-hosted-device",
+            profileId = null,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val report = store.save(capture(day = 10, fingerprint = "hosted-delete-failure", binding = hostedBinding))
+        store.markHostedProcessing(report.id, "ABC123")
+        val interruptedCopy = temporaryFolder.newFolder("hosted-delete-failure-copy")
+        report.directory.copyRecursively(interruptedCopy, overwrite = true)
+        store.stageHostedDeletionAndDelete(report.id)
+        interruptedCopy.copyRecursively(report.directory, overwrite = true)
+
+        val originalPermissions = Files.getPosixFilePermissions(report.directory.toPath())
+        Files.setPosixFilePermissions(
+            report.directory.toPath(),
+            setOf(
+                PosixFilePermission.OWNER_READ,
+                PosixFilePermission.OWNER_EXECUTE,
+                PosixFilePermission.GROUP_READ,
+                PosixFilePermission.GROUP_EXECUTE,
+                PosixFilePermission.OTHERS_READ,
+                PosixFilePermission.OTHERS_EXECUTE,
+            ),
+        )
+        try {
+            val restarted = newStore(nowMs = { day(11) })
+
+            assertTrue(report.directory.exists(), "persistent removal failure must be observable")
+            assertNull(restarted.load(report.id), "queued evidence must never become uploadable")
+            assertTrue(restarted.hostedDeletionIntents().isEmpty(), "remote DELETE must wait for local removal")
+            assertFailsWith<IllegalStateException> { restarted.completeHostedDeletion(report.id) }
+            assertTrue(
+                temporaryFolder.root.resolve("store/client-diagnostics/hosted-deletion-intents.json")
+                    .readText()
+                    .contains(report.id),
+                "failed local removal must leave the durable intent queued",
+            )
+        } finally {
+            if (report.directory.exists()) {
+                Files.setPosixFilePermissions(report.directory.toPath(), originalPermissions)
+            }
+        }
+
+        val recovered = newStore(nowMs = { day(12) })
+        assertFalse(report.directory.exists())
+        assertEquals(listOf(report.id), recovered.hostedDeletionIntents())
+        recovered.completeHostedDeletion(report.id)
+        assertTrue(recovered.hostedDeletionIntents().isEmpty())
     }
 
     private fun newStore(

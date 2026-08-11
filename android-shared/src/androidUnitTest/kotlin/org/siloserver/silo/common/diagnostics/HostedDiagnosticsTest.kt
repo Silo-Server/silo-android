@@ -26,12 +26,32 @@ import kotlin.test.assertTrue
 @RunWith(RobolectricTestRunner::class)
 class HostedDiagnosticsTest {
     @Test
+    fun cachedCapabilitiesMustIncludeHostedSchemaV1() = runTest {
+        val v2Only = HostedDiagnosticsCapabilities(
+            status = org.siloserver.silo.network.api.HostedDiagnosticsAvailability.AVAILABLE,
+            collectorId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            acceptedSchemaVersions = listOf(2),
+            maxBundleBytes = 10L * 1_024 * 1_024,
+            maxManifestBytes = 64L * 1_024,
+            retentionDays = HOSTED_DIAGNOSTICS_RETENTION_DAYS,
+            consentNoticeVersion = 1,
+        )
+        val repository = HostedDiagnosticsCapabilitiesRepository(
+            store = InMemoryCapabilitiesStore(v2Only),
+            api = RecordingOfflineHostedApi(),
+        )
+
+        assertEquals(listOf(1), repository.local().acceptedSchemaVersions)
+    }
+
+    @Test
     fun offlineCollectorDoesNotDisablePersistentHostedCapture() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = context.getSharedPreferences("hosted-offline-${System.nanoTime()}", Context.MODE_PRIVATE)
         val transitions = DefaultIdentityTransitionBarrier()
         val registry = AndroidServerRegistry(prefs, transitions)
         val serverId = registry.addOrUpdate("https://private-silo.example")
+        registry.addOrUpdate("https://saved-private-silo.example:9443")
         registry.switchTo(serverId)
         val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
         tokens.saveTokens("source-access", "source-refresh", 3_600)
@@ -60,9 +80,12 @@ class HostedDiagnosticsTest {
         assertTrue(1 in resolved.orThrow().acceptedSchemaVersions)
         assertEquals(30, resolved.retentionDays)
 
-        val redactionTokens = DestinationAwareDiagnosticsRedactionTokenProvider(tokens) { "installation-token" }
+        val redactionTokens = DestinationAwareDiagnosticsRedactionTokenProvider(tokens, registry) { "installation-token" }
         val hostedTokens = redactionTokens.tokens(DiagnosticsDestinationKind.HOSTED)
         assertTrue("https://private-silo.example" in hostedTokens)
+        assertTrue("private-silo.example" in hostedTokens)
+        assertTrue("https://saved-private-silo.example:9443" in hostedTokens)
+        assertTrue("saved-private-silo.example" in hostedTokens)
         assertTrue(serverId in hostedTokens)
         assertTrue("adult-profile" in hostedTokens)
         assertTrue("installation-token" in hostedTokens)
@@ -98,8 +121,9 @@ class HostedDiagnosticsTest {
         assertNull(store.load())
     }
 
-    private class InMemoryCapabilitiesStore : HostedDiagnosticsCapabilitiesStore {
-        private var value: HostedDiagnosticsCapabilities? = null
+    private class InMemoryCapabilitiesStore(
+        private var value: HostedDiagnosticsCapabilities? = null,
+    ) : HostedDiagnosticsCapabilitiesStore {
         override suspend fun load(): HostedDiagnosticsCapabilities? = value
         override suspend fun save(capabilities: HostedDiagnosticsCapabilities) {
             value = capabilities
@@ -130,6 +154,10 @@ class HostedDiagnosticsTest {
             installationToken: String,
             reportId: String,
         ) = offline<HostedDiagnosticsReportStatusResponse>()
+        override suspend fun deleteReport(
+            installationToken: String,
+            reportId: String,
+        ) = offline<Unit>()
     }
 }
 

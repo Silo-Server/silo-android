@@ -32,9 +32,12 @@ import org.siloserver.silo.network.api.HostedDiagnosticsInstallationResponse
 import org.siloserver.silo.network.api.HostedDiagnosticsReportState
 import org.siloserver.silo.network.api.HostedDiagnosticsReportStatusResponse
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DiagnosticsUploaderTest {
     @get:Rule
@@ -309,34 +312,259 @@ class DiagnosticsUploaderTest {
     }
 
     @Test
-    fun hostedAcceptedUploadRecordsShortIdAndProcessingState() = runTest {
+    fun hostedProcessingIsRetainedAndPolledBeforeCapabilityOrAutomaticConsentGates() = runTest {
+        val fixture = hostedFixture()
+
+        assertEquals(
+            DiagnosticsUploadDecision.KeptConsentReviewRequired,
+            fixture.uploader.uploadAutomatically(fixture.report.id),
+        )
+        assertEquals(0, fixture.api.capabilitiesCalls)
+        assertTrue(fixture.api.createdRequests.isEmpty())
+
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        val processing = assertNotNull(fixture.store.load(fixture.report.id))
+        assertEquals("ABC123", processing.state.hostedRemoteShortId)
+        assertEquals("processing", processing.state.errorCode)
+        assertTrue(fixture.sent.shortIds.isEmpty(), "processing is not a durable success for the user")
+
+        fixture.api.capabilities = fixture.api.capabilities.copy(status = HostedDiagnosticsAvailability.DISABLED)
+        fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
+            fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
+        )
+        assertEquals(
+            DiagnosticsUploadDecision.Uploaded("ABC123", "ready"),
+            fixture.uploader.uploadAutomatically(fixture.report.id),
+        )
+        assertEquals(1, fixture.api.capabilitiesCalls, "an accepted report must poll before live capability gating")
+        assertEquals(listOf("ready"), fixture.sent.states)
+        assertNull(fixture.store.load(fixture.report.id))
+    }
+
+    @Test
+    fun hostedExactCreateEnvelopeIsFrozenUntilStaleConsentThenReframedFromSanitizedEvidence() = runTest {
+        val fixture = hostedFixture(
+            artifacts = mapOf(
+                "device.json" to """{"token":"old-source-token","safe":"kept"}""".encodeToByteArray(),
+            ),
+            redactionValues = listOf("old-source-token"),
+        )
+        fixture.api.createReportNetworkErrorsRemaining = 1
+
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        val originalEnvelope = (fixture.store.loadHostedEnvelope(fixture.report.id) as HostedEnvelopeLoadResult.Available).bundle
+        assertTrue(originalEnvelope.sanitizedEntries.values.none { it.decodeToString().contains("old-source-token") })
+        assertEquals(1, fixture.redactionTokens.calls)
+
+        fixture.redactionTokens.values = listOf("rotated-token-that-must-not-rebuild-evidence")
+        fixture.api.capabilities = fixture.api.capabilities.copy(
+            consentNoticeVersion = 2,
+            maxBundleBytes = 1,
+            maxManifestBytes = 1,
+        )
+        fixture.api.createReportFailure = HostedDiagnosticsApiResult.Failure(
+            httpStatus = 409,
+            errorCode = "stale_consent",
+            message = "consent notice changed",
+        )
+
+        assertEquals(DiagnosticsUploadDecision.KeptConsentReviewRequired, fixture.uploader.upload(fixture.report.id))
+        val retriedEnvelope = (fixture.store.loadHostedEnvelope(fixture.report.id) as HostedEnvelopeLoadResult.Available).bundle
+        assertContentEquals(originalEnvelope.manifestBytes, retriedEnvelope.manifestBytes)
+        assertContentEquals(originalEnvelope.bytes, retriedEnvelope.bytes)
+        assertEquals(fixture.api.createdRequests[0], fixture.api.createdRequests[1])
+        assertEquals(1, fixture.redactionTokens.calls, "an ambiguous exact retry must not read rotating secrets again")
+        assertTrue(assertNotNull(fixture.store.load(fixture.report.id)).state.hostedConsentRefreshRequired)
+
+        fixture.api.createReportFailure = null
+        fixture.api.capabilities = fixture.api.capabilities.copy(
+            maxBundleBytes = 10L * 1_024 * 1_024,
+            maxManifestBytes = 64L * 1_024,
+        )
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        val reframed = (fixture.store.loadHostedEnvelope(fixture.report.id) as HostedEnvelopeLoadResult.Available).bundle
+        assertEquals(2, reframed.manifest.consent.noticeVersion)
+        assertFalse(reframed.manifest.archive.sha256 == originalEnvelope.manifest.archive.sha256)
+        assertTrue(reframed.sanitizedEntries.values.none { it.decodeToString().contains("rotated-token") })
+        assertEquals(1, fixture.redactionTokens.calls, "reframing must use only the cached sanitized members")
+        assertEquals(2, fixture.api.createdRequests[2].manifest.consent.noticeVersion)
+
+        fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
+            fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
+        )
+        assertEquals(
+            DiagnosticsUploadDecision.Uploaded("ABC123", "ready"),
+            fixture.uploader.uploadAutomatically(fixture.report.id),
+        )
+        assertNull(fixture.store.load(fixture.report.id))
+    }
+
+    @Test
+    fun ambiguousHostedPutFailuresRetryTheExactCreateEnvelopeWithAFreshToken() = runTest {
+        listOf(
+            HostedDiagnosticsApiResult.Failure(401, "invalid_upload_token", "upload claim expired"),
+            HostedDiagnosticsApiResult.Failure(409, "upload_cancelled", "stale claim was recovered"),
+            HostedDiagnosticsApiResult.Failure(202, "invalid_response", "accepted receipt was malformed"),
+        ).forEach { ambiguousFailure ->
+            val fixture = hostedFixture()
+            fixture.api.nextUploadToken = "expired-upload-token"
+            fixture.api.uploadFailure = ambiguousFailure
+
+            assertEquals(
+                DiagnosticsUploadDecision.KeptRetryable,
+                fixture.uploader.upload(fixture.report.id),
+                ambiguousFailure.errorCode,
+            )
+            assertNotNull(fixture.store.load(fixture.report.id))
+
+            fixture.api.uploadFailure = null
+            fixture.api.nextUploadToken = "fresh-upload-token"
+            fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
+                fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
+            )
+            assertEquals(
+                DiagnosticsUploadDecision.Uploaded("ABC123", "ready"),
+                fixture.uploader.upload(fixture.report.id),
+                ambiguousFailure.errorCode,
+            )
+            assertEquals(fixture.api.createdRequests[0], fixture.api.createdRequests[1])
+            assertEquals(listOf("expired-upload-token", "fresh-upload-token"), fixture.api.uploadTokens)
+            assertNull(fixture.store.load(fixture.report.id))
+        }
+    }
+
+    @Test
+    fun invalidHostedInstallationIsReRegisteredWithoutChangingTheCreateEnvelope() = runTest {
+        val fixture = hostedFixture(
+            credentials = HostedDiagnosticsCredentials("stale-installation", "stale-installation-token"),
+        )
+        fixture.api.invalidInstallationToken = "stale-installation-token"
+        fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
+            fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
+        )
+
+        assertEquals(
+            DiagnosticsUploadDecision.Uploaded("ABC123", "ready"),
+            fixture.uploader.upload(fixture.report.id),
+        )
+        assertEquals(listOf("stale-installation-token", "installation-token"), fixture.api.createReportTokens)
+        assertEquals(1, fixture.api.installationCreateCalls)
+        assertEquals(fixture.api.createdRequests[0], fixture.api.createdRequests[1])
+        assertNull(fixture.store.load(fixture.report.id))
+    }
+
+    @Test
+    fun hostedRejectedAndInternalWireStatesRetainLocalEvidence() = runTest {
+        listOf(
+            HostedDiagnosticsReportState.REJECTED to "privacy_artifact_rejected",
+            HostedDiagnosticsReportState.UPLOADED to "invalid_response",
+        ).forEach { (remoteState, expectedCode) ->
+            val fixture = hostedFixture()
+            assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+            fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
+                fixture.api.status(
+                    fixture.report,
+                    remoteState,
+                    errorCode = if (remoteState == HostedDiagnosticsReportState.REJECTED) expectedCode else null,
+                ),
+            )
+
+            assertEquals(DiagnosticsUploadDecision.KeptInvalid, fixture.uploader.uploadAutomatically(fixture.report.id))
+            val retained = assertNotNull(fixture.store.load(fixture.report.id))
+            assertEquals(PendingReportStatus.PERMANENT_FAILURE, retained.state.status)
+            assertEquals(expectedCode, retained.state.errorCode)
+        }
+    }
+
+    @Test
+    fun hostedExplicitReceiptIdentityMismatchIsPermanentAndRetainsLocalEvidence() = runTest {
+        val fixture = hostedFixture()
+        fixture.api.uploadReceiptOverride = HostedDiagnosticsReportStatusResponse(
+            reportId = "11111111-1111-4111-8111-111111111111",
+            shortId = "ABC123",
+            state = HostedDiagnosticsReportState.PROCESSING,
+        )
+
+        assertEquals(DiagnosticsUploadDecision.KeptInvalid, fixture.uploader.upload(fixture.report.id))
+        val retained = assertNotNull(fixture.store.load(fixture.report.id))
+        assertEquals(PendingReportStatus.PERMANENT_FAILURE, retained.state.status)
+        assertEquals("invalid_response", retained.state.errorCode)
+        assertTrue(fixture.api.statusReportIds.isEmpty(), "a mismatched success receipt must not be polled")
+    }
+
+    @Test
+    fun hostedPrivacyPolicyErrorsArePermanentButNeverDeleteLocalEvidence() = runTest {
+        listOf(
+            "hosted_consent_required",
+            "privacy_artifact_rejected",
+            "upload_attempt_limit_exceeded",
+        ).forEach { errorCode ->
+            val fixture = hostedFixture()
+            fixture.api.createReportFailure = HostedDiagnosticsApiResult.Failure(
+                httpStatus = 422,
+                errorCode = errorCode,
+                message = "collector rejected the envelope",
+            )
+
+            assertEquals(DiagnosticsUploadDecision.KeptInvalid, fixture.uploader.upload(fixture.report.id), errorCode)
+            val retained = assertNotNull(fixture.store.load(fixture.report.id))
+            assertEquals(PendingReportStatus.PERMANENT_FAILURE, retained.state.status)
+            assertEquals(errorCode, retained.state.errorCode)
+        }
+    }
+
+    @Test
+    fun hostedManifestAndCompressionLimitsMapToTooLargeAndRetainLocalEvidence() = runTest {
+        listOf(
+            413 to "manifest_too_large",
+            422 to "compression_ratio_exceeded",
+        ).forEach { (httpStatus, errorCode) ->
+            val fixture = hostedFixture()
+            fixture.api.createReportFailure = HostedDiagnosticsApiResult.Failure(
+                httpStatus = httpStatus,
+                errorCode = errorCode,
+                message = "collector size policy rejected the envelope",
+            )
+
+            assertEquals(DiagnosticsUploadDecision.KeptTooLarge, fixture.uploader.upload(fixture.report.id), errorCode)
+            val retained = assertNotNull(fixture.store.load(fixture.report.id))
+            assertEquals(PendingReportStatus.PERMANENT_FAILURE, retained.state.status)
+            assertEquals(errorCode, retained.state.errorCode)
+        }
+    }
+
+    private fun hostedFixture(
+        artifacts: Map<String, ByteArray> = mapOf("device.json" to "{}".encodeToByteArray()),
+        redactionValues: List<String> = listOf("source-access"),
+        credentials: HostedDiagnosticsCredentials = HostedDiagnosticsCredentials(
+            "installation-1",
+            "installation-token",
+        ),
+    ): HostedFixture {
         val store = FilePendingReportStore(temporaryFolder.newFolder(), nowMs = { CAPTURED_AT })
         val binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "anonymous-hosted-device")
-        val pendingBinding = PendingReportBinding(
-            serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
-            accountUserId = binding.accountUserId,
-            profileId = null,
-            ownershipGeneration = 7,
-            destinationKind = DiagnosticsDestinationKind.HOSTED,
-        )
         val hostedManifest = manifest().copy(
             report = manifest().report.copy(profileId = null),
             destination = DiagnosticsDestination(HOSTED_DIAGNOSTICS_COLLECTOR_ID),
+            consent = DiagnosticsConsent(ManifestConsentMode.MANUAL, 1),
+            playbackSessionIds = emptyList(),
         )
         val report = store.save(
             PendingReportCapture(
-                binding = pendingBinding,
+                binding = PendingReportBinding(
+                    serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+                    accountUserId = binding.accountUserId,
+                    profileId = null,
+                    ownershipGeneration = 7,
+                    destinationKind = DiagnosticsDestinationKind.HOSTED,
+                ),
                 manifest = hostedManifest,
-                artifacts = mapOf("device.json" to "{}".encodeToByteArray()),
+                artifacts = artifacts,
                 fingerprint = "hosted-fingerprint",
                 capturedAtEpochMs = CAPTURED_AT,
             ),
         )
         val hostedApi = FakeHostedDiagnosticsApi()
-        hostedApi.invalidInstallationToken = "stale-installation-token"
-        val credentialStore = InMemoryHostedCredentialStore(
-            HostedDiagnosticsCredentials("stale-installation", "stale-installation-token"),
-        )
         val environment = ExitReportEnvironment(
             appVersion = "1.0",
             appBuild = "1",
@@ -344,10 +572,14 @@ class DiagnosticsUploaderTest {
             osVersion = "36",
             deviceSummary = hostedManifest.deviceSummary,
         )
-        val installations = HostedDiagnosticsInstallationManager(credentialStore, hostedApi, environment)
-        val capabilityStore = InMemoryHostedCapabilitiesStore()
-        val capabilities = HostedDiagnosticsCapabilitiesRepository(capabilityStore, hostedApi)
+        val installations = HostedDiagnosticsInstallationManager(
+            InMemoryHostedCredentialStore(credentials),
+            hostedApi,
+            environment,
+        )
         val sent = FakeSentRecorder()
+        val redactionTokens = RecordingRedactionTokenProvider(redactionValues)
+        val staleConsent = FakeStaleConsentHandler()
         val uploader = DefaultDiagnosticsUploader(
             reports = store,
             identity = FakeIdentityResolver(
@@ -362,69 +594,18 @@ class DiagnosticsUploaderTest {
                     destinationKind = DiagnosticsDestinationKind.HOSTED,
                 ),
             ),
-            bundleBuilder = FakeBundleBuilder(),
+            bundleBuilder = FileDiagnosticsBundleBuilder(),
             api = FakeDiagnosticsApi(),
             hostedApi = hostedApi,
             hostedInstallations = installations,
-            hostedCapabilities = capabilities,
-            redactionTokens = DiagnosticsRedactionTokenProvider { _ -> listOf("source-access") },
+            hostedCapabilities = HostedDiagnosticsCapabilitiesRepository(InMemoryHostedCapabilitiesStore(), hostedApi),
+            redactionTokens = redactionTokens,
             sentRecorder = sent,
             consentProvider = FakeConsentProvider(DiagnosticsConsentMode.ASK),
+            staleConsentHandler = staleConsent,
             nowMs = { CAPTURED_AT + 1_000 },
         )
-
-        val automaticDecision = uploader.uploadAutomatically(report.id)
-
-        assertEquals(DiagnosticsUploadDecision.KeptConsentReviewRequired, automaticDecision)
-        assertNull(hostedApi.createdRequest, "hosted reports must never enter the automatic upload path")
-
-        hostedApi.createReportFailure = HostedDiagnosticsApiResult.Failure(
-            httpStatus = 422,
-            errorCode = "privacy_field_rejected",
-            message = "source identity is not allowed",
-        )
-        assertEquals(DiagnosticsUploadDecision.KeptInvalid, uploader.upload(report.id))
-        assertEquals(PendingReportStatus.PERMANENT_FAILURE, store.load(report.id)?.state?.status)
-        assertEquals("privacy_field_rejected", store.load(report.id)?.state?.errorCode)
-        hostedApi.createReportFailure = null
-        val wireReportId = requireNotNull(report.id.toHostedWireReportIdOrNull())
-
-        hostedApi.uploadReceiptOverride = HostedDiagnosticsReportStatusResponse(
-            reportId = "11111111-1111-4111-8111-111111111111",
-            shortId = "ABC123",
-            state = HostedDiagnosticsReportState.PROCESSING,
-        )
-        assertEquals(DiagnosticsUploadDecision.KeptInvalid, uploader.upload(report.id))
-        assertNotNull(store.load(report.id), "a wrong-ID 202 receipt must not delete local evidence")
-        assertEquals(emptyList(), hostedApi.statusReportIds, "an invalid PUT receipt must not be trusted")
-        hostedApi.uploadReceiptOverride = null
-        hostedApi.reportStatusResultOverride = HostedDiagnosticsApiResult.NetworkError(
-            IllegalStateException("status temporarily unavailable"),
-        )
-
-        val decision = uploader.upload(report.id)
-
-        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "processing"), decision)
-        assertEquals(32, report.id.length)
-        assertEquals(false, report.id.contains('-'), "the local file identity must remain 32-hex")
-        assertEquals(
-            listOf(
-                "stale-installation-token",
-                "stale-installation-token",
-                "installation-token",
-                "installation-token",
-            ),
-            hostedApi.createReportTokens,
-        )
-        assertEquals(List(4) { wireReportId }, hostedApi.createReportIds)
-        assertEquals(listOf(wireReportId, wireReportId), hostedApi.uploadReportIds)
-        assertEquals(listOf(wireReportId), hostedApi.statusReportIds)
-        assertEquals(1, hostedApi.installationCreateCalls)
-        assertEquals(wireReportId, hostedApi.createdRequest?.reportId)
-        assertNull(hostedApi.createdRequest?.manifest?.report?.profileId)
-        assertEquals(listOf("ABC123"), sent.shortIds)
-        assertEquals(listOf("processing"), sent.states)
-        assertNull(store.load(report.id))
+        return HostedFixture(store, report, hostedApi, redactionTokens, sent, staleConsent, uploader)
     }
 
     private fun fixture(maxBundleBytes: Long = 1_024 * 1_024): Fixture {
@@ -565,14 +746,20 @@ class DiagnosticsUploaderTest {
         var createdRequest: HostedDiagnosticsCreateReportRequest? = null
         var invalidInstallationToken: String? = null
         var createReportFailure: HostedDiagnosticsApiResult.Failure? = null
+        var createReportNetworkErrorsRemaining: Int = 0
+        var uploadFailure: HostedDiagnosticsApiResult.Failure? = null
         var uploadReceiptOverride: HostedDiagnosticsReportStatusResponse? = null
         var reportStatusResultOverride: HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>? = null
+        var nextUploadToken: String = "upload-token"
         var installationCreateCalls: Int = 0
+        var capabilitiesCalls: Int = 0
+        val createdRequests = mutableListOf<HostedDiagnosticsCreateReportRequest>()
         val createReportTokens = mutableListOf<String>()
         val createReportIds = mutableListOf<String>()
         val uploadReportIds = mutableListOf<String>()
+        val uploadTokens = mutableListOf<String>()
         val statusReportIds = mutableListOf<String>()
-        private val capabilities = HostedDiagnosticsCapabilities(
+        var capabilities = HostedDiagnosticsCapabilities(
             status = HostedDiagnosticsAvailability.AVAILABLE,
             collectorId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
             acceptedSchemaVersions = listOf(1),
@@ -582,7 +769,10 @@ class DiagnosticsUploaderTest {
             consentNoticeVersion = 1,
         )
 
-        override suspend fun capabilities() = HostedDiagnosticsApiResult.Success(capabilities)
+        override suspend fun capabilities(): HostedDiagnosticsApiResult<HostedDiagnosticsCapabilities> {
+            capabilitiesCalls += 1
+            return HostedDiagnosticsApiResult.Success(capabilities)
+        }
         override suspend fun createInstallation(request: HostedDiagnosticsInstallationRequest):
             HostedDiagnosticsApiResult<HostedDiagnosticsInstallationResponse> {
             installationCreateCalls += 1
@@ -596,6 +786,11 @@ class DiagnosticsUploaderTest {
         ): HostedDiagnosticsApiResult<HostedDiagnosticsCreateReportResponse> {
             createReportTokens += installationToken
             createReportIds += request.reportId
+            createdRequests += request
+            if (createReportNetworkErrorsRemaining > 0) {
+                createReportNetworkErrorsRemaining -= 1
+                return HostedDiagnosticsApiResult.NetworkError(IllegalStateException("create response was lost"))
+            }
             createReportFailure?.let { return it }
             if (installationToken == invalidInstallationToken) {
                 return HostedDiagnosticsApiResult.Failure(
@@ -606,7 +801,7 @@ class DiagnosticsUploaderTest {
             }
             createdRequest = request
             return HostedDiagnosticsApiResult.Success(
-                HostedDiagnosticsCreateReportResponse(request.reportId, "ABC123", "upload-token", "2026-08-18T00:00:00Z"),
+                HostedDiagnosticsCreateReportResponse(request.reportId, "ABC123", nextUploadToken, "2026-08-18T00:00:00Z"),
             )
         }
         override suspend fun uploadBundle(
@@ -616,6 +811,8 @@ class DiagnosticsUploaderTest {
             bundle: ByteArray,
         ): HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse> {
             uploadReportIds += reportId
+            uploadTokens += uploadToken
+            uploadFailure?.let { return it }
             return HostedDiagnosticsApiResult.Success(
                 uploadReceiptOverride ?: HostedDiagnosticsReportStatusResponse(
                     reportId,
@@ -633,6 +830,32 @@ class DiagnosticsUploaderTest {
             return HostedDiagnosticsApiResult.Success(
                 HostedDiagnosticsReportStatusResponse(reportId, "ABC123", HostedDiagnosticsReportState.PROCESSING),
             )
+        }
+        override suspend fun deleteReport(
+            installationToken: String,
+            reportId: String,
+        ): HostedDiagnosticsApiResult<Unit> = HostedDiagnosticsApiResult.Success(Unit)
+
+        fun status(
+            report: PendingReport,
+            state: HostedDiagnosticsReportState,
+            errorCode: String? = null,
+        ) = HostedDiagnosticsReportStatusResponse(
+            reportId = requireNotNull(report.id.toHostedWireReportIdOrNull()),
+            shortId = "ABC123",
+            state = state,
+            errorCode = errorCode,
+        )
+    }
+
+    private class RecordingRedactionTokenProvider(
+        var values: List<String>,
+    ) : DiagnosticsRedactionTokenProvider {
+        var calls: Int = 0
+
+        override suspend fun tokens(destinationKind: DiagnosticsDestinationKind): List<String> {
+            calls += 1
+            return values
         }
     }
 
@@ -659,6 +882,16 @@ class DiagnosticsUploaderTest {
         val api: FakeDiagnosticsApi,
         val sent: FakeSentRecorder,
         val consent: FakeConsentProvider,
+        val staleConsent: FakeStaleConsentHandler,
+        val uploader: DefaultDiagnosticsUploader,
+    )
+
+    private data class HostedFixture(
+        val store: FilePendingReportStore,
+        val report: PendingReport,
+        val api: FakeHostedDiagnosticsApi,
+        val redactionTokens: RecordingRedactionTokenProvider,
+        val sent: FakeSentRecorder,
         val staleConsent: FakeStaleConsentHandler,
         val uploader: DefaultDiagnosticsUploader,
     )

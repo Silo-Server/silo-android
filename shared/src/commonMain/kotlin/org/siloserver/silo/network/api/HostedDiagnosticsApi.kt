@@ -8,6 +8,7 @@ import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -180,6 +181,11 @@ interface HostedDiagnosticsApi {
         installationToken: String,
         reportId: String,
     ): HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>
+
+    suspend fun deleteReport(
+        installationToken: String,
+        reportId: String,
+    ): HostedDiagnosticsApiResult<Unit>
 }
 
 class DefaultHostedDiagnosticsApi(
@@ -264,6 +270,33 @@ class DefaultHostedDiagnosticsApi(
             }
         },
     )
+
+    override suspend fun deleteReport(
+        installationToken: String,
+        reportId: String,
+    ): HostedDiagnosticsApiResult<Unit> = try {
+        val response = client.delete("/v1/reports/$reportId") {
+            bearerAuth(installationToken)
+        }
+        if (response.status == HttpStatusCode.NoContent) {
+            HostedDiagnosticsApiResult.Success(Unit)
+        } else {
+            val failure = response.failure()
+            if (
+                response.status == HttpStatusCode.NotFound &&
+                failure.errorCode == "report_not_found"
+            ) {
+                // Repeated DELETE can observe 404 after the collector has
+                // already unlinked the report from this installation.
+                HostedDiagnosticsApiResult.Success(Unit)
+            } else {
+                failure
+            }
+        }
+    } catch (error: Throwable) {
+        if (error is CancellationException) throw error
+        HostedDiagnosticsApiResult.NetworkError(error)
+    }
 
     private suspend inline fun <reified T> request(
         expected: HttpStatusCode,

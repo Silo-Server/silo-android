@@ -47,12 +47,15 @@ class HostedDiagnosticsApiTest {
                 contentLength = request.body.contentLength,
                 body = request.body.toByteArray(),
             )
-            val (status, body) = when (request.url.encodedPath) {
-                "/v1/capabilities" -> HttpStatusCode.OK to CAPABILITIES
-                "/v1/installations" -> HttpStatusCode.Created to INSTALLATION
-                "/v1/reports" -> HttpStatusCode.Created to CREATED
-                "/v1/reports/$REPORT_ID/bundle" -> HttpStatusCode.Accepted to PUT_STATUS
-                "/v1/reports/$REPORT_ID" -> HttpStatusCode.OK to STATUS
+            val (status, body) = when {
+                request.url.encodedPath == "/v1/reports/$REPORT_ID" && request.method == HttpMethod.Delete -> {
+                    HttpStatusCode.NoContent to ""
+                }
+                request.url.encodedPath == "/v1/capabilities" -> HttpStatusCode.OK to CAPABILITIES
+                request.url.encodedPath == "/v1/installations" -> HttpStatusCode.Created to INSTALLATION
+                request.url.encodedPath == "/v1/reports" -> HttpStatusCode.Created to CREATED
+                request.url.encodedPath == "/v1/reports/$REPORT_ID/bundle" -> HttpStatusCode.Accepted to PUT_STATUS
+                request.url.encodedPath == "/v1/reports/$REPORT_ID" -> HttpStatusCode.OK to STATUS
                 else -> HttpStatusCode.NotFound to "{}"
             }
             respond(
@@ -88,6 +91,9 @@ class HostedDiagnosticsApiTest {
         val status = assertIs<HostedDiagnosticsApiResult.Success<HostedDiagnosticsReportStatusResponse>>(
             api.reportStatus(INSTALLATION_TOKEN, REPORT_ID),
         )
+        assertIs<HostedDiagnosticsApiResult.Success<Unit>>(
+            api.deleteReport(INSTALLATION_TOKEN, REPORT_ID),
+        )
 
         assertEquals(HostedDiagnosticsReportState.PROCESSING, status.value.state)
         assertEquals(REPORT_ID, upload.value.reportId)
@@ -95,7 +101,7 @@ class HostedDiagnosticsApiTest {
         assertEquals(HostedDiagnosticsReportState.PROCESSING, upload.value.state)
         assertTrue(captured.all { it.host == "collector.example" })
         assertEquals(
-            listOf(HttpMethod.Get, HttpMethod.Post, HttpMethod.Post, HttpMethod.Put, HttpMethod.Get),
+            listOf(HttpMethod.Get, HttpMethod.Post, HttpMethod.Post, HttpMethod.Put, HttpMethod.Get, HttpMethod.Delete),
             captured.map(CapturedRequest::method),
         )
         assertEquals(
@@ -104,6 +110,7 @@ class HostedDiagnosticsApiTest {
                 "/v1/installations",
                 "/v1/reports",
                 "/v1/reports/$REPORT_ID/bundle",
+                "/v1/reports/$REPORT_ID",
                 "/v1/reports/$REPORT_ID",
             ),
             captured.map(CapturedRequest::path),
@@ -235,6 +242,55 @@ class HostedDiagnosticsApiTest {
 
         assertEquals(HttpStatusCode.Accepted.value, result.httpStatus)
         assertEquals("invalid_response", result.errorCode)
+        transport.close()
+    }
+
+    @Test
+    fun deleteFailurePreservesCollectorErrorForLocalRetry() = runTest {
+        val transport = createHostedDiagnosticsClient(
+            baseUrl = "https://collector.example",
+            platformClient = HttpClient(
+                MockEngine {
+                    respond(
+                        content = """{"error":"storage_unavailable","message":"try again"}""",
+                        status = HttpStatusCode.ServiceUnavailable,
+                        headers = Headers.build {
+                            append(HttpHeaders.ContentType, "application/json")
+                            append(HttpHeaders.RetryAfter, "60")
+                        },
+                    )
+                },
+            ),
+        )
+
+        val result = assertIs<HostedDiagnosticsApiResult.Failure>(
+            DefaultHostedDiagnosticsApi(transport).deleteReport(INSTALLATION_TOKEN, REPORT_ID),
+        )
+
+        assertEquals(HttpStatusCode.ServiceUnavailable.value, result.httpStatus)
+        assertEquals("storage_unavailable", result.errorCode)
+        assertEquals(60, result.retryAfterSeconds)
+        transport.close()
+    }
+
+    @Test
+    fun reportNotFoundCompletesAnIdempotentDeleteRetry() = runTest {
+        val transport = createHostedDiagnosticsClient(
+            baseUrl = "https://collector.example",
+            platformClient = HttpClient(
+                MockEngine {
+                    respond(
+                        content = """{"error":"report_not_found","message":"already erased"}""",
+                        status = HttpStatusCode.NotFound,
+                        headers = Headers.build { append(HttpHeaders.ContentType, "application/json") },
+                    )
+                },
+            ),
+        )
+
+        assertIs<HostedDiagnosticsApiResult.Success<Unit>>(
+            DefaultHostedDiagnosticsApi(transport).deleteReport(INSTALLATION_TOKEN, REPORT_ID),
+        )
         transport.close()
     }
 

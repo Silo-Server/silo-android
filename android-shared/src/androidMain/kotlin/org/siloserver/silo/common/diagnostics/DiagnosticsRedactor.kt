@@ -56,17 +56,22 @@ class DiagnosticsRedactor(
             host in knownServerHosts -> stableHostToken(host)
             else -> stableHostToken(host)
         }
-        return runCatching {
-            URI(
-                scheme,
-                null,
-                safeHost,
-                uri.port,
-                uri.rawPath.orEmpty(),
-                null,
-                null,
-            ).toASCIIString()
-        }.getOrElse { "$scheme://$safeHost" }
+        return buildString {
+            append(scheme)
+            append("://")
+            if (':' in safeHost && !safeHost.startsWith('[')) {
+                append('[')
+                append(safeHost)
+                append(']')
+            } else {
+                append(safeHost)
+            }
+            if (uri.port >= 0) {
+                append(':')
+                append(uri.port)
+            }
+            append(sanitizePath(uri.rawPath.orEmpty()))
+        }
     }
 
     fun sanitizeThrowable(
@@ -112,6 +117,18 @@ class DiagnosticsRedactor(
     private fun isLoopbackHost(host: String): Boolean =
         host == "localhost" || host == "::1" || IPV4_LOOPBACK_PATTERN.matches(host)
 
+    private fun sanitizePath(path: String): String = path
+        .split('/')
+        .joinToString("/") { segment ->
+            if (segment.isPrivateIdentifierPathSegment()) "{id}" else segment
+        }
+
+    private fun String.isPrivateIdentifierPathSegment(): Boolean =
+        UUID_PATH_SEGMENT.matches(this) ||
+            NUMERIC_ID_PATH_SEGMENT.matches(this) ||
+            HEX_ID_PATH_SEGMENT.matches(this) ||
+            OPAQUE_ID_PATH_SEGMENT.matches(this)
+
     private fun MatchResult.isStructurallyValidJwt(): Boolean =
         groupValues[1].decodesToJsonObject() && groupValues[2].decodesToJsonObject()
 
@@ -150,7 +167,13 @@ class DiagnosticsRedactor(
 
         val JWT_JSON = Json { isLenient = false }
         val TRAILING_URL_PUNCTUATION = setOf('.', ',', ';', ':', '!', '?', ')', ']', '}')
-        val URL_PATTERN = Regex("(?i)\\bhttps?://[^\\s<>\\\"']+")
+        val URL_PATTERN = Regex("(?i)\\b(?:https?|wss?)://[^\\s<>\\\"']+")
+        val UUID_PATH_SEGMENT = Regex(
+            "(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        )
+        val NUMERIC_ID_PATH_SEGMENT = Regex("^[0-9]+$")
+        val HEX_ID_PATH_SEGMENT = Regex("(?i)^[0-9a-f]{16,}$")
+        val OPAQUE_ID_PATH_SEGMENT = Regex("^[A-Za-z0-9_-]{20,}$")
         val AUTHORIZATION_PATTERN = Regex(
             "(?i)\\b(authorization|proxy-authorization)\\s*[:=]\\s*(?:bearer\\s+)?[^\\s,;]+",
         )

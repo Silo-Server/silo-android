@@ -77,6 +77,7 @@ val diagnosticsModule = module {
         EncryptedPreferencesHostedDiagnosticsCredentialStore(get())
     }
     single { HostedDiagnosticsInstallationManager(get(), get(), get()) }
+    single<HostedDiagnosticsReportDeleter> { DefaultHostedDiagnosticsReportDeleter(get(), get()) }
     single<DiagnosticsIdentityResolver> {
         DestinationDiagnosticsIdentityResolver(
             destination = { get<DiagnosticsSettingsStore>().destinationKind() },
@@ -95,7 +96,7 @@ val diagnosticsModule = module {
     single<DiagnosticsRedactionTokenProvider> {
         val tokenManager = get<TokenManager>()
         val hostedInstallations = get<HostedDiagnosticsInstallationManager>()
-        DestinationAwareDiagnosticsRedactionTokenProvider(tokenManager) {
+        DestinationAwareDiagnosticsRedactionTokenProvider(tokenManager, get()) {
             hostedInstallations.current()?.installationToken
         }
     }
@@ -228,6 +229,7 @@ val diagnosticsModule = module {
             capture = get(),
             uploader = get(),
             uploadScheduler = get(),
+            hostedReportDeleter = get(),
             runtimePublisher = get(),
             incidentCollector = get(),
         )

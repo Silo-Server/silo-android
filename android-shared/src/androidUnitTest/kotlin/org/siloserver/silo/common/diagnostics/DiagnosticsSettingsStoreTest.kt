@@ -102,7 +102,7 @@ class DiagnosticsSettingsStoreTest {
             acceptedSchemaVersions = listOf(1),
             maxBundleBytes = 10L * 1_024 * 1_024,
             maxManifestBytes = 64L * 1_024,
-            retentionDays = 7,
+            retentionDays = HOSTED_DIAGNOSTICS_RETENTION_DAYS,
             consentNoticeVersion = 1,
         )
 

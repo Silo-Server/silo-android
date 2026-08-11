@@ -2,6 +2,7 @@ package org.siloserver.silo.common.diagnostics
 
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
@@ -25,10 +26,17 @@ data class DiagnosticsBundle(
     val manifest: DiagnosticsManifest,
     val manifestBytes: ByteArray,
     val bytes: ByteArray,
+    /** Already-sanitized members used only to safely reframe stale hosted consent. */
+    val sanitizedEntries: Map<String, ByteArray> = emptyMap(),
 )
 
 interface DiagnosticsBundleBuilder {
     fun build(report: PendingReport, redactionTokens: List<String>): DiagnosticsBundle
+
+    fun reframeHosted(
+        cached: DiagnosticsBundle,
+        consent: org.siloserver.silo.model.diagnostics.DiagnosticsConsent,
+    ): DiagnosticsBundle = error("hosted consent reframing is unsupported")
 }
 
 val CANONICAL_ARCHIVE_ORDER = listOf(
@@ -45,7 +53,12 @@ val CANONICAL_ARCHIVE_ORDER = listOf(
 class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
     override fun build(report: PendingReport, redactionTokens: List<String>): DiagnosticsBundle {
         val tokens = redactionTokens.filter(String::isNotEmpty).distinct().sortedByDescending(String::length)
+        val hosted = report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED
         val artifactEntries = CANONICAL_ARCHIVE_ORDER.drop(1).mapNotNull { path ->
+            // ApplicationExitInfo tombstones are opaque protobuf bytes. They
+            // cannot pass the hosted collector's textual privacy admission
+            // boundary, so retain them only for self-hosted diagnostics.
+            if (hosted && path == CRASH_TOMBSTONE_FILE) return@mapNotNull null
             val file = report.directory.resolve(path)
             if (!file.isFile) return@mapNotNull null
             require(file.isWithin(report.directory)) { "diagnostics artifact escapes report directory: $path" }
@@ -54,14 +67,14 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
                     path = path,
                     bytes = file.readBytes(),
                     tokens = tokens,
-                    hosted = report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED,
+                    hosted = hosted,
                 )
             } else {
                 file.readBytes()
             }
             ArchiveEntry(path, bytes)
         }
-        val sanitizedManifest = sanitizeManifest(report.manifest, tokens).let { manifest ->
+        val sanitizedManifest = sanitizeManifest(report.manifest, tokens, hosted).let { manifest ->
             val logs = artifactEntries.firstOrNull { it.name == LOGS_FILE }?.bytes
             manifest.copy(
                 logSummary = DiagnosticsLogSummaryBuilder.build(
@@ -83,9 +96,42 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         }
         require(entries.any { it.name == DEVICE_FILE }) { "device.json is required" }
 
+        return finalize(sanitizedManifest, entries)
+    }
+
+    override fun reframeHosted(
+        cached: DiagnosticsBundle,
+        consent: org.siloserver.silo.model.diagnostics.DiagnosticsConsent,
+    ): DiagnosticsBundle {
+        require(cached.sanitizedEntries.isNotEmpty()) { "hosted sanitized evidence is unavailable" }
+        require(cached.manifest.destination.serverInstanceId == HOSTED_DIAGNOSTICS_COLLECTOR_ID)
+        require(cached.manifest.report.profileId == null)
+        require(cached.manifest.playbackSessionIds.isEmpty())
+        require(CRASH_TOMBSTONE_FILE !in cached.manifest.archive.entries)
+        val reframedManifest = cached.manifest.copy(consent = consent)
+        val embeddedManifest = JSON.encodeToJsonElement(DiagnosticsManifest.serializer(), reframedManifest)
+            .jsonObject
+            .jsonObjectWithoutArchive()
+            .let(JSON::encodeToString)
+            .encodeToByteArray()
+        val entries = cached.manifest.archive.entries.map { name ->
+            val bytes = if (name == MANIFEST_FILE) {
+                embeddedManifest
+            } else {
+                checkNotNull(cached.sanitizedEntries[name]) { "missing sanitized hosted member: $name" }
+            }
+            ArchiveEntry(name, bytes)
+        }
+        return finalize(reframedManifest, entries)
+    }
+
+    private fun finalize(
+        manifest: DiagnosticsManifest,
+        entries: List<ArchiveEntry>,
+    ): DiagnosticsBundle {
         val tarBytes = UstarWriter.write(entries)
         val gzipBytes = gzip(tarBytes)
-        val externalManifest = sanitizedManifest.copy(
+        val externalManifest = manifest.copy(
             archive = DiagnosticsArchive(
                 entries = entries.map(ArchiveEntry::name),
                 bytes = gzipBytes.size.toLong(),
@@ -94,14 +140,22 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             ),
         ).also(DiagnosticsManifest::validate)
         val externalManifestBytes = JSON.encodeToString(externalManifest).encodeToByteArray()
-        return DiagnosticsBundle(externalManifest, externalManifestBytes, gzipBytes)
+        return DiagnosticsBundle(
+            externalManifest,
+            externalManifestBytes,
+            gzipBytes,
+            entries.associate { entry -> entry.name to entry.bytes },
+        )
     }
 
     private fun sanitizeManifest(
         manifest: DiagnosticsManifest,
         tokens: List<String>,
+        hosted: Boolean,
     ): DiagnosticsManifest {
-        val sanitized = JSON.encodeToJsonElement(DiagnosticsManifest.serializer(), manifest).redact(tokens)
+        val sanitized = JSON.encodeToJsonElement(DiagnosticsManifest.serializer(), manifest)
+            .redact(tokens)
+            .sanitizeHostedStringsIf(hosted)
         val encoded = JSON.encodeToString(sanitized)
         check(tokens.none(encoded::contains)) { "manifest redaction could not be verified" }
         return JSON.decodeFromString(encoded)
@@ -116,9 +170,14 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         runCatching {
             val decoded = checkNotNull(UTF8_DECODER.get()).decode(ByteBuffer.wrap(bytes)).toString()
             val sanitized = when {
-                path.endsWith(".json") -> JSON.encodeToString(JSON.parseToJsonElement(decoded).redact(tokens))
+                path.endsWith(".json") -> JSON.encodeToString(
+                    JSON.parseToJsonElement(decoded)
+                        .redact(tokens)
+                        .stripHostedDeviceIdentifiersIf(hosted && path == DEVICE_FILE)
+                        .sanitizeHostedStringsIf(hosted),
+                )
                 path.endsWith(".jsonl") -> redactJsonLines(decoded, tokens, hosted)
-                else -> decoded.redact(tokens)
+                else -> decoded.redact(tokens).sanitizeHostedTextIf(hosted)
             }
             check(tokens.none(sanitized::contains)) { "artifact redaction could not be verified" }
             sanitized.encodeToByteArray()
@@ -136,7 +195,7 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
                 line
             } else {
                 val sanitized = JSON.parseToJsonElement(line).redact(tokens).let { element ->
-                    if (hosted) element.toHostedDiagnosticsLogLine() else element
+                    if (hosted) element.toHostedDiagnosticsLogLine().sanitizeHostedStrings() else element
                 }
                 JSON.encodeToString(sanitized)
             }
@@ -151,19 +210,18 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         val allowedAttributes = HOSTED_V1_LOG_ATTRIBUTES[category].orEmpty()
         val filteredAttributes = (output["attrs"] as? JsonObject)
             ?.filterKeys(allowedAttributes::contains)
+            ?.mapValues { (key, value) ->
+                if (category == "network" && key == "path" && value is JsonPrimitive && value.isString) {
+                    JsonPrimitive(checkNotNull(value.contentOrNull).templateHostedPrivatePathSegments())
+                } else {
+                    value
+                }
+            }
             .orEmpty()
         if (filteredAttributes.isEmpty()) {
             output.remove("attrs")
         } else {
             output["attrs"] = JsonObject(filteredAttributes)
-        }
-        val message = output["msg"] as? JsonPrimitive
-        if (message?.isString == true) {
-            output["msg"] = JsonPrimitive(
-                PRIVATE_PLAYBACK_ASSIGNMENT.replace(checkNotNull(message.contentOrNull)) { match ->
-                    "${match.groupValues[1]}${match.groupValues[2]}[REDACTED]"
-                },
-            )
         }
         return JsonObject(output)
     }
@@ -174,11 +232,82 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         is JsonPrimitive -> if (isString) JsonPrimitive(checkNotNull(contentOrNull).redact(tokens)) else this
     }
 
+    private fun JsonElement.sanitizeHostedStringsIf(hosted: Boolean): JsonElement =
+        if (hosted) sanitizeHostedStrings() else this
+
+    private fun JsonElement.stripHostedDeviceIdentifiersIf(strip: Boolean): JsonElement =
+        if (strip) stripHostedDeviceIdentifiers() else this
+
+    private fun JsonElement.stripHostedDeviceIdentifiers(): JsonElement = when (this) {
+        is JsonObject -> JsonObject(
+            entries
+                .filterNot { (key, _) -> key.normalizedPrivacyKey() in HOSTED_DEVICE_IDENTIFIER_KEYS }
+                .associate { (key, value) -> key to value.stripHostedDeviceIdentifiers() },
+        )
+        is JsonArray -> JsonArray(map { value -> value.stripHostedDeviceIdentifiers() })
+        is JsonPrimitive -> this
+    }
+
+    private fun String.normalizedPrivacyKey(): String =
+        lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
+
+    private fun JsonElement.sanitizeHostedStrings(): JsonElement = when (this) {
+        is JsonObject -> JsonObject(mapValues { (_, value) -> value.sanitizeHostedStrings() })
+        is JsonArray -> JsonArray(map { value -> value.sanitizeHostedStrings() })
+        is JsonPrimitive -> if (isString) JsonPrimitive(checkNotNull(contentOrNull).sanitizeHostedText()) else this
+    }
+
     private fun String.redact(tokens: List<String>): String {
         var output = this
         tokens.forEach { token -> output = output.replace(token, REDACTED_VALUE) }
         return output
     }
+
+    private fun String.sanitizeHostedTextIf(hosted: Boolean): String =
+        if (hosted) sanitizeHostedText() else this
+
+    private fun String.sanitizeHostedText(): String {
+        var output = HOST_TOKEN.replace(this, REDACTED_HOST_VALUE)
+        output = REDACTED_AUTHORITY.replace(output) { match ->
+            "${match.groupValues[1]}$REDACTED_HOST_VALUE"
+        }
+        output = PRIVATE_IDENTIFIER_ASSIGNMENT.replace(output, "[REDACTED_PRIVATE_ID]")
+        return HOSTED_AUTHORITY_URL.replace(output) { match -> sanitizeHostedUrl(match.value) }
+    }
+
+    private fun sanitizeHostedUrl(candidate: String): String {
+        val trailing = candidate.takeLastWhile { it in TRAILING_URL_PUNCTUATION }
+        val core = candidate.dropLast(trailing.length)
+        val uri = runCatching { URI(core) }.getOrNull() ?: return candidate
+        val host = uri.host ?: return candidate
+        return runCatching {
+            URI(
+                uri.scheme,
+                null,
+                host,
+                uri.port,
+                ENCODED_ID_PLACEHOLDER.replace(uri.rawPath.orEmpty(), "{id}")
+                    .templateHostedPrivatePathSegments(),
+                null,
+                null,
+            ).toASCIIString()
+                .replace("%7Bid%7D", "{id}", ignoreCase = true) + trailing
+        }.getOrDefault(candidate)
+    }
+
+    private fun String.templateHostedPrivatePathSegments(): String = split('/')
+        .joinToString("/") { segment ->
+            if (
+                UUID_PATH_SEGMENT.matches(segment) ||
+                NUMERIC_ID_PATH_SEGMENT.matches(segment) ||
+                HEX_ID_PATH_SEGMENT.matches(segment) ||
+                OPAQUE_ID_PATH_SEGMENT.matches(segment)
+            ) {
+                "{id}"
+            } else {
+                segment
+            }
+        }
 
     private fun gzip(bytes: ByteArray): ByteArray = ByteArrayOutputStream().use { output ->
         GZIPOutputStream(output).use { gzip -> gzip.write(bytes) }
@@ -268,7 +397,9 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         const val MANIFEST_FILE = "manifest.json"
         const val DEVICE_FILE = "device.json"
         const val LOGS_FILE = "logs.jsonl"
+        const val CRASH_TOMBSTONE_FILE = "crash/tombstone.pb"
         const val REDACTED_VALUE = "[REDACTED]"
+        const val REDACTED_HOST_VALUE = "redacted.invalid"
         val REDACTION_FAILURE_SENTINEL = "{\"redaction_failure\":true}\n".encodeToByteArray()
         val TEXT_ENTRIES = CANONICAL_ARCHIVE_ORDER.toSet() - MANIFEST_FILE - "crash/tombstone.pb"
         val HOSTED_V1_LOG_ATTRIBUTES = mapOf(
@@ -288,9 +419,40 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             "lifecycle" to setOf("state"),
             "crash" to setOf("fingerprint", "source"),
         )
-        val PRIVATE_PLAYBACK_ASSIGNMENT = Regex(
-            """(?i)\b(playback(?:[_\s-]?session)?[_\s-]?ids?)\s*([:=])\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)""",
+        val HOSTED_DEVICE_IDENTIFIER_KEYS = setOf(
+            "id",
+            "address",
+            "routehash",
+            "routehashes",
+            "deviceid",
+            "deviceaddress",
+            "deviceidhash",
+            "deviceaddresshash",
+            "serial",
+            "serialnumber",
+            "imei",
+            "meid",
+            "mac",
+            "macaddress",
+            "ssid",
+            "bssid",
+            "ip",
+            "ipaddress",
         )
+        val PRIVATE_IDENTIFIER_ASSIGNMENT = Regex(
+            """(?i)\b(playback[_-]?session[_-]?id|session[_-]?id|(?:plan|selected|effective|requested|media)?[_-]?file[_-]?id|item[_-]?id|media[_-]?id|plan[_-]?id|playback[_-]?attempt[_-]?id|plan[_-]?attempt[_-]?key|subtitle[_-]?id|track[_-]?id)\s*[:=]\s*(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*'|[^\s,;)\]}]+)""",
+        )
+        val HOST_TOKEN = Regex("(?i)\\bhost_[0-9a-f]{16}\\b")
+        val REDACTED_AUTHORITY = Regex("(?i)\\b((?:https?|wss?)://)\\[REDACTED]")
+        val HOSTED_AUTHORITY_URL = Regex("(?i)\\b(?:https?|wss?)://[^\\s<>\\\"']+")
+        val TRAILING_URL_PUNCTUATION = setOf('.', ',', ';', ':', '!', '?', ')', ']', '}')
+        val UUID_PATH_SEGMENT = Regex(
+            "(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        )
+        val NUMERIC_ID_PATH_SEGMENT = Regex("^[0-9]+$")
+        val HEX_ID_PATH_SEGMENT = Regex("(?i)^[0-9a-f]{16,}$")
+        val OPAQUE_ID_PATH_SEGMENT = Regex("^[A-Za-z0-9_-]{20,}$")
+        val ENCODED_ID_PLACEHOLDER = Regex("(?i)%(?:25)?7bid%(?:25)?7d")
         val JSON = Json { encodeDefaults = true; explicitNulls = false; ignoreUnknownKeys = false }
         val UTF8_DECODER: ThreadLocal<java.nio.charset.CharsetDecoder> = ThreadLocal.withInitial {
             Charsets.UTF_8.newDecoder()

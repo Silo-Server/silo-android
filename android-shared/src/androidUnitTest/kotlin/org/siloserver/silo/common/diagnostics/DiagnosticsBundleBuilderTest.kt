@@ -126,6 +126,7 @@ class DiagnosticsBundleBuilderTest {
             "device.json" to "{}".encodeToByteArray(),
             "logs.jsonl" to "$playbackLine\n$lifecycleLine\n".encodeToByteArray(),
             "breadcrumbs.jsonl" to "$focusLine\n".encodeToByteArray(),
+            "crash/tombstone.pb" to "opaque-private-native-trace".encodeToByteArray(),
         )
 
         val hosted = builder.build(
@@ -143,9 +144,11 @@ class DiagnosticsBundleBuilderTest {
         assertFalse(hostedLogs[0].getValue("attrs").jsonObject.containsKey("buffered_ms"))
         assertFalse(hostedLogs[0].getValue("attrs").jsonObject.containsKey("failure_code"))
         assertFalse(hostedLogs[0].getValue("msg").jsonPrimitive.content.contains("private-playback-correlation"))
-        assertTrue(hostedLogs[0].getValue("msg").jsonPrimitive.content.contains("[REDACTED]"))
+        assertTrue(hostedLogs[0].getValue("msg").jsonPrimitive.content.contains("[REDACTED_PRIVATE_ID]"))
         assertEquals(setOf("state"), hostedLogs[1].getValue("attrs").jsonObject.keys)
         assertEquals(setOf("target", "action"), hostedBreadcrumb.getValue("attrs").jsonObject.keys)
+        assertFalse(hostedEntries.containsKey("crash/tombstone.pb"))
+        assertFalse(hosted.manifest.archive.entries.contains("crash/tombstone.pb"))
 
         val selfHosted = builder.build(
             report(artifacts, DiagnosticsDestinationKind.SELF_HOSTED),
@@ -159,6 +162,69 @@ class DiagnosticsBundleBuilderTest {
         assertTrue(selfHostedLogs.contains("private-playback-correlation"))
         assertTrue(selfHostedLogs.contains("p95_frame_ms"))
         assertTrue(selfHostedBreadcrumbs.contains("private-route"))
+        assertContentEquals(
+            "opaque-private-native-trace".encodeToByteArray(),
+            selfHostedEntries.getValue("crash/tombstone.pb").bytes,
+        )
+    }
+
+    @Test
+    fun hostedBundleCanonicalizesPrivateHostsPathsAndIdentifierAssignmentsInEveryTextField() {
+        val privateHost = "saved-private-silo.example"
+        val networkLine = """{"ts":"2026-08-11T00:00:00Z","run":"run-1","lvl":"I","cat":"network","tag":"wss://$privateHost/items/42 planAttemptKey=attempt-private","msg":"host_0123456789abcdef selectedFileId=991 playbackSessionId=session-private","attrs":{"method":"GET","path":"/users/42/items/0123456789abcdef","status":200,"duration_ms":5}}"""
+        val device = """{"server":"$privateHost","socket":"ws://$privateHost/items/42?token=private","note":"sessionId=session-private trackId=track-private","host_token":"host_fedcba9876543210"}"""
+        val bundle = builder.build(
+            report(
+                artifacts = mapOf(
+                    "device.json" to device.encodeToByteArray(),
+                    "logs.jsonl" to "$networkLine\n".encodeToByteArray(),
+                ),
+                destinationKind = DiagnosticsDestinationKind.HOSTED,
+            ),
+            redactionTokens = listOf(privateHost),
+        )
+        val entries = untar(gunzip(bundle.bytes)).associateBy(TarEntry::name)
+        val shippedDevice = entries.getValue("device.json").bytes.decodeToString()
+        val shippedLog = entries.getValue("logs.jsonl").bytes.decodeToString()
+        val shipped = entries.values.joinToString("\n") { it.bytes.decodeToString() }
+
+        listOf(
+            privateHost,
+            "host_0123456789abcdef",
+            "host_fedcba9876543210",
+            "attempt-private",
+            "session-private",
+            "track-private",
+            "/items/42",
+            "/users/42",
+        ).forEach { leaked -> assertFalse(shipped.contains(leaked), "leaked $leaked in $shipped") }
+        assertTrue(shipped.contains("wss://redacted.invalid/items/{id}"), shipped)
+        assertTrue(shipped.contains("ws://redacted.invalid/items/{id}"), shipped)
+        assertTrue(shipped.contains("[REDACTED_PRIVATE_ID]"), shipped)
+        Json.parseToJsonElement(shippedDevice)
+        shippedLog.lineSequence().filter(String::isNotBlank).forEach { line -> Json.parseToJsonElement(line) }
+    }
+
+    @Test
+    fun hostedDeviceSnapshotOmitsDeterministicRouteAndDeviceIdentifiersOnlyForHosted() {
+        val device = """{"identity":{"manufacturer":"NVIDIA","build_fingerprint_hash":"${"a".repeat(32)}"},"audio":{"route_hashes":["${"b".repeat(32)}"],"outputs":[{"type":"hdmi","id":"${"c".repeat(32)}","address":"${"d".repeat(32)}"}]}}"""
+        val artifacts = mapOf("device.json" to device.encodeToByteArray())
+
+        val hostedDevice = builder.build(
+            report(artifacts, DiagnosticsDestinationKind.HOSTED),
+            redactionTokens = emptyList(),
+        ).sanitizedEntries.getValue("device.json").decodeToString()
+        val selfHostedDevice = builder.build(
+            report(artifacts, DiagnosticsDestinationKind.SELF_HOSTED),
+            redactionTokens = emptyList(),
+        ).sanitizedEntries.getValue("device.json").decodeToString()
+
+        listOf("route_hashes", "\"id\"", "\"address\"", "b".repeat(32), "c".repeat(32), "d".repeat(32))
+            .forEach { value -> assertFalse(hostedDevice.contains(value), hostedDevice) }
+        assertTrue(hostedDevice.contains("build_fingerprint_hash"), hostedDevice)
+        assertTrue(selfHostedDevice.contains("route_hashes"), selfHostedDevice)
+        assertTrue(selfHostedDevice.contains("\"id\""), selfHostedDevice)
+        assertTrue(selfHostedDevice.contains("\"address\""), selfHostedDevice)
     }
 
     @Test
@@ -189,6 +255,17 @@ class DiagnosticsBundleBuilderTest {
                 file.writeBytes(bytes)
             }
         }
+        val reportManifest = manifest().let { value ->
+            if (destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                value.copy(
+                    report = value.report.copy(profileId = null),
+                    destination = DiagnosticsDestination(HOSTED_DIAGNOSTICS_COLLECTOR_ID),
+                    playbackSessionIds = emptyList(),
+                )
+            } else {
+                value
+            }
+        }
         return PendingReport(
             id = "a".repeat(32),
             directory = directory,
@@ -199,7 +276,7 @@ class DiagnosticsBundleBuilderTest {
                 7,
                 destinationKind,
             ),
-            manifest = manifest(),
+            manifest = reportManifest,
             state = PendingReportState(
                 capturedAtEpochMs = 1,
                 fingerprint = "fingerprint",

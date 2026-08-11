@@ -2,6 +2,7 @@ package org.siloserver.silo.common.diagnostics
 
 import android.content.SharedPreferences
 import android.util.Base64
+import java.net.URI
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
@@ -65,7 +66,7 @@ class HostedDiagnosticsCapabilitiesRepository(
 
     private fun HostedDiagnosticsCapabilities.isUsable(): Boolean =
         collectorId == HOSTED_DIAGNOSTICS_COLLECTOR_ID &&
-            acceptedSchemaVersions.isNotEmpty() &&
+            1 in acceptedSchemaVersions &&
             maxBundleBytes > 0 &&
             maxManifestBytes > 0 &&
             retentionDays == HOSTED_DIAGNOSTICS_RETENTION_DAYS &&
@@ -161,8 +162,33 @@ class HostedDiagnosticsInstallationManager(
         runCatching { HostedDiagnosticsCredentials(installationId, installationToken) }.getOrNull()
 }
 
+fun interface HostedDiagnosticsReportDeleter {
+    suspend fun delete(reportId: String): Boolean
+
+    data object None : HostedDiagnosticsReportDeleter {
+        override suspend fun delete(reportId: String): Boolean = false
+    }
+}
+
+class DefaultHostedDiagnosticsReportDeleter(
+    private val api: HostedDiagnosticsApi,
+    private val installations: HostedDiagnosticsInstallationManager,
+) : HostedDiagnosticsReportDeleter {
+    override suspend fun delete(reportId: String): Boolean {
+        val wireReportId = reportId.toHostedWireReportIdOrNull() ?: return false
+        val credentials = installations.current() ?: return false
+        return when (api.deleteReport(credentials.installationToken, wireReportId)) {
+            is HostedDiagnosticsApiResult.Success -> true
+            is HostedDiagnosticsApiResult.Failure,
+            is HostedDiagnosticsApiResult.NetworkError,
+            -> false
+        }
+    }
+}
+
 class DestinationAwareDiagnosticsRedactionTokenProvider(
     private val tokenManager: TokenManager,
+    private val serverRegistry: ServerRegistry? = null,
     private val hostedInstallationToken: suspend () -> String?,
 ) : DiagnosticsRedactionTokenProvider {
     override suspend fun tokens(destinationKind: DiagnosticsDestinationKind): List<String> = buildList {
@@ -171,7 +197,14 @@ class DestinationAwareDiagnosticsRedactionTokenProvider(
         add(tokenManager.getProfileToken())
         add(hostedInstallationToken())
         if (destinationKind == DiagnosticsDestinationKind.HOSTED) {
-            add(tokenManager.getServerUrl())
+            val serverUrls = buildList {
+                add(tokenManager.getServerUrl())
+                serverRegistry?.entries?.value?.forEach { entry -> add(entry.url) }
+            }.filterNotNull().filter(String::isNotBlank)
+            serverUrls.forEach { url ->
+                add(url)
+                add(runCatching { URI(url).host }.getOrNull())
+            }
             add(tokenManager.getCurrentServerId())
             add(tokenManager.getProfileId())
         }

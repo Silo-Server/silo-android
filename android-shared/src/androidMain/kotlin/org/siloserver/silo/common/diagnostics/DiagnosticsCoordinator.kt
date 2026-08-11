@@ -3,6 +3,7 @@ package org.siloserver.silo.common.diagnostics
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,7 +70,7 @@ interface DiagnosticsCoordinator {
     suspend fun stopTimedCapture(): String?
     suspend fun cancelTimedCapture()
     suspend fun upload(reportId: String, expectedNoticeVersion: Int? = null): DiagnosticsUploadDecision
-    suspend fun delete(reportId: String)
+    suspend fun delete(reportId: String): Boolean
     suspend fun decline(reportId: String)
 }
 
@@ -82,6 +83,7 @@ class DefaultDiagnosticsCoordinator(
     private val capture: DiagnosticsCaptureController,
     private val uploader: DiagnosticsUploader,
     private val uploadScheduler: DiagnosticsUploadScheduler,
+    private val hostedReportDeleter: HostedDiagnosticsReportDeleter = HostedDiagnosticsReportDeleter.None,
     private val runtimePublisher: DiagnosticsRuntimePublisher = DiagnosticsRuntimePublisher.None,
     private val incidentCollector: DiagnosticsIncidentCollector = DiagnosticsIncidentCollector { _, _ -> emptyList() },
     actorDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -141,7 +143,7 @@ class DefaultDiagnosticsCoordinator(
     override suspend fun upload(reportId: String, expectedNoticeVersion: Int?): DiagnosticsUploadDecision =
         requestResult { Command.Upload(reportId, expectedNoticeVersion, it) }
 
-    override suspend fun delete(reportId: String) = request { Command.Delete(reportId, it) }
+    override suspend fun delete(reportId: String): Boolean = requestResult { Command.Delete(reportId, it) }
 
     override suspend fun decline(reportId: String) = request { Command.Decline(reportId, it) }
 
@@ -165,12 +167,13 @@ class DefaultDiagnosticsCoordinator(
             is Command.Upload -> completeResult(command.completion) {
                 uploadOwned(command.reportId, command.expectedNoticeVersion)
             }
-            is Command.Delete -> complete(command.completion) { deleteOwned(command.reportId) }
+            is Command.Delete -> completeResult(command.completion) { deleteOwned(command.reportId) }
             is Command.Decline -> complete(command.completion) { declineOwned(command.reportId) }
         }
     }
 
     private suspend fun refreshOwnedState() {
+        drainHostedDeletionIntents()
         val selectedDestination = runCatching { settings.destinationKind() }
             .getOrDefault(DiagnosticsDestinationKind.HOSTED)
         val resolved = runCatching { identity.resolve(requirePersistentCapture = true) }.getOrNull()
@@ -429,16 +432,51 @@ class DefaultDiagnosticsCoordinator(
         return decision
     }
 
-    private suspend fun deleteOwned(reportId: String) {
-        val report = reports.load(reportId) ?: return
+    private suspend fun deleteOwned(reportId: String): Boolean {
+        val report = reports.load(reportId) ?: return true
         val liveBinding = currentEligibleContext()?.binding
         val cachedBinding = if (liveBinding == null) {
             trustedCachedContext()?.binding
         } else {
             null
         }
-        if (report.binding.binding == (liveBinding ?: cachedBinding)) reports.delete(reportId)
+        if (report.binding.binding != (liveBinding ?: cachedBinding)) return false
+        try {
+            reports.stageHostedDeletionAndDelete(reportId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            if (reports.load(reportId) != null) return false
+            refreshOwnedState()
+            return true
+        }
         refreshOwnedState()
+        return true
+    }
+
+    private suspend fun drainHostedDeletionIntents(): Boolean {
+        var completedAll = true
+        reports.hostedDeletionIntents().forEach { reportId ->
+            val completed = try {
+                hostedReportDeleter.delete(reportId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                false
+            }
+            if (completed) {
+                try {
+                    reports.completeHostedDeletion(reportId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    completedAll = false
+                }
+            } else {
+                completedAll = false
+            }
+        }
+        return completedAll
     }
 
     private suspend fun declineOwned(reportId: String) {
@@ -504,7 +542,7 @@ class DefaultDiagnosticsCoordinator(
             val expectedNoticeVersion: Int?,
             val completion: CompletableDeferred<DiagnosticsUploadDecision>,
         ) : Command
-        data class Delete(val reportId: String, val completion: CompletableDeferred<Unit>) : Command
+        data class Delete(val reportId: String, val completion: CompletableDeferred<Boolean>) : Command
         data class Decline(val reportId: String, val completion: CompletableDeferred<Unit>) : Command
     }
 
@@ -527,12 +565,14 @@ private fun DiagnosticsAvailabilityStatus.toUiAvailability(): DiagnosticsAvailab
     DiagnosticsAvailabilityStatus.STORAGE_UNAVAILABLE -> DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE
 }
 
-private fun PendingReport.summary(retentionDays: Int): DiagnosticsReportSummary = DiagnosticsReportSummary(
+private fun PendingReport.summary(@Suppress("UNUSED_PARAMETER") retentionDays: Int): DiagnosticsReportSummary = DiagnosticsReportSummary(
     id = id,
     type = manifest.report.type,
     capturedAt = manifest.report.capturedAt,
     capturedAtEpochMs = state.capturedAtEpochMs,
-    expiresAtEpochMs = state.capturedAtEpochMs + retentionDays.coerceAtLeast(1) * MILLIS_PER_DAY,
+    // This is local pending-evidence expiry, not the collector's post-upload
+    // retention policy shown in settings.
+    expiresAtEpochMs = state.capturedAtEpochMs + PENDING_DIAGNOSTICS_RETENTION_DAYS * MILLIS_PER_DAY,
     evidenceBytes = directory.walkTopDown().filter(File::isFile).sumOf(File::length),
     destinationServerInstanceId = manifest.destination.serverInstanceId,
     capturedProfileId = binding.profileId,

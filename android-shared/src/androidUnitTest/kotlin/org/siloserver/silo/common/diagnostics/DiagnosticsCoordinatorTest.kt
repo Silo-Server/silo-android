@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
@@ -237,6 +238,7 @@ class DiagnosticsCoordinatorTest {
             profileId = null,
             sourceProfileId = ADULT_A.profileId,
             destinationKind = DiagnosticsDestinationKind.HOSTED,
+            retentionDays = HOSTED_DIAGNOSTICS_RETENTION_DAYS,
         )
         val fixture = fixture(
             MutableIdentityResolver(hosted),
@@ -249,9 +251,144 @@ class DiagnosticsCoordinatorTest {
         fixture.coordinator.refresh()
 
         fixture.coordinator.setConsent(DiagnosticsConsentMode.ALWAYS)
+        fixture.reports.save(reportCapture(hosted, "hosted"))
+        fixture.coordinator.refresh()
 
         assertEquals(DiagnosticsConsentMode.ASK, fixture.coordinator.state.value.consent)
         assertFalse(fixture.coordinator.state.value.allowsAutomaticUpload)
+        assertEquals(HOSTED_DIAGNOSTICS_RETENTION_DAYS, fixture.coordinator.state.value.retentionDays)
+        assertEquals(
+            CAPTURED_AT + PENDING_DIAGNOSTICS_RETENTION_DAYS * 24L * 60 * 60 * 1_000,
+            fixture.coordinator.state.value.pending.single().expiresAtEpochMs,
+            "local pending evidence expires after seven days even though uploaded reports disclose 30-day retention",
+        )
+    }
+
+    @Test
+    fun hostedDeletePersistsErasureIntentAndRetriesAfterAnAmbiguousFailure() = runTest {
+        val hosted = ADULT_A.copy(
+            binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "anonymous-hosted-device"),
+            profileId = null,
+            sourceProfileId = ADULT_A.profileId,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+            retentionDays = HOSTED_DIAGNOSTICS_RETENTION_DAYS,
+        )
+        val deleter = RecordingHostedReportDeleter(result = false)
+        val fixture = fixture(
+            MutableIdentityResolver(hosted),
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+            hostedReportDeleter = deleter,
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        val report = fixture.reports.save(reportCapture(hosted, "hosted-delete"))
+        val bundle = FileDiagnosticsBundleBuilder().build(report, redactionTokens = emptyList())
+        fixture.reports.saveHostedEnvelope(report.id, bundle)
+
+        assertTrue(fixture.coordinator.delete(report.id))
+
+        assertEquals(null, fixture.reports.load(report.id))
+        assertEquals(listOf(report.id), fixture.reports.hostedDeletionIntents())
+        assertEquals(listOf(report.id), deleter.reportIds)
+        assertTrue(fixture.coordinator.state.value.pending.none { it.id == report.id })
+
+        deleter.result = true
+        fixture.coordinator.refresh()
+
+        assertTrue(fixture.reports.hostedDeletionIntents().isEmpty())
+        assertEquals(listOf(report.id, report.id), deleter.reportIds)
+    }
+
+    @Test
+    fun selfHostedDeleteRemainsLocalOnly() = runTest {
+        val deleter = RecordingHostedReportDeleter(result = false)
+        val fixture = fixture(
+            MutableIdentityResolver(ADULT_A),
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+            hostedReportDeleter = deleter,
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        val report = fixture.reports.save(reportCapture(ADULT_A, "self-hosted-delete"))
+
+        assertTrue(fixture.coordinator.delete(report.id))
+
+        assertEquals(null, fixture.reports.load(report.id))
+        assertTrue(deleter.reportIds.isEmpty())
+    }
+
+    @Test
+    fun turnOffStagesHostedErasureBeforePurgingLocalEvidence() = runTest {
+        val hosted = ADULT_A.copy(
+            binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "anonymous-hosted-device"),
+            profileId = null,
+            sourceProfileId = ADULT_A.profileId,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+            retentionDays = HOSTED_DIAGNOSTICS_RETENTION_DAYS,
+        )
+        val deleter = RecordingHostedReportDeleter(result = false)
+        val fixture = fixture(
+            MutableIdentityResolver(hosted),
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+            hostedReportDeleter = deleter,
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        val report = fixture.reports.save(reportCapture(hosted, "hosted-turn-off"))
+        val bundle = FileDiagnosticsBundleBuilder().build(report, redactionTokens = emptyList())
+        fixture.reports.saveHostedEnvelope(report.id, bundle)
+
+        fixture.coordinator.setConsent(DiagnosticsConsentMode.NEVER)
+
+        assertEquals(null, fixture.reports.load(report.id))
+        assertEquals(listOf(report.id), fixture.reports.hostedDeletionIntents())
+        assertEquals(listOf(report.id), deleter.reportIds)
+        assertEquals(listOf(hosted.binding), fixture.purgedBindings)
+        assertTrue(fixture.coordinator.state.value.pending.isEmpty())
+    }
+
+    @Test
+    fun startupRefreshRetriesPersistedHostedErasureIntents() = runTest {
+        val hosted = ADULT_A.copy(
+            binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "anonymous-hosted-device"),
+            profileId = null,
+            sourceProfileId = ADULT_A.profileId,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+            retentionDays = HOSTED_DIAGNOSTICS_RETENTION_DAYS,
+        )
+        val deleter = RecordingHostedReportDeleter(result = true)
+        val fixture = fixture(
+            MutableIdentityResolver(hosted),
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+            hostedReportDeleter = deleter,
+        )
+        val report = fixture.reports.save(reportCapture(hosted, "hosted-startup-delete"))
+        fixture.reports.markHostedProcessing(report.id, "ABC123")
+        val interruptedCopy = temporaryFolder.newFolder("hosted-startup-delete-copy")
+        report.directory.copyRecursively(interruptedCopy, overwrite = true)
+        fixture.reports.stageHostedDeletionAndDelete(report.id)
+        assertEquals(listOf(report.id), fixture.reports.hostedDeletionIntents())
+        interruptedCopy.copyRecursively(report.directory, overwrite = true)
+        assertTrue(report.directory.isDirectory)
+
+        fixture.coordinator.start()
+        runCurrent()
+
+        assertFalse(report.directory.exists())
+        assertTrue(fixture.reports.hostedDeletionIntents().isEmpty())
+        assertEquals(listOf(report.id), deleter.reportIds)
     }
 
     @Test
@@ -385,10 +522,12 @@ class DiagnosticsCoordinatorTest {
         capture: RecordingCaptureController,
         scope: CoroutineScope,
         actorDispatcher: CoroutineDispatcher,
+        hostedReportDeleter: HostedDiagnosticsReportDeleter = HostedDiagnosticsReportDeleter.None,
     ): Fixture {
         val files = temporaryFolder.newFolder()
         val purgedBindings = mutableListOf<DiagnosticsBinding>()
         val evidence = mutableSetOf<DiagnosticsBinding>()
+        val reports = FilePendingReportStore(files, nowMs = { CAPTURED_AT })
         val settings = DiagnosticsSettingsStore(
             dataStore = PreferenceDataStoreFactory.create {
                 File(files, "diagnostics-${System.nanoTime()}.preferences_pb")
@@ -397,9 +536,9 @@ class DiagnosticsCoordinatorTest {
                 purgedBindings += binding
                 evidence -= binding
                 capture.purge(binding)
+                reports.purge(binding)
             },
         )
-        val reports = FilePendingReportStore(files, nowMs = { CAPTURED_AT })
         val coordinator = DefaultDiagnosticsCoordinator(
             scope = scope,
             actorDispatcher = actorDispatcher,
@@ -410,6 +549,7 @@ class DiagnosticsCoordinatorTest {
             capture = capture,
             uploader = DiagnosticsUploader { DiagnosticsUploadDecision.KeptUnavailable },
             uploadScheduler = DiagnosticsUploadScheduler { },
+            hostedReportDeleter = hostedReportDeleter,
         )
         return Fixture(coordinator, reports, evidence, purgedBindings)
     }
@@ -420,6 +560,7 @@ class DiagnosticsCoordinatorTest {
             accountUserId = context.binding.accountUserId,
             profileId = context.profileId,
             ownershipGeneration = context.ownershipGeneration,
+            destinationKind = context.destinationKind,
         ),
         manifest = DiagnosticsManifest(
             schemaVersion = 1,
@@ -491,6 +632,17 @@ class DiagnosticsCoordinatorTest {
 
         override suspend fun purge(binding: DiagnosticsBinding) {
             hasPersistentEvidence = false
+        }
+    }
+
+    private class RecordingHostedReportDeleter(
+        var result: Boolean,
+    ) : HostedDiagnosticsReportDeleter {
+        val reportIds = mutableListOf<String>()
+
+        override suspend fun delete(reportId: String): Boolean {
+            reportIds += reportId
+            return result
         }
     }
 
