@@ -2,10 +2,13 @@ package org.siloserver.silo.android.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.model.auth.User
+import org.siloserver.silo.model.auth.canManageProfilesFromPicker
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfileRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,11 +33,41 @@ data class ProfileSelectionUiState(
     /** The profile this session is signed in as — deleting it needs a
      *  stronger warning and clears the local selection first. */
     val activeProfileId: String? = null,
-)
+    /**
+     * Whether the picker shows management affordances (Manage Profiles, Add
+     * Profile). Mirrors the server's gate — admin account OR acting as the
+     * primary profile (phone keeps the acting profile across Switch Profile) —
+     * see [canManageProfilesFromPicker]. Fails closed while neither resolves.
+     */
+    val canManageProfiles: Boolean = false,
+) {
+    /**
+     * The add tile stays visible on an empty grid regardless of role: the
+     * server exempts creation of the very first profile from the
+     * primary-or-admin gate, and hiding it would strand a fresh account.
+     */
+    val canAddProfile: Boolean get() = canManageProfiles || profiles.isEmpty()
+}
 
 class ProfileSelectionViewModel(
     private val profileRepository: ProfileRepository,
+    /**
+     * Resolves the signed-in account, null when it cannot be resolved (fails
+     * closed) — the seam unit tests drive, mirroring AdminEntryViewModel;
+     * production uses the repository-backed secondary constructor.
+     */
+    private val currentUserProvider: suspend () -> User? = { null },
 ) : ViewModel() {
+
+    constructor(
+        profileRepository: ProfileRepository,
+        authRepository: AuthRepository,
+    ) : this(
+        profileRepository = profileRepository,
+        currentUserProvider = {
+            (authRepository.getCurrentUser() as? ApiResult.Success)?.data
+        },
+    )
 
     private val _uiState = MutableStateFlow(ProfileSelectionUiState())
     val uiState: StateFlow<ProfileSelectionUiState> = _uiState.asStateFlow()
@@ -72,6 +105,7 @@ class ProfileSelectionViewModel(
 
             val scope = profileRepository.captureIdentityScope()
             val activeId = profileRepository.getActiveProfileId()
+            val user = currentUserProvider()
             val result = profileRepository.listProfiles()
             // Two separate reasons to drop this response: a newer load
             // superseded it, or the identity it was fetched under is gone.
@@ -83,7 +117,18 @@ class ProfileSelectionViewModel(
                 // Leaving a scope behind for an empty grid is stale metadata
                 // that a later selection could be qualified against.
                 gridScope = null
-                _uiState.update { it.copy(isLoading = false, profiles = emptyList()) }
+                // The management grant belongs to the identity the grid was
+                // fetched under — fail closed with it, and take the manage
+                // affordances (mode + pending delete) down with the grant.
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        profiles = emptyList(),
+                        canManageProfiles = false,
+                        isManageMode = false,
+                        deleteDialogProfile = null,
+                    )
+                }
                 return@launch
             }
 
@@ -96,8 +141,28 @@ class ProfileSelectionViewModel(
                     // accepted as belonging to the new one. That is worse than
                     // the unguarded commit this was meant to fix.
                     gridScope = scope
+                    // Resolve the acting profile against THIS grid so the
+                    // grant stays paired with the identity scope it was
+                    // fetched under. Phone keeps the acting profile across
+                    // Switch Profile, so a non-admin owner acting as the
+                    // primary is authorized here; at first login (or if the
+                    // active id is gone from the list) this is null and only
+                    // the admin arm can hold.
+                    val activeProfile = result.data.firstOrNull { it.id == activeId }
+                    val canManage = canManageProfilesFromPicker(user, activeProfile)
                     _uiState.update {
-                        it.copy(isLoading = false, profiles = result.data, activeProfileId = activeId)
+                        it.copy(
+                            isLoading = false,
+                            profiles = result.data,
+                            activeProfileId = activeId,
+                            canManageProfiles = canManage,
+                            // A revoked grant must also leave manage mode (or
+                            // the "Done" toggle disappears while its mode
+                            // stays) and close a pending delete confirmation,
+                            // which would otherwise stay open and actionable.
+                            isManageMode = it.isManageMode && canManage,
+                            deleteDialogProfile = if (canManage) it.deleteDialogProfile else null,
+                        )
                     }
                 }
 
@@ -288,6 +353,8 @@ class ProfileSelectionViewModel(
                         pinIsVerifying = false,
                         pinError = null,
                         deleteDialogProfile = null,
+                        isManageMode = false,
+                        canManageProfiles = false,
                     )
                 }
                 loadProfiles()

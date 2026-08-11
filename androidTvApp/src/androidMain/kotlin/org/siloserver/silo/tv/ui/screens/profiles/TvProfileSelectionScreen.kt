@@ -160,15 +160,21 @@ fun TvProfileSelectionScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TvHeroActionPill(
-                        label = if (state.isManageMode) "Done" else "Manage",
-                        icon = Icons.Filled.Edit,
-                        variant = TvPillVariant.Hollow,
-                        heightOverride = ProfileUtilityChipHeight,
-                        horizontalPaddingOverride = 10.dp,
-                        labelStyle = MaterialTheme.typography.labelMedium,
-                        onClick = viewModel::toggleManageMode,
-                    )
+                    // Edit/delete would 403 unless the account is admin or
+                    // the acting profile is the primary — and TV clears the
+                    // acting profile before this picker, so in practice only
+                    // admin accounts are offered the mode here.
+                    if (state.canManageProfiles) {
+                        TvHeroActionPill(
+                            label = if (state.isManageMode) "Done" else "Manage",
+                            icon = Icons.Filled.Edit,
+                            variant = TvPillVariant.Hollow,
+                            heightOverride = ProfileUtilityChipHeight,
+                            horizontalPaddingOverride = 10.dp,
+                            labelStyle = MaterialTheme.typography.labelMedium,
+                            onClick = viewModel::toggleManageMode,
+                        )
+                    }
                     TvHeroActionPill(
                         label = "Change Server",
                         icon = Icons.Filled.Dns,
@@ -271,6 +277,11 @@ fun TvProfileSelectionScreen(
                         },
                         onProfileFocused = { focusedProfileId = it },
                         isManageMode = state.isManageMode,
+                        // Server-gated: creating needs an admin account or a
+                        // primary acting profile (cleared before this picker
+                        // on TV) — except the very first profile, which any
+                        // account may bootstrap.
+                        showAddProfile = state.canAddProfile,
                         onProfileSelected = viewModel::onProfileSelected,
                         onEditProfile = { onEditProfile(it.id) },
                         onDeleteProfile = viewModel::requestDelete,
@@ -334,12 +345,13 @@ private fun ProfileTileGrid(
     // left the grid entirely. Restoration must not re-request a tile then.
     onProfileFocused: (String?) -> Unit,
     isManageMode: Boolean,
+    showAddProfile: Boolean,
     onProfileSelected: (Profile) -> Unit,
     onEditProfile: (Profile) -> Unit,
     onDeleteProfile: (Profile) -> Unit,
     onAddProfile: () -> Unit,
 ) {
-    val itemCount = profiles.size + 1
+    val itemCount = profiles.size + if (showAddProfile) 1 else 0
     val rowCount = (itemCount + ProfileGridColumns - 1) / ProfileGridColumns
     Column(
         modifier = Modifier
