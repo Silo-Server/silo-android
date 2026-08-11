@@ -171,6 +171,19 @@ import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+
+/**
+ * Frames the shell will wait for content to actually take focus after it
+ * dismantles the previous owner.
+ *
+ * Three: the synchronous claim, then two more frames. On a 2 GB Amlogic box the
+ * content group is routinely still composing when the claim arrives, and one
+ * extra frame was already known to be too few for the Home row. Beyond this the
+ * screen genuinely has nothing focusable and retrying cannot help.
+ */
+private const val CONTENT_HANDOFF_ATTEMPTS = 3
 
 /**
  * Main authenticated TV shell. Mirrors `TVMainTabView` on tvOS: a content
@@ -651,21 +664,45 @@ fun TvMainShell(
         // claim". On a 2 GB Amlogic box the content group is routinely still
         // composing when Down arrives from the menu bar, and the first claim
         // lands on nothing.
-        val claimedInline = if (homeLike) false else claimContentFocus(route)
-        if (!claimedInline) {
-            panelScope.launch {
-                if (!claimContentFocus(route)) {
-                    withFrameNanos { }
-                    if (!claimContentFocus(route)) {
-                        DiagnosticsFocusLogger.contentEntryFailed(route)
-                    }
-                }
+        //
+        // The claim's return value is NOT proof that focus arrived — that is
+        // the whole premise of the silent-focus-claim ratchet. It is only worth
+        // skipping the observed pass when focus is demonstrably in content
+        // already.
+        if (!homeLike) claimContentFocus(route)
+        panelScope.launch {
+            val result = requestFocusUntilObserved(
+                maxAttempts = CONTENT_HANDOFF_ATTEMPTS,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = { claimContentFocus(route) },
+                isFocused = { contentHasFocus },
+            )
+            // One more frame before giving up. The last attempt inspects focus
+            // in the same frame it requested it, so a claim that WAS accepted
+            // but reports asynchronously would otherwise look like a failure —
+            // and the fallback below would yank focus off content that had just
+            // taken it.
+            if (result != TvObservedFocusResult.Focused) withFrameNanos { }
+            if (result != TvObservedFocusResult.Focused && !contentHasFocus) {
+                // Content has nothing focusable — a loading or empty rail, which
+                // should not have to invent a focusable control just to satisfy
+                // shell navigation. The shell dismantled the old focus owner, so
+                // the shell owes a real successor: put it back on the bar rather
+                // than leaving focus nowhere and the D-pad apparently dead.
+                DiagnosticsFocusLogger.contentEntryFailed(route)
+                // With a target, so dwell suppression actually applies: without
+                // one the suppressed-button is null and the tab we just focused
+                // reopens its preview a moment later.
+                focusState.requestMenuFocus(
+                    target = selectedMenuFocusTarget,
+                    suppressDwellPreview = true,
+                )
             }
         }
     }
     val openForYou: (SavedListSelection?) -> Unit = { selection ->
         forYouEntryRequest = forYouEntryRequest.next(selection)
-        focusState.closePanel(false)
+        focusState.closePanel()
         navigateToSecondary(TvMainRoute.ForYou.route)
         moveFocusToContent(TvMainRoute.ForYou.route)
     }
@@ -692,7 +729,7 @@ fun TvMainShell(
         // A dwell preview can still be open when Center commits For You (or a
         // library root). Close it without returning focus to the bar before the
         // content handoff, otherwise the overlay lingers and races page focus.
-        focusState.closePanel(false)
+        focusState.closePanel()
         if (route != currentRoute) {
             navigateToRoute(route)
         }
@@ -751,7 +788,7 @@ fun TvMainShell(
             navigateToRoute(route)
         }
         // Close WITHOUT returning focus to the bar; commit wants content focus.
-        focusState.closePanel(false)
+        focusState.closePanel()
         moveFocusToContent(route)
     }
 
@@ -833,7 +870,15 @@ fun TvMainShell(
             menuFocusTarget = selectedMenuFocusTarget,
         )) {
             // Panel/dropdown already closed by onBack(): just consume.
-            TvShellBackAction.ClosePanel,
+            // onBack() closed the panel without claiming focus; put the viewer
+            // back where they came from in the same press.
+            TvShellBackAction.ClosePanel -> {
+                moveFocusToContent(currentRoute)
+                true
+            }
+            // Preview only: focus never left the bar, so dismissing it must not
+            // move the viewer anywhere.
+            TvShellBackAction.ClosePanelPreview -> true
             TvShellBackAction.CloseProfileMenu -> true
             // Content on a tab root: onBack() already routed focus to the bar's
             // selected tab -- just consume.
@@ -874,9 +919,13 @@ fun TvMainShell(
         profileMenuOpen = focusState.profileMenuOpen,
         menuFocused = focusState.isMenuFocused,
         onTabRoot = selectedRoot != null,
+        // Must match what onBack() will decide, or the shell would decline the
+        // press and let navigation take it while handleShellBack expected it.
+        panelEntered = focusState.panelHasFocus,
     )
     val shellHandlesBack = currentRoute != TvMainRoute.Settings.route && when (pendingShellBackAction) {
         TvShellBackAction.ClosePanel,
+        TvShellBackAction.ClosePanelPreview,
         TvShellBackAction.CloseProfileMenu,
         TvShellBackAction.MoveFocusToMenu -> true
         TvShellBackAction.MenuBack -> selectedRoot != TvRootDestination.Home
@@ -1385,6 +1434,7 @@ fun TvMainShell(
                 currentRoute == TvMainRoute.Settings.route,
             focusRequest = focusState.menuFocusRequest,
             focusRequestTarget = focusState.menuFocusTarget,
+            focusRequestSuppressesDwell = focusState.menuFocusSuppressesDwell,
             profileFocusRequest = focusState.profileFocusRequest,
             isSearchActive = currentRoute == TvMainRoute.Search.route,
             visibility = if (currentRoute == TvMainRoute.Settings.route) 0f else menuVisibility.value,
@@ -1495,8 +1545,9 @@ fun TvMainShell(
                         focusEntryToken = focusState.panelFocusEntryToken,
                         onCommitLibrary = { lib -> commitScope(dest.type, lib, TvLibraryPill.Recommended) },
                         onCommitSection = { lib, pill -> commitScope(dest.type, lib, pill) },
-                        onPanelFocusChanged = { /* optional bar-dim tracking */ },
-                        onClose = { focusState.closePanel(true) },
+                        // Where focus actually is, which is what Back routing
+                        // needs — the entry flag only records intent.
+                        onPanelFocusChanged = { focusState.onPanelFocusChanged(it) },
                         modifier = Modifier,
                     )
                 }

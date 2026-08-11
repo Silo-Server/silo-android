@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -30,6 +31,9 @@ class TokenManagerImpl(
     private var accessToken: String? = null
     private var refreshToken: String? = null
     private var tokenExpiry: TimeSource.Monotonic.ValueTimeMark? = null
+
+    /** Lifetime the server gave the current access token, for the half-life clamp. */
+    private var tokenLifetimeMs: Long? = null
 
     private var profileId: String? = null
     private var profileToken: String? = null
@@ -83,6 +87,7 @@ class TokenManagerImpl(
             this.accessToken = accessToken
             this.refreshToken = refreshToken
             this.tokenExpiry = timeSource.markNow() + expiresIn.seconds
+            this.tokenLifetimeMs = expiresIn.seconds.inWholeMilliseconds
         }
     }
 
@@ -105,6 +110,23 @@ class TokenManagerImpl(
                 _sessionExpired.tryEmit(Unit)
             }
         }
+    }
+
+    /**
+     * Reads the deadline [saveTokensLocked] has always recorded. A temporary
+     * overlay is excluded: this impl does not track an expiry for one, and
+     * answering from the underlying account's deadline would refresh the wrong
+     * credentials.
+     */
+    override suspend fun accessTokenExpiresWithin(marginMs: Long): Boolean = mutex.withLock {
+        if (temporaryScope != null) return@withLock false
+        if (accessToken == null) return@withLock false
+        val expiry = tokenExpiry ?: return@withLock false
+        shouldRefreshProactively(
+            remainingMs = (expiry - timeSource.markNow()).inWholeMilliseconds,
+            lifetimeMs = tokenLifetimeMs,
+            marginMs = marginMs,
+        )
     }
 
     override suspend fun getProfileId(): String? = mutex.withLock {
@@ -205,6 +227,7 @@ class TokenManagerImpl(
         accessToken = null
         refreshToken = null
         tokenExpiry = null
+        tokenLifetimeMs = null
         profileId = null
         profileToken = null
     }

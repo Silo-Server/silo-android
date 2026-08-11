@@ -192,7 +192,6 @@ fun TvForYouSelector(
  *   returns to the anchored library row.
  * - **Select/Enter** on a library row commits that scope ([onCommitLibrary]);
  *   on a section row commits scope + section ([onCommitSection]).
- * - **Back/Escape** closes ([onClose]).
  */
 @Composable
 fun TvCascadeSelector(
@@ -205,7 +204,6 @@ fun TvCascadeSelector(
     onCommitLibrary: (UserLibrary) -> Unit,
     onCommitSection: (UserLibrary, TvLibraryPill) -> Unit,
     onPanelFocusChanged: (Boolean) -> Unit,
-    onClose: () -> Unit,
     /** Gates the Collections pill per anchored library (QA 2026-07-08). */
     libraryHasCollections: (Int) -> Boolean = { true },
     modifier: Modifier = Modifier,

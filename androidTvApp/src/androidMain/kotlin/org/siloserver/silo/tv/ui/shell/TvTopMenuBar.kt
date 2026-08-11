@@ -70,6 +70,7 @@ import org.siloserver.silo.tv.ui.theme.navRailLabel
 private const val TopMenuInitialPreviewDelayMillis = 180L
 private const val TopMenuPanelSwitchDelayMillis = 80L
 
+
 /**
  * Layout constants for the top menu band. Vertical-clearance / anchor tokens
  * here are consumed by every root screen (`contentTopInset`) and by the shell's
@@ -159,6 +160,12 @@ fun TvTopMenuBar(
     isFocusSuppressed: Boolean,
     focusRequest: Int,
     focusRequestTarget: TvTopMenuPanel? = null,
+    /**
+     * True for a deliberate shell handoff to the bar — Back up from content, or
+     * the fallback when content has nothing focusable. See
+     * TvShellFocusState.menuFocusSuppressesDwell.
+     */
+    focusRequestSuppressesDwell: Boolean = false,
     profileFocusRequest: Int = 0,
     isSearchActive: Boolean = false,
     visibility: Float = 1f,
@@ -249,7 +256,12 @@ fun TvTopMenuBar(
             isTargetAvailable = focusRequestTargetAvailable,
             requestFocus = {
                 val explicitFocus = focusRequestTarget?.let(::focusForPanel)
-                dwellSuppressedButton = explicitFocus
+                // The target names which bar element to land on; it does NOT by
+                // itself mean the preview should be suppressed. Only a panel
+                // Back-close wants that. Arming it for every targeted request
+                // meant an ordinary content-to-bar Up — which also carries a
+                // target — left that tab unable to reopen its own cascade.
+                dwellSuppressedButton = explicitFocus.takeIf { focusRequestSuppressesDwell }
                 val requester = explicitFocus?.let(::requesterForFocus) ?: selectedEntryRequester()
                 requestTopMenuFocusUntilApplied(
                     awaitFrame = { androidx.compose.runtime.withFrameNanos { } },
@@ -293,6 +305,13 @@ fun TvTopMenuBar(
         if (suppressed != null) {
             // A transient null is the panel→bar focus handoff itself; keep the
             // suppression armed until the requested anchor actually focuses.
+            // A transient null is the panel→bar focus handoff itself; keep the
+            // suppression armed until the requested anchor actually focuses,
+            // and hold it while that anchor keeps focus so a deliberate handoff
+            // to the bar does not flash a panel straight back open. This can no
+            // longer wedge the tab: only an explicit requestMenuFocus arms it,
+            // so an ordinary content-to-bar Up arrives unsuppressed and opens
+            // the cascade.
             if (focus == null || focus == suppressed) return@LaunchedEffect
             // Moving anywhere else re-arms normal dwell behavior, matching
             // tvOS's dwellSuppressedElement lifecycle.

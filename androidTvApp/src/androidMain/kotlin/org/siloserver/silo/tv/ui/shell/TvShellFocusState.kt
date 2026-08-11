@@ -54,6 +54,14 @@ sealed interface TvShellBackAction {
     /** Content on a tab root pressed Back: the caller focuses the bar's selected tab. */
     data object MoveFocusToMenu : TvShellBackAction
 
+    /**
+     * A dwell PREVIEW was showing while focus stayed on the bar. Back dismisses
+     * the preview and nothing else: the viewer never left the chrome, so moving
+     * them into content would be a jump they did not ask for, and would cost
+     * them the trip back up to reach Home.
+     */
+    data object ClosePanelPreview : TvShellBackAction
+
     /** Nothing to dismiss; the caller pops the nested NavHost or lets the activity finish. */
     data object DelegateToNav : TvShellBackAction
 }
@@ -79,16 +87,22 @@ internal fun tvShellMode(
 /**
  * Pure Back/Escape routing, mirroring the historical shell `onPreviewKeyEvent`
  * `when`. The order is load-bearing and was settled across several "fix focus"
- * commits: an open cascade panel (even a mere preview) is dismissed first, then
- * the profile dropdown, then a focused menu bar hands focus back to content;
- * only with nothing to dismiss does Back fall through to navigation.
+ * commits: an open cascade panel is dismissed first — a preview
+ * without moving focus, an entered panel by handing focus to content — then the
+ * profile dropdown, then a focused menu bar; only with nothing to dismiss does
+ * Back fall through to navigation.
  */
 internal fun tvShellBackAction(
     panelOpen: Boolean,
     profileMenuOpen: Boolean,
     menuFocused: Boolean,
     onTabRoot: Boolean,
+    panelEntered: Boolean = true,
 ): TvShellBackAction = when {
+    // A panel the viewer never entered is a dwell preview: focus is still on
+    // the bar, so dismissing it must leave focus there. Routing this through
+    // ClosePanel sent them into content from a menu they were still browsing.
+    panelOpen && !panelEntered -> TvShellBackAction.ClosePanelPreview
     panelOpen -> TvShellBackAction.ClosePanel
     profileMenuOpen -> TvShellBackAction.CloseProfileMenu
     // Back-stack model (QA 2026-07-08): content Back on a tab root climbs to
@@ -129,6 +143,36 @@ class TvShellFocusState {
     var menuFocusTarget by mutableStateOf<TvTopMenuPanel?>(null)
         private set
 
+    /**
+     * Whether [menuFocusRequest] should also suppress its target's dwell
+     * preview.
+     *
+     * Only a panel Back-close wants that: reopening the panel the user just
+     * dismissed is the thing being prevented. An ordinary content-to-bar Up
+     * carries a target too — it decides which tab to land on — and arming
+     * suppression from that left the tab you came back to unable to reopen its
+     * own cascade at all, which is what testers hit on Movies and TV alike.
+     */
+    var menuFocusSuppressesDwell by mutableStateOf(false)
+        private set
+
+    /**
+     * Whether anything inside the open panel actually holds focus, reported by
+     * the selector as its rows and pills gain and lose it.
+     *
+     * Back routing asks this rather than [panelEntersFocus], because entry
+     * INTENT is not entry: an empty panel, an unattached requester, or a claim
+     * that silently failed all leave focus on the bar while the intent flag
+     * says otherwise — and Back would then throw the viewer into content from a
+     * bar they never left.
+     */
+    var panelHasFocus by mutableStateOf(false)
+        private set
+
+    fun onPanelFocusChanged(focused: Boolean) {
+        panelHasFocus = focused
+    }
+
     /** Nudge the menu bar to return focus to the profile avatar. */
     var profileFocusRequest by mutableIntStateOf(0)
         private set
@@ -153,7 +197,12 @@ class TvShellFocusState {
     var openPanel by mutableStateOf<TvTopMenuPanel?>(null)
         private set
 
-    /** True once the user has committed to *entering* [openPanel] (vs previewing). */
+    /**
+     * True once the user has committed to *entering* [openPanel] (vs previewing).
+     *
+     * Intent, not arrival: this is set before the selector's asynchronous focus
+     * request runs. Use [panelHasFocus] for questions about where focus IS.
+     */
     var panelEntersFocus by mutableStateOf(false)
         private set
 
@@ -176,9 +225,10 @@ class TvShellFocusState {
     // --- Menu-bar focus signals -------------------------------------------------
 
     /** Route focus to the bar's selected tab (content → bar Up, or panel close). */
-    fun requestMenuFocus(target: TvTopMenuPanel? = null) {
+    fun requestMenuFocus(target: TvTopMenuPanel? = null, suppressDwellPreview: Boolean = false) {
         DiagnosticsFocusLogger.transition(target?.diagnosticsTarget() ?: "menu", "request")
         menuFocusTarget = target
+        menuFocusSuppressesDwell = suppressDwellPreview
         menuFocusRequest++
     }
 
@@ -277,26 +327,24 @@ class TvShellFocusState {
     }
 
     /**
-     * Close any open panel. [returnFocusToBar] re-focuses the originating tab on
-     * a Back-close; a commit passes false so its own content-focus move is not
-     * raced back to the bar by the focus bump.
+     * Close any open panel, leaving focus where it is. Callers that want focus
+     * moved do it themselves, so a commit's own content-focus move is never
+     * raced back to the bar by a focus bump from here.
      */
-    fun closePanel(returnFocusToBar: Boolean) {
+    fun closePanel() {
         val closingPanel = openPanel
         openPanel = null
         panelEntersFocus = false
+        panelHasFocus = false
         DiagnosticsFocusLogger.transition(closingPanel?.diagnosticsTarget() ?: "panel", "close")
-        if (returnFocusToBar && closingPanel != null) {
-            requestMenuFocus(closingPanel)
-        }
     }
 
     // --- Back routing -----------------------------------------------------------
 
     /**
      * Apply the state half of a shell Back press and report what the caller
-     * should do for the side-effecting cases ([TvShellBackAction.MoveFocusToContent]
-     * and [TvShellBackAction.DelegateToNav] are left to the composable, which owns
+     * should do for the side-effecting cases ([TvShellBackAction.ClosePanel] and
+     * [TvShellBackAction.DelegateToNav] are left to the composable, which owns
      * the focus manager and nav controller).
      */
     fun onBack(
@@ -308,11 +356,24 @@ class TvShellFocusState {
             profileMenuOpen = profileMenuOpen,
             menuFocused = isMenuFocused,
             onTabRoot = onTabRoot,
+            panelEntered = panelHasFocus,
         )
         when (action) {
-            TvShellBackAction.ClosePanel -> closePanel(returnFocusToBar = true)
+            // Back out of a cascade the viewer ENTERED hands focus to content,
+            // not back to the anchor tab. Parking them one level up in the
+            // chrome is what "back doesn't exit the menus" meant.
+            TvShellBackAction.ClosePanel -> closePanel()
+            // Focus never left the bar, so there is nothing to restore.
+            TvShellBackAction.ClosePanelPreview -> closePanel()
             TvShellBackAction.CloseProfileMenu -> dismissProfileMenu()
-            TvShellBackAction.MoveFocusToMenu -> requestMenuFocus(menuFocusTarget)
+            // Back from content climbs to the bar, and must NOT pop that tab's
+            // cascade on arrival: the viewer is leaving, not browsing. Without
+            // this the next Back sees an open panel and closes it back to
+            // content, so Back ping-pongs and never reaches MenuBack — Home and
+            // exit become unreachable. Up from content is the browsing case and
+            // stays unsuppressed, which is what makes the cascade openable.
+            TvShellBackAction.MoveFocusToMenu ->
+                requestMenuFocus(menuFocusTarget, suppressDwellPreview = true)
             TvShellBackAction.MenuBack,
             TvShellBackAction.DelegateToNav -> Unit
         }
