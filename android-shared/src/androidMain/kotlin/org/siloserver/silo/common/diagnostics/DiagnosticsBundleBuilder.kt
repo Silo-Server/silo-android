@@ -304,7 +304,9 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         if (hosted) sanitizeHostedText() else this
 
     private fun String.sanitizeHostedText(): String {
-        var output = HOST_TOKEN.replace(this, REDACTED_HOST_VALUE)
+        var output = NETWORK_IDENTITY_ASSIGNMENT.replace(this, REDACTED_NETWORK_IDENTITY)
+        output = LOOPBACK_IDENTITY.replace(output, REDACTED_HOST_VALUE)
+        output = HOST_TOKEN.replace(output, REDACTED_HOST_VALUE)
         output = REDACTED_AUTHORITY.replace(output) { match ->
             "${match.groupValues[1]}$REDACTED_HOST_VALUE"
         }
@@ -437,6 +439,7 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         const val CRASH_TOMBSTONE_FILE = "crash/tombstone.pb"
         const val REDACTED_VALUE = "[REDACTED]"
         const val REDACTED_HOST_VALUE = "redacted.invalid"
+        const val REDACTED_NETWORK_IDENTITY = "[redacted_network_identity]"
         const val HOSTED_C2_PLATFORM_DECODER = "android-c2-platform-decoder"
         const val HOSTED_C2_VENDOR_DECODER = "android-c2-vendor-decoder"
         const val HOSTED_OMX_PLATFORM_DECODER = "android-omx-platform-decoder"
@@ -487,6 +490,22 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             "bssid",
             "ip",
             "ipaddress",
+            "host",
+            "hostname",
+            "server",
+            "serverurl",
+            "baseurl",
+            "origin",
+            "originurl",
+            "endpoint",
+            "endpointurl",
+            "url",
+        )
+        val NETWORK_IDENTITY_ASSIGNMENT = Regex(
+            """(?i)\b(host(?:[._-]?name)?|server(?:[._-]?url)?|base[._-]?url|origin(?:[._-]?url)?|endpoint(?:[._-]?url)?|address|url)\s*[:=]\s*(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*'|(?:https?|wss?)://\[[^\]\r\n]+\](?::\d+)?[^\s,;)\]}]*|\[[^\]\r\n]+\](?::\d+)?|[^\s,;)\]}]+)""",
+        )
+        val LOOPBACK_IDENTITY = Regex(
+            """(?i)(?:(?<![a-z0-9_.-])localhost(?![a-z0-9_-]|\.[a-z0-9])|(?<![a-z0-9_.-])127\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|0?[0-9]{1,2})\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|0?[0-9]{1,2})\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|0?[0-9]{1,2})(?![a-z0-9_-]|\.[a-z0-9])|(?<![a-z0-9_.:-])\[::1\](?![a-z0-9_.-])|(?<![a-z0-9_:\[])::1(?![a-z0-9_:\]]|\.[a-z0-9]))""",
         )
         val PRIVATE_IDENTIFIER_ASSIGNMENT = Regex(
             """(?i)\b(playback[_-]?session[_-]?id|session[_-]?id|(?:plan|selected|effective|requested|media)?[_-]?file[_-]?id|item[_-]?id|media[_-]?id|plan[_-]?id|playback[_-]?attempt[_-]?id|plan[_-]?attempt[_-]?key|subtitle[_-]?id|track[_-]?id)\s*[:=]\s*(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*'|[^\s,;)\]}]+)""",

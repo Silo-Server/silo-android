@@ -290,6 +290,133 @@ class DiagnosticsBundleBuilderTest {
     }
 
     @Test
+    fun hostedBundleCanonicalizesLoopbackIdentityAcrossEveryTextSurfaceOnly() {
+        val device = """{"host":"127.0.0.1","host.name":"LOCALHOST","server_url":"http://127.0.0.2:49152/device/42","server.url":"ws://[::1]:9000/device/42","origin":{"note":"removed"},"safe":{"hostname":"localhost","originUrl":"https://127.0.0.3/origin","base.url":"http://localhost/base","endpoint":"[::1]","address":"127.0.0.4","url":"http://[::1]:9001/device","server_instance_id":"keep","note":"device LOCALHOST 127.0.0.0 127.255.255.255 [::1] ::1 connect http://localhost:8080/items/42 url=http://127.0.0.5/private"}}""".encodeToByteArray()
+        val logs = """{"ts":"2026-08-11T00:00:00Z","run":"::1","lvl":"E","cat":"network","tag":"http://127.0.0.2:49152/items/42","msg":"host=127.0.0.1 throwable LOCALHOST peer [::1] ws://[::1]:9000/users/99 server_instance_id=keep","attrs":{"method":"GET","path":"/items/42","status":500,"duration_ms":2}}"""
+            .plus('\n').encodeToByteArray()
+        val breadcrumbs = """{"ts":"2026-08-11T00:00:01Z","run":"run-1","lvl":"I","cat":"focus","tag":"ws://127.0.0.3:9002/library/42","msg":"server_url='ws://[::1]:9001/items/42' origin=https://example.test/private bare 127.255.254.253 and ::1","attrs":{"target":"127.0.0.9","action":"baseUrl=http://localhost:1234/x"}}"""
+            .plus('\n').encodeToByteArray()
+        val crashSummary = """{"summary":"endpoint=http://127.0.0.5:8080/x bare localhost","stack_excerpt":"peer ::1 and [::1] http://127.0.0.6:8080/items/42","thread":"url='http://localhost:9000/private'"}"""
+            .encodeToByteArray()
+        val crashStack = (
+            "IllegalStateException: hostname=\"LOCALHOST\" address=[::1] peer 127.0.0.7 ::1 [::1]\n" +
+                "at ws://[::1]:9000/items/42 endpoint : http://127.0.0.8:8080/private\n" +
+                "server=redacted.invalid server_instance_id=keep"
+            ).encodeToByteArray()
+        val artifacts = mapOf(
+            "device.json" to device,
+            "logs.jsonl" to logs,
+            "crash/summary.json" to crashSummary,
+            "crash/stack.txt" to crashStack,
+            "breadcrumbs.jsonl" to breadcrumbs,
+        )
+        fun withLoopbackManifest(report: PendingReport): PendingReport = report.copy(
+            manifest = report.manifest.copy(
+                report = report.manifest.report.copy(
+                    captureSessionId = "host=127.0.0.1",
+                    appVersion = "http://localhost:49152/build/42",
+                    appBuild = "127.0.0.10",
+                    osVersion = "peer ::1",
+                ),
+                deviceSummary = report.manifest.deviceSummary.copy(
+                    manufacturer = "LOCALHOST",
+                    model = "[::1]",
+                    os = "http://127.0.0.11:8080/os/42",
+                    formFactor = "server=already-safe",
+                ),
+            ),
+        )
+
+        val hosted = builder.build(
+            withLoopbackManifest(report(artifacts, DiagnosticsDestinationKind.HOSTED)),
+            redactionTokens = emptyList(),
+        )
+        val hostedSurfaces = linkedMapOf(
+            "outer manifest" to hosted.manifestBytes.decodeToString(),
+            "embedded manifest" to hosted.sanitizedEntries.getValue("manifest.json").decodeToString(),
+            "device" to hosted.sanitizedEntries.getValue("device.json").decodeToString(),
+            "logs" to hosted.sanitizedEntries.getValue("logs.jsonl").decodeToString(),
+            "breadcrumbs" to hosted.sanitizedEntries.getValue("breadcrumbs.jsonl").decodeToString(),
+            "crash summary" to hosted.sanitizedEntries.getValue("crash/summary.json").decodeToString(),
+            "crash stack" to hosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString(),
+        )
+        hostedSurfaces.forEach { (name, text) ->
+            assertTrue(text.contains("redacted.invalid"), "$name: $text")
+            assertTrue(text.contains("[redacted_network_identity]"), "$name: $text")
+            assertFalse(text.contains("localhost", ignoreCase = true), "$name: $text")
+            assertFalse(text.contains("127."), "$name: $text")
+            assertFalse(text.contains("::1"), "$name: $text")
+            assertFalse(text.contains("example.test"), "$name: $text")
+            assertFalse(text.contains("already-safe"), "$name: $text")
+        }
+        val hostedText = hostedSurfaces.values.joinToString("\n")
+        assertTrue(hostedText.contains("http://redacted.invalid:49152/build/{id}"), hostedText)
+        assertTrue(hostedText.contains("http://redacted.invalid:49152/items/{id}"), hostedText)
+        assertTrue(hostedText.contains("ws://redacted.invalid:9000/users/{id}"), hostedText)
+        assertTrue(hostedText.contains("ws://redacted.invalid:9002/library/{id}"), hostedText)
+        assertTrue(hostedText.contains("http://redacted.invalid:8080/items/{id}"), hostedText)
+        assertTrue(hostedText.contains("server_instance_id=keep"), hostedText)
+        assertFalse(
+            Regex(
+                """(?i)\b(?:host(?:[._-]?name)?|server(?:[._-]?url)?|base[._-]?url|origin(?:[._-]?url)?|endpoint(?:[._-]?url)?|address|url)\s*[:=]""",
+            ).containsMatchIn(hostedText),
+            hostedText,
+        )
+
+        listOf("outer manifest", "embedded manifest").forEach { name ->
+            val manifest = Json.parseToJsonElement(hostedSurfaces.getValue(name)).jsonObject
+            assertEquals(
+                HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+                manifest.getValue("destination").jsonObject.getValue("server_instance_id").jsonPrimitive.content,
+            )
+        }
+        val hostedDevice = Json.parseToJsonElement(hostedSurfaces.getValue("device")).jsonObject
+        assertEquals(setOf("safe"), hostedDevice.keys)
+        assertEquals(
+            setOf("server_instance_id", "note"),
+            hostedDevice.getValue("safe").jsonObject.keys,
+        )
+
+        val selfHosted = builder.build(
+            withLoopbackManifest(report(artifacts, DiagnosticsDestinationKind.SELF_HOSTED)),
+            redactionTokens = emptyList(),
+        )
+        artifacts.forEach { (path, bytes) ->
+            assertContentEquals(bytes, selfHosted.sanitizedEntries.getValue(path), path)
+        }
+        listOf(
+            selfHosted.manifestBytes.decodeToString(),
+            selfHosted.sanitizedEntries.getValue("manifest.json").decodeToString(),
+        ).forEach { manifest ->
+            assertTrue(manifest.contains("host=127.0.0.1"), manifest)
+            assertTrue(manifest.contains("http://localhost:49152/build/42"), manifest)
+            assertFalse(manifest.contains("[redacted_network_identity]"), manifest)
+        }
+    }
+
+    @Test
+    fun hostedLoopbackNormalizationRequiresLiteralTokenBoundariesAndValidIpv4Octets() {
+        val boundaryValues =
+            "mylocalhost localhost.example 127.0.0.1.example 127.0.0.256 1127.0.0.1 " +
+                "127.0.0.1x 2001:db8::1 ::10 foo[::1]bar"
+        val bundle = builder.build(
+            report(
+                artifacts = mapOf(
+                    "device.json" to "{}".encodeToByteArray(),
+                    "crash/stack.txt" to boundaryValues.encodeToByteArray(),
+                ),
+                destinationKind = DiagnosticsDestinationKind.HOSTED,
+            ),
+            redactionTokens = emptyList(),
+        )
+
+        assertContentEquals(
+            boundaryValues.encodeToByteArray(),
+            bundle.sanitizedEntries.getValue("crash/stack.txt"),
+        )
+    }
+
+    @Test
     fun hostedDeviceSnapshotOmitsDeterministicRouteAndDeviceIdentifiersOnlyForHosted() {
         val device = """{"identity":{"manufacturer":"NVIDIA","build_fingerprint_hash":"${"a".repeat(32)}"},"audio":{"route_hashes":["${"b".repeat(32)}"],"outputs":[{"type":"hdmi","id":"${"c".repeat(32)}","address":"${"d".repeat(32)}"}]}}"""
         val artifacts = mapOf("device.json" to device.encodeToByteArray())
