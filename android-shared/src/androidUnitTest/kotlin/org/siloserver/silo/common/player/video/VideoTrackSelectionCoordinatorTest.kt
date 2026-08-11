@@ -24,11 +24,15 @@ class VideoTrackSelectionCoordinatorTest {
         val source = sourceFile.readText()
 
         assertTrue(
+            source.contains("val mountedMediaSpec = mediaSpec ?: return false"),
+            "external subtitle selection must report not-ready instead of remounting before media exists",
+        )
+        assertTrue(
             source.contains("refreshMountedVideoMedia("),
             "external subtitle selection must remount via the shared refresh helper",
         )
         assertTrue(
-            source.contains("mediaSpec.copy(subtitles = listOf(subtitle))"),
+            source.contains("mountedMediaSpec.copy(subtitles = listOf(subtitle))"),
             "external subtitle selection must remount with the selected subtitle configuration",
         )
     }

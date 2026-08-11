@@ -4,6 +4,7 @@ import org.siloserver.silo.network.PlaybackRealtimeClient
 import org.siloserver.silo.network.PlaybackRealtimeEvent
 import org.siloserver.silo.playback.PlaybackAction
 import org.siloserver.silo.playback.decodeMarkersUpdate
+import org.siloserver.silo.playback.decodePlaybackSubtitleReady
 import org.siloserver.silo.playback.decidePlaybackAction
 import org.siloserver.silo.playback.isTransport
 import kotlinx.coroutines.CancellationException
@@ -89,7 +90,7 @@ class PlaybackRealtimeController(
 
     private fun handleServerEvent(event: PlaybackRealtimeEvent.ServerEvent) {
         when (event.name) {
-            "subtitle_ready" -> viewModel.refreshSubtitles()
+            "subtitle_ready" -> viewModel.applySubtitleReady(decodePlaybackSubtitleReady(event))
             "markers_updated" -> {
                 val markers = decodeMarkersUpdate(event)
                 viewModel.applyUpdatedMarkers(markers.intro, markers.credits)

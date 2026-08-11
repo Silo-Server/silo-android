@@ -10,6 +10,7 @@ import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
+import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -578,7 +579,7 @@ class SubtitleManagerTrackSelectionTest {
             MimeTypes.APPLICATION_PGS,
             MimeTypes.APPLICATION_DVBSUBS,
         ).forEach { codec ->
-            assertTrue(isBitmapSubtitleCodecOrMime(codec), "expected bitmap: $codec")
+            assertTrue(isBitmapSubtitleCodecFamily(codec), "expected bitmap: $codec")
         }
         listOf(
             "subrip",
@@ -591,7 +592,7 @@ class SubtitleManagerTrackSelectionTest {
             null,
             " ",
         ).forEach { codec ->
-            assertFalse(isBitmapSubtitleCodecOrMime(codec), "expected text: $codec")
+            assertFalse(isBitmapSubtitleCodecFamily(codec), "expected text: $codec")
         }
     }
 

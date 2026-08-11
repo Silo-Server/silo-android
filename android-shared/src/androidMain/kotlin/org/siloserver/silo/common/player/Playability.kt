@@ -20,3 +20,11 @@ sealed class Playability {
         val classification: String = "transport_stall",
     ) : Playability()
 }
+
+fun Playability.failureDiagnostics(): Map<String, String> = when (this) {
+    is Playability.StartupStalled -> mapOf(
+        "buffered_ahead_ms" to bufferedAheadMs.toString(),
+        "stalled_for_ms" to stalledForMs.toString(),
+    )
+    else -> emptyMap()
+}

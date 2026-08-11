@@ -1,15 +1,18 @@
 package org.siloserver.silo.domain
 
 import org.siloserver.silo.model.catalog.WatchDetail
-import org.siloserver.silo.model.playback.ClientCodecCapabilities
-import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PlaybackRepository
 
 /**
- * Orchestrates the full playback lifecycle: session creation, progress reporting,
- * and session teardown.
+ * Orchestrates the playback lifecycle around an already-started session:
+ * progress reporting, teardown, and watch detail.
+ *
+ * Session creation is not here. Starting playback needs the full v3 evidence
+ * bundle — codec probe, output context, delivery capabilities — which only the
+ * platform layer can assemble, so it runs through
+ * `PlaybackSessionManager.startVideoSessionV3` instead.
  *
  * Combines [PlaybackRepository] for session management with [CatalogRepository]
  * for fetching watch detail (versions, intro/credits markers, user progress).
@@ -18,32 +21,6 @@ class ManagePlaybackUseCase(
     private val playbackRepo: PlaybackRepository,
     private val catalogRepo: CatalogRepository,
 ) {
-    /**
-     * Starts a playback session for a content item.
-     *
-     * @param contentId The content ID (used for logging/context; the server uses fileId).
-     * @param fileId The specific file version to play.
-     * @param profileId The active user profile.
-     * @param capabilities Client codec support for direct-play/transcode decisions.
-     * @param qualityPreference Optional quality preference (e.g. "original", "1080p").
-     * @return The playback session info including stream URL and decision (direct/transcode).
-     */
-    suspend fun startPlayback(
-        contentId: String,
-        fileId: Int,
-        profileId: String,
-        capabilities: ClientCodecCapabilities,
-        qualityPreference: String? = null,
-        startPosition: Double? = null,
-    ): ApiResult<PlaybackSessionResponse> =
-        playbackRepo.startPlayback(
-            fileId = fileId,
-            profileId = profileId,
-            qualityPreference = qualityPreference,
-            startPosition = startPosition,
-            capabilities = capabilities,
-        )
-
     /**
      * Reports the current playback position and paused state.
      * Should be called periodically during playback (e.g. every 10 seconds).

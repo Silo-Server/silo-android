@@ -1,7 +1,10 @@
 package org.siloserver.silo.common.player
 
 import org.siloserver.silo.model.playback.HdrCapabilities
+import org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81
+import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -48,6 +51,42 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
                 supportedHdr = HdrCapabilities(),
             ),
             "P5 has no backward-compatible base layer; without a DV decoder the Media3 route cannot render it.",
+        )
+    }
+
+    @Test
+    fun hdr10OutputAndPackagedConverterDoNotAdvertiseAnUnvalidatedClientTransformation() {
+        val transformations = advertisedClientDolbyVisionTransformations(
+            hdrDetails = HdrCapabilities(
+                hdr10 = true,
+                dolbyVisionProfiles = listOf(8),
+            ),
+            nativeRpuConverterAvailable = true,
+        )
+
+        assertTrue(
+            transformations.isEmpty(),
+            "Runtime prerequisites cannot be promoted to validated v3 capability claims.",
+        )
+    }
+
+    @Test
+    fun clientTransformationsRequireExactFixtureValidationAndRuntimePrerequisites() {
+        val transformations = advertisedClientDolbyVisionTransformations(
+            hdrDetails = HdrCapabilities(
+                hdr10 = true,
+                dolbyVisionProfiles = listOf(8),
+            ),
+            nativeRpuConverterAvailable = true,
+            fixtureValidatedTransformations = setOf(
+                CLIENT_DV7_TO_DV81,
+                CLIENT_DV7_TO_HDR10,
+            ),
+        )
+
+        assertEquals(
+            listOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10),
+            transformations.map { it.name },
         )
     }
 }

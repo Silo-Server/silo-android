@@ -170,7 +170,15 @@ val playerInfraModule = module {
     single<PlaybackSessionLifecycle> {
         PlaybackSessionLifecycle(
             sessionManager = get(),
-            profileRepository = get(),
+            healthApi = get(),
+            personalDataRepository = get(),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            playbackSessions = get<DiagnosticsPlaybackSessionTracker>(),
+        )
+    }
+    single(AUDIOBOOK_PLAYBACK_SESSION_LIFECYCLE_QUALIFIER) {
+        PlaybackSessionLifecycle(
+            sessionManager = get(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER),
             healthApi = get(),
             personalDataRepository = get(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),

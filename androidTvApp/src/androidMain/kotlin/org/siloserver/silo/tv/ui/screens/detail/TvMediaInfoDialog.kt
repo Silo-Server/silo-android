@@ -42,6 +42,7 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -73,7 +74,7 @@ internal fun tvMediaInfoSubtitleSummary(track: SubtitleTrack): TvMediaInfoTrackS
         codecLabel(track.codec),
         if (track.isDefault) "Default" else null,
         if (track.forced) "Forced" else null,
-        if (rawTitle.hasSdhHint()) "SDH" else null,
+        if (subtitleLabelIndicatesHearingImpaired(rawTitle)) "SDH" else null,
         if (track.external) "External" else null,
     ).distinct().joinToString(" · ").ifBlank { null }
     return TvMediaInfoTrackSummary(primary = primary, secondary = secondary)
@@ -325,10 +326,6 @@ private fun looksLikeReleaseFileName(value: String): Boolean {
     return listOf("bluray", "webrip", "web-dl", "hdtv", "remux", "x264", "x265", "1080p", "2160p")
         .any { it in lower } && ('[' in value || '-' in value || '.' in value)
 }
-
-private fun String?.hasSdhHint(): Boolean =
-    this?.contains(Regex("(^|[._\\-\\s(])sdh([._\\-\\s)]|$)", RegexOption.IGNORE_CASE)) == true ||
-        this?.contains("hearing", ignoreCase = true) == true
 
 private fun languageDisplayName(value: String?): String? {
     val normalized = value?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() && it != "und" }
