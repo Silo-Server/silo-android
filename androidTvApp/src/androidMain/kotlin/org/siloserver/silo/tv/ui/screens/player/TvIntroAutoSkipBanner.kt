@@ -1,8 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -61,26 +61,32 @@ fun TvIntroAutoSkipBanner(
     modifier: Modifier = Modifier,
     totalSeconds: Int = 5,
 ) {
+    // Key on the state kind: per-second CountingDown ticks then recompose this
+    // slot instead of recreating the subtree (which would restart the drain).
+    val slot = when (state) {
+        IntroAutoSkipState.Hidden -> 0
+        IntroAutoSkipState.ShowingButton -> 1
+        is IntroAutoSkipState.CountingDown -> 2
+    }
     AnimatedContent(
-        targetState = state,
+        targetState = slot,
         transitionSpec = {
             fadeIn(animationSpec = tween(durationMillis = 200)) togetherWith
                 fadeOut(animationSpec = tween(durationMillis = 200))
         },
         label = "tvIntroAutoSkipBanner",
         modifier = modifier,
-    ) { current ->
-        when (current) {
-            IntroAutoSkipState.Hidden -> {
+    ) { currentSlot ->
+        when (currentSlot) {
+            0 -> {
                 // Render nothing but stay in the layout slot so AnimatedContent can fade in/out.
                 Spacer(Modifier.size(0.dp))
             }
-            IntroAutoSkipState.ShowingButton -> {
+            1 -> {
                 TvSkipIntroButton(onClick = onSkipNow)
             }
-            is IntroAutoSkipState.CountingDown -> {
+            else -> {
                 TvShrinkingFillButton(
-                    secondsRemaining = current.secondsRemaining,
                     totalSeconds = totalSeconds,
                     onSkipNow = onSkipNow,
                 )
@@ -124,15 +130,13 @@ private fun TvSkipIntroButton(onClick: () -> Unit) {
 
 /**
  * Countdown variant: the button's background fill is the timer. A translucent
- * white fill drains left-to-right over the dark scrim; when it empties the
- * auto-skip fires. Auto-focuses on entry so D-pad Select skips immediately.
- * The fill animates smoothly between the controller's whole-second ticks via
- * [animateFloatAsState]. Fill stays translucent so the label reads at every
- * drain level.
+ * white fill drains left-to-right over the dark scrim in one continuous
+ * [totalSeconds]-long animation; when it empties the auto-skip fires.
+ * Auto-focuses on entry so D-pad Select skips immediately. Fill stays
+ * translucent so the label reads at every drain level.
  */
 @Composable
 private fun TvShrinkingFillButton(
-    secondsRemaining: Int,
     totalSeconds: Int,
     onSkipNow: () -> Unit,
 ) {
@@ -144,12 +148,16 @@ private fun TvShrinkingFillButton(
         runCatching { focusRequester.requestFocus() }
     }
 
-    val progress by animateFloatAsState(
-        targetValue = if (totalSeconds <= 0) 0f
-        else secondsRemaining.coerceIn(0, totalSeconds).toFloat() / totalSeconds.toFloat(),
-        animationSpec = tween(durationMillis = 1000, easing = LinearEasing),
-        label = "tvIntroSkipFill",
-    )
+    val fill = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        fill.animateTo(
+            targetValue = 0f,
+            animationSpec = tween(
+                durationMillis = totalSeconds.coerceAtLeast(1) * 1000,
+                easing = LinearEasing,
+            ),
+        )
+    }
 
     val shape = RoundedCornerShape(28.dp)
     val borderColor = if (isFocused) Color.White else Color.Transparent
@@ -162,13 +170,16 @@ private fun TvShrinkingFillButton(
             .focusable(enabled = true, interactionSource = interactionSource)
             .clickable(interactionSource = interactionSource, indication = null) { onSkipNow() },
     ) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .fillMaxWidth(progress)
-                .fillMaxHeight()
-                .background(Color.White.copy(alpha = if (isFocused) 0.40f else 0.28f)),
-        )
+        // matchParentSize sizes the fill layer to the pill; plain fillMaxWidth /
+        // fillMaxHeight here would grab the screen's max constraints and balloon it.
+        Box(Modifier.matchParentSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fill.value)
+                    .fillMaxHeight()
+                    .background(Color.White.copy(alpha = if (isFocused) 0.40f else 0.28f)),
+            )
+        }
         Text(
             text = "Skip Intro",
             color = Color.White,
