@@ -226,11 +226,34 @@ class ServerSetupPersistenceTest {
         tokenManager = tokenManager,
     )
 
+    /**
+     * Waits for a connect attempt to finish.
+     *
+     * `first { !it.isLoading }` alone is not a settle condition: `isLoading` is
+     * set to true INSIDE `viewModelScope.launch`, so until that body runs the
+     * predicate is already satisfied by the state BEFORE the load began, and
+     * the caller asserts against a view model that has not done the work.
+     * `runCurrent()` only drains what is scheduled at the current virtual time,
+     * which is not a guarantee that the body has run.
+     *
+     * `advanceUntilIdle()` is that guarantee: the launch body has at least
+     * reached its first suspension point, so the await can only be answered by
+     * a load that genuinely finished. The await stays as a backstop for any
+     * future path that leaves the test dispatcher, where virtual time alone
+     * would not settle anything.
+     *
+     * This class has been seen to fail intermittently on
+     * `cleartextApprovalIsOriginSpecific` under a loaded machine. That failure
+     * was NOT reproduced on demand — 10 isolated runs and 6 full-suite runs of
+     * the previous helper all passed — so this is a latent weakness found by
+     * reading, and it is not proven to be the cause.
+     */
     private suspend fun TestScope.awaitSettled(viewModel: ServerSetupViewModel) {
-        runCurrent()
+        advanceUntilIdle()
         withTimeout(5_000) {
             viewModel.uiState.first { !it.isLoading }
         }
+        advanceUntilIdle()
     }
 }
 
