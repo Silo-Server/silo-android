@@ -339,6 +339,26 @@ class TvShellFocusStateTest {
         )
     }
 
+    /**
+     * The escalation must never fire on Home, because MenuBack there means
+     * EXIT. An earlier cut of this branch escalated unconditionally, so a bar
+     * that never answered on Home turned the second Back into a silent app
+     * exit — a worse failure than the stranding it was meant to fix.
+     */
+    @Test
+    fun theEscalationNeverExitsTheAppFromHome() {
+        val s = TvShellFocusState()
+
+        assertEquals(TvShellBackAction.MoveFocusToMenu, s.onBack(onTabRoot = true, onHome = true))
+        assertTrue(s.barHandoffAttempted, "the handoff is outstanding, exactly as off Home")
+
+        assertEquals(
+            TvShellBackAction.MoveFocusToMenu,
+            s.onBack(onTabRoot = true, onHome = true),
+            "on Home the unanswered handoff repeats rather than escalating to exit",
+        )
+    }
+
     /** When the bar DOES answer, the ladder is unchanged. */
     @Test
     fun aBarThatTakesFocusStillGetsTheNormalLadder() {
