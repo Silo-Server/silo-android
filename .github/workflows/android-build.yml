@@ -43,6 +43,33 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
 
+      # Robolectric does NOT resolve its Android runtimes through Gradle. At test
+      # execution time it fetches android-all-instrumented straight from Maven
+      # Central into ~/.m2, which setup-gradle's cache does not cover — so every
+      # run re-downloaded 85-204 MB per SDK level. On 2026-08-11 Maven Central
+      # answered 403 and took out 31 unrelated tests in android-shared, and the
+      # download time is a large part of this job.
+      #
+      # Which runtimes get fetched depends on the Robolectric version AND on the
+      # SDK each test resolves to, so the key hashes the version catalogue and
+      # the module build files (min/target SDK) together. A new @Config(sdk=NN)
+      # in a test is deliberately NOT in the key: hashing test sources would
+      # bust this cache on nearly every pull request, which costs more than it
+      # saves. The residual gap is bounded — that one runtime is re-fetched each
+      # run until something else moves the key — and the restore-key prefix
+      # still seeds from the previous cache rather than starting cold.
+      #
+      # A run-id-suffixed key would close the gap by saving every run, but this
+      # cache is hundreds of MB; a new entry per run would evict the Gradle
+      # cache against the repository's 10 GB budget.
+      - name: Cache Robolectric Android runtimes
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', '**/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
       - name: Run unit tests
         shell: bash
         run: |

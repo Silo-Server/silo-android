@@ -314,13 +314,7 @@ class AudioCapabilityManager(
             .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
             .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
             .build()
-        val layoutsToProbe = listOf(
-            AudioLayoutProbe(2, AudioFormat.CHANNEL_OUT_STEREO, listOf("stereo")),
-            // FFprobe commonly distinguishes 5.1 and 5.1(side), while
-            // Android exposes one encoded six-channel mask to AudioTrack.
-            AudioLayoutProbe(6, AudioFormat.CHANNEL_OUT_5POINT1, listOf("5.1", "5.1(side)")),
-            AudioLayoutProbe(8, AudioFormat.CHANNEL_OUT_7POINT1_SURROUND, listOf("7.1")),
-        )
+        val layoutsToProbe = PASSTHROUGH_LAYOUT_PROBES
         return encodings.mapNotNull { support ->
             val channelCounts = sortedSetOf<Int>()
             val layouts = sortedSetOf<String>()
@@ -365,7 +359,7 @@ class AudioCapabilityManager(
         }
     }.getOrDefault(false)
 
-    private data class AudioLayoutProbe(
+    internal data class AudioLayoutProbe(
         val channelCount: Int,
         val channelMask: Int,
         val layoutNames: List<String>,
@@ -426,3 +420,29 @@ private class SpatializerBridge(
 
     fun isEnabled(): Boolean = spatializer.isEnabled
 }
+
+/**
+ * The encoded layouts probed per audio format. Deliberately the single source
+ * of truth: [PROBED_PASSTHROUGH_CHANNEL_COUNTS] is derived from it, so the
+ * reader of a passthrough entry can never disagree with the writer about which
+ * counts were actually asked. A constant that merely *claimed* to match would
+ * need a runtime check, and a structural invariant is not worth crashing
+ * capability detection over.
+ */
+@UnstableApi
+internal val PASSTHROUGH_LAYOUT_PROBES: List<AudioCapabilityManager.AudioLayoutProbe> = listOf(
+    AudioCapabilityManager.AudioLayoutProbe(2, AudioFormat.CHANNEL_OUT_STEREO, listOf("stereo")),
+    // FFprobe commonly distinguishes 5.1 and 5.1(side), while Android exposes
+    // one encoded six-channel mask to AudioTrack.
+    AudioCapabilityManager.AudioLayoutProbe(
+        6,
+        AudioFormat.CHANNEL_OUT_5POINT1,
+        listOf("5.1", "5.1(side)"),
+    ),
+    AudioCapabilityManager.AudioLayoutProbe(
+        8,
+        AudioFormat.CHANNEL_OUT_7POINT1_SURROUND,
+        listOf("7.1"),
+    ),
+)
+

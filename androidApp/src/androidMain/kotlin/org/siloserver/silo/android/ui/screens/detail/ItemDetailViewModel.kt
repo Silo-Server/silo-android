@@ -23,6 +23,7 @@ import org.siloserver.silo.repository.MetadataAiRepository
 import org.siloserver.silo.repository.DownloadsRepository
 import org.siloserver.silo.repository.EbookReaderRepository
 import org.siloserver.silo.repository.PersonalDataRepository
+import org.siloserver.silo.repository.RecommendationRepository
 import org.siloserver.silo.viewmodel.applyLocalPlaybackProgress
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.playback.SUBTITLE_OFF_FINGERPRINT
@@ -38,6 +39,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -47,6 +51,7 @@ import kotlinx.coroutines.launch
 data class ItemDetailUiState(
     val isLoading: Boolean = true,
     val detail: ItemDetail? = null,
+    val similarItems: List<ItemDetail> = emptyList(),
     val seasons: List<Season> = emptyList(),
     val selectedSeasonNumber: Int = 1,
     val episodes: List<EpisodeListItem> = emptyList(),
@@ -121,6 +126,7 @@ class ItemDetailViewModel(
     private val downloadsRepository: DownloadsRepository,
     private val downloadEnqueuer: DownloadEnqueuer,
     private val ebookReaderRepository: EbookReaderRepository,
+    private val recommendationRepository: RecommendationRepository,
     metadataAiRepository: MetadataAiRepository,
     savedStateHandle: SavedStateHandle,
     private val userItemState: org.siloserver.silo.repository.port.UserItemStatePort =
@@ -352,6 +358,7 @@ class ItemDetailViewModel(
                     }
                     // Restore a persisted audio/subtitle override for this item.
                     seedPersistedTrackSelection()
+                    viewModelScope.launch { loadSimilar(detail) }
                     // For series, load seasons
                     if (detail.type == "series") {
                         loadSeasons(detail.contentId)
@@ -392,6 +399,35 @@ class ItemDetailViewModel(
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun loadSimilar(detail: ItemDetail) {
+        if (detail.type == "episode" || _uiState.value.similarItems.isNotEmpty()) return
+
+        val scored = when (
+            val result = recommendationRepository.getSimilar(detail.contentId, limit = 12)
+        ) {
+            is ApiResult.Success -> result.data.items
+            else -> return
+        }
+        if (scored.isEmpty()) return
+
+        val items = coroutineScope {
+            scored
+                .map { ref ->
+                    async {
+                        when (val result = catalogRepository.getItemDetail(ref.mediaItemId)) {
+                            is ApiResult.Success -> result.data
+                            else -> null
+                        }
+                    }
+                }
+                .awaitAll()
+                .filterNotNull()
+        }
+        if (items.isNotEmpty()) {
+            _uiState.update { it.copy(similarItems = items) }
         }
     }
 

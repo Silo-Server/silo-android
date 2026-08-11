@@ -186,7 +186,21 @@ fun TvSearchScreen(
             action = "keyboard_dismissed",
         )
     }
-    var searchScreenHasFocus by remember { mutableStateOf(false) }
+    // Which REGION holds focus. A screen-wide flag cannot answer the question
+    // these claims actually ask. requestFocusUntilObserved tests isFocused()
+    // before it ever calls requestFocus, so "something on the search screen has
+    // focus" made every claim below a no-op the moment the screen owned focus
+    // at all — which is always, once you are on it. Back from a result never
+    // returned to the field, and a submitted search never handed you its
+    // results, because in both cases the flag was already true.
+    var focusedRegion by remember { mutableStateOf<TvSearchFocusRegion?>(null) }
+    val setFocusedRegion: (TvSearchFocusRegion, Boolean) -> Unit = { region, focused ->
+        if (focused) {
+            focusedRegion = region
+        } else if (focusedRegion == region) {
+            focusedRegion = null
+        }
+    }
     val requestMediaType = state.mediaType.toRequestMediaType()
     val visibleRequestResults = requestState.results
         .filterTvRequestResults()
@@ -246,7 +260,7 @@ fun TvSearchScreen(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
                 requestFocus = activeSearchFieldFocusRequester::requestFocus,
-                isFocused = { searchScreenHasFocus },
+                isFocused = { focusedRegion == TvSearchFocusRegion.Field },
             )
         }
         hasEnteredSearch = true
@@ -369,6 +383,11 @@ fun TvSearchScreen(
             return@LaunchedEffect
         }
 
+        // Observed on the CARD, not the region. A return is a claim on one
+        // specific item, so "some result has focus" is the same too-coarse test
+        // this file just removed everywhere else: any already-focused card in
+        // the region satisfied it and the saved card was never requested, which
+        // is precisely the case a return exists to serve.
         when (located.sectionId) {
             TvSearchCatalogSectionId -> {
                 restoreCatalogIndex = located.itemIndex
@@ -377,7 +396,7 @@ fun TvSearchScreen(
                     maxAttempts = TvFrameRelocationMaxAttempts,
                     awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
                     requestFocus = restoreCatalogFocusRequester::requestFocus,
-                    isFocused = { searchScreenHasFocus },
+                    isFocused = { focusedReturnItemId == located.itemId },
                 )
             }
             TvSearchRequestSectionId -> {
@@ -386,7 +405,7 @@ fun TvSearchScreen(
                     maxAttempts = TvFrameRelocationMaxAttempts,
                     awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
                     requestFocus = restoreRequestFocusRequester::requestFocus,
-                    isFocused = { searchScreenHasFocus },
+                    isFocused = { focusedReturnItemId == located.itemId },
                 )
             }
         }
@@ -420,7 +439,7 @@ fun TvSearchScreen(
             maxAttempts = TvFrameRelocationMaxAttempts,
             awaitAttempt = { androidx.compose.runtime.withFrameNanos { } },
             requestFocus = activeSearchFieldFocusRequester::requestFocus,
-            isFocused = { searchScreenHasFocus },
+            isFocused = { focusedRegion == TvSearchFocusRegion.Field },
         )
     }
     LaunchedEffect(
@@ -445,11 +464,17 @@ fun TvSearchScreen(
             state.error != null -> feedbackActionFocusRequester
             else -> firstFilterChipFocusRequester
         }
+        val postSearchRegion = when {
+            state.items.isNotEmpty() -> TvSearchFocusRegion.CatalogResults
+            visibleRequestResults.isNotEmpty() -> TvSearchFocusRegion.RequestResults
+            state.error != null -> TvSearchFocusRegion.Feedback
+            else -> TvSearchFocusRegion.Chips
+        }
         requestFocusUntilObserved(
             maxAttempts = TvContentInitialFocusMaxAttempts,
             awaitAttempt = { withFrameNanos { } },
             requestFocus = postSearchTarget::requestFocus,
-            isFocused = { searchScreenHasFocus },
+            isFocused = { focusedRegion == postSearchRegion },
         )
     }
     // Note: we deliberately do NOT auto-jump focus to the first result when
@@ -464,10 +489,6 @@ fun TvSearchScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            // Every focus target on this screen — field, chips, results,
-            // request rows, feedback action — lives under here, so "focus is on
-            // the search screen" is the arrival each claim below waits on.
-            .onFocusChanged { searchScreenHasFocus = it.hasFocus }
             .background(MaterialTheme.colorScheme.background),
     ) {
         TvCatalogGrid(
@@ -504,11 +525,22 @@ fun TvSearchScreen(
             restoreItemIndex = restoreCatalogIndex,
             restoreItemFocusRequester = restoreCatalogFocusRequester,
             onItemFocusedAtIndex = { item, _, focused ->
+                // Guarded on item IDENTITY, not just the region. These callbacks
+                // are per card, and Compose can deliver the newly focused card
+                // before the outgoing one reports false — a bare region flag
+                // would then be cleared by the card that just lost focus, right
+                // after the new one set it. Recycling an outgoing item has the
+                // same shape. A stale false whose id is no longer the focused
+                // one is ignored here.
                 val id = tvSearchCatalogItemId(item.contentId)
                 if (focused) {
                     focusedReturnItemId = id
+                    focusedRegion = TvSearchFocusRegion.CatalogResults
                 } else if (focusedReturnItemId == id) {
                     focusedReturnItemId = null
+                    if (focusedRegion == TvSearchFocusRegion.CatalogResults) {
+                        focusedRegion = null
+                    }
                 }
             },
             // UP from the first card always lands back on the filter chip rail.
@@ -533,7 +565,13 @@ fun TvSearchScreen(
                     searchFieldFocusRequester = activeSearchFieldFocusRequester,
                     firstFilterChipFocusRequester = firstFilterChipFocusRequester,
                     firstContentFocusRequester = firstContentFocusRequester,
-                    onSearchFieldFocusChanged = onSearchFieldFocusChanged,
+                    onSearchFieldFocusChanged = { focused ->
+                        setFocusedRegion(TvSearchFocusRegion.Field, focused)
+                        onSearchFieldFocusChanged(focused)
+                    },
+                    onChipsFocusChanged = { focused ->
+                        setFocusedRegion(TvSearchFocusRegion.Chips, focused)
+                    },
                     onQueryChanged = viewModel::onQueryChanged,
                     onSearch = {
                         pendingSearchFocus = true
@@ -563,11 +601,18 @@ fun TvSearchScreen(
                     restoreItemIndex = restoreRequestIndex,
                     restoreItemFocusRequester = restoreRequestFocusRequester,
                     onItemFocusChanged = { item, _, focused ->
+                        // Identity-guarded for the same reason as the catalog
+                        // cards above: a late false from the card that just
+                        // lost focus must not clear the region the new one set.
                         val id = tvSearchRequestItemId(item.mediaType, item.tmdbId)
                         if (focused) {
                             focusedReturnItemId = id
+                            focusedRegion = TvSearchFocusRegion.RequestResults
                         } else if (focusedReturnItemId == id) {
                             focusedReturnItemId = null
+                            if (focusedRegion == TvSearchFocusRegion.RequestResults) {
+                                focusedRegion = null
+                            }
                         }
                     },
                     onItemClicked = { item, index ->
@@ -598,6 +643,9 @@ fun TvSearchScreen(
                         actionLabel = "Try again",
                         actionFocusRequester = feedbackActionFocusRequester,
                         actionUpFocusRequester = firstFilterChipFocusRequester,
+                        onActionFocusChanged = { focused ->
+                            setFocusedRegion(TvSearchFocusRegion.Feedback, focused)
+                        },
                         onAction = viewModel::submitSearch,
                     )
                     else -> SearchFeedbackMessage(
@@ -715,6 +763,15 @@ private fun RequestSearchFeedbackRow(
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
+/**
+ * The focus regions a claim on this screen can aim at.
+ *
+ * Each claim is observed on the region it actually asked for, so moving focus
+ * WITHIN the screen — field to results, results back to field — is a state the
+ * arrival test can distinguish. A single screen-wide hasFocus could not.
+ */
+private enum class TvSearchFocusRegion { Field, Chips, CatalogResults, RequestResults, Feedback }
+
 @Composable
 private fun SearchStage(
     query: String,
@@ -726,6 +783,7 @@ private fun SearchStage(
     firstFilterChipFocusRequester: FocusRequester,
     firstContentFocusRequester: FocusRequester,
     onSearchFieldFocusChanged: (Boolean) -> Unit,
+    onChipsFocusChanged: (Boolean) -> Unit,
     onQueryChanged: (String) -> Unit,
     onSearch: () -> Unit,
     onMediaTypeChanged: (TvSearchMediaType) -> Unit,
@@ -834,7 +892,9 @@ private fun SearchStage(
         }
 
         LazyRow(
-            modifier = Modifier.focusRestorer(firstFilterChipFocusRequester),
+            modifier = Modifier
+                .onFocusChanged { onChipsFocusChanged(it.hasFocus) }
+                .focusRestorer(firstFilterChipFocusRequester),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(end = Spacing.xs),
             verticalAlignment = Alignment.CenterVertically,
@@ -905,6 +965,7 @@ private fun SearchFeedbackMessage(
     actionLabel: String? = null,
     actionFocusRequester: FocusRequester? = null,
     actionUpFocusRequester: FocusRequester? = null,
+    onActionFocusChanged: (Boolean) -> Unit = {},
     onAction: (() -> Unit)? = null,
 ) {
     Row(
@@ -942,6 +1003,7 @@ private fun SearchFeedbackMessage(
                     onClick = onAction,
                     modifier = Modifier
                         .padding(top = Spacing.sm)
+                        .onFocusChanged { onActionFocusChanged(it.isFocused) }
                         .then(
                             if (actionFocusRequester != null) {
                                 Modifier.focusRequester(actionFocusRequester)

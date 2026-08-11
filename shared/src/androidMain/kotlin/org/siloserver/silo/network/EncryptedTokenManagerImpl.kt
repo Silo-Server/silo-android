@@ -46,6 +46,9 @@ class EncryptedTokenManagerImpl(
     private var accessToken: String? = null
     private var refreshToken: String? = null
     private var tokenExpiryEpochMs: Long? = null
+
+    /** Lifetime the server gave the active access token, for the half-life clamp. */
+    private var tokenLifetimeMs: Long? = null
     private var profileId: String? = null
     private var profileToken: String? = null
     private var temporaryScope: TemporaryAuthScope? = null
@@ -103,6 +106,34 @@ class EncryptedTokenManagerImpl(
     }
 
     /**
+     * Answers for whichever identity is actually installed: a remote-playback
+     * overlay carries its own deadline, and falling through to the saved
+     * account's would refresh credentials this request is not spending.
+     */
+    override suspend fun accessTokenExpiresWithin(marginMs: Long): Boolean = mutex.withLock {
+        ensureCacheMatchesRegistryLocked()
+        temporaryScope?.let { overlay ->
+            // NOT expiresAtEpochMs — that is when the temporary SESSION ends,
+            // which can be hours past the access token it was issued with.
+            // Unknown until a refresh has told us, and unknown means leave it
+            // to the reactive 401 rather than refresh on a guess.
+            val overlayExpiry = overlay.accessTokenExpiresAtEpochMs ?: return@withLock false
+            return@withLock shouldRefreshProactively(
+                remainingMs = overlayExpiry - System.currentTimeMillis(),
+                lifetimeMs = overlay.accessTokenLifetimeMs,
+                marginMs = marginMs,
+            )
+        }
+        if (accessToken == null) return@withLock false
+        val expiry = tokenExpiryEpochMs ?: return@withLock false
+        shouldRefreshProactively(
+            remainingMs = expiry - System.currentTimeMillis(),
+            lifetimeMs = tokenLifetimeMs,
+            marginMs = marginMs,
+        )
+    }
+
+    /**
      * The registry observer flushes the cache asynchronously; between a
      * direct `ServerRegistry.switchTo()` and that collector running there is
      * a window where `getServerUrl()` already answers with the NEW server
@@ -140,23 +171,30 @@ class EncryptedTokenManagerImpl(
         mutex.withLock {
             ensureCacheMatchesRegistryLocked()
             temporaryScope?.let { scope ->
+                // The SESSION deadline (expiresAtEpochMs) is untouched: a
+                // refresh renews the access token, not the temporary session.
                 temporaryScope = scope.copy(
                     accessToken = accessToken,
                     refreshToken = refreshToken,
-                    expiresAtEpochMs = System.currentTimeMillis() + expiresIn * 1000L,
+                    accessTokenExpiresAtEpochMs =
+                        System.currentTimeMillis() + expiresIn * 1000L,
+                    accessTokenLifetimeMs = expiresIn * 1000L,
                 )
                 return@withLock
             }
             val serverId = activeServerId ?: return@withLock
             this.accessToken = accessToken
             this.refreshToken = refreshToken
-            val expiryEpochMs = System.currentTimeMillis() + expiresIn * 1000L
+            val lifetimeMs = expiresIn * 1000L
+            val expiryEpochMs = System.currentTimeMillis() + lifetimeMs
             this.tokenExpiryEpochMs = expiryEpochMs
+            this.tokenLifetimeMs = lifetimeMs
             persistentCredentialEpoch += 1
             prefs.edit()
                 .putString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), accessToken)
                 .putString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), refreshToken)
                 .putLong(serverScopedKey(serverId, KEY_TOKEN_EXPIRY), expiryEpochMs)
+                .putLong(serverScopedKey(serverId, KEY_TOKEN_LIFETIME), lifetimeMs)
                 .apply()
         }
     }
@@ -195,6 +233,7 @@ class EncryptedTokenManagerImpl(
         accessToken = null
         refreshToken = null
         tokenExpiryEpochMs = null
+        tokenLifetimeMs = null
         profileId = null
         profileToken = null
         if (serverId != null) {
@@ -202,6 +241,7 @@ class EncryptedTokenManagerImpl(
                 .remove(serverScopedKey(serverId, KEY_ACCESS_TOKEN))
                 .remove(serverScopedKey(serverId, KEY_REFRESH_TOKEN))
                 .remove(serverScopedKey(serverId, KEY_TOKEN_EXPIRY))
+                .remove(serverScopedKey(serverId, KEY_TOKEN_LIFETIME))
                 .remove(serverScopedKey(serverId, KEY_PROFILE_ID))
                 .remove(serverScopedKey(serverId, KEY_PROFILE_TOKEN))
                 .apply()
@@ -448,8 +488,9 @@ class EncryptedTokenManagerImpl(
         expiresIn: Long,
     ) {
         mutex.withLock {
-            val expiryEpochMs = System.currentTimeMillis() + expiresIn * 1000L
-            savePersistentTokens(serverId, accessToken, refreshToken, expiryEpochMs)
+            val lifetimeMs = expiresIn * 1000L
+            val expiryEpochMs = System.currentTimeMillis() + lifetimeMs
+            savePersistentTokens(serverId, accessToken, refreshToken, expiryEpochMs, lifetimeMs)
         }
     }
 
@@ -460,22 +501,33 @@ class EncryptedTokenManagerImpl(
         expiresIn: Long,
     ) {
         mutex.withLock {
-            val expiryEpochMs = System.currentTimeMillis() + expiresIn * 1000L
+            val lifetimeMs = expiresIn * 1000L
+            val expiryEpochMs = System.currentTimeMillis() + lifetimeMs
             val generationId = scope.credentialGenerationId
             if (generationId == null) {
                 // A stale scope must not overwrite the credentials of the login
                 // that replaced it.
                 if (scope.credentialsReplaced()) return@withLock
-                savePersistentTokens(scope.serverId, accessToken, refreshToken, expiryEpochMs)
+                savePersistentTokens(
+                    scope.serverId,
+                    accessToken,
+                    refreshToken,
+                    expiryEpochMs,
+                    lifetimeMs,
+                )
                 return@withLock
             }
             val temporary = temporaryScope
                 ?.takeIf { it.generationId == generationId && it.serverId == scope.serverId }
                 ?: return@withLock
+            // expiresAtEpochMs is the temporary SESSION deadline and is NOT
+            // renewed by refreshing the access token — overwriting it here
+            // silently extended the guest session on every refresh.
             temporaryScope = temporary.copy(
                 accessToken = accessToken,
                 refreshToken = refreshToken,
-                expiresAtEpochMs = expiryEpochMs,
+                accessTokenExpiresAtEpochMs = expiryEpochMs,
+                accessTokenLifetimeMs = lifetimeMs,
             )
         }
     }
@@ -493,16 +545,19 @@ class EncryptedTokenManagerImpl(
         accessToken: String,
         refreshToken: String,
         expiryEpochMs: Long,
+        lifetimeMs: Long,
     ) {
         prefs.edit()
             .putString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), accessToken)
             .putString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), refreshToken)
             .putLong(serverScopedKey(serverId, KEY_TOKEN_EXPIRY), expiryEpochMs)
+            .putLong(serverScopedKey(serverId, KEY_TOKEN_LIFETIME), lifetimeMs)
             .apply()
         if (serverId == activeServerId) {
             this.accessToken = accessToken
             this.refreshToken = refreshToken
             this.tokenExpiryEpochMs = expiryEpochMs
+            this.tokenLifetimeMs = lifetimeMs
         }
     }
 
@@ -518,6 +573,7 @@ class EncryptedTokenManagerImpl(
             accessToken = null
             refreshToken = null
             tokenExpiryEpochMs = null
+            tokenLifetimeMs = null
             profileId = null
             profileToken = null
             return
@@ -526,6 +582,8 @@ class EncryptedTokenManagerImpl(
         refreshToken = prefs.getString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), null)
         val expiryKey = serverScopedKey(serverId, KEY_TOKEN_EXPIRY)
         tokenExpiryEpochMs = if (prefs.contains(expiryKey)) prefs.getLong(expiryKey, 0L) else null
+        val lifetimeKey = serverScopedKey(serverId, KEY_TOKEN_LIFETIME)
+        tokenLifetimeMs = if (prefs.contains(lifetimeKey)) prefs.getLong(lifetimeKey, 0L) else null
         profileId = prefs.getString(serverScopedKey(serverId, KEY_PROFILE_ID), null)
         profileToken = prefs.getString(serverScopedKey(serverId, KEY_PROFILE_TOKEN), null)
     }
@@ -534,6 +592,7 @@ class EncryptedTokenManagerImpl(
         const val KEY_ACCESS_TOKEN = "access_token"
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_TOKEN_EXPIRY = "token_expiry_epoch_ms"
+        const val KEY_TOKEN_LIFETIME = "token_lifetime_ms"
         const val KEY_PROFILE_ID = "profile_id"
         const val KEY_PROFILE_TOKEN = "profile_token"
         // Retained only so [AndroidServerRegistry.migrateLegacyIfNeeded] can

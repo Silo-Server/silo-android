@@ -45,7 +45,10 @@ class AuthApi(private val client: HttpClient) {
     }
 
     suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> = safeApiCall {
-        client.get("/api/v1/auth/setup")
+        // Public, exactly like the explicit-server variant below — which
+        // already opted out. Without this the relative form carries a bearer
+        // it never needed, and a dead session would fail it.
+        client.get("/api/v1/auth/setup") { skipSiloAuth() }
     }
 
     suspend fun getSetupStatus(serverUrl: String): ApiResult<SetupStatusResponse> = safeApiCall {
@@ -55,7 +58,7 @@ class AuthApi(private val client: HttpClient) {
     }
 
     suspend fun getSignupStatus(): ApiResult<SignupStatusResponse> = safeApiCall {
-        client.get("/api/v1/auth/signup")
+        client.get("/api/v1/auth/signup") { skipSiloAuth() }
     }
 
     suspend fun getSignupStatus(serverUrl: String): ApiResult<SignupStatusResponse> = safeApiCall {

@@ -1989,6 +1989,7 @@ fun TvPlayerScreen(
                         // playback seeks the MediaController directly.
                         transportEnabled = canSeekInRoom,
                         playPauseEnabled = canPlayPauseInRoom,
+                        canToggleAfterCommit = roomController == null,
                         onSkipBack = {
                             if (canSeekInRoom) {
                                 performRelativeSeek(
@@ -2335,10 +2336,29 @@ private fun TvPlayerIdleOverlay(
     // play/pause (host_only policy) gets a no-op play/pause.
     transportEnabled: Boolean = true,
     playPauseEnabled: Boolean = true,
+    /**
+     * Whether Center may toggle playback after committing a scrub.
+     *
+     * False in a Watch Together room. There, the commit and the play/pause are
+     * two independently launched room requests, and the play/pause carries the
+     * live position rather than the committed one — so it can land after the
+     * seek and pull every participant back to where the scrub started. Solo
+     * playback applies both locally and in order, so it keeps the behaviour.
+     */
+    canToggleAfterCommit: Boolean = true,
 ) {
     val scrubberFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
     var idleOverlayHasFocus by remember { mutableStateOf(false) }
+    // Observed per ROW, not for the overlay as a whole. `idleOverlayHasFocus` is
+    // hasFocus on the overlay's root, so it is already true whenever ANY control
+    // holds focus — including the scrubber. Using it as the arrival test made
+    // every request from inside the overlay a no-op: D-pad Down on the scrub bar
+    // asks for the transport, the retry loop sees "already focused" and never
+    // requests, and focus stays on the bar. That is why reaching the controls
+    // needed a Back (which hides the overlay, clearing the flag) before Down.
+    var scrubberHasFocus by remember { mutableStateOf(false) }
+    var transportHasFocus by remember { mutableStateOf(false) }
     var currentRate by remember { mutableStateOf(0) }
     LaunchedEffect(focusRequest.nonce) {
         val overlayTarget = when (focusRequest.target) {
@@ -2349,7 +2369,12 @@ private fun TvPlayerIdleOverlay(
             maxAttempts = TvContentInitialFocusMaxAttempts,
             awaitAttempt = { withFrameNanos { } },
             requestFocus = overlayTarget::requestFocus,
-            isFocused = { idleOverlayHasFocus },
+            isFocused = {
+                when (focusRequest.target) {
+                    TvIdleOverlayFocusTarget.Scrubber -> scrubberHasFocus
+                    TvIdleOverlayFocusTarget.Transport -> transportHasFocus
+                }
+            },
         )
     }
 
@@ -2419,6 +2444,7 @@ private fun TvPlayerIdleOverlay(
             // Interactive scrubber — capsule track with chapter ticks, ±10s
             // skip, hold-to-auto-seek, and Select to commit. tvOS spec §4.1.
             TvPlayerScrubber(
+                modifier = Modifier.onFocusChanged { scrubberHasFocus = it.hasFocus },
                 positionSec = positionSec,
                 durationSec = durationSec,
                 bufferedAheadSec = bufferedAheadSec,
@@ -2441,6 +2467,8 @@ private fun TvPlayerIdleOverlay(
                 onCommitScrub = onCommitScrub,
                 onCancelScrub = onCancelScrub,
                 onRequestFocus = scrubberFocus,
+                onPlayPause = onPlayPause,
+                canToggleAfterCommit = canToggleAfterCommit,
                 onMoveDownToTransport = {
                     playPauseFocus.claimFocusOrReport(
                         target = "player_transport",
@@ -2454,6 +2482,7 @@ private fun TvPlayerIdleOverlay(
             Spacer(modifier = Modifier.height(8.dp))
 
             TvPlayerTransportCluster(
+                modifier = Modifier.onFocusChanged { transportHasFocus = it.hasFocus },
                 isPlaying = !isPaused,
                 onSkipBack = onSkipBack,
                 onPlayPause = onPlayPause,
