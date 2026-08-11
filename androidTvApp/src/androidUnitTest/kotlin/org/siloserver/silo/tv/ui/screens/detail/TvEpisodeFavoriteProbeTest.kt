@@ -145,22 +145,40 @@ class TvEpisodeFavoriteProbeTest {
     /**
      * Revalidation is how a favourite toggled on an episode's own screen gets
      * back to the rail: the parent view model is retained, so its answer for
-     * that episode is stale but present.
+     * that episode is stale but present. Only the changed item is re-asked
+     * about — re-probing the whole season on every resume is the request volume
+     * this window exists to prevent.
      */
     @Test
-    fun anEmptyKnownSetReProbesEpisodesAnAnswerIsAlreadyHeldFor() = runTest(UnconfinedTestDispatcher()) {
+    fun revalidationReAsksOnlyAboutTheChangedEpisode() = runTest(UnconfinedTestDispatcher()) {
         val asked = mutableListOf<String>()
+        val known = setOf("ep1", "ep2", "ep3")
+        val changed = setOf("ep2")
 
-        val resolved = probeEpisodeFavorites(
-            episodeIds = listOf("ep1", "ep2"),
-            knownIds = emptySet(),
+        probeEpisodeFavorites(
+            episodeIds = listOf("ep1", "ep2", "ep3"),
+            knownIds = known - changed,
         ) { id ->
             asked += id
             ApiResult.Success(true)
         }
 
-        assertEquals(listOf("ep1", "ep2"), asked)
-        assertEquals(mapOf("ep1" to true, "ep2" to true), resolved.toMap())
+        assertEquals(listOf("ep2"), asked)
+    }
+
+    @Test
+    fun aResumeThatChangedNothingProbesNothing() = runTest(UnconfinedTestDispatcher()) {
+        var called = false
+
+        probeEpisodeFavorites(
+            episodeIds = listOf("ep1", "ep2", "ep3"),
+            knownIds = setOf("ep1", "ep2", "ep3") - emptySet(),
+        ) {
+            called = true
+            ApiResult.Success(true)
+        }
+
+        assertFalse(called, "foregrounding the app must not re-probe a whole season")
     }
 
     @Test
@@ -181,5 +199,30 @@ class TvEpisodeFavoriteProbeTest {
             resolved.any { it.first == "boom" },
             "a transient failure must not stick as a cached 'not a favourite'",
         )
+    }
+}
+
+/** The consume-once channel the child detail screen uses to tell the parent. */
+class TvFavoriteRevalidationSessionTest {
+
+    @Test
+    fun handsOverEachChangeExactlyOnce() {
+        TvFavoriteRevalidationSession.reset()
+        TvFavoriteRevalidationSession.markChanged("ep-7")
+        TvFavoriteRevalidationSession.markChanged("ep-9")
+
+        assertEquals(setOf("ep-7", "ep-9"), TvFavoriteRevalidationSession.consumeChanged())
+        assertEquals(
+            emptySet(),
+            TvFavoriteRevalidationSession.consumeChanged(),
+            "a second resume must not re-probe what the first already settled",
+        )
+    }
+
+    @Test
+    fun ignoresABlankId() {
+        TvFavoriteRevalidationSession.reset()
+        TvFavoriteRevalidationSession.markChanged("")
+        assertEquals(emptySet(), TvFavoriteRevalidationSession.consumeChanged())
     }
 }

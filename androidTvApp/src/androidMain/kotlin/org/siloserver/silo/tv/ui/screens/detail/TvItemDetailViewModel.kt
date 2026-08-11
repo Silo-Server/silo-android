@@ -540,9 +540,11 @@ class TvItemDetailViewModel(
         }
         val season = _uiState.value.selectedSeason
         // Coming back from an episode's own screen: the favourite may have been
-        // toggled in there, and this view model still holds the old answer.
+        // toggled in there, and this view model still holds the old answer. Only
+        // the items actually changed are re-asked about.
+        val favoritesToRecheck = TvFavoriteRevalidationSession.consumeChanged()
         if (seriesId != null && season != null) {
-            loadEpisodes(seriesId, season, quiet = true, revalidateFavorites = true)
+            loadEpisodes(seriesId, season, quiet = true, revalidateFavorites = favoritesToRecheck)
         }
     }
 
@@ -560,6 +562,10 @@ class TvItemDetailViewModel(
                 }
             } else {
                 _uiState.update { it.copy(isTogglingFavorite = false) }
+                // A series rail one screen up may be holding a stale answer for
+                // this item. Tell it exactly which one changed rather than
+                // making it re-ask about the whole season.
+                TvFavoriteRevalidationSession.markChanged(contentId)
             }
         }
     }
@@ -848,7 +854,7 @@ class TvItemDetailViewModel(
         seriesContentId: String,
         seasonNumber: Int,
         quiet: Boolean = false,
-        revalidateFavorites: Boolean = false,
+        revalidateFavorites: Set<String> = emptySet(),
     ) {
         // Cancel any in-flight episode load so a slower response for a
         // previously-selected season can't overwrite episodes/next-up for the
@@ -902,26 +908,30 @@ class TvItemDetailViewModel(
      * rather than being cached indefinitely.
      */
     /**
-     * @param revalidate re-asks about every visible episode even when an answer
-     * is already held. Returning from an episode's own detail screen is the
-     * case that needs it: this view model is retained, so the favourite the
-     * viewer just toggled in there is still in the map and would never be
-     * re-read. The existing entries stay until a fresh answer replaces them —
-     * clearing first would render every episode as "not a favourite" for the
-     * length of a round trip, and permanently so for any probe that fails.
+     * @param revalidate ids to re-ask about even though an answer is already
+     * held, because they were toggled on a screen further down. This view model
+     * is retained across that trip, so its answer for them is stale but
+     * present. Deliberately a targeted SET rather than a blanket flag:
+     * ON_RESUME also fires for returning from playback and for foregrounding
+     * the app, and re-probing a whole season on each of those would restore the
+     * request volume this window exists to prevent.
+     *
+     * Existing entries stay until a fresh answer replaces them — clearing first
+     * would render every episode as "not a favourite" for the length of a round
+     * trip, and permanently so for any probe that fails.
      */
     private suspend fun refreshEpisodeFavoriteStates(
         episodes: List<EpisodeListItem>,
-        revalidate: Boolean = false,
+        revalidate: Set<String> = emptySet(),
     ) {
-        if (episodes.isEmpty()) {
-            _uiState.update { it.copy(episodeFavoriteStates = emptyMap()) }
-            return
-        }
+        // An empty season leaves the accumulated answers alone: rendering is
+        // keyed by the visible episode ids, so nothing stale can show, and
+        // clearing would make returning to a populated season re-probe it.
+        if (episodes.isEmpty()) return
         val generation = episodeListGeneration
         probeEpisodeFavorites(
             episodeIds = episodes.map { it.contentId },
-            knownIds = if (revalidate) emptySet() else _uiState.value.episodeFavoriteStates.keys,
+            knownIds = _uiState.value.episodeFavoriteStates.keys - revalidate,
             onResolved = { id, favorite ->
                 // Publish per answer rather than per batch. Guarded by the
                 // generation the probes were started for, so a season the
@@ -1602,6 +1612,33 @@ private fun BrowseItem.toSectionItem(): SectionItem = SectionItem(
  * manual audio/subtitle pre-selection (QA 2026-07-08). In-memory on purpose:
  * durable per-playback preferences are recorded by the player itself.
  */
+/**
+ * Favourites toggled on one detail screen that a retained detail screen further
+ * up may still be showing the old answer for.
+ *
+ * Process-scoped and consume-once, mirroring [TvDetailTrackSelectionSession]:
+ * the child writes, the parent reads on resume. A targeted set is the point —
+ * re-asking about every visible episode on every resume would restore the
+ * request volume the probe window exists to prevent, and ON_RESUME fires for
+ * returning from playback and for foregrounding the app too, not just for
+ * coming back from an episode.
+ */
+internal object TvFavoriteRevalidationSession {
+    private val changed = LinkedHashSet<String>()
+
+    fun markChanged(contentId: String) {
+        if (contentId.isBlank()) return
+        synchronized(changed) { changed += contentId }
+    }
+
+    /** Everything changed since the last read, cleared as it is handed over. */
+    fun consumeChanged(): Set<String> = synchronized(changed) {
+        if (changed.isEmpty()) emptySet() else changed.toSet().also { changed.clear() }
+    }
+
+    fun reset() = synchronized(changed) { changed.clear() }
+}
+
 internal object TvDetailTrackSelectionSession {
     internal data class Saved(
         val fileId: Int?,
