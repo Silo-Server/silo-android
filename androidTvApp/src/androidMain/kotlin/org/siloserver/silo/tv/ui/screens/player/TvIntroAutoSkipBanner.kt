@@ -36,6 +36,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,6 +77,11 @@ fun TvIntroAutoSkipBanner(
         IntroAutoSkipState.ShowingButton -> 1
         is IntroAutoSkipState.CountingDown -> 2
     }
+    // The manual pill auto-focuses when it appears fresh, but not when it
+    // appears because the countdown was cancelled — that would yank focus
+    // straight back from wherever the user just moved it.
+    val previousSlot = remember { mutableStateOf(-1) }
+    LaunchedEffect(slot) { previousSlot.value = slot }
     AnimatedContent(
         targetState = slot,
         transitionSpec = {
@@ -86,7 +97,10 @@ fun TvIntroAutoSkipBanner(
                 Spacer(Modifier.size(0.dp))
             }
             1 -> {
-                TvSkipIntroButton(onClick = onSkipNow)
+                TvSkipIntroButton(
+                    onClick = onSkipNow,
+                    autoFocus = previousSlot.value != 2,
+                )
             }
             else -> {
                 TvShrinkingFillButton(
@@ -108,9 +122,21 @@ fun TvIntroAutoSkipBanner(
  * gradient scrim of the player overlay.
  */
 @Composable
-private fun TvSkipIntroButton(onClick: () -> Unit) {
+private fun TvSkipIntroButton(
+    onClick: () -> Unit,
+    autoFocus: Boolean,
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
+    val focusRequester = remember { FocusRequester() }
+
+    val shouldFocus = remember { autoFocus }
+    LaunchedEffect(Unit) {
+        if (!shouldFocus) return@LaunchedEffect
+        withFrameNanos { }
+        withFrameNanos { }
+        runCatching { focusRequester.requestFocus() }
+    }
 
     val shape = RoundedCornerShape(28.dp)
     val borderColor = if (isFocused) Color.White else Color.Transparent
@@ -121,15 +147,16 @@ private fun TvSkipIntroButton(onClick: () -> Unit) {
             .background(Color.White, shape)
             .border(BorderStroke(2.dp, borderColor), shape)
             .background(containerScrim, shape)
+            .focusRequester(focusRequester)
             .focusable(enabled = true, interactionSource = interactionSource)
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
-            .padding(horizontal = 28.dp, vertical = 14.dp),
+            .padding(horizontal = 32.dp, vertical = 18.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = "Skip Intro",
             color = Color.Black,
-            fontSize = 16.sp,
+            fontSize = 18.sp,
             fontWeight = FontWeight.Medium,
         )
     }
@@ -164,13 +191,19 @@ private fun TvShrinkingFillButton(
         runCatching { focusRequester.requestFocus() }
     }
 
-    // Losing focus after having it means the user D-padded away: stop the
-    // timer, leave the manual pill. Focus never gained (request failed) does
-    // nothing.
-    var hadFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(isFocused) {
-        if (isFocused) hadFocus = true
-        else if (hadFocus) onCancel()
+    // Cancel on an actual D-pad direction press, not on focus loss: focus here
+    // is transient (the player re-focuses its own overlay), and inferring intent
+    // from it killed the countdown a beat after it appeared.
+    val cancelOnDirection: (KeyEvent) -> Boolean = { event ->
+        if (event.type == KeyEventType.KeyDown &&
+            (
+                event.key == Key.DirectionUp || event.key == Key.DirectionDown ||
+                    event.key == Key.DirectionLeft || event.key == Key.DirectionRight
+                )
+        ) {
+            onCancel()
+        }
+        false
     }
 
     BackHandler(onBack = onDismiss)
@@ -201,6 +234,7 @@ private fun TvShrinkingFillButton(
             .background(Color.Black.copy(alpha = 0.65f), shape)
             .border(BorderStroke(2.dp, borderColor), shape)
             .focusRequester(focusRequester)
+            .onPreviewKeyEvent(cancelOnDirection)
             .focusable(enabled = true, interactionSource = interactionSource)
             .clickable(interactionSource = interactionSource, indication = null) { onSkipNow() },
     ) {
