@@ -62,6 +62,7 @@ fun MovieDetailContent(
         url = detail.posterUrl,
         thumbhash = detail.posterThumbhash,
     ),
+    similarItems: List<ItemDetail> = emptyList(),
     isFavorite: Boolean,
     isInWatchlist: Boolean,
     selectedVersionIndex: Int,
@@ -343,7 +344,7 @@ fun MovieDetailContent(
         if (detail.type != "episode") {
             item(contentType = "detail-similar") {
                 SimilarRail(
-                    contentId = detail.contentId,
+                    items = similarItems,
                     onSelect = onItemDetailClick,
                 )
             }
