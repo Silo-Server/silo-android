@@ -178,24 +178,26 @@ fun PlayerProgressBar(
                             .background(Color.White.copy(alpha = 0.52f)),
                     )
                     // Intro tint — iOS draws the intro range cyan at 0.4.
-                    intro?.let { range ->
-                        val startFraction = (range.start / maxDuration).toFloat().coerceIn(0f, 1f)
-                        val endFraction = (range.end / maxDuration).toFloat().coerceIn(startFraction, 1f)
-                        if (endFraction > startFraction) {
-                            val density = LocalDensity.current
-                            val barWidthDp = with(density) { barWidthPx.toDp() }
-                            Box(
-                                modifier = Modifier
-                                    .offset(x = barWidthDp * startFraction)
-                                    .width(barWidthDp * (endFraction - startFraction))
-                                    .fillMaxHeight()
-                                    .background(Color.Cyan.copy(alpha = 0.4f)),
-                            )
+                    if (hasKnownDuration) {
+                        intro?.let { range ->
+                            val startFraction = (range.start / maxDuration).toFloat().coerceIn(0f, 1f)
+                            val endFraction = (range.end / maxDuration).toFloat().coerceIn(startFraction, 1f)
+                            if (endFraction > startFraction) {
+                                val density = LocalDensity.current
+                                val barWidthDp = with(density) { barWidthPx.toDp() }
+                                Box(
+                                    modifier = Modifier
+                                        .offset(x = barWidthDp * startFraction)
+                                        .width(barWidthDp * (endFraction - startFraction))
+                                        .fillMaxHeight()
+                                        .background(Color.Cyan.copy(alpha = 0.4f)),
+                                )
+                            }
                         }
                     }
                     // Chapter ticks, under the played fill (iOS: the fill
                     // covers ticks in played territory).
-                    if (chapters.isNotEmpty()) {
+                    if (hasKnownDuration && chapters.isNotEmpty()) {
                         val density = LocalDensity.current
                         val barWidthDp = with(density) { barWidthPx.toDp() }
                         chapters.forEach { chapter ->

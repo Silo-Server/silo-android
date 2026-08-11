@@ -68,18 +68,47 @@ class PlaybackSubtitleReadyTest {
     }
 
     @Test
-    fun malformedScalarFieldsDoNotAbortRealtimeDecoding() {
+    fun malformedSessionIdDoesNotDiscardValidControlFields() {
         val update = decodePlaybackSubtitleReady(
             buildJsonObject {
                 putJsonObject("session_id") { put("unexpected", true) }
-                putJsonArray("file_id") { add(JsonPrimitive(9)) }
-                putJsonObject("subtitle_id") { put("unexpected", 77) }
+                put("file_id", 9)
+                put("subtitle_id", 77)
             },
         )
 
         assertNull(update.sessionId)
+        assertEquals(9, update.mediaFileId)
+        assertEquals(77, update.subtitleId)
+    }
+
+    @Test
+    fun malformedFileIdDoesNotDiscardValidControlFields() {
+        val update = decodePlaybackSubtitleReady(
+            buildJsonObject {
+                put("session_id", "s")
+                putJsonArray("file_id") { add(JsonPrimitive(9)) }
+                put("subtitle_id", 77)
+            },
+        )
+
+        assertEquals("s", update.sessionId)
         assertNull(update.mediaFileId)
+        assertEquals(77, update.subtitleId)
+    }
+
+    @Test
+    fun malformedSubtitleIdDoesNotDiscardValidControlFields() {
+        val update = decodePlaybackSubtitleReady(
+            buildJsonObject {
+                put("session_id", "s")
+                put("file_id", 9)
+                putJsonObject("subtitle_id") { put("unexpected", 77) }
+            },
+        )
+
+        assertEquals("s", update.sessionId)
+        assertEquals(9, update.mediaFileId)
         assertNull(update.subtitleId)
-        assertNull(update.track)
     }
 }
