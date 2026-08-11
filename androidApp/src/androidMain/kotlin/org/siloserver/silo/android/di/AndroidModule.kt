@@ -24,6 +24,9 @@ import org.siloserver.silo.common.player.AndroidSubtitlePresentation
 import org.siloserver.silo.common.player.SiloPlayerFactory
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionManager
+import org.siloserver.silo.common.player.audio.PassthroughSuppressionScope
+import org.siloserver.silo.common.di.AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER
+import org.siloserver.silo.common.di.AUDIOBOOK_PLAYBACK_SESSION_LIFECYCLE_QUALIFIER
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.cast.CastPlaybackPreparer
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
@@ -252,6 +255,14 @@ val androidModule = module {
         )
     }
     single { PlaybackSessionManager(get(), get(), get()) }
+    single(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER) {
+        PlaybackSessionManager(
+            playbackRepository = get(),
+            tokenManager = get(),
+            networkEvidenceProvider = get(),
+            passthroughSuppression = PassthroughSuppressionScope.None,
+        )
+    }
     // Google Cast (Chromecast) — phone only. The session manager owns the Cast
     // SDK lifecycle; the preparer opens the separate Tier-2 cast-capability
     // playback session so the raw phone stream is never cast.
@@ -272,6 +283,7 @@ val androidModule = module {
             playerSettingsStore = get(),
             sessionLifecycle = get(),
             reachabilityMonitor = get(),
+            userItemStatePort = get(),
         )
     }
     factory {
@@ -456,8 +468,8 @@ val androidModule = module {
     viewModel {
         org.siloserver.silo.common.player.AudiobookPlayerViewModel(
             catalogRepository = get(),
-            playbackSessionManager = get(),
-            playbackSessionLifecycle = get(),
+            playbackSessionManager = get(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER),
+            playbackSessionLifecycle = get(AUDIOBOOK_PLAYBACK_SESSION_LIFECYCLE_QUALIFIER),
             capabilityDetector = get(),
             bookmarksStore = get(),
             userItemStatePort = get(),

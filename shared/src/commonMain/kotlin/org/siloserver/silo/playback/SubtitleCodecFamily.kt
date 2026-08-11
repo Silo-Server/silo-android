@@ -40,6 +40,13 @@ fun isTextSubtitleCodecFamily(family: String?): Boolean =
         else -> false
     }
 
+/** Whether [family] is an image-based subtitle codec or MIME alias. */
+fun isBitmapSubtitleCodecFamily(family: String?): Boolean =
+    when (canonicalSubtitleCodecFamily(family)) {
+        "pgs", "vobsub", "dvbsub" -> true
+        else -> false
+    }
+
 /**
  * Whether the server can hand this bitmap family to the client as a sidecar
  * instead of burning it into the picture.

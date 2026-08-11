@@ -13,10 +13,16 @@ import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.OfflineMediaResolver
 import org.siloserver.silo.model.audiobook.AudiobookBookmark
 import org.siloserver.silo.model.catalog.VersionChapter
-import org.siloserver.silo.model.playback.PlayMethod
-import org.siloserver.silo.model.playback.PlaybackSessionResponse
+import org.siloserver.silo.model.playback.QUALITY_ORIGINAL_V3
+import org.siloserver.silo.model.playback.ClientCodecCapabilities
+import org.siloserver.silo.model.playback.ClientPlaybackContext
+import org.siloserver.silo.model.playback.PlaybackTimeline
+import org.siloserver.silo.model.playback.ProgressPersistenceV3
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
+import org.siloserver.silo.common.player.seek.PlaybackSeekDecision
+import org.siloserver.silo.common.player.seek.decideSeek
+import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.CatalogRepository
@@ -168,6 +174,11 @@ class AudiobookPlayerViewModel(
      *  part loads or on the single-file fallback. */
     private var activeTrackIndex: Int? = null
 
+    /** Source/player mapping for the protocol-v3 transport mounted in Media3. */
+    private var activePlaybackTimeline: PlaybackTimeline? = null
+    /** Server-declared full runtime for the active effective file; null is unknown. */
+    private var activePlaybackSourceDurationSeconds: Double? = null
+
     /** Invalidates an in-flight [loadTrack] when the user seeks again, the book
      *  advances, or the player closes while `/playback/start` is still on the
      *  wire (Apple `loadGeneration`). */
@@ -198,10 +209,88 @@ class AudiobookPlayerViewModel(
 
     init {
         observeAudiobookSettings()
+        observeMissingPlaybackSessions()
         if (contentId.isNotBlank()) {
             loadDetail()
             loadBookmarks()
             startPeriodicPositionSave()
+        }
+    }
+
+    private fun observeMissingPlaybackSessions() {
+        viewModelScope.launch {
+            playbackSessionLifecycle.missingSessionEvents.collect { renewal ->
+                val state = _uiState.value
+                if (
+                    isClosing ||
+                    state.sessionId != renewal.staleSessionId ||
+                    renewal.startParams.contentId != contentId ||
+                    renewal.startParams.fileId != state.selectedFileId
+                ) {
+                    return@collect
+                }
+                val profileId = profileRepository.getActiveProfileId() ?: return@collect
+                val generation = ++loadGeneration
+                val trackIndex = activeTrackIndex
+                when (
+                    val playback = startPartSession(
+                        fileId = renewal.startParams.fileId,
+                        profileId = profileId,
+                        startPosition = renewal.positionSeconds,
+                        capabilities = renewal.startParams.capabilities,
+                        clientPlaybackContext = renewal.startParams.clientPlaybackContext,
+                    )
+                ) {
+                    is ApiResult.Success -> {
+                        val start = playback.data
+                        if (generation != loadGeneration || isClosing) {
+                            if (start is VideoSessionStartV3.Ready) {
+                                runCatching {
+                                    playbackSessionManager.stopSession(start.session.sessionId)
+                                }
+                            }
+                        } else if (start is VideoSessionStartV3.Ready) {
+                            applyStartedSession(
+                                ready = start,
+                                localSeek = renewal.positionSeconds,
+                                globalPosition = state.positionSeconds,
+                                trackIndex = trackIndex,
+                                fileId = renewal.startParams.fileId,
+                                isCurrent = {
+                                    generation == loadGeneration &&
+                                        !isClosing &&
+                                        _uiState.value.sessionId == renewal.staleSessionId
+                                },
+                            )
+                        } else {
+                            applyFailedSessionStart(
+                                start.failureMessage(),
+                                expectedSessionId = renewal.staleSessionId,
+                            )
+                        }
+                    }
+                    is ApiResult.Error -> if (
+                        generation == loadGeneration &&
+                        !isClosing &&
+                        _uiState.value.sessionId == renewal.staleSessionId
+                    ) {
+                        applyFailedSessionStart(
+                            playback.message,
+                            expectedSessionId = renewal.staleSessionId,
+                        )
+                    }
+                    is ApiResult.NetworkError -> if (
+                        generation == loadGeneration &&
+                        !isClosing &&
+                        _uiState.value.sessionId == renewal.staleSessionId
+                    ) {
+                        applyFailedSessionStart(
+                            playback.exception.message ?: "Network error",
+                            expectedSessionId = renewal.staleSessionId,
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -393,12 +482,15 @@ class AudiobookPlayerViewModel(
                             fileId = selectedVersion.fileId,
                             profileId = profileId,
                             startGlobal = startGlobal,
+                            generation = generation,
                         )
                         return@launch
                     }
 
                     timeline = builtTimeline
                     activeTrackIndex = null
+                    activePlaybackTimeline = null
+                    activePlaybackSourceDurationSeconds = null
                     loadTrack(atGlobalTime = startGlobal, autoplay = true)
                 }
                 is ApiResult.Error -> loadOfflineOnly(error = r.message)
@@ -434,12 +526,13 @@ class AudiobookPlayerViewModel(
         val localTime = tl.localTimeFor(clamped, track)
 
         if (activeTrackIndex == index && _uiState.value.sessionId != null) {
-            // Same part: keep the stream, seek the engine to the file-local
-            // offset. pendingSeek is consumed by the Compose layer as a
-            // controller.seekTo in part-local (stream) space.
-            _uiState.update { it.copy(positionSeconds = clamped) }
-            if (autoplay) _uiState.update { it.copy(isPaused = false) }
-            _pendingSeek.value = localTime
+            seekActiveSession(
+                sourceLocalSeconds = localTime,
+                globalSeconds = clamped,
+                autoplay = autoplay,
+                trackIndex = index,
+                fileId = track.fileId,
+            )
             return
         }
 
@@ -450,7 +543,8 @@ class AudiobookPlayerViewModel(
         // position is captured BEFORE that pre-write: retiring the old session
         // must report where the old part actually was, not the new target
         // mapped back into it.
-        val outgoingLocal = sessionLocalPosition(_uiState.value)
+        val outgoingState = _uiState.value
+        val outgoingLocal = sessionLocalPosition(outgoingState)
         pendingTrackLoadLocalStart = localTime
         _uiState.update { it.copy(positionSeconds = clamped) }
         if (autoplay) _uiState.update { it.copy(isPaused = false) }
@@ -462,50 +556,47 @@ class AudiobookPlayerViewModel(
                 _uiState.update { it.copy(error = "No active profile") }
                 return@launch
             }
-            retireActiveSession(outgoingLocal)
+            retireActiveSession(
+                finalLocalPosition = outgoingLocal,
+                finalGlobalPosition = outgoingState.positionSeconds,
+                finalGlobalDuration = outgoingState.durationSeconds,
+            )
             when (val playback = startPartSession(track.fileId, profileId, localTime)) {
                 is ApiResult.Success -> {
+                    val start = playback.data
                     if (generation != loadGeneration || isClosing) {
                         // Superseded by a newer seek/advance or a close while the
                         // request was in flight — release the session we no
                         // longer need (Apple parity).
-                        runCatching { playbackSessionManager.stopSession(playback.data.sessionId) }
+                        if (start is VideoSessionStartV3.Ready) {
+                            runCatching { playbackSessionManager.stopSession(start.session.sessionId) }
+                        }
                         return@launch
                     }
-                    applyStartedSession(
-                        session = playback.data,
-                        localSeek = localTime,
-                        globalPosition = clamped,
-                        trackIndex = index,
-                        fileId = track.fileId,
-                        generation = generation,
-                    )
+                    if (start is VideoSessionStartV3.Ready) {
+                        applyStartedSession(
+                            ready = start,
+                            localSeek = localTime,
+                            globalPosition = clamped,
+                            trackIndex = index,
+                            fileId = track.fileId,
+                            isCurrent = {
+                                generation == loadGeneration &&
+                                    !isClosing &&
+                                    _uiState.value.sessionId == null
+                            },
+                        )
+                    } else {
+                        applyFailedSessionStart(start.failureMessage())
+                    }
                 }
                 is ApiResult.Error -> {
                     if (generation != loadGeneration) return@launch
-                    pendingTrackLoadLocalStart = null
-                    _uiState.update {
-                        it.copy(
-                            streamUrl = null,
-                            sessionId = null,
-                            isPlaying = false,
-                            isPaused = true,
-                            error = playback.message.ifBlank { "Audiobook playback failed" },
-                        )
-                    }
+                    applyFailedSessionStart(playback.message.ifBlank { "Audiobook playback failed" })
                 }
                 is ApiResult.NetworkError -> {
                     if (generation != loadGeneration) return@launch
-                    pendingTrackLoadLocalStart = null
-                    _uiState.update {
-                        it.copy(
-                            streamUrl = null,
-                            sessionId = null,
-                            isPlaying = false,
-                            isPaused = true,
-                            error = playback.exception.message ?: "Network error",
-                        )
-                    }
+                    applyFailedSessionStart(playback.exception.message ?: "Network error")
                 }
             }
         }
@@ -520,76 +611,80 @@ class AudiobookPlayerViewModel(
         fileId: Int,
         profileId: String,
         startGlobal: Double,
+        generation: Int,
     ) {
-        // Capture the load generation before the session round-trip so a close
-        // (or a competing load) while the request is in flight invalidates any
-        // transcode fallback inside applyStartedSession.
-        val generation = loadGeneration
         when (val playback = startPartSession(fileId, profileId, startGlobal)) {
-            is ApiResult.Success -> applyStartedSession(
-                session = playback.data,
-                localSeek = startGlobal,
-                globalPosition = startGlobal,
-                trackIndex = null,
-                fileId = fileId,
-                generation = generation,
-            )
-            is ApiResult.Error -> _uiState.update {
-                it.copy(
-                    streamUrl = null,
-                    sessionId = null,
-                    isPlaying = false,
-                    isPaused = true,
-                    error = playback.message.ifBlank { "Audiobook playback failed" },
-                )
+            is ApiResult.Success -> {
+                val start = playback.data
+                if (generation != startGeneration || isClosing) {
+                    if (start is VideoSessionStartV3.Ready) {
+                        runCatching { playbackSessionManager.stopSession(start.session.sessionId) }
+                    }
+                    return
+                }
+                if (start is VideoSessionStartV3.Ready) {
+                    applyStartedSession(
+                        ready = start,
+                        localSeek = startGlobal,
+                        globalPosition = startGlobal,
+                        trackIndex = null,
+                        fileId = fileId,
+                        isCurrent = { generation == startGeneration && !isClosing },
+                    )
+                } else {
+                    applyFailedSessionStart(start.failureMessage())
+                }
             }
-            is ApiResult.NetworkError -> _uiState.update {
-                it.copy(
-                    streamUrl = null,
-                    sessionId = null,
-                    isPlaying = false,
-                    isPaused = true,
-                    error = playback.exception.message ?: "Network error",
-                )
+            is ApiResult.Error -> if (generation == startGeneration && !isClosing) {
+                applyFailedSessionStart(playback.message.ifBlank { "Audiobook playback failed" })
+            }
+            is ApiResult.NetworkError -> if (generation == startGeneration && !isClosing) {
+                applyFailedSessionStart(playback.exception.message ?: "Network error")
             }
         }
     }
 
     /**
      * Start a per-part playback session for [fileId] at the file-local
-     * [startPosition] (Apple `startSession(for:localTime:)`). Audiobooks are
-     * audio-only; their sole "video" stream is an embedded cover-art still
-     * (mjpeg/png/jpeg). The server's resolver gates DIRECT play on the client
-     * decoding the file's video codec, so advertise the still-image codecs to
-     * keep audiobooks on DIRECT instead of a pointless audio-only transcode.
-     * Scoped here so real video playback (PlayerViewModel) keeps its true
-     * decoder list.
+     * [startPosition] (Apple `startSession(for:localTime:)`).
      *
-     * Started with `disableProgressPersistence = true` (Apple sets this on every
-     * per-part session) so the session never persists the part-local position as
-     * the book's position. Whole-book resume is driven separately by routing the
-     * durable sink through the global position (see [savePosition]). Both the
-     * multi-part part-session start and the single-file fallback
-     * ([startSingleFileSession]) flow through here, so no audiobook session ever
-     * persists a part-local position.
+     * The advertised capabilities are the device's real ones. Audiobooks used to
+     * be started with still-image codecs (mjpeg/png/jpeg) spliced into
+     * `codecsVideo`, because a cover-art picture was persisted as a video track
+     * and the resolver then gated direct play on decoding it. Protocol v3 makes
+     * that untenable and unnecessary: this client advertises
+     * `video_evidence: "exact"`, so claiming decoders `MediaCodecList` never
+     * enumerated would be a false attestation — and the server no longer records
+     * cover art as a video track, so an audiobook reaches the audio-only planner
+     * on its own merits.
+     *
+     * Part-local positions are never persisted as the book's position. That is
+     * no longer something the client asks for: the server derives it from the
+     * file's presentation-part count, so a multi-part audiobook session owns no
+     * resume timeline whether or not the client remembers to opt out. Whole-book
+     * resume is driven separately by routing the durable sink through the global
+     * position (see [savePosition]).
      */
     private suspend fun startPartSession(
         fileId: Int,
         profileId: String,
         startPosition: Double,
-    ): ApiResult<PlaybackSessionResponse> {
-        val capabilities = capabilityDetector.detect().let { caps ->
-            caps.copy(
-                codecsVideo = (caps.codecsVideo + AUDIOBOOK_COVER_ART_CODECS)
-                    .distinct(),
-            )
-        }
-        return playbackSessionManager.startSession(
+        capabilities: ClientCodecCapabilities? = null,
+        clientPlaybackContext: ClientPlaybackContext? = null,
+    ): ApiResult<VideoSessionStartV3> {
+        val resolvedCapabilities = capabilities ?: capabilityDetector.detect()
+        val resolvedContext = clientPlaybackContext
+            ?: capabilityDetector.detectPlaybackContext(capabilities = resolvedCapabilities)
+        return playbackSessionManager.startVideoSessionV3(
             fileId = fileId,
             profileId = profileId,
-            capabilities = capabilities,
+            capabilities = resolvedCapabilities,
+            clientPlaybackContext = resolvedContext,
+            audioTrackIndex = null,
+            subtitleTrackIndex = null,
+            qualityPreference = QUALITY_ORIGINAL_V3,
             startPosition = startPosition,
-            disableProgressPersistence = true,
+            progressPersistence = ProgressPersistenceV3.CLIENT,
         )
     }
 
@@ -599,122 +694,186 @@ class AudiobookPlayerViewModel(
      * (the outgoing part's file-local position, captured by the caller BEFORE
      * it pre-writes the target position into ui-state), then stop it.
      */
-    private suspend fun retireActiveSession(finalLocalPosition: Double) {
+    private suspend fun retireActiveSession(
+        finalLocalPosition: Double,
+        finalGlobalPosition: Double,
+        finalGlobalDuration: Double,
+    ) {
         val sessionId = _uiState.value.sessionId ?: return
+        playbackSessionLifecycle.reportPosition(
+            positionSec = finalLocalPosition,
+            durationSec = activePartDurationSeconds(),
+            isPaused = true,
+            expectedSessionId = sessionId,
+            persistencePositionSec = finalGlobalPosition,
+            persistenceDurationSec = finalGlobalDuration,
+        )
         _uiState.update { it.copy(sessionId = null) }
-        runCatching {
-            playbackSessionManager.reportProgress(sessionId, finalLocalPosition, isPaused = true)
-        }
-        runCatching { playbackSessionManager.stopSession(sessionId) }
+        playbackSessionLifecycle.stop(expectedSessionId = sessionId)
+        activePlaybackTimeline = null
+        activePlaybackSourceDurationSeconds = null
     }
 
     /**
-     * Apply a started session to UI state, honoring the server's `play_method`.
-     * Mirrors the video player's
-     * [org.siloserver.silo.android.ui.screens.player.PlayerViewModel] handling:
-     * a DIRECT session streams [PlaybackSessionResponse.streamUrl] as-is, while
-     * REMUX / TRANSCODE require an explicit transcode start whose HLS manifest
-     * URL is what Media3 must actually load. Without this branch the raw
-     * `stream_url` for a transcode session 404s until a job is started.
+     * Apply a started v3 session to UI state.
      *
-     * Audiobooks have no video resolution, so the transcode resolution is left
-     * empty — the server keeps audio-only delivery.
+     * There is no play-method branch any more. A v3 plan's `stream.url` is the
+     * URL to load whatever the delivery turned out to be — the server has
+     * already started whatever it needed to serve it — so the old
+     * DIRECT-vs-REMUX/TRANSCODE split, which had to fire a second
+     * transcode-start round-trip before the stream URL resolved, collapses into
+     * a single assignment.
      *
      * [localSeek] is the file-local offset the engine seeks to (fed to the
      * Compose layer via [resumePositionSeconds]); [globalPosition] is the
-     * whole-book position shown in the UI; [trackIndex] becomes [activeTrackIndex]
-     * (null on the single-file fallback). [generation] is the caller's captured
-     * [loadGeneration]: the transcode fallback awaits a second round-trip, so a
-     * newer load / close during that await must not have its state clobbered by
-     * this (now stale) one.
+     * whole-book position shown in the UI; [trackIndex] becomes
+     * [activeTrackIndex] (null on the single-file fallback).
+     *
+     * The player start position comes from the plan rather than from
+     * [localSeek]: the two differ when the server anchors the stream somewhere
+     * other than the requested offset, and the plan is the authority on where
+     * the delivered stream actually begins.
      */
     private suspend fun applyStartedSession(
-        session: PlaybackSessionResponse,
+        ready: VideoSessionStartV3.Ready,
         localSeek: Double,
         globalPosition: Double,
         trackIndex: Int?,
         fileId: Int,
-        generation: Int,
-    ) {
-        // Server stream URLs are relative (e.g. /playback/stream/...). The
-        // Compose layer hands them straight to Media3, so they must be
-        // absolute here or OkHttp fails the open with "Malformed URL".
-        val serverUrl = playbackSessionManager.getServerUrl()
-        val resolvedLocalSeek = localSeek.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
-        activeTrackIndex = trackIndex
-        // The Compose layer applies resumePositionSeconds as the *stream* start
-        // position, so it is file-local. For a multi-part load, hold engine-time
-        // mapping suppressed until the stream settles near this value.
-        pendingTrackLoadLocalStart = if (trackIndex != null) resolvedLocalSeek else null
-        _resumePosition.value = resolvedLocalSeek.takeIf { it > 0.0 }
-        if (session.playMethod == PlayMethod.TRANSCODE || session.playMethod == PlayMethod.REMUX) {
-            val mode = if (session.playMethod == PlayMethod.REMUX) {
-                PlaybackSessionManager.TranscodeMode.REMUX
-            } else {
-                PlaybackSessionManager.TranscodeMode.FULL
-            }
-            when (val r = playbackSessionManager.startTranscodeFallback(
-                session = session,
-                seekSeconds = resolvedLocalSeek,
-                resolution = "",
-                mode = mode,
-            )) {
-                is ApiResult.Success -> {
-                    if (generation != loadGeneration || isClosing) {
-                        // Superseded by a newer load or a close while the
-                        // transcode start was on the wire — release the fresh
-                        // session instead of clobbering the newer load's state.
-                        runCatching { playbackSessionManager.stopSession(r.data.sessionId) }
-                        return
-                    }
-                    _uiState.update {
-                        it.copy(
-                            streamUrl = resolvePlaybackStreamUrl(serverUrl, r.data.streamUrl),
-                            sessionId = r.data.sessionId,
-                            selectedFileId = fileId,
-                            positionSeconds = globalPosition,
-                            error = null,
-                        )
-                    }
-                }
-                is ApiResult.Error -> {
-                    if (generation != loadGeneration || isClosing) return
-                    pendingTrackLoadLocalStart = null
-                    _uiState.update {
-                        it.copy(
-                            streamUrl = null,
-                            sessionId = null,
-                            isPlaying = false,
-                            isPaused = true,
-                            error = r.message.ifBlank { "Audiobook transcode failed" },
-                        )
-                    }
-                }
-                is ApiResult.NetworkError -> {
-                    if (generation != loadGeneration || isClosing) return
-                    pendingTrackLoadLocalStart = null
-                    _uiState.update {
-                        it.copy(
-                            streamUrl = null,
-                            sessionId = null,
-                            isPlaying = false,
-                            isPaused = true,
-                            error = r.exception.message ?: "Network error",
-                        )
-                    }
-                }
-            }
-        } else {
+        isCurrent: () -> Boolean,
+    ): Boolean {
+        var lifecycleOwnsSession = false
+        var published = false
+        try {
+            // Server stream URLs are relative (e.g. /playback/stream/...). The
+            // Compose layer hands them straight to Media3, so they must be
+            // absolute here or OkHttp fails the open with "Malformed URL".
+            val serverUrl = playbackSessionManager.getServerUrl()
+            val requestedSeek = localSeek.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
+            val resolvedLocalSeek = ready.plan.timeline.playerStartSeconds
+                .takeIf { it.isFinite() && it >= 0.0 }
+                ?: requestedSeek
+            val playbackTimeline = ready.plan.timeline.toPlaybackTimeline()
+            lifecycleOwnsSession = playbackSessionLifecycle.adoptActiveSessionIfCurrent(
+                params = StartParams(
+                    contentId = contentId,
+                    fileId = fileId,
+                    capabilities = ready.capabilities,
+                    qualityPreference = QUALITY_ORIGINAL_V3,
+                    startPosition = ready.plan.timeline.sourceStartSeconds
+                        .takeIf { it.isFinite() && it >= 0.0 }
+                        ?: requestedSeek,
+                    clientPlaybackContext = ready.clientPlaybackContext,
+                ),
+                session = ready.session,
+                isCurrent = isCurrent,
+            )
+            if (!lifecycleOwnsSession) return false
+
+            // Adoption can wait behind a concurrent teardown. Check the transaction
+            // again before publishing; the main-thread state writes below do not
+            // suspend, so a close cannot interleave after this gate.
+            if (!isCurrent()) return false
+
+            activeTrackIndex = trackIndex
+            activePlaybackTimeline = playbackTimeline
+            activePlaybackSourceDurationSeconds = ready.plan.source.durationSeconds
+                ?.takeIf { it.isFinite() && it >= 0.0 }
+            val sourceStart = playbackTimeline.sourcePositionForPlayer(resolvedLocalSeek)
+                ?: ready.plan.timeline.sourceStartSeconds.coerceAtLeast(0.0)
+            val partDuration = ready.session.durationSeconds ?: 0.0
+            playbackSessionLifecycle.reportPosition(
+                positionSec = sourceStart,
+                durationSec = partDuration,
+                isPaused = _uiState.value.isPaused,
+                expectedSessionId = ready.session.sessionId,
+                persistencePositionSec = globalPosition,
+                persistenceDurationSec = _uiState.value.durationSeconds,
+            )
+            // The Compose layer applies resumePositionSeconds as the *stream* start
+            // position, so it is file-local. For a multi-part load, hold engine-time
+            // mapping suppressed until the stream settles near this value.
+            pendingTrackLoadLocalStart = if (trackIndex != null) resolvedLocalSeek else null
+            _resumePosition.value = resolvedLocalSeek.takeIf { it > 0.0 }
             _uiState.update {
                 it.copy(
-                    streamUrl = resolvePlaybackStreamUrl(serverUrl, session.streamUrl),
-                    sessionId = session.sessionId,
+                    streamUrl = resolvePlaybackStreamUrl(serverUrl, ready.plan.stream.url),
+                    sessionId = ready.session.sessionId,
                     selectedFileId = fileId,
                     positionSeconds = globalPosition,
                     error = null,
                 )
             }
+            published = true
+            return true
+        } finally {
+            if (!published) {
+                withContext(NonCancellable) {
+                    if (lifecycleOwnsSession) {
+                        playbackSessionLifecycle.stop(expectedSessionId = ready.session.sessionId)
+                    } else {
+                        playbackSessionManager.abandonActiveVideoPlanIfCurrent(
+                            sessionId = ready.session.sessionId,
+                            planId = ready.plan.planId,
+                        )
+                    }
+                }
+            }
         }
+    }
+
+    /** Releases a committed replan that lost ownership before UI adoption. */
+    private suspend fun abandonUnpublishedSession(ready: VideoSessionStartV3.Ready) {
+        withContext(NonCancellable) {
+            playbackSessionManager.abandonActiveVideoPlanIfCurrent(
+                sessionId = ready.session.sessionId,
+                planId = ready.plan.planId,
+            )
+        }
+    }
+
+    /**
+     * Report a v3 start that produced no playable plan. A terminal result
+     * carries the server's own reason; a protocol-version rejection means this
+     * build is talking to a server that predates the contract it speaks.
+     */
+    private fun applyFailedSessionStart(
+        failureMessage: String,
+        expectedSessionId: String? = _uiState.value.sessionId,
+    ) {
+        val state = _uiState.value
+        if (expectedSessionId != null && state.sessionId != expectedSessionId) return
+        if (expectedSessionId != null) {
+            playbackSessionLifecycle.reportPosition(
+                positionSec = sessionLocalPosition(state),
+                durationSec = activePartDurationSeconds(),
+                isPaused = true,
+                expectedSessionId = expectedSessionId,
+                persistencePositionSec = state.positionSeconds,
+                persistenceDurationSec = state.durationSeconds,
+            )
+            playbackSessionLifecycle.stopAsync(expectedSessionId = expectedSessionId)
+        }
+        pendingTrackLoadLocalStart = null
+        activePlaybackTimeline = null
+        activePlaybackSourceDurationSeconds = null
+        _uiState.update {
+            it.copy(
+                streamUrl = null,
+                sessionId = null,
+                isPlaying = false,
+                isPaused = true,
+                error = failureMessage,
+            )
+        }
+    }
+
+    private fun VideoSessionStartV3.failureMessage(): String = when (this) {
+        is VideoSessionStartV3.Ready -> ""
+        is VideoSessionStartV3.Terminal ->
+            message.ifBlank { "Audiobook playback failed" }
+        VideoSessionStartV3.ServerUpgradeRequired ->
+            "This server does not support the playback protocol this app speaks."
     }
 
     /**
@@ -843,12 +1002,25 @@ class AudiobookPlayerViewModel(
             }
         }
 
+        val mappedSourceLocal = activePlaybackTimeline?.sourcePositionForPlayer(seconds)
+        val sourceLocal = mappedSourceLocal ?: seconds
         val global = if (tl != null && active != null) {
-            tl.globalTimeFor(seconds, active)
+            tl.globalTimeFor(sourceLocal, active)
         } else {
-            seconds
+            sourceLocal
         }
-        _uiState.update { it.copy(positionSeconds = global) }
+        val updated = _uiState.value.copy(positionSeconds = global)
+        _uiState.value = updated
+        updated.sessionId?.let { sessionId ->
+            playbackSessionLifecycle.reportPosition(
+                positionSec = sourceLocal,
+                durationSec = activePartDurationSeconds(),
+                isPaused = updated.isPaused,
+                expectedSessionId = sessionId,
+                persistencePositionSec = global,
+                persistenceDurationSec = updated.durationSeconds,
+            )
+        }
 
         // End-of-part: once the engine plays (near) the end of a non-final part,
         // cross into the next part. Guarded to while actually playing so a pause
@@ -858,7 +1030,7 @@ class AudiobookPlayerViewModel(
         // duration would trip the advance on every tick.
         if (tl != null && active != null && !tl.isSingle && !_uiState.value.isPaused) {
             if (active.durationSeconds > TRACK_END_EPSILON &&
-                seconds >= active.durationSeconds - TRACK_END_EPSILON
+                sourceLocal >= active.durationSeconds - TRACK_END_EPSILON
             ) {
                 advanceAfterTrackEnd(active)
             }
@@ -877,6 +1049,83 @@ class AudiobookPlayerViewModel(
     /** Reflect Media3's playWhenReady — the real pause intent. */
     fun onPauseStateChanged(isPaused: Boolean) {
         _uiState.update { it.copy(isPaused = isPaused) }
+    }
+
+    /** Route Media3 failures through the same protocol-v3 replan transaction. */
+    fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+        val state = _uiState.value
+        val sessionId = state.sessionId ?: return
+        val fileId = state.selectedFileId ?: return
+        val globalPosition = state.positionSeconds
+        val sourcePosition = sessionLocalPosition(state)
+        val trackIndex = activeTrackIndex
+        val generation = ++loadGeneration
+        viewModelScope.launch {
+            when (
+                val result = playbackSessionManager.replanActiveVideoSession(
+                    classification = error.audiobookFailureClassification(),
+                    message = error.message,
+                    positionSeconds = sourcePosition,
+                    audioTrackIndex = null,
+                    subtitleTrackIndex = null,
+                    decoderName = error.cause?.javaClass?.simpleName,
+                    diagnostics = mapOf("surface" to "audiobook"),
+                )
+            ) {
+                is ApiResult.Success -> {
+                    val replacement = result.data
+                    if (
+                        generation != loadGeneration ||
+                        isClosing ||
+                        _uiState.value.sessionId != sessionId
+                    ) {
+                        if (replacement is VideoSessionStartV3.Ready) {
+                            abandonUnpublishedSession(replacement)
+                        }
+                        return@launch
+                    }
+                    if (replacement is VideoSessionStartV3.Ready) {
+                        applyStartedSession(
+                            ready = replacement,
+                            localSeek = sourcePosition,
+                            globalPosition = globalPosition,
+                            trackIndex = trackIndex,
+                            fileId = fileId,
+                            isCurrent = {
+                                generation == loadGeneration &&
+                                    !isClosing &&
+                                    _uiState.value.sessionId == sessionId
+                            },
+                        )
+                    } else {
+                        applyFailedSessionStart(
+                            replacement.failureMessage(),
+                            expectedSessionId = sessionId,
+                        )
+                    }
+                }
+                is ApiResult.Error -> if (
+                    generation == loadGeneration &&
+                    !isClosing &&
+                    _uiState.value.sessionId == sessionId
+                ) {
+                    applyFailedSessionStart(
+                        result.message.ifBlank { "Audiobook playback failed" },
+                        expectedSessionId = sessionId,
+                    )
+                }
+                is ApiResult.NetworkError -> if (
+                    generation == loadGeneration &&
+                    !isClosing &&
+                    _uiState.value.sessionId == sessionId
+                ) {
+                    applyFailedSessionStart(
+                        result.exception.message ?: "Network error",
+                        expectedSessionId = sessionId,
+                    )
+                }
+            }
+        }
     }
 
     fun togglePlay() {
@@ -903,11 +1152,112 @@ class AudiobookPlayerViewModel(
     fun seekTo(seconds: Double) {
         val tl = timeline
         if (tl == null) {
-            _pendingSeek.value = seconds
+            val target = seconds
                 .coerceIn(0.0, _uiState.value.durationSeconds.coerceAtLeast(0.0))
+            if (_uiState.value.sessionId != null && activePlaybackTimeline != null) {
+                seekActiveSession(
+                    sourceLocalSeconds = target,
+                    globalSeconds = target,
+                    autoplay = !_uiState.value.isPaused,
+                    trackIndex = null,
+                    fileId = _uiState.value.selectedFileId ?: return,
+                )
+            } else {
+                _pendingSeek.value = target
+            }
             return
         }
         loadTrack(atGlobalTime = seconds, autoplay = !_uiState.value.isPaused)
+    }
+
+    private fun seekActiveSession(
+        sourceLocalSeconds: Double,
+        globalSeconds: Double,
+        autoplay: Boolean,
+        trackIndex: Int?,
+        fileId: Int,
+    ) {
+        val playbackTimeline = activePlaybackTimeline
+        if (playbackTimeline == null) {
+            _uiState.update {
+                it.copy(positionSeconds = globalSeconds, isPaused = if (autoplay) false else it.isPaused)
+            }
+            _pendingSeek.value = sourceLocalSeconds
+            return
+        }
+        when (val decision = playbackTimeline.decideSeek(sourceLocalSeconds)) {
+            is PlaybackSeekDecision.NativeSeek -> {
+                _uiState.update {
+                    it.copy(positionSeconds = globalSeconds, isPaused = if (autoplay) false else it.isPaused)
+                }
+                _pendingSeek.value = decision.targetPlayerPositionSeconds
+            }
+            is PlaybackSeekDecision.ServerReanchor -> {
+                val generation = ++loadGeneration
+                val sessionId = _uiState.value.sessionId ?: return
+                _uiState.update {
+                    it.copy(positionSeconds = globalSeconds, isPaused = if (autoplay) false else it.isPaused)
+                }
+                viewModelScope.launch {
+                    when (
+                        val result = playbackSessionManager.reanchorActiveVideoSession(
+                            positionSeconds = decision.targetSourcePositionSeconds,
+                            diagnostics = mapOf(
+                                "surface" to "audiobook",
+                                "reason" to decision.reason.name.lowercase(),
+                            ),
+                        )
+                    ) {
+                        is ApiResult.Success -> {
+                            val replacement = result.data
+                            if (
+                                generation != loadGeneration ||
+                                isClosing ||
+                                _uiState.value.sessionId != sessionId
+                            ) {
+                                if (replacement is VideoSessionStartV3.Ready) {
+                                    abandonUnpublishedSession(replacement)
+                                }
+                                return@launch
+                            }
+                            if (replacement is VideoSessionStartV3.Ready) {
+                                applyStartedSession(
+                                    ready = replacement,
+                                    localSeek = decision.targetSourcePositionSeconds,
+                                    globalPosition = globalSeconds,
+                                    trackIndex = trackIndex,
+                                    fileId = fileId,
+                                    isCurrent = {
+                                        generation == loadGeneration &&
+                                            !isClosing &&
+                                            _uiState.value.sessionId == sessionId
+                                    },
+                                )
+                            } else {
+                                applyFailedSessionStart(
+                                    replacement.failureMessage(),
+                                    expectedSessionId = sessionId,
+                                )
+                            }
+                        }
+                        is ApiResult.Error -> if (
+                            generation == loadGeneration &&
+                            !isClosing &&
+                            _uiState.value.sessionId == sessionId
+                        ) {
+                            _uiState.update { it.copy(error = result.message.ifBlank { "Seek failed" }) }
+                        }
+                        is ApiResult.NetworkError -> if (
+                            generation == loadGeneration &&
+                            !isClosing &&
+                            _uiState.value.sessionId == sessionId
+                        ) {
+                            _uiState.update { it.copy(error = result.exception.message ?: "Seek failed") }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun consumePendingSeek() { _pendingSeek.value = null }
@@ -1121,7 +1471,6 @@ class AudiobookPlayerViewModel(
                     durationSeconds = state.durationSeconds,
                 )
             }
-            reportSessionProgress(state)
         }
     }
 
@@ -1167,9 +1516,21 @@ class AudiobookPlayerViewModel(
         // Invalidate any in-flight cross-part load so it can't resurrect a
         // session after we clear state here (Apple close() bumps loadGeneration).
         loadGeneration++
+        startGeneration++
         pendingTrackLoadLocalStart = null
         val state = _uiState.value
         val sessionId = state.sessionId
+        val sessionLocal = sessionLocalPosition(state)
+        if (sessionId != null) {
+            playbackSessionLifecycle.reportPosition(
+                positionSec = sessionLocal,
+                durationSec = activePartDurationSeconds(),
+                isPaused = true,
+                expectedSessionId = sessionId,
+                persistencePositionSec = state.positionSeconds,
+                persistenceDurationSec = state.durationSeconds,
+            )
+        }
         _uiState.update {
             it.copy(
                 streamUrl = null,
@@ -1178,11 +1539,11 @@ class AudiobookPlayerViewModel(
                 isPaused = true,
             )
         }
+        activePlaybackTimeline = null
+        activePlaybackSourceDurationSeconds = null
         if (sessionId == null) return
         if (stoppingSessionId == sessionId) return
         stoppingSessionId = sessionId
-        // Capture the part-local session position now, before state is cleared.
-        val sessionLocal = sessionLocalPosition(state)
         viewModelScope.launch {
             try {
                 withContext(NonCancellable + Dispatchers.IO) {
@@ -1198,12 +1559,7 @@ class AudiobookPlayerViewModel(
                             durationSeconds = state.durationSeconds,
                         )
                     }
-                    // SINK 1: part-local position to the retiring session.
-                    reportAndStopSession(
-                        sessionId = sessionId,
-                        positionSeconds = sessionLocal,
-                        isPaused = true,
-                    )
+                    playbackSessionLifecycle.stop(expectedSessionId = sessionId)
                     // Inside NonCancellable so a teardown-cancelled viewModelScope
                     // can't skip the prompt drain (covers downloaded/offline-while-
                     // online where no connectivity change triggers it).
@@ -1214,23 +1570,6 @@ class AudiobookPlayerViewModel(
                     stoppingSessionId = null
                 }
             }
-        }
-    }
-
-    /**
-     * SINK 1 — per-part playback session. Reports the PART-LOCAL position (the
-     * session streams a single part; admin activity + session keepalive) rather
-     * than the whole-book position. Distinct from [savePosition]'s SINK 2 which
-     * carries the whole-book position for durable resume.
-     */
-    private suspend fun reportSessionProgress(state: AudiobookPlayerUiState) {
-        val sessionId = state.sessionId ?: return
-        runCatching {
-            playbackSessionManager.reportProgress(
-                sessionId = sessionId,
-                position = sessionLocalPosition(state),
-                isPaused = state.isPaused,
-            )
         }
     }
 
@@ -1250,19 +1589,8 @@ class AudiobookPlayerViewModel(
         }
     }
 
-    private suspend fun reportAndStopSession(
-        sessionId: String,
-        positionSeconds: Double,
-        isPaused: Boolean,
-    ) {
-        runCatching {
-            playbackSessionManager.reportProgress(
-                sessionId = sessionId,
-                position = positionSeconds,
-                isPaused = isPaused,
-            )
-        }
-        runCatching { playbackSessionManager.stopSession(sessionId) }
+    private fun activePartDurationSeconds(): Double {
+        return activePlaybackSourceDurationSeconds ?: 0.0
     }
 
     override fun onCleared() {
@@ -1270,20 +1598,22 @@ class AudiobookPlayerViewModel(
         // session during teardown (Apple close(): isClosing + loadGeneration).
         isClosing = true
         loadGeneration++
+        startGeneration++
         pendingTrackLoadLocalStart = null
         sleepTimerJob?.cancel()
         positionSaveJob?.cancel()
         val state = _uiState.value
         val sessionId = state.sessionId
         if (sessionId != null) {
-            val positionSeconds = sessionLocalPosition(state)
-            val isPaused = true
-            // SINK 1: report the retiring session in part-local space.
-            playbackSessionLifecycle.reportAndStopExternalSessionAsync(
-                sessionId = sessionId,
-                positionSeconds = positionSeconds,
-                isPaused = isPaused,
+            playbackSessionLifecycle.reportPosition(
+                positionSec = sessionLocalPosition(state),
+                durationSec = activePartDurationSeconds(),
+                isPaused = true,
+                expectedSessionId = sessionId,
+                persistencePositionSec = state.positionSeconds,
+                persistenceDurationSec = state.durationSeconds,
             )
+            playbackSessionLifecycle.stopAsync(expectedSessionId = sessionId)
         }
         super.onCleared()
     }
@@ -1300,12 +1630,6 @@ class AudiobookPlayerViewModel(
          *  mapping resumes. Wide enough to absorb the ~250ms poll cadence and a
          *  fresh prepare's initial seek. */
         private const val TRACK_LOAD_SETTLE_TOLERANCE = 3.0
-
-        /** Still-image codecs ffprobe reports for embedded audiobook cover
-         *  art. Advertised as "video" so the server resolves these audio-only
-         *  items to DIRECT instead of transcoding the poster. */
-        private val AUDIOBOOK_COVER_ART_CODECS =
-            listOf("mjpeg", "png", "jpeg", "bmp", "gif")
     }
 }
 
@@ -1326,4 +1650,30 @@ private fun AudiobookTimeline.toWholeBookChapters(): List<VersionChapter> =
             startSeconds = chapter.startSeconds,
             endSeconds = chapter.endSeconds ?: chapter.startSeconds,
         )
+    }
+
+private fun org.siloserver.silo.model.playback.PlaybackTimelineV3.toPlaybackTimeline() =
+    PlaybackTimeline(
+        sourceStartSeconds = sourceStartSeconds,
+        playerStartSeconds = playerStartSeconds,
+        streamOriginSeconds = streamOriginSeconds,
+        timelineOffsetSeconds = timelineOffsetSeconds,
+        seekWindowStartSeconds = seekWindowStartSeconds,
+        seekWindowEndSeconds = seekWindowEndSeconds,
+        canSeekAnywhere = canSeekAnywhere,
+        seekRestoration = seekRestoration,
+    )
+
+private fun androidx.media3.common.PlaybackException.audiobookFailureClassification(): String =
+    when (errorCode) {
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        -> "decoder_failure"
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+        -> "transport_failure"
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "http_failure"
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "source_unavailable"
+        else -> "player_error"
     }

@@ -169,6 +169,10 @@ fun AudiobookPlayerScreen(
                 override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                     viewModel.onPauseStateChanged(!playWhenReady)
                 }
+
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    viewModel.onPlayerError(error)
+                }
             }
             c.addListener(listener)
             onDispose { runCatching { c.removeListener(listener) } }

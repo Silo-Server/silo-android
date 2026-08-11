@@ -543,6 +543,11 @@ class TvPlaybackFormattingTest {
         assertEquals("English (SDH)", TvPlaybackFormatting.subtitleValueLabel(v, selectedSubtitleTrackIndex = 0))
     }
 
+    @Test fun subtitleValueLabel_hindiCodeDoesNotAddHearingImpairedBadge() {
+        val v = fileVersion(subtitles = listOf(subtitleTrack(index = 1, lang = "eng", title = "EN - HI")))
+        assertEquals("English", TvPlaybackFormatting.subtitleValueLabel(v, selectedSubtitleTrackIndex = 0))
+    }
+
     @Test fun subtitleOptions_useCombinedSpaceNotStreamIndex() {
         // Stream indexes are non-ordinal and collide (external tracks decode 0).
         // selectionIndex must be the COMBINED index the server resolves

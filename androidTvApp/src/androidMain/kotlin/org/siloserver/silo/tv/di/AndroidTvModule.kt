@@ -26,6 +26,9 @@ import org.siloserver.silo.tv.ui.screens.settings.TvSettingsViewModel
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewModel
 import org.siloserver.silo.common.player.SiloPlayerFactory
 import org.siloserver.silo.common.player.PlaybackSessionManager
+import org.siloserver.silo.common.player.audio.PassthroughSuppressionScope
+import org.siloserver.silo.common.di.AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER
+import org.siloserver.silo.common.di.AUDIOBOOK_PLAYBACK_SESSION_LIFECYCLE_QUALIFIER
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.cast.SiloCastNsdAdvertiser
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
@@ -172,6 +175,14 @@ val androidTvModule = module {
         )
     }
     single { PlaybackSessionManager(get(), get(), get()) }
+    single(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER) {
+        PlaybackSessionManager(
+            playbackRepository = get(),
+            tokenManager = get(),
+            networkEvidenceProvider = get(),
+            passthroughSuppression = PassthroughSuppressionScope.None,
+        )
+    }
     factory<VideoPlaybackStarter>(named("tvVideoPlaybackStarter")) {
         TvVideoPlaybackStarter(
             catalogRepository = get(),
@@ -219,8 +230,8 @@ val androidTvModule = module {
     viewModel {
         org.siloserver.silo.common.player.AudiobookPlayerViewModel(
             catalogRepository = get(),
-            playbackSessionManager = get(),
-            playbackSessionLifecycle = get(),
+            playbackSessionManager = get(AUDIOBOOK_PLAYBACK_SESSION_MANAGER_QUALIFIER),
+            playbackSessionLifecycle = get(AUDIOBOOK_PLAYBACK_SESSION_LIFECYCLE_QUALIFIER),
             capabilityDetector = get(),
             bookmarksStore = get(),
             userItemStatePort = get(),

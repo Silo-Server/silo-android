@@ -66,6 +66,7 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SleepTimerController
+import org.siloserver.silo.common.player.StartParams
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
@@ -74,13 +75,18 @@ import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.libass.LibassBridge
+import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.playback.ClientCodecCapabilities
+import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEngineKind
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
+import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
+import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -99,7 +105,11 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SubtitlesRepository
+import org.siloserver.silo.repository.port.LocalTrackSelection
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
+import org.siloserver.silo.repository.port.UserItemStatePort
+import org.siloserver.silo.playback.audioTrackFingerprint
+import org.siloserver.silo.playback.encodeCatalogSubtitlePreference
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -312,7 +322,6 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                 introAutoSkipController = IntroAutoSkipController(scope),
                 sessionLifecycle = PlaybackSessionLifecycle(
                     manager,
-                    profileRepository,
                     healthApi,
                     personalDataRepository,
                     scope,
@@ -390,7 +399,6 @@ class MobileVideoPlaybackStarterCancellationTest {
                 playerSettingsStore = FakePlayerSettingsStore(),
                 sessionLifecycle = PlaybackSessionLifecycle(
                     manager,
-                    profileRepository,
                     HealthApi(client),
                     PersonalDataRepository(PersonalDataApi(client)),
                     backgroundScope,
@@ -539,11 +547,104 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             assertFalse(ready.showForcedSubtitles)
         }
 
+    @Test
+    fun persistedPerFileTracksAreIncludedInTheInitialV3Allocation() = runTest(dispatcher) {
+        val audioTracks = listOf(
+            AudioTrack(codec = "aac", language = "en", title = "Stereo"),
+            AudioTrack(codec = "truehd", language = "en", title = "Atmos"),
+        )
+        // Catalog order intentionally differs from the server's combined
+        // external-then-embedded subtitle index space. English is catalog
+        // ordinal 0 but combined index 1.
+        val subtitleTracks = listOf(
+            SubtitleTrack(index = 12, codec = "subrip", language = "en", title = "English"),
+            SubtitleTrack(index = 0, codec = "srt", language = "fr", title = "French", external = true),
+        )
+        val persisted = LocalTrackSelection(
+            audioFingerprint = audioTrackFingerprint(audioTracks[1]),
+            subtitleFingerprint = encodeCatalogSubtitlePreference(subtitleTracks, 0),
+        )
+        val localState = object : UserItemStatePort by NoOpUserItemStatePort {
+            override suspend fun localTrackSelection(contentId: String, fileId: Int) = persisted
+        }
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            versionFields = """
+                "audio_tracks": [
+                  {"codec":"aac","language":"en","title":"Stereo"},
+                  {"codec":"truehd","language":"en","title":"Atmos"}
+                ],
+                "subtitle_tracks": [
+                  {"index":12,"codec":"subrip","language":"en","title":"English","external":false},
+                  {"index":0,"codec":"srt","language":"fr","title":"French","external":true}
+                ]
+            """.trimIndent(),
+            userItemStatePort = localState,
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals(1, allocation?.audioTrackIndex)
+        assertEquals(1, allocation?.subtitleTrackIndex)
+    }
+
+    @Test
+    fun explicitPlaybackSubtitleIndexWinsAndPassesThroughUnchanged() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            versionFields = """
+                "subtitle_tracks": [
+                  {"index":12,"codec":"subrip","language":"en","title":"English","external":false},
+                  {"index":0,"codec":"srt","language":"fr","title":"French","external":true}
+                ]
+            """.trimIndent(),
+            explicitSubtitleTrackIndex = 1,
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals(1, allocation?.subtitleTrackIndex)
+    }
+
+    @Test
+    fun serverSelectedSubtitleIndexIsRetainedForSessionRenewal() = runTest(dispatcher) {
+        var adoptedParams: StartParams? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            readyStart = allocatedReady("subtitle-session", selectedSubtitleIndex = 4),
+            onAdoption = { adoptedParams = it },
+        )
+
+        assertEquals(4, adoptedParams?.subtitleTrackIndex)
+    }
+
+    @Test
+    fun unknownSourceDurationStaysUnknownAtTheStarterBoundary() = runTest(dispatcher) {
+        val ready = start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+        )
+
+        assertNull(ready.durationSeconds)
+    }
+
     private suspend fun TestScope.start(
         effective: String,
         profile: Profile,
+        versionFields: String = "",
+        explicitSubtitleTrackIndex: Int? = null,
+        userItemStatePort: UserItemStatePort = NoOpUserItemStatePort,
+        onAllocation: (MobileVideoSessionAllocation) -> Unit = {},
+        readyStart: VideoSessionStartV3.Ready = allocatedReady("subtitle-session"),
+        onAdoption: (StartParams) -> Unit = {},
     ): VideoPlaybackStartResult.Ready {
-        val client = catalogClient(effective)
+        val client = catalogClient(effective, versionFields)
         val tokenManager = FakeTokenManager()
         val profileRepository = FakeProfileRepository(client, tokenManager, profile)
         val manager = RecordingPlaybackSessionManager(client, tokenManager)
@@ -560,14 +661,17 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             playerSettingsStore = FakePlayerSettingsStore(),
             sessionLifecycle = PlaybackSessionLifecycle(
                 manager,
-                profileRepository,
                 HealthApi(client),
                 PersonalDataRepository(PersonalDataApi(client)),
                 backgroundScope,
             ),
             reachabilityMonitor = ServerReachabilityMonitor(HealthApi(client), backgroundScope),
-            sessionAllocator = { ApiResult.Success(allocatedReady("subtitle-session")) },
-            sessionAdopter = { _, _ -> },
+            userItemStatePort = userItemStatePort,
+            sessionAllocator = {
+                onAllocation(it)
+                ApiResult.Success(readyStart)
+            },
+            sessionAdopter = { params, _ -> onAdoption(params) },
         )
 
         val result = starter.start(
@@ -576,14 +680,20 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 preferredFileId = 41,
                 roomId = null,
                 resumePositionOverride = null,
+                subtitleTrackIndex = explicitSubtitleTrackIndex,
             ),
         )
         assertTrue(result is VideoPlaybackStartResult.Ready, "expected a ready start, got $result")
         return result
     }
 
-    private fun catalogClient(effective: String): HttpClient =
-        HttpClient(
+    private fun catalogClient(effective: String, versionFields: String): HttpClient {
+        val extraVersionFields = versionFields
+            .trim()
+            .takeIf(String::isNotEmpty)
+            ?.let { ",\n$it" }
+            .orEmpty()
+        return HttpClient(
             MockEngine { request ->
                 if (request.url.encodedPath == "/api/v1/watch/starter") {
                     respond(
@@ -598,6 +708,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                                   "file_id": 41,
                                   "container": "mkv",
                                   "duration": 120.0
+                                  $extraVersionFields
                                 }
                               ]
                             }
@@ -616,6 +727,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
+    }
 }
 
 private class DeferredNonCooperativeStarter : VideoPlaybackStarter {
@@ -797,12 +909,18 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun flushPendingDeviceSettings() = Unit
 }
 
-private fun allocatedReady(sessionId: String): VideoSessionStartV3.Ready {
+private fun allocatedReady(
+    sessionId: String,
+    selectedSubtitleIndex: Int? = null,
+): VideoSessionStartV3.Ready {
+    val selectedSubtitle = selectedSubtitleIndex?.let { index ->
+        PlaybackTrackIdentityV3("file:41:subtitle:$index", index)
+    }
     val plan = PlaybackPlanV3(
         planId = "plan-$sessionId",
+        planAttemptKey = "v3:test:$sessionId",
         sessionId = sessionId,
         delivery = PlaybackDelivery.ORIGINAL_HTTP,
-        engine = PlaybackEngineKind.MEDIA3_DIRECT,
         stream = PlaybackStreamV3(
             url = "https://silo.test/stream/$sessionId",
             protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
@@ -810,6 +928,7 @@ private fun allocatedReady(sessionId: String): VideoSessionStartV3.Ready {
         ),
         decisionReason = "test",
         effectiveMediaFileId = 41,
+        selectedTracks = SelectedPlaybackTracksV3(subtitle = selectedSubtitle),
     )
     return VideoSessionStartV3.Ready(
         session = PlaybackSessionResponse(
@@ -824,6 +943,8 @@ private fun allocatedReady(sessionId: String): VideoSessionStartV3.Ready {
         playbackAttemptId = "playback-attempt",
         planAttemptId = "plan-attempt",
         planAttemptKey = "plan-key",
+        capabilities = ClientCodecCapabilities(),
+        clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
     )
 }
 

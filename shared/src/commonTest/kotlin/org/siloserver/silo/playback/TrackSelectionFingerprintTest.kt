@@ -362,6 +362,25 @@ class TrackSelectionFingerprintTest {
     }
 
     @Test
+    fun catalogPreferenceDoesNotTreatHindiCodeAsHearingImpaired() {
+        val catalog = listOf(
+            SubtitleTrack(
+                index = 7,
+                codec = "srt",
+                language = "hin",
+                title = "EN - HI",
+                external = true,
+            ),
+        )
+
+        val identity = assertIs<SubtitleIdentity.ServerSidecar>(
+            decodeSubtitleIdentityPreference(encodeCatalogSubtitlePreference(catalog, 0)),
+        )
+
+        assertNull(identity.media?.hearingImpaired)
+    }
+
+    @Test
     fun playerCanonicalLanguagePreferenceSafelyMissesDifferentCatalogLanguage() {
         val preference = encodedPlayerServerPreference("Dialogue", "en", "subrip")
         val catalog = listOf(

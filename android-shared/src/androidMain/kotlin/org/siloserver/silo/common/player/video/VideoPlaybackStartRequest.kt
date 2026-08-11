@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.player.video
 
+import org.siloserver.silo.common.player.StartParams
+
 data class VideoPlaybackStartRequest(
     val contentId: String,
     val preferredFileId: Int?,
@@ -34,4 +36,10 @@ data class VideoPlaybackStartRequest(
      * against this request's target catalog only after loading its watch detail.
      */
     val episodeSelectionHandoff: EpisodeSelectionHandoff? = null,
+    /**
+     * Exact adoption-time evidence for renewing a server session that vanished.
+     * A renewal is the same output route, so probing capabilities or rebuilding
+     * context here would silently turn it into a different playback decision.
+     */
+    val recoveryStartParams: StartParams? = null,
 )

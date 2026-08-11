@@ -20,19 +20,23 @@ class PlaybackSessionLifecycleLoggingTest {
     }
 
     @Test
-    fun aNewStartWaitsForAnAsynchronousStopToFinish() {
+    fun takingOwnershipWaitsForAnAsynchronousStopToFinish() {
+        // The lifecycle no longer starts sessions — under protocol v3 planning
+        // belongs to the owner — so the two doors into ownership are direct
+        // adoption and epoch acquisition. Both must drain a queued teardown
+        // first, or an older screen's stop lands on the new session.
         val text = source.joinToString("\n")
 
         assertTrue(text.contains("private var pendingStopJob: Job?"))
         assertTrue(text.contains("private suspend fun awaitPendingStop()"))
         assertTrue(
-            text.substringAfter("suspend fun start(params: StartParams)")
-                .substringBefore("suspend fun adoptActiveSession(")
+            text.substringAfter("suspend fun adoptActiveSession(")
+                .substringBefore("suspend fun acquireOwnershipEpoch()")
                 .contains("awaitPendingStop()"),
         )
         assertTrue(
-            text.substringAfter("suspend fun adoptActiveSession(")
-                .substringBefore("private suspend fun startInternal(")
+            text.substringAfter("suspend fun acquireOwnershipEpoch()")
+                .substringBefore("suspend fun adoptActiveSessionIfCurrent(")
                 .contains("awaitPendingStop()"),
         )
     }

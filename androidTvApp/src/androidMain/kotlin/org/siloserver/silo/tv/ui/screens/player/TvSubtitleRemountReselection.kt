@@ -2,11 +2,11 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.SubDiag
 import org.siloserver.silo.common.player.MountedSubtitleTrack
-import org.siloserver.silo.common.player.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.common.player.resolveMountedSubtitle
 import org.siloserver.silo.common.player.trackIdDenotes
 import org.siloserver.silo.common.player.subtitleArtifactTrackId
 import org.siloserver.silo.model.playback.SubtitleIdentity
+import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 
 /**
  * Who asked for a subtitle mount, ordered by authority.

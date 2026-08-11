@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.subtitles.DownloadedSubtitle
 import kotlin.test.Test
@@ -62,5 +63,21 @@ class SubtitleTrackSelectionTest {
         assertEquals(7, selectedServerSubtitleTrackIndex(1, tracks))
         assertEquals(-1, selectedServerSubtitleTrackIndex(-1, tracks))
         assertNull(selectedServerSubtitleTrackIndex(2, tracks))
+    }
+
+    @Test
+    fun missingSessionRenewalPreservesAuthoritativeDownloadedInventorySelection() {
+        val mounted = listOf(
+            track(0),
+            track(1),
+            track(4, "downloaded"),
+        )
+        assertEquals(
+            2,
+            authoritativePlaybackSubtitleOrdinal(
+                serverIndex = 4,
+                playbackTracks = mounted,
+            ),
+        )
     }
 }

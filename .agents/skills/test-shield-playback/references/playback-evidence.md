@@ -4,16 +4,23 @@ Use three independent evidence planes. A plan or capability claim is not proof t
 
 ## Server decision
 
-`shield-test plan` reads the configured dev database and identifies the decision for this Shield by manufacturer, model, and device codename. Check:
+`shield-test plan` reads the configured dev database and identifies the decision
+for this Shield by manufacturer and model, also accepting the configured device
+codename when a client supplies that optional field. Check:
 
-- `delivery` and `engine` for direct, remux, HLS, or compatibility behavior.
+- `delivery` for original HTTP, progressive, HLS, or terminal behavior; the
+  platform-neutral v3 contract no longer exposes a client-engine name.
 - `decision_reason` and transformations for why the route was selected.
 - `effective_recipe` for the video codec, dynamic range, resolution, frame rate, audio codec, layout, and channel count.
 - The request's advertised Dolby Vision profiles and audio passthrough codecs.
 
 The plan proves what the server instructed. It does not prove decoder initialization, an HDMI mode switch, or passthrough at AudioFlinger.
 
-For an HDR negotiation report, use `find-hdr <range>` to select an exact source file and `capabilities` to compare codec/engine claims with output claims. A rejected start may not create a `playback_v3_attempts` row, so an empty exact-content `plan` result plus a newer on-screen terminal is meaningful; do not substitute an older successful plan.
+For an HDR negotiation report, use `find-hdr <range>` to select an exact source
+file and `capabilities` to compare decoder/delivery claims with output claims. A
+rejected start may not create a `playback_v3_attempts` row, so an empty
+exact-content `plan` result plus a newer on-screen terminal is meaningful; do
+not substitute an older successful plan.
 
 ## Android player
 

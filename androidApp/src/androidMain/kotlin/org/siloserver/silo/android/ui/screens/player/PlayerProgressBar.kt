@@ -71,11 +71,22 @@ fun PlayerProgressBar(
     var seekPosition by remember { mutableFloatStateOf(0f) }
     var barWidthPx by remember { mutableFloatStateOf(0f) }
 
-    val maxDuration = duration.toFloat().coerceAtLeast(1f)
-    val displayPosition = (if (isSeeking) seekPosition else position.toFloat()).coerceIn(0f, maxDuration)
-    val playedFraction = displayPosition / maxDuration
-    val bufferedFraction = (bufferedPosition.toFloat().coerceIn(0f, maxDuration) / maxDuration)
-        .coerceIn(playedFraction, 1f)
+    val hasKnownDuration = duration.isFinite() && duration > 0.0
+    val maxDuration = if (hasKnownDuration) duration.toFloat() else 1f
+    val rawDisplayPosition = if (isSeeking) seekPosition else position.toFloat()
+    val displayPosition = if (hasKnownDuration) {
+        rawDisplayPosition.coerceIn(0f, maxDuration)
+    } else {
+        rawDisplayPosition.coerceAtLeast(0f)
+    }
+    val sliderPosition = if (hasKnownDuration) displayPosition else 0f
+    val playedFraction = if (hasKnownDuration) displayPosition / maxDuration else 0f
+    val bufferedFraction = if (hasKnownDuration) {
+        (bufferedPosition.toFloat().coerceIn(0f, maxDuration) / maxDuration)
+            .coerceIn(playedFraction, 1f)
+    } else {
+        0f
+    }
 
     // iOS bottom bar is VStack(spacing: 8): progress slider, then the time row.
     Column(
@@ -124,8 +135,8 @@ fun PlayerProgressBar(
         }
 
         Slider(
-            value = displayPosition,
-            enabled = enabled,
+            value = sliderPosition,
+            enabled = enabled && hasKnownDuration,
             onValueChange = { value ->
                 isSeeking = true
                 seekPosition = value
@@ -167,24 +178,26 @@ fun PlayerProgressBar(
                             .background(Color.White.copy(alpha = 0.52f)),
                     )
                     // Intro tint — iOS draws the intro range cyan at 0.4.
-                    intro?.let { range ->
-                        val startFraction = (range.start / maxDuration).toFloat().coerceIn(0f, 1f)
-                        val endFraction = (range.end / maxDuration).toFloat().coerceIn(startFraction, 1f)
-                        if (endFraction > startFraction) {
-                            val density = LocalDensity.current
-                            val barWidthDp = with(density) { barWidthPx.toDp() }
-                            Box(
-                                modifier = Modifier
-                                    .offset(x = barWidthDp * startFraction)
-                                    .width(barWidthDp * (endFraction - startFraction))
-                                    .fillMaxHeight()
-                                    .background(Color.Cyan.copy(alpha = 0.4f)),
-                            )
+                    if (hasKnownDuration) {
+                        intro?.let { range ->
+                            val startFraction = (range.start / maxDuration).toFloat().coerceIn(0f, 1f)
+                            val endFraction = (range.end / maxDuration).toFloat().coerceIn(startFraction, 1f)
+                            if (endFraction > startFraction) {
+                                val density = LocalDensity.current
+                                val barWidthDp = with(density) { barWidthPx.toDp() }
+                                Box(
+                                    modifier = Modifier
+                                        .offset(x = barWidthDp * startFraction)
+                                        .width(barWidthDp * (endFraction - startFraction))
+                                        .fillMaxHeight()
+                                        .background(Color.Cyan.copy(alpha = 0.4f)),
+                                )
+                            }
                         }
                     }
                     // Chapter ticks, under the played fill (iOS: the fill
                     // covers ticks in played territory).
-                    if (chapters.isNotEmpty()) {
+                    if (hasKnownDuration && chapters.isNotEmpty()) {
                         val density = LocalDensity.current
                         val barWidthDp = with(density) { barWidthPx.toDp() }
                         chapters.forEach { chapter ->
@@ -241,7 +254,11 @@ fun PlayerProgressBar(
 }
 
 internal fun remainingTimeLabel(position: Double, duration: Double): String =
-    "−${formatClockTime((duration - position).coerceAtLeast(0.0))}"
+    if (duration.isFinite() && duration > 0.0) {
+        "−${formatClockTime((duration - position).coerceAtLeast(0.0))}"
+    } else {
+        "−−:−−"
+    }
 
 /** iOS `chapterTitle(at:)`: the last chapter starting at or before [seconds],
  *  falling back to "Chapter N" when the chapter is untitled. */
