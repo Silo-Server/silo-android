@@ -3379,8 +3379,12 @@ private fun TvPlayerOverlays(
         // rather than in the idle overlay so a hidden-controls D-pad seek still
         // reports buffering; the HUD and Up Next own their own feedback.
         val sleepRemaining = (sleepTimerState as? SleepTimerState.Active)?.remainingSeconds
+        // A stalled player reports buffering during an outage too, but the
+        // centered reconnect spinner and the notice toast already say more
+        // than the capsule would, so the capsule stands down while it shows.
+        val showBufferingChip = isBuffering && !showSpinner
         if (!isInPictureInPictureMode && !hudOpen && !showNextUp &&
-            (isBuffering || sleepRemaining != null)
+            (showBufferingChip || sleepRemaining != null)
         ) {
             Box(
                 modifier = Modifier
@@ -3392,7 +3396,7 @@ private fun TvPlayerOverlays(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    if (isBuffering) {
+                    if (showBufferingChip) {
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(percent = 50))
@@ -3490,13 +3494,12 @@ private fun TvPlayerOverlays(
             }
         }
 
-        // Outage spinner. Native ExoPlayer buffering now surfaces as the
-        // top-right Buffering capsule inside the idle overlay's statusColumn
-        // (mirroring tvOS), so the centered full-screen spinner is reserved for
-        // the lifecycle Reconnecting state (the server-outage probe loop, which
-        // the player itself can't observe) — and only when the idle overlay
-        // isn't already showing the chip. The Up-Next overlay owns its own
-        // loading state, so no spinner there either.
+        // Outage spinner. Native ExoPlayer buffering surfaces as the top-right
+        // Buffering capsule (mirroring tvOS), so this centered spinner is
+        // reserved for the lifecycle Reconnecting state: the server-outage
+        // probe loop, which the player itself can't observe. The capsule
+        // stands down while this shows, so the two never stack. The Up-Next
+        // overlay owns its own loading state, so no spinner there either.
         if (showSpinner) {
             Box(
                 modifier = Modifier.fillMaxSize(),
