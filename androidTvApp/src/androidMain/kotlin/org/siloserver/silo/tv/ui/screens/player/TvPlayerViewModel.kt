@@ -2189,9 +2189,16 @@ class TvPlayerViewModel(
             // countdown from full whenever it sees a pause. Unfiltered, a
             // stuttering stream renews its own countdown on every hiccup and
             // the prompt can sit there without ever firing.
+            //
+            // isPaused is the viewer's own press and needs no filtering, so it
+            // stops the countdown on the frame of the press rather than after
+            // the grace window.
             playbackActive = _uiState
                 .map { it.isPlaying && !it.isLoading }
-                .settlingFalseEdges(PLAYBACK_PAUSE_GRACE_MS),
+                .settlingFalseEdges(
+                    graceMillis = PLAYBACK_PAUSE_GRACE_MS,
+                    deliberatelyInactive = _uiState.map { it.isPaused },
+                ),
         )
     }
 

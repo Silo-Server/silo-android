@@ -67,6 +67,46 @@ class SettlingFalseEdgesTest {
         job.cancel()
     }
 
+    @Test
+    fun `a deliberate pause is reported without waiting out the grace period`() = runTest {
+        val playing = MutableStateFlow(true)
+        val paused = MutableStateFlow(false)
+        val seen = mutableListOf<Boolean>()
+        val job = launch { playing.settlingFalseEdges(grace, paused).toList(seen) }
+        runCurrent()
+
+        // The press flips isPaused at once; isPlaying follows from the player.
+        paused.value = true
+        playing.value = false
+        runCurrent()
+
+        assertEquals(
+            listOf(true, false),
+            seen,
+            "a pause must report on the press, not $grace ms later",
+        )
+        job.cancel()
+    }
+
+    @Test
+    fun `a stall is still swallowed when the viewer has not paused`() = runTest {
+        val playing = MutableStateFlow(true)
+        val paused = MutableStateFlow(false)
+        val seen = mutableListOf<Boolean>()
+        val job = launch { playing.settlingFalseEdges(grace, paused).toList(seen) }
+        runCurrent()
+
+        playing.value = false
+        advanceTimeBy(grace / 2)
+        runCurrent()
+        playing.value = true
+        advanceTimeBy(grace * 2)
+        runCurrent()
+
+        assertEquals(listOf(true), seen, "the grace window must survive the pause bypass")
+        job.cancel()
+    }
+
     /** Repeated stutters must not accumulate into a reported pause. */
     @Test
     fun `several short stalls in a row are each swallowed`() = runTest {
