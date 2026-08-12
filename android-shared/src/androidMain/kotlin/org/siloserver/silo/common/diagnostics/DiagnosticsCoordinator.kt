@@ -61,6 +61,14 @@ fun interface DiagnosticsIncidentCollector {
     ): List<PendingReport>
 }
 
+fun interface DiagnosticsStoredEvidenceReconciler {
+    fun reconcile()
+
+    data object None : DiagnosticsStoredEvidenceReconciler {
+        override fun reconcile() = Unit
+    }
+}
+
 interface DiagnosticsCoordinator {
     val state: StateFlow<DiagnosticsUiState>
 
@@ -92,6 +100,7 @@ class DefaultDiagnosticsCoordinator(
     private val hostedReportDeleter: HostedDiagnosticsReportDeleter = HostedDiagnosticsReportDeleter.None,
     private val runtimePublisher: DiagnosticsRuntimePublisher = DiagnosticsRuntimePublisher.None,
     private val incidentCollector: DiagnosticsIncidentCollector = DiagnosticsIncidentCollector { _, _ -> emptyList() },
+    private val storedEvidenceReconciler: DiagnosticsStoredEvidenceReconciler = DiagnosticsStoredEvidenceReconciler.None,
     actorDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : DiagnosticsCoordinator {
@@ -237,6 +246,16 @@ class DefaultDiagnosticsCoordinator(
     }
 
     private suspend fun refreshOwnedState() {
+        try {
+            storedEvidenceReconciler.reconcile()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            val selectedDestination = runCatching { settings.destinationKind() }
+                .getOrDefault(mutableState.value.destinationKind)
+            failClosedUnresolvedRefresh(selectedDestination)
+            return
+        }
         drainHostedDeletionIntents()
         val selectedDestination = runCatching { settings.destinationKind() }
             .getOrDefault(DiagnosticsDestinationKind.HOSTED)
@@ -386,14 +405,7 @@ class DefaultDiagnosticsCoordinator(
                     // identity mutation either waits and purges this work, or wins first and
                     // prevents this block from running.
                     runtimePublisher.publish(resolved)
-                    try {
-                        incidentCollector.collect(resolved, consent.mode)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Throwable) {
-                        // Exit-info collection is best effort. The remaining evidence gates
-                        // still commit under the same identity generation.
-                    }
+                    incidentCollector.collect(resolved, consent.mode)
                     capture.setDebugLogging(
                         resolved,
                         debugLogging && activeCapture == null,
@@ -486,6 +498,31 @@ class DefaultDiagnosticsCoordinator(
             destinationKind = selectedDestination,
             allowsAutomaticUpload = selectedDestination == DiagnosticsDestinationKind.SELF_HOSTED,
             retentionDays = resolved.retentionDays,
+        )
+    }
+
+    private suspend fun failClosedUnresolvedRefresh(selectedDestination: DiagnosticsDestinationKind) {
+        capture.closeGate()
+        runtimePublisher.closeGate()
+        currentContext = null
+        val active = activeCapture
+        activeCapture = null
+        runCatching { if (active != null) capture.cancel(active) }
+        runCatching { capture.setDebugLogging(null, false) }
+        runCatching { capture.setPersistentBreadcrumbs(null, false) }
+        val purgeFailure = runCatching { capture.purgeCurrentEvidence() }.exceptionOrNull()
+        liveEvidenceCleanupPending.set(purgeFailure != null)
+        mutableState.value = mutableState.value.copy(
+            availability = DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE,
+            profileEligible = false,
+            consent = DiagnosticsConsentMode.ASK,
+            debugLogging = false,
+            pending = emptyList(),
+            prompt = null,
+            timedCapture = TimedCaptureState(),
+            sentHistory = emptyList(),
+            destinationKind = selectedDestination,
+            allowsAutomaticUpload = selectedDestination == DiagnosticsDestinationKind.SELF_HOSTED,
         )
     }
 

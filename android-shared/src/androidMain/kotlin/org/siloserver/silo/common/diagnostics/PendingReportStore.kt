@@ -134,7 +134,12 @@ class FilePendingReportStore(
 
     override fun save(capture: PendingReportCapture): PendingReport = synchronized(lock) {
         validateCapture(capture)
-        if (capture.capturedAtEpochMs < nowMs() - retentionMs) {
+        val now = nowMs()
+        check(now >= 0) { "diagnostics clock must be non-negative" }
+        if (
+            capture.capturedAtEpochMs < retentionCutoff(now, retentionMs) ||
+            capture.capturedAtEpochMs > futureBoundary(now)
+        ) {
             throw PendingReportRejectedException("capture is outside the retention window")
         }
         pruneLocked()
@@ -512,8 +517,14 @@ class FilePendingReportStore(
             return
         }
         reconcileUnpublishedEvidenceLocked()
-        val cutoff = nowMs() - retentionMs
-        val expired = reportsLocked().filter { it.state.capturedAtEpochMs < cutoff }
+        val now = nowMs()
+        check(now >= 0) { "diagnostics clock must be non-negative" }
+        val cutoff = retentionCutoff(now, retentionMs)
+        val futureBoundary = futureBoundary(now)
+        val expired = reportsLocked().filter { report ->
+            report.state.capturedAtEpochMs < cutoff ||
+                report.state.capturedAtEpochMs > futureBoundary
+        }
         expired.forEach(::recordAutomaticHandoffAndDeleteLocked)
         val index = readIndex()
         val pruned = index.pruned(nowMs(), retentionMs)
@@ -599,7 +610,7 @@ class FilePendingReportStore(
         receipts[id] = HostedReadyReceipt(
             binding = binding,
             destinationKind = DiagnosticsDestinationKind.HOSTED,
-            readyAtEpochMs = nowMs(),
+            readyAtEpochMs = checkedNow(),
         )
         // Publish UUID + ownership before raw evidence is removed. This is
         // also used for expiry/quota eviction where a lost response means the
@@ -659,6 +670,10 @@ class FilePendingReportStore(
         directorySync(directory)
     }
 
+    private fun checkedNow(): Long = nowMs().also { now ->
+        check(now >= 0) { "diagnostics clock must be non-negative" }
+    }
+
     private fun readIndex(): PendingIndex {
         if (!indexFile.isFile || indexFile.length() > MAX_INDEX_BYTES) return PendingIndex()
         return runCatching { JSON.decodeFromString<PendingIndex>(indexFile.readText()) }.getOrDefault(PendingIndex())
@@ -688,7 +703,8 @@ class FilePendingReportStore(
     private fun stageHostedDeletionIdsLocked(reportIds: Set<String>) {
         if (reportIds.isEmpty()) return
         val intents = readHostedDeletionIntentsLocked().toMutableMap()
-        reportIds.forEach { reportId -> intents[reportId] = nowMs() }
+        val stagedAt = checkedNow()
+        reportIds.forEach { reportId -> intents[reportId] = stagedAt }
         // Publish the UUID-only erasure intent before deleting any evidence.
         // If persistence fails, the caller keeps every report intact.
         writeHostedDeletionIntentsLocked(intents)
@@ -722,9 +738,14 @@ class FilePendingReportStore(
     private fun pruneHostedReadyReceiptsLocked() {
         val receipts = readHostedReadyReceiptsLocked()
         if (receipts.isEmpty()) return
-        val cutoff = nowMs() - HOSTED_READY_RECEIPT_RETENTION_MS
+        val now = nowMs()
+        check(now >= 0) { "diagnostics clock must be non-negative" }
+        val cutoff = retentionCutoff(now, HOSTED_READY_RECEIPT_RETENTION_MS)
+        val futureBoundary = futureBoundary(now)
         val expiredIds = receipts
-            .filterValues { receipt -> receipt.readyAtEpochMs < cutoff }
+            .filterValues { receipt ->
+                receipt.readyAtEpochMs < cutoff || receipt.readyAtEpochMs > futureBoundary
+            }
             .keys
         // Never silently discard deletion authority based only on the client
         // wall clock. A clock jump could otherwise age a fresh collector
@@ -811,10 +832,12 @@ class FilePendingReportStore(
         @SerialName("retry_after") val retryAfter: Map<String, Long> = emptyMap(),
     ) {
         fun pruned(now: Long, retention: Long): PendingIndex {
-            val cutoff = now - retention
+            check(now >= 0) { "diagnostics clock must be non-negative" }
+            val cutoff = retentionCutoff(now, retention)
+            val futureBoundary = futureBoundary(now)
             return copy(
-                fingerprints = fingerprints.filterValues { it >= cutoff },
-                throttles = throttles.filterValues { it >= cutoff },
+                fingerprints = fingerprints.filterValues { it in cutoff..futureBoundary },
+                throttles = throttles.filterValues { it in cutoff..futureBoundary },
                 retryAfter = retryAfter.filterValues { it > now },
             )
         }
@@ -853,6 +876,17 @@ class FilePendingReportStore(
 }
 
 const val PENDING_DIAGNOSTICS_RETENTION_DAYS = 7
+private const val MAX_DIAGNOSTICS_FUTURE_SKEW_MS = 5L * 60 * 1_000
+
+private fun retentionCutoff(now: Long, retention: Long): Long =
+    if (now < retention) 0 else now - retention
+
+private fun futureBoundary(now: Long): Long =
+    if (now > Long.MAX_VALUE - MAX_DIAGNOSTICS_FUTURE_SKEW_MS) {
+        Long.MAX_VALUE
+    } else {
+        now + MAX_DIAGNOSTICS_FUTURE_SKEW_MS
+    }
 
 private fun DiagnosticsBinding.scopeKey(): String =
     MessageDigest.getInstance("SHA-256")

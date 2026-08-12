@@ -145,6 +145,10 @@ val diagnosticsModule = module {
     single { DeviceSnapshotCache() }
     single { androidExitReportEnvironment(androidContext(), get()) }
     single { FileJvmCrashMarkerSource(androidContext().noBackupFilesDir) }
+    single<DiagnosticsStoredEvidenceReconciler> {
+        val markers = get<FileJvmCrashMarkerSource>()
+        DiagnosticsStoredEvidenceReconciler(markers::reconcile)
+    }
     single<AndroidExitInfoSource> { FrameworkAndroidExitInfoSource(androidContext()) }
     single<ProcessStateSummaryPublisher> { AndroidProcessStateSummaryPublisher(androidContext()) }
     single { DiagnosticsRunLedger(androidContext().noBackupFilesDir, get()) }
@@ -280,6 +284,7 @@ val diagnosticsModule = module {
             hostedReportDeleter = get(),
             runtimePublisher = get(),
             incidentCollector = get(),
+            storedEvidenceReconciler = get(),
         )
     }
 }

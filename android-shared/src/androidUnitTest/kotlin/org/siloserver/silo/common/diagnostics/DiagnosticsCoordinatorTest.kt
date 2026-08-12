@@ -1162,6 +1162,82 @@ class DiagnosticsCoordinatorTest {
     }
 
     @Test
+    fun rawMarkerReconciliationRunsBeforeIdentityResolutionAndRecoversWithoutKillingTheActor() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A)
+        val capture = RecordingCaptureController()
+        var reconciliationFailuresRemaining = 2
+        var incidentCalls = 0
+        val fixture = fixture(
+            identity = identity,
+            transitions = DefaultIdentityTransitionBarrier(),
+            capture = capture,
+            scope = backgroundScope,
+            actorDispatcher = UnconfinedTestDispatcher(testScheduler),
+            incidentCollectorFactory = {
+                DiagnosticsIncidentCollector { _, _ ->
+                    incidentCalls += 1
+                    emptyList()
+                }
+            },
+            storedEvidenceReconciler = DiagnosticsStoredEvidenceReconciler {
+                if (reconciliationFailuresRemaining > 0) {
+                    reconciliationFailuresRemaining -= 1
+                    error("marker directory unavailable")
+                }
+            },
+        )
+
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+
+        assertEquals(DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE, fixture.coordinator.state.value.availability)
+        assertEquals(0, identity.resolveCalls)
+        assertEquals(0, incidentCalls)
+        assertTrue(capture.gateClosed)
+        assertFalse(capture.persistentBreadcrumbsEnabled)
+
+        fixture.coordinator.refresh()
+
+        assertEquals(DiagnosticsAvailabilityUi.AVAILABLE, fixture.coordinator.state.value.availability)
+        assertEquals(1, identity.resolveCalls)
+        assertEquals(1, incidentCalls)
+    }
+
+    @Test
+    fun incidentMarkerCleanupFailureKeepsEvidenceClosedAndActorCanRetry() = runTest {
+        val capture = RecordingCaptureController()
+        var failuresRemaining = 2
+        val fixture = fixture(
+            identity = MutableIdentityResolver(ADULT_A),
+            transitions = DefaultIdentityTransitionBarrier(),
+            capture = capture,
+            scope = backgroundScope,
+            actorDispatcher = UnconfinedTestDispatcher(testScheduler),
+            incidentCollectorFactory = {
+                DiagnosticsIncidentCollector { _, _ ->
+                    if (failuresRemaining > 0) {
+                        failuresRemaining -= 1
+                        error("marker delete failed")
+                    }
+                    emptyList()
+                }
+            },
+        )
+
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+
+        assertEquals(DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE, fixture.coordinator.state.value.availability)
+        assertTrue(capture.gateClosed)
+        assertFalse(capture.persistentBreadcrumbsEnabled)
+
+        fixture.coordinator.refresh()
+
+        assertEquals(DiagnosticsAvailabilityUi.AVAILABLE, fixture.coordinator.state.value.availability)
+        assertTrue(capture.persistentBreadcrumbsEnabled)
+    }
+
+    @Test
     fun detachedRawGenerationCleanupFailureKeepsActorClosedUntilRetrySucceeds() = runTest {
         val capture = RecordingCaptureController().apply {
             hasPersistentEvidence = true
@@ -1486,6 +1562,7 @@ class DiagnosticsCoordinatorTest {
         incidentCollectorFactory: (PendingReportStore) -> DiagnosticsIncidentCollector = {
             DiagnosticsIncidentCollector { _, _ -> emptyList() }
         },
+        storedEvidenceReconciler: DiagnosticsStoredEvidenceReconciler = DiagnosticsStoredEvidenceReconciler.None,
         reportsFactory: (File) -> FilePendingReportStore = { files ->
             FilePendingReportStore(
                 files,
@@ -1527,6 +1604,7 @@ class DiagnosticsCoordinatorTest {
             hostedReportDeleter = hostedReportDeleter,
             runtimePublisher = runtimePublisher,
             incidentCollector = incidentCollectorFactory(reports),
+            storedEvidenceReconciler = storedEvidenceReconciler,
         )
         return Fixture(coordinator, settings, reports, evidence, purgedBindings, dataStore)
     }
@@ -1575,7 +1653,11 @@ class DiagnosticsCoordinatorTest {
         var current: DiagnosticsCaptureContext?,
     ) : DiagnosticsIdentityResolver {
         var trustCachedIdentity = true
-        override suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? = current
+        var resolveCalls = 0
+        override suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? {
+            resolveCalls += 1
+            return current
+        }
         override suspend fun matchesCachedIdentity(cached: CachedDiagnosticsContext): Boolean = trustCachedIdentity
     }
 

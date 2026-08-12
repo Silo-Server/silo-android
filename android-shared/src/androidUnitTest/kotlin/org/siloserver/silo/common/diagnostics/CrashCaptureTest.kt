@@ -182,7 +182,14 @@ class CrashCaptureTest {
         assertTrue(files.single().name.endsWith(".json"))
         assertFalse(files.single().name.endsWith(".tmp"))
         assertTrue(files.single().length() in 1..CrashMarkerRenderer.MAX_MARKER_BYTES.toLong())
-        val decoded = FileJvmCrashMarkerSource(temporaryFolder.root).records().single()
+        val decoded = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            nowMs = { 1_700_000_000_000 },
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = File::delete,
+            syncDirectory = {},
+            listFiles = File::listFiles,
+        ).records().single()
         assertEquals("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", decoded.runToken)
         assertEquals("capture-1", decoded.captureSessionId)
     }
@@ -229,7 +236,7 @@ class CrashCaptureTest {
 
         assertFalse(mutationRan)
         assertEquals(0, transitions.generation.value)
-        assertEquals(1, source.records().size)
+        assertEquals(1, temporaryFolder.root.resolve("client-diagnostics/crash-markers").listFiles().orEmpty().size)
     }
 
     @Test
@@ -279,6 +286,118 @@ class CrashCaptureTest {
 
         assertFalse(mutationRan)
         assertTrue(directory.resolve("jvm-3-3.json").exists())
+    }
+
+    @Test
+    fun reconciliationStrictlyPrunesExpiredFutureMalformedTemporaryAndOverCapEvidence() {
+        val directory = temporaryFolder.root.resolve("client-diagnostics/crash-markers")
+        assertTrue(directory.mkdirs())
+        markerFile(directory, NOW - EIGHT_DAYS_MS)
+        markerFile(directory, NOW + ONE_HOUR_MS)
+        markerFile(directory, NOW - 10, fileTimestamp = NOW - 9)
+        directory.resolve("jvm-${NOW - 8}-8.json").writeText("raw malformed private crash")
+        directory.resolve("jvm-${NOW - 7}-7.json")
+            .writeBytes(ByteArray(CrashMarkerRenderer.MAX_MARKER_BYTES + 1))
+        directory.resolve(".jvm-${NOW - 6}-6.tmp").writeText("raw temporary private crash")
+        directory.resolve("unexpected-private-evidence").writeText("raw unexpected private crash")
+        assertTrue(directory.resolve("unexpected-directory").mkdir())
+        val retainedTimes = listOf(NOW - 4, NOW - 3, NOW - 2, NOW - 1)
+        retainedTimes.forEach { markerFile(directory, it) }
+        var syncs = 0
+        val source = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            nowMs = { NOW },
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = File::delete,
+            syncDirectory = { syncs += 1 },
+            listFiles = File::listFiles,
+        )
+
+        val records = source.records()
+
+        assertEquals(retainedTimes.takeLast(3), records.map(JvmCrashMarkerRecord::occurredAtEpochMs))
+        assertEquals(
+            retainedTimes.takeLast(3).map { "jvm-$it-1.json" },
+            directory.listFiles().orEmpty().map(File::getName).sorted(),
+        )
+        assertEquals(1, syncs)
+    }
+
+    @Test
+    fun expiredMarkerDeletionAndDirectorySyncFailuresFailClosed() {
+        val directory = temporaryFolder.root.resolve("client-diagnostics/crash-markers")
+        assertTrue(directory.mkdirs())
+        val expired = markerFile(directory, NOW - EIGHT_DAYS_MS)
+        val deletionFailure = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            nowMs = { NOW },
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = { false },
+            syncDirectory = {},
+            listFiles = File::listFiles,
+        )
+
+        assertFailsWith<IllegalStateException> { deletionFailure.reconcile() }
+        assertTrue(expired.exists())
+
+        val syncFailure = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            nowMs = { NOW },
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = File::delete,
+            syncDirectory = { error("fsync failed") },
+            listFiles = File::listFiles,
+        )
+        assertFailsWith<IllegalStateException> { syncFailure.reconcile() }
+        assertFalse(expired.exists())
+    }
+
+    @Test
+    fun markerReconciliationFailsClosedWhenTheOwnedDirectoryCannotBeEnumerated() {
+        val directory = temporaryFolder.root.resolve("client-diagnostics/crash-markers")
+        assertTrue(directory.mkdirs())
+        markerFile(directory, NOW)
+        val source = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            nowMs = { NOW },
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = File::delete,
+            syncDirectory = {},
+            listFiles = { null },
+        )
+
+        assertFailsWith<IllegalStateException> { source.reconcile() }
+        assertTrue(directory.listFiles().orEmpty().isNotEmpty())
+    }
+
+    @Test
+    fun reconciliationRemovesLiveAndDanglingSymbolicLinksWithoutFollowingThem() {
+        val directory = temporaryFolder.root.resolve("client-diagnostics/crash-markers")
+        assertTrue(directory.mkdirs())
+        val outside = temporaryFolder.root.resolve("outside-private-evidence").apply {
+            writeText("private evidence outside marker root")
+        }
+        val liveLink = directory.resolve("jvm-${NOW}-1.json")
+        val danglingLink = directory.resolve("dangling-private-evidence")
+        java.nio.file.Files.createSymbolicLink(liveLink.toPath(), outside.toPath())
+        java.nio.file.Files.createSymbolicLink(
+            danglingLink.toPath(),
+            temporaryFolder.root.resolve("missing-private-evidence").toPath(),
+        )
+        val source = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            nowMs = { NOW },
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = File::delete,
+            syncDirectory = {},
+            listFiles = File::listFiles,
+        )
+
+        source.reconcile()
+
+        assertTrue(directory.listFiles().orEmpty().isEmpty())
+        assertTrue(outside.isFile)
+        assertEquals("private evidence outside marker root", outside.readText())
     }
 
     @Test
@@ -354,4 +473,25 @@ class CrashCaptureTest {
         logGeneration = 7,
         redactionTokens = listOf("secret-token"),
     )
+
+    private fun markerFile(
+        directory: File,
+        occurredAtEpochMs: Long,
+        fileTimestamp: Long = occurredAtEpochMs,
+    ): File = directory.resolve("jvm-$fileTimestamp-1.json").also { file ->
+        file.writeBytes(
+            CrashMarkerRenderer().render(
+                thread = Thread.currentThread(),
+                throwable = IllegalStateException("private crash"),
+                runtime = runtime(),
+                occurredAtEpochMs = occurredAtEpochMs,
+            ),
+        )
+    }
+
+    private companion object {
+        const val NOW = 1_700_000_000_000L
+        const val ONE_HOUR_MS = 60L * 60 * 1_000
+        const val EIGHT_DAYS_MS = 8L * 24 * 60 * 60 * 1_000
+    }
 }

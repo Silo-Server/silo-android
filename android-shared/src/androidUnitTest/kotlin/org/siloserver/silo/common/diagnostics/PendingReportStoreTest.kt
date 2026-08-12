@@ -112,6 +112,67 @@ class PendingReportStoreTest {
     }
 
     @Test
+    fun futureDatedCaptureIsRejectedAndFutureIndexValuesArePruned() {
+        val now = day(10)
+        val store = newStore(nowMs = { now }, retentionMs = day(7))
+        store.markThrottled("future", atEpochMs = day(11))
+
+        assertFailsWith<PendingReportRejectedException> {
+            store.save(capture(day = 11, fingerprint = "future"))
+        }
+
+        assertFalse(store.hasSeenFingerprint("future"))
+        assertFalse(store.isThrottled("future", windowMs = day(7)))
+        assertTrue(store.list(binding.binding).isEmpty())
+    }
+
+    @Test
+    fun negativeClockFailsClosedBeforeReportOrIndexMutation() {
+        val store = newStore(nowMs = { -1L }, retentionMs = day(7))
+
+        assertFailsWith<IllegalStateException> {
+            store.save(capture(day = 0, fingerprint = "negative-clock"))
+        }
+        assertFailsWith<IllegalStateException> {
+            store.markThrottled("negative-clock", atEpochMs = 0)
+        }
+    }
+
+    @Test
+    fun negativeClockCannotPublishHostedErasureAuthorityOrDeleteRawEvidence() {
+        var now = day(10)
+        val hostedBinding = hostedBinding()
+        val store = newStore(nowMs = { now }, retentionMs = day(7))
+        val report = store.save(capture(day = 10, fingerprint = "negative-authority", binding = hostedBinding))
+        now = -1
+
+        assertFailsWith<IllegalStateException> {
+            store.stageHostedDeletionAndDelete(report.id)
+        }
+
+        assertTrue(report.directory.isDirectory)
+        assertTrue(store.hostedDeletionIntents().isEmpty())
+    }
+
+    @Test
+    fun correctedClockPrunesFutureHostedEvidenceButRetainsItsErasureAuthority() {
+        var now = day(20)
+        val hostedBinding = hostedBinding()
+        val store = newStore(nowMs = { now }, retentionMs = day(7))
+        val report = store.save(capture(day = 20, fingerprint = "future-hosted", binding = hostedBinding))
+        store.markHostedProcessing(report.id, "ABC123")
+
+        now = day(10)
+
+        assertTrue(store.list(hostedBinding.binding).isEmpty())
+        assertFalse(report.directory.exists())
+        assertEquals(hostedBinding.binding, store.hostedReadyBinding(report.id))
+
+        store.purge(hostedBinding.binding)
+        assertEquals(listOf(report.id), store.hostedDeletionIntents())
+    }
+
+    @Test
     fun stateDeleteAndBindingPurgeArePersistentAndScoped() {
         val store = newStore(nowMs = { day(10) })
         val first = store.save(capture(day = 9, fingerprint = "first"))
