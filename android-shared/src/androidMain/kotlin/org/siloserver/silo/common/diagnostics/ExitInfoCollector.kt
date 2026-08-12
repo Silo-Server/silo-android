@@ -4,8 +4,11 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
+import android.system.Os
+import android.system.OsConstants
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileDescriptor
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
@@ -116,37 +119,116 @@ interface JvmCrashMarkerSource {
     }
 }
 
-class FileJvmCrashMarkerSource(noBackupFilesDir: File) : JvmCrashMarkerSource {
+class FileJvmCrashMarkerSource internal constructor(
+    noBackupFilesDir: File,
+    private val fileGate: JvmCrashMarkerFileGate,
+    private val deleteFile: (File) -> Boolean,
+    private val syncDirectory: (File) -> Unit,
+    private val listFiles: (File) -> Array<File>?,
+) : JvmCrashMarkerSource {
     private val directory = noBackupFilesDir.resolve("client-diagnostics/crash-markers")
 
-    override fun records(): List<JvmCrashMarkerRecord> {
+    constructor(noBackupFilesDir: File) : this(
+        noBackupFilesDir = noBackupFilesDir,
+        fileGate = JVM_CRASH_MARKER_FILE_GATE,
+        deleteFile = File::delete,
+        syncDirectory = ::syncJvmCrashMarkerDirectory,
+        listFiles = File::listFiles,
+    )
+
+    override fun records(): List<JvmCrashMarkerRecord> = fileGate.withLock {
         directory.listFiles().orEmpty().filter { it.name.endsWith(".tmp") }.forEach(File::delete)
         val files = directory.listFiles().orEmpty()
-            .filter { it.isFile && MARKER_NAME.matches(it.name) && it.length() in 1..CrashMarkerRenderer.MAX_MARKER_BYTES.toLong() }
+            .filter(::isBoundedMarkerFile)
             .sortedBy(File::lastModified)
         files.dropLast(MAX_MARKERS).forEach(File::delete)
-        return files.takeLast(MAX_MARKERS)
-            .mapNotNull { file ->
-                runCatching { JSON.decodeFromString<JvmCrashMarkerRecord>(file.readText()) }
-                    .getOrNull()
-                    ?.takeIf { marker -> marker.schemaVersion == 1 && marker.occurredAtEpochMs >= 0 }
-                    ?.copy(sourceFileName = file.name)
-            }
+        files.takeLast(MAX_MARKERS)
+            .mapNotNull(::decodeMarker)
             .sortedBy(JvmCrashMarkerRecord::occurredAtEpochMs)
     }
 
     override fun delete(marker: JvmCrashMarkerRecord) {
-        marker.sourceFileName
-            ?.takeIf(MARKER_NAME::matches)
-            ?.let(directory::resolve)
-            ?.takeIf(File::exists)
-            ?.delete()
+        fileGate.withLock {
+            marker.sourceFileName
+                ?.takeIf(MARKER_NAME::matches)
+                ?.let(directory::resolve)
+                ?.takeIf(File::exists)
+                ?.let { file ->
+                    deleteStrict(file)
+                    syncAndVerify(files = listOf(file))
+                }
+        }
+    }
+
+    override fun purge(binding: DiagnosticsBinding) {
+        fileGate.withLock {
+            if (!directory.exists()) return@withLock
+            check(directory.isDirectory) { "JVM crash marker path is not a directory" }
+            val removed = checkNotNull(listFiles(directory)) {
+                "unable to enumerate JVM crash markers"
+            }
+                .filter(File::isFile)
+                .filter { file ->
+                    when {
+                        file.name.endsWith(".tmp") -> true
+                        !MARKER_NAME.matches(file.name) -> false
+                        !isBoundedMarkerFile(file) -> true
+                        else -> decodeMarker(file)?.binding?.binding?.let { it == binding } ?: true
+                    }
+                }
+            removed.forEach(::deleteStrict)
+            syncAndVerify(removed)
+        }
+    }
+
+    fun purgeAll() {
+        fileGate.withLock {
+            if (!directory.exists()) return@withLock
+            check(directory.isDirectory) { "JVM crash marker path is not a directory" }
+            val removed = checkNotNull(listFiles(directory)) {
+                "unable to enumerate JVM crash markers"
+            }.toList()
+            removed.forEach(::deleteStrict)
+            syncAndVerify(removed)
+        }
+    }
+
+    private fun isBoundedMarkerFile(file: File): Boolean =
+        file.isFile &&
+            MARKER_NAME.matches(file.name) &&
+            file.length() in 1..CrashMarkerRenderer.MAX_MARKER_BYTES.toLong()
+
+    private fun decodeMarker(file: File): JvmCrashMarkerRecord? =
+        runCatching { JSON.decodeFromString<JvmCrashMarkerRecord>(file.readText()) }
+            .getOrNull()
+            ?.takeIf { marker -> marker.schemaVersion == 1 && marker.occurredAtEpochMs >= 0 }
+            ?.copy(sourceFileName = file.name)
+
+    private fun deleteStrict(file: File) {
+        check(!file.exists() || deleteFile(file)) { "unable to delete JVM crash marker ${file.name}" }
+        check(!file.exists()) { "JVM crash marker still exists after deletion: ${file.name}" }
+    }
+
+    private fun syncAndVerify(files: List<File>) {
+        if (files.isEmpty()) return
+        syncDirectory(directory)
+        check(files.none(File::exists)) { "JVM crash marker deletion was not durable" }
     }
 
     private companion object {
         const val MAX_MARKERS = 3
         val MARKER_NAME = Regex("^jvm-[0-9]+-[0-9]+\\.json$")
         val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    }
+}
+
+private fun syncJvmCrashMarkerDirectory(directory: File) {
+    var descriptor: FileDescriptor? = null
+    try {
+        descriptor = Os.open(directory.absolutePath, OsConstants.O_RDONLY, 0)
+        Os.fsync(checkNotNull(descriptor))
+    } finally {
+        descriptor?.let(Os::close)
     }
 }
 

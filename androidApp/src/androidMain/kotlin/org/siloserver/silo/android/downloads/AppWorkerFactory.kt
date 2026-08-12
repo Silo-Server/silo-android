@@ -13,7 +13,6 @@ import org.siloserver.silo.common.downloads.DownloadSubscriptionWorker
 import org.siloserver.silo.common.downloads.DownloadWorker
 import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadWorker
-import org.siloserver.silo.common.diagnostics.DiagnosticsUploader
 import org.siloserver.silo.repository.DownloadSubscriptionRepository
 import org.siloserver.silo.repository.DownloadsRepository
 import io.ktor.client.HttpClient
@@ -83,7 +82,6 @@ class AppWorkerFactory : WorkerFactory() {
                 DiagnosticsUploadWorker(
                     appContext = appContext,
                     params = workerParameters,
-                    uploader = koin.get<DiagnosticsUploader>(),
                     coordinator = koin.get<DiagnosticsCoordinator>(),
                 )
             }

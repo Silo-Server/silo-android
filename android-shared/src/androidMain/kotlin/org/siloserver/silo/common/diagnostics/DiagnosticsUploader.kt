@@ -5,6 +5,8 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
 import org.siloserver.silo.model.diagnostics.DiagnosticsErrorCode
 import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResult
+import org.siloserver.silo.network.DiagnosticsUploadAuthorization
+import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.api.DiagnosticsApi
 import org.siloserver.silo.network.api.HostedDiagnosticsApi
 import org.siloserver.silo.network.api.HostedDiagnosticsApiResult
@@ -12,6 +14,7 @@ import org.siloserver.silo.network.api.HostedDiagnosticsCreateReportRequest
 import org.siloserver.silo.network.api.HostedDiagnosticsAvailability
 import org.siloserver.silo.network.api.HostedDiagnosticsCapabilities
 import org.siloserver.silo.network.api.HostedDiagnosticsReportState
+import org.siloserver.silo.network.api.HostedDiagnosticsReportStatusResponse
 
 sealed interface DiagnosticsUploadDecision {
     data class Uploaded(val shortId: String, val state: String = "ready") : DiagnosticsUploadDecision
@@ -39,12 +42,24 @@ fun interface DiagnosticsRedactionTokenProvider {
     suspend fun tokens(destinationKind: DiagnosticsDestinationKind): List<String>
 }
 
+fun interface DiagnosticsSelfHostedAuthorizationProvider {
+    suspend fun current(): DiagnosticsUploadAuthorization?
+}
+
 fun interface DiagnosticsSentRecorder {
     suspend fun record(binding: DiagnosticsBinding, shortId: String, sentAtEpochMs: Long, state: String)
 }
 
 fun interface DiagnosticsUploadConsentProvider {
     suspend fun consent(binding: DiagnosticsBinding, noticeVersion: Int): DiagnosticsConsentMode
+}
+
+fun interface DiagnosticsTransportPolicy {
+    suspend fun permits(
+        binding: PendingReportBinding,
+        noticeVersion: Int,
+        requireAlwaysConsent: Boolean,
+    ): Boolean
 }
 
 fun interface DiagnosticsStaleConsentHandler {
@@ -62,16 +77,20 @@ class SettingsDiagnosticsStaleConsentHandler(
 class DefaultDiagnosticsUploader(
     private val reports: PendingReportStore,
     private val identity: DiagnosticsIdentityResolver,
+    private val identityTransitions: IdentityTransitionBarrier,
+    private val privacyBarrier: DiagnosticsPrivacyBarrier = DiagnosticsPrivacyBarrier(),
     private val bundleBuilder: DiagnosticsBundleBuilder,
     private val api: DiagnosticsApi,
     private val hostedApi: HostedDiagnosticsApi? = null,
     private val hostedInstallations: HostedDiagnosticsInstallationManager? = null,
     private val hostedCapabilities: HostedDiagnosticsCapabilitiesRepository? = null,
     private val redactionTokens: DiagnosticsRedactionTokenProvider,
+    private val selfHostedAuthorization: DiagnosticsSelfHostedAuthorizationProvider,
     private val sentRecorder: DiagnosticsSentRecorder,
     private val consentProvider: DiagnosticsUploadConsentProvider = DiagnosticsUploadConsentProvider {
             _, _ -> DiagnosticsConsentMode.ASK
     },
+    private val transportPolicy: DiagnosticsTransportPolicy = DiagnosticsTransportPolicy { _, _, _ -> true },
     private val staleConsentHandler: DiagnosticsStaleConsentHandler = DiagnosticsStaleConsentHandler { _, _ -> },
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : DiagnosticsUploader {
@@ -95,13 +114,16 @@ class DefaultDiagnosticsUploader(
         requireAlwaysConsent: Boolean,
         expectedNoticeVersion: Int?,
     ): DiagnosticsUploadDecision {
+        // Capture before loading evidence so any identity mutation that races
+        // this operation invalidates all post-network local bookkeeping.
+        val operationGeneration = identityTransitions.generation.value
         val report = reports.load(reportId) ?: return DiagnosticsUploadDecision.KeptInvalid
         if (
             report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED &&
             report.state.hostedRemoteShortId != null
         ) {
             return try {
-                pollHostedStatus(report)
+                pollHostedStatus(report, operationGeneration)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -256,10 +278,37 @@ class DefaultDiagnosticsUploader(
             }
         }
 
+        val exactSelfHostedAuthorization = if (
+            report.binding.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED
+        ) {
+            val authorization = try {
+                selfHostedAuthorization.current()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                null
+            } ?: return DiagnosticsUploadDecision.KeptUnavailable
+            if (!authorization.matches(after, operationGeneration)) {
+                return DiagnosticsUploadDecision.KeptIdentityChanged
+            }
+            authorization
+        } else {
+            null
+        }
+
         val decision = try {
             when (report.binding.destinationKind) {
-                DiagnosticsDestinationKind.HOSTED -> uploadHosted(report, bundle)
-                DiagnosticsDestinationKind.SELF_HOSTED -> uploadSelfHosted(report, bundle, after.noticeVersion)
+                DiagnosticsDestinationKind.HOSTED ->
+                    uploadHosted(report, bundle, after, operationGeneration, requireAlwaysConsent)
+                DiagnosticsDestinationKind.SELF_HOSTED ->
+                    uploadSelfHosted(
+                        report,
+                        bundle,
+                        after,
+                        checkNotNull(exactSelfHostedAuthorization),
+                        operationGeneration,
+                        requireAlwaysConsent,
+                    )
             }
         } catch (error: CancellationException) {
             throw error
@@ -273,25 +322,94 @@ class DefaultDiagnosticsUploader(
     private suspend fun uploadSelfHosted(
         report: PendingReport,
         bundle: DiagnosticsBundle,
-        noticeVersion: Int,
-    ): DiagnosticsUploadDecision = when (
-        val result = api.upload(bundle.manifestBytes, bundle.bytes, report.binding.profileId)
-    ) {
+        expectedIdentity: DiagnosticsCaptureContext,
+        authorization: DiagnosticsUploadAuthorization,
+        operationGeneration: Long,
+        requireAlwaysConsent: Boolean,
+    ): DiagnosticsUploadDecision {
+        val uploadAttempt = identityTransitions.withCurrentGeneration(operationGeneration) {
+            privacyBarrier.withTransport {
+                when {
+                    !report.canUploadUnder(expectedIdentity) ||
+                        !authorization.matches(expectedIdentity, operationGeneration) ->
+                        SelfHostedUploadAttempt.IdentityChanged
+                    !transportPolicy.permits(
+                        report.binding,
+                        expectedIdentity.noticeVersion,
+                        requireAlwaysConsent,
+                    ) -> SelfHostedUploadAttempt.Revoked
+                    reports.load(report.id) == null -> SelfHostedUploadAttempt.ReportRemoved
+                    else -> {
+                        // Keep the request bound to the exact identity that approved
+                        // this report. Privacy and identity revocations either happen
+                        // before this lease and prevent the POST, or wait for it.
+                        SelfHostedUploadAttempt.Sent(
+                            api.upload(
+                                bundle.manifestBytes,
+                                bundle.bytes,
+                                report.binding.profileId,
+                                authorization,
+                            ),
+                        )
+                    }
+                }
+            }
+        } ?: return DiagnosticsUploadDecision.KeptIdentityChanged
+        val result = when (uploadAttempt) {
+            SelfHostedUploadAttempt.IdentityChanged -> return DiagnosticsUploadDecision.KeptIdentityChanged
+            SelfHostedUploadAttempt.Revoked -> return DiagnosticsUploadDecision.KeptConsentReviewRequired
+            SelfHostedUploadAttempt.ReportRemoved -> return DiagnosticsUploadDecision.KeptInvalid
+            is SelfHostedUploadAttempt.Sent -> uploadAttempt.result
+        }
+        return when (result) {
             is DiagnosticsUploadResult.Success -> {
-                reports.delete(report.id)
-                runCatching { sentRecorder.record(report.binding.binding, result.response.shortId, nowMs(), "ready") }
-                DiagnosticsUploadDecision.Uploaded(result.response.shortId, "ready")
+                val finalized = identityTransitions.withCurrentGeneration(operationGeneration) {
+                    privacyBarrier.withTransport {
+                        if (
+                            !transportPolicy.permits(
+                                report.binding,
+                                expectedIdentity.noticeVersion,
+                                requireAlwaysConsent,
+                            ) || reports.load(report.id) == null
+                        ) {
+                            false
+                        } else {
+                            reports.delete(report.id)
+                            runCatching {
+                                sentRecorder.record(report.binding.binding, result.response.shortId, nowMs(), "ready")
+                            }
+                            true
+                        }
+                    }
+                }
+                if (finalized != true) {
+                    DiagnosticsUploadDecision.KeptIdentityChanged
+                } else {
+                    DiagnosticsUploadDecision.Uploaded(result.response.shortId, "ready")
+                }
             }
             is DiagnosticsUploadResult.NetworkError -> {
                 markRetryable(report.id, "network")
                 DiagnosticsUploadDecision.KeptRetryable
             }
-            is DiagnosticsUploadResult.Failure -> mapServerError(report, result, noticeVersion)
+            is DiagnosticsUploadResult.Failure -> if (result.code == DiagnosticsErrorCode.UNAUTHORIZED) {
+                // The leased exact-scope request deliberately suppresses auth
+                // refresh to avoid re-entering the identity barrier. A normal
+                // preflight on the next attempt may refresh before send.
+                markRetryable(report.id, result.code.wire)
+                DiagnosticsUploadDecision.KeptRetryable
+            } else {
+                mapServerError(report, result, expectedIdentity.noticeVersion)
+            }
         }
+    }
 
     private suspend fun uploadHosted(
         report: PendingReport,
         bundle: DiagnosticsBundle,
+        expectedIdentity: DiagnosticsCaptureContext,
+        operationGeneration: Long,
+        requireAlwaysConsent: Boolean,
     ): DiagnosticsUploadDecision {
         val wireReportId = report.id.toHostedWireReportIdOrNull() ?: run {
             markPermanent(report.id, "invalid_report_id")
@@ -302,7 +420,15 @@ class DefaultDiagnosticsUploader(
             markRetryable(report.id, "installation_unavailable")
             return DiagnosticsUploadDecision.KeptRetryable
         }
-        return uploadHosted(report, bundle, wireReportId, credentials)
+        return uploadHosted(
+            report,
+            bundle,
+            wireReportId,
+            credentials,
+            expectedIdentity,
+            operationGeneration,
+            requireAlwaysConsent,
+        )
     }
 
     private suspend fun uploadHosted(
@@ -310,19 +436,42 @@ class DefaultDiagnosticsUploader(
         bundle: DiagnosticsBundle,
         wireReportId: String,
         credentials: HostedDiagnosticsCredentials,
+        expectedIdentity: DiagnosticsCaptureContext,
+        operationGeneration: Long,
+        requireAlwaysConsent: Boolean,
     ): DiagnosticsUploadDecision {
         val hostedApi = hostedApi ?: return DiagnosticsUploadDecision.KeptUnavailable
-        val created = when (
-            val result = hostedApi.createReport(
-                installationToken = credentials.installationToken,
-                request = HostedDiagnosticsCreateReportRequest(
-                    reportId = wireReportId,
-                    manifest = bundle.manifest,
-                    bundleBytes = bundle.bytes.size.toLong(),
-                    bundleSha256 = bundle.manifest.archive.sha256,
-                ),
-            )
-        ) {
+        val createAttempt = identityTransitions.withCurrentGeneration(expectedIdentity.ownershipGeneration) {
+            privacyBarrier.withTransport {
+                when {
+                    !report.canUploadUnder(expectedIdentity) -> HostedCreateAttempt.IdentityChanged
+                    !transportPolicy.permits(
+                        report.binding,
+                        expectedIdentity.noticeVersion,
+                        requireAlwaysConsent,
+                    ) -> HostedCreateAttempt.Revoked
+                    reports.load(report.id) == null -> HostedCreateAttempt.ReportRemoved
+                    else -> HostedCreateAttempt.Sent(
+                        hostedApi.createReport(
+                            installationToken = credentials.installationToken,
+                            request = HostedDiagnosticsCreateReportRequest(
+                                reportId = wireReportId,
+                                manifest = bundle.manifest,
+                                bundleBytes = bundle.bytes.size.toLong(),
+                                bundleSha256 = bundle.manifest.archive.sha256,
+                            ),
+                        ),
+                    )
+                }
+            }
+        } ?: return DiagnosticsUploadDecision.KeptIdentityChanged
+        val createResult = when (createAttempt) {
+            HostedCreateAttempt.IdentityChanged -> return DiagnosticsUploadDecision.KeptIdentityChanged
+            HostedCreateAttempt.Revoked -> return DiagnosticsUploadDecision.KeptConsentReviewRequired
+            HostedCreateAttempt.ReportRemoved -> return DiagnosticsUploadDecision.KeptInvalid
+            is HostedCreateAttempt.Sent -> createAttempt.result
+        }
+        val created = when (val result = createResult) {
             is HostedDiagnosticsApiResult.Success -> result.value
             is HostedDiagnosticsApiResult.Failure -> {
                 return mapHostedError(report, result)
@@ -336,14 +485,38 @@ class DefaultDiagnosticsUploader(
             markPermanent(report.id, "invalid_response")
             return DiagnosticsUploadDecision.KeptInvalid
         }
-        val uploadReceipt = when (
-            val uploaded = hostedApi.uploadBundle(
-                installationToken = credentials.installationToken,
-                reportId = wireReportId,
-                uploadToken = created.uploadToken,
-                bundle = bundle.bytes,
-            )
-        ) {
+        val uploadAttempt = identityTransitions.withCurrentGeneration(operationGeneration) {
+            privacyBarrier.withTransport {
+                when {
+                    !report.canUploadUnder(expectedIdentity) -> HostedUploadAttempt.IdentityChanged
+                    !transportPolicy.permits(
+                        report.binding,
+                        expectedIdentity.noticeVersion,
+                        requireAlwaysConsent,
+                    ) -> HostedUploadAttempt.Revoked
+                    reports.load(report.id) == null -> HostedUploadAttempt.ReportRemoved
+                    else -> {
+                        // Starting the full-bundle PUT is itself a privacy boundary.
+                        // A revocation either prevents it or waits for it to finish.
+                        HostedUploadAttempt.Sent(
+                            hostedApi.uploadBundle(
+                                installationToken = credentials.installationToken,
+                                reportId = wireReportId,
+                                uploadToken = created.uploadToken,
+                                bundle = bundle.bytes,
+                            ),
+                        )
+                    }
+                }
+            }
+        } ?: return DiagnosticsUploadDecision.KeptIdentityChanged
+        val uploaded = when (uploadAttempt) {
+            HostedUploadAttempt.IdentityChanged -> return DiagnosticsUploadDecision.KeptIdentityChanged
+            HostedUploadAttempt.Revoked -> return DiagnosticsUploadDecision.KeptConsentReviewRequired
+            HostedUploadAttempt.ReportRemoved -> return DiagnosticsUploadDecision.KeptInvalid
+            is HostedUploadAttempt.Sent -> uploadAttempt.result
+        }
+        val uploadReceipt = when (uploaded) {
             is HostedDiagnosticsApiResult.Success -> uploaded.value
             is HostedDiagnosticsApiResult.Failure -> return mapHostedError(report, uploaded)
             is HostedDiagnosticsApiResult.NetworkError -> {
@@ -366,11 +539,48 @@ class DefaultDiagnosticsUploader(
         // Persist the remote identity immediately after the first validated
         // durable receipt so an eventual rejection can still be deleted from
         // the collector before local evidence is removed.
-        reports.markHostedProcessing(report.id, uploadShortId)
-
-        val state = when (
-            val status = hostedApi.reportStatus(credentials.installationToken, wireReportId)
+        if (
+            identityTransitions.withCurrentGeneration(operationGeneration) {
+                privacyBarrier.withTransport {
+                    if (
+                        !transportPolicy.permits(
+                            report.binding,
+                            expectedIdentity.noticeVersion,
+                            requireAlwaysConsent,
+                        ) || reports.load(report.id) == null
+                    ) {
+                        false
+                    } else {
+                        reports.markHostedProcessing(report.id, uploadShortId)
+                        true
+                    }
+                }
+            } != true
         ) {
+            return DiagnosticsUploadDecision.KeptIdentityChanged
+        }
+
+        val statusAttempt = identityTransitions.withCurrentGeneration(operationGeneration) {
+            privacyBarrier.withTransport {
+                when {
+                    !transportPolicy.permits(
+                        report.binding,
+                        expectedIdentity.noticeVersion,
+                        requireAlwaysConsent,
+                    ) -> HostedStatusAttempt.Revoked
+                    reports.load(report.id) == null -> HostedStatusAttempt.ReportRemoved
+                    else -> HostedStatusAttempt.Sent(
+                        hostedApi.reportStatus(credentials.installationToken, wireReportId),
+                    )
+                }
+            }
+        } ?: return DiagnosticsUploadDecision.KeptIdentityChanged
+        val statusResult = when (statusAttempt) {
+            HostedStatusAttempt.Revoked -> return DiagnosticsUploadDecision.KeptConsentReviewRequired
+            HostedStatusAttempt.ReportRemoved -> return DiagnosticsUploadDecision.KeptInvalid
+            is HostedStatusAttempt.Sent -> statusAttempt.result
+        }
+        val state = when (val status = statusResult) {
             is HostedDiagnosticsApiResult.Success -> {
                 if (
                     status.value.reportId != wireReportId ||
@@ -400,14 +610,38 @@ class DefaultDiagnosticsUploader(
             -> uploadReceipt.state
         }
         if (state == HostedDiagnosticsReportState.READY) {
-            reports.recordHostedReadyAndDelete(report.id, report.binding)
-            runCatching { sentRecorder.record(report.binding.binding, uploadShortId, nowMs(), state.wireValue) }
-            return DiagnosticsUploadDecision.Uploaded(uploadShortId, state.wireValue)
+            val finalized = identityTransitions.withCurrentGeneration(operationGeneration) {
+                privacyBarrier.withTransport {
+                    if (
+                        !transportPolicy.permits(
+                            report.binding,
+                            expectedIdentity.noticeVersion,
+                            requireAlwaysConsent,
+                        ) || reports.load(report.id) == null
+                    ) {
+                        false
+                    } else {
+                        reports.recordHostedReadyAndDelete(report.id, report.binding)
+                        runCatching {
+                            sentRecorder.record(report.binding.binding, uploadShortId, nowMs(), state.wireValue)
+                        }
+                        true
+                    }
+                }
+            }
+            return if (finalized != true) {
+                DiagnosticsUploadDecision.KeptIdentityChanged
+            } else {
+                DiagnosticsUploadDecision.Uploaded(uploadShortId, state.wireValue)
+            }
         }
         return DiagnosticsUploadDecision.KeptRetryable
     }
 
-    private suspend fun pollHostedStatus(report: PendingReport): DiagnosticsUploadDecision {
+    private suspend fun pollHostedStatus(
+        report: PendingReport,
+        operationGeneration: Long,
+    ): DiagnosticsUploadDecision {
         val expectedShortId = report.state.hostedRemoteShortId ?: return DiagnosticsUploadDecision.KeptRetryable
         val wireReportId = report.id.toHostedWireReportIdOrNull() ?: run {
             markPermanent(report.id, "invalid_report_id")
@@ -418,7 +652,27 @@ class DefaultDiagnosticsUploader(
             return DiagnosticsUploadDecision.KeptRetryable
         }
         val api = hostedApi ?: return DiagnosticsUploadDecision.KeptUnavailable
-        return when (val result = api.reportStatus(credentials.installationToken, wireReportId)) {
+        val statusAttempt = identityTransitions.withCurrentGeneration(operationGeneration) {
+            privacyBarrier.withTransport {
+                when {
+                    !transportPolicy.permits(
+                        report.binding,
+                        report.manifest.consent.noticeVersion,
+                        false,
+                    ) -> HostedStatusAttempt.Revoked
+                    reports.load(report.id) == null -> HostedStatusAttempt.ReportRemoved
+                    else -> HostedStatusAttempt.Sent(
+                        api.reportStatus(credentials.installationToken, wireReportId),
+                    )
+                }
+            }
+        } ?: return DiagnosticsUploadDecision.KeptIdentityChanged
+        val result = when (statusAttempt) {
+            HostedStatusAttempt.Revoked -> return DiagnosticsUploadDecision.KeptConsentReviewRequired
+            HostedStatusAttempt.ReportRemoved -> return DiagnosticsUploadDecision.KeptInvalid
+            is HostedStatusAttempt.Sent -> statusAttempt.result
+        }
+        return when (result) {
             is HostedDiagnosticsApiResult.NetworkError -> {
                 markRetryable(report.id, "network")
                 DiagnosticsUploadDecision.KeptRetryable
@@ -438,15 +692,53 @@ class DefaultDiagnosticsUploader(
                 }
                 when (status.state) {
                     HostedDiagnosticsReportState.READY -> {
-                        reports.recordHostedReadyAndDelete(report.id, report.binding)
-                        runCatching {
-                            sentRecorder.record(report.binding.binding, expectedShortId, nowMs(), "ready")
+                        val finalized = identityTransitions.withCurrentGeneration(operationGeneration) {
+                            privacyBarrier.withTransport {
+                                if (
+                                    !transportPolicy.permits(
+                                        report.binding,
+                                        report.manifest.consent.noticeVersion,
+                                        false,
+                                    ) || reports.load(report.id) == null
+                                ) {
+                                    false
+                                } else {
+                                    reports.recordHostedReadyAndDelete(report.id, report.binding)
+                                    runCatching {
+                                        sentRecorder.record(report.binding.binding, expectedShortId, nowMs(), "ready")
+                                    }
+                                    true
+                                }
+                            }
                         }
-                        DiagnosticsUploadDecision.Uploaded(expectedShortId, "ready")
+                        if (finalized != true) {
+                            DiagnosticsUploadDecision.KeptIdentityChanged
+                        } else {
+                            DiagnosticsUploadDecision.Uploaded(expectedShortId, "ready")
+                        }
                     }
                     HostedDiagnosticsReportState.PROCESSING -> {
-                        reports.markHostedProcessing(report.id, expectedShortId)
-                        DiagnosticsUploadDecision.KeptRetryable
+                        val finalized = identityTransitions.withCurrentGeneration(operationGeneration) {
+                            privacyBarrier.withTransport {
+                                if (
+                                    !transportPolicy.permits(
+                                        report.binding,
+                                        report.manifest.consent.noticeVersion,
+                                        false,
+                                    ) || reports.load(report.id) == null
+                                ) {
+                                    false
+                                } else {
+                                    reports.markHostedProcessing(report.id, expectedShortId)
+                                    true
+                                }
+                            }
+                        }
+                        if (finalized != true) {
+                            DiagnosticsUploadDecision.KeptIdentityChanged
+                        } else {
+                            DiagnosticsUploadDecision.KeptRetryable
+                        }
                     }
                     HostedDiagnosticsReportState.REJECTED,
                     HostedDiagnosticsReportState.DELETING,
@@ -498,7 +790,11 @@ class DefaultDiagnosticsUploader(
         }
         if (decision == DiagnosticsUploadDecision.KeptRetryable) {
             error.retryAfterSeconds?.coerceIn(0, MAX_RETRY_AFTER_SECONDS)?.let { seconds ->
-                reports.setRetryAfterDeadline(report.binding.binding, nowMs() + seconds * 1_000L)
+                reports.setRetryAfterDeadlineForReport(
+                    report.id,
+                    report.binding.binding,
+                    nowMs() + seconds * 1_000L,
+                )
             }
         }
         when (decision) {
@@ -558,7 +854,11 @@ class DefaultDiagnosticsUploader(
         }
         if (decision == DiagnosticsUploadDecision.KeptRetryable) {
             error.retryAfterSeconds?.coerceIn(0, MAX_RETRY_AFTER_SECONDS)?.let { seconds ->
-                reports.setRetryAfterDeadline(report.binding.binding, nowMs() + seconds * 1_000L)
+                reports.setRetryAfterDeadlineForReport(
+                    report.id,
+                    report.binding.binding,
+                    nowMs() + seconds * 1_000L,
+                )
             }
         }
         val code = error.code.wire
@@ -644,7 +944,49 @@ class DefaultDiagnosticsUploader(
             "size_mismatch",
         )
     }
+
+    private sealed interface HostedCreateAttempt {
+        data object IdentityChanged : HostedCreateAttempt
+        data object Revoked : HostedCreateAttempt
+        data object ReportRemoved : HostedCreateAttempt
+        data class Sent(
+            val result: HostedDiagnosticsApiResult<org.siloserver.silo.network.api.HostedDiagnosticsCreateReportResponse>,
+        ) : HostedCreateAttempt
+    }
+
+    private sealed interface SelfHostedUploadAttempt {
+        data object IdentityChanged : SelfHostedUploadAttempt
+        data object Revoked : SelfHostedUploadAttempt
+        data object ReportRemoved : SelfHostedUploadAttempt
+        data class Sent(val result: DiagnosticsUploadResult) : SelfHostedUploadAttempt
+    }
+
+    private sealed interface HostedUploadAttempt {
+        data object IdentityChanged : HostedUploadAttempt
+        data object Revoked : HostedUploadAttempt
+        data object ReportRemoved : HostedUploadAttempt
+        data class Sent(
+            val result: HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>,
+        ) : HostedUploadAttempt
+    }
+
+    private sealed interface HostedStatusAttempt {
+        data object Revoked : HostedStatusAttempt
+        data object ReportRemoved : HostedStatusAttempt
+        data class Sent(
+            val result: HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>,
+        ) : HostedStatusAttempt
+    }
 }
+
+private fun DiagnosticsUploadAuthorization.matches(
+    context: DiagnosticsCaptureContext,
+    expectedGeneration: Long,
+): Boolean =
+    identityGeneration == expectedGeneration &&
+        context.ownershipGeneration == expectedGeneration &&
+        context.localServerId?.let { it == serverId } == true &&
+        activeProfileId == context.profileId
 
 private fun PendingReport.canUploadUnder(context: DiagnosticsCaptureContext): Boolean =
     context.profileEligible &&

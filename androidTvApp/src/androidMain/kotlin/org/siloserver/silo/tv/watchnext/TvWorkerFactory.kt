@@ -9,7 +9,6 @@ import org.siloserver.silo.common.data.sync.SyncEngine
 import org.siloserver.silo.common.data.sync.SyncWorker
 import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadWorker
-import org.siloserver.silo.common.diagnostics.DiagnosticsUploader
 import org.siloserver.silo.repository.SectionRepository
 import org.koin.core.context.GlobalContext
 
@@ -60,7 +59,6 @@ class TvWorkerFactory : WorkerFactory() {
                 DiagnosticsUploadWorker(
                     appContext = appContext,
                     params = workerParameters,
-                    uploader = koin.get<DiagnosticsUploader>(),
                     coordinator = koin.get<DiagnosticsCoordinator>(),
                 )
             }

@@ -1,7 +1,9 @@
 package org.siloserver.silo.common.diagnostics
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -22,6 +24,9 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsReport
 import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResponse
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResult
+import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
+import org.siloserver.silo.network.DiagnosticsUploadAuthorization
+import org.siloserver.silo.network.IdentityTransitionKind
 import org.siloserver.silo.network.api.DiagnosticsApi
 import org.siloserver.silo.network.api.HostedDiagnosticsApi
 import org.siloserver.silo.network.api.HostedDiagnosticsApiResult
@@ -41,6 +46,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class DiagnosticsUploaderTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
@@ -131,11 +137,71 @@ class DiagnosticsUploaderTest {
     }
 
     @Test
+    fun selfHostedSuccessAfterSignOutCannotDeleteOrRecordOldIdentityEvidence() = runTest {
+        val fixture = fixture()
+        val uploadStarted = CompletableDeferred<Unit>()
+        val releaseUpload = CompletableDeferred<Unit>()
+        val mutationRequested = CompletableDeferred<Unit>()
+        val mutationStarted = CompletableDeferred<Unit>()
+        fixture.api.result = DiagnosticsUploadResult.Success(DiagnosticsUploadResponse("report-1", "ABC123"))
+        fixture.api.onUploadSuspending = {
+            uploadStarted.complete(Unit)
+            releaseUpload.await()
+        }
+
+        val upload = async { fixture.uploader.upload(fixture.report.id) }
+        uploadStarted.await()
+        val transition = async {
+            mutationRequested.complete(Unit)
+            fixture.identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutationStarted.complete(Unit)
+                fixture.identity.current = null
+            }
+        }
+        mutationRequested.await()
+        runCurrent()
+        assertFalse(mutationStarted.isCompleted, "sign out must wait for an already-started POST")
+        releaseUpload.complete(Unit)
+        transition.await()
+
+        assertEquals(DiagnosticsUploadDecision.KeptIdentityChanged, upload.await())
+        assertEquals(1, fixture.api.uploadCalls)
+        assertNotNull(fixture.store.load(fixture.report.id))
+        assertTrue(fixture.sent.shortIds.isEmpty())
+    }
+
+    @Test
+    fun selfHostedServerSwitchThatWinsBeforePostPreventsAnyNetworkCall() = runTest {
+        val fixture = fixture()
+        val preflightResolveStarted = CompletableDeferred<Unit>()
+        val releasePreflightResolve = CompletableDeferred<Unit>()
+        fixture.identity.beforeReturn = { call ->
+            if (call == 2) {
+                preflightResolveStarted.complete(Unit)
+                releasePreflightResolve.await()
+            }
+        }
+
+        val upload = async { fixture.uploader.upload(fixture.report.id) }
+        preflightResolveStarted.await()
+        fixture.identityTransitions.changing(IdentityTransitionKind.SERVER_SWITCH) {
+            fixture.identity.current = fixture.identity.current?.copy(
+                binding = DiagnosticsBinding("server-2", "user-2"),
+                ownershipGeneration = fixture.identityTransitions.generation.value,
+            )
+        }
+        releasePreflightResolve.complete(Unit)
+
+        assertEquals(DiagnosticsUploadDecision.KeptIdentityChanged, upload.await())
+        assertEquals(0, fixture.api.uploadCalls)
+        assertNotNull(fixture.store.load(fixture.report.id))
+    }
+
+    @Test
     fun anotherEligibleProfileOnTheSameAccountCanSendWithCapturedAttribution() = runTest {
         val fixture = fixture()
         fixture.identity.current = fixture.identity.current?.copy(
             profileId = "profile-2",
-            ownershipGeneration = 8,
         )
         fixture.api.result = DiagnosticsUploadResult.Success(DiagnosticsUploadResponse("report-1", "ABC123"))
 
@@ -257,7 +323,7 @@ class DiagnosticsUploaderTest {
             "archive_mismatch" to DiagnosticsUploadDecision.KeptInvalid,
             "stale_report" to DiagnosticsUploadDecision.KeptInvalid,
             "stale_consent" to DiagnosticsUploadDecision.KeptConsentReviewRequired,
-            "unauthorized" to DiagnosticsUploadDecision.KeptInvalid,
+            "unauthorized" to DiagnosticsUploadDecision.KeptRetryable,
             "api_key_not_allowed" to DiagnosticsUploadDecision.KeptInvalid,
             "forbidden" to DiagnosticsUploadDecision.KeptInvalid,
         )
@@ -364,7 +430,7 @@ class DiagnosticsUploaderTest {
         assertEquals(listOf(fixture.report.id), fixture.store.hostedDeletionIntents())
         releaseStatus.complete(Unit)
 
-        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "ready"), polling.await())
+        assertEquals(DiagnosticsUploadDecision.KeptIdentityChanged, polling.await())
         assertNull(fixture.store.load(fixture.report.id))
         assertEquals(listOf(fixture.report.id), fixture.store.hostedDeletionIntents())
         val deleter = DefaultHostedDiagnosticsReportDeleter(fixture.api, fixture.installations)
@@ -377,6 +443,84 @@ class DiagnosticsUploaderTest {
             fixture.uploader.uploadAutomatically(fixture.report.id),
             "evidence covered by a winning deletion must never become re-uploadable",
         )
+    }
+
+    @Test
+    fun hostedReadyAfterAccountReplacementCannotReviveOldBookkeeping() = runTest {
+        val fixture = hostedFixture()
+        val statusStarted = CompletableDeferred<Unit>()
+        val releaseStatus = CompletableDeferred<Unit>()
+        fixture.api.beforeReportStatus = {
+            statusStarted.complete(Unit)
+            releaseStatus.await()
+        }
+        fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
+            fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
+        )
+
+        val upload = async { fixture.uploader.upload(fixture.report.id) }
+        statusStarted.await()
+        val mutationStarted = CompletableDeferred<Unit>()
+        val transition = async {
+            fixture.identityTransitions.changing(IdentityTransitionKind.ACCOUNT_REPLACE) {
+                mutationStarted.complete(Unit)
+                fixture.store.purge(fixture.report.binding.binding)
+                fixture.identity.current = fixture.identity.current?.copy(
+                    binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "replacement-device"),
+                    ownershipGeneration = fixture.identityTransitions.generation.value,
+                )
+            }
+        }
+        runCurrent()
+        assertFalse(mutationStarted.isCompleted, "account replacement must wait for an already-started status call")
+        releaseStatus.complete(Unit)
+        transition.await()
+
+        assertEquals(DiagnosticsUploadDecision.KeptIdentityChanged, upload.await())
+        assertNull(fixture.store.load(fixture.report.id))
+        assertEquals(listOf(fixture.report.id), fixture.store.hostedDeletionIntents())
+        assertTrue(fixture.sent.shortIds.isEmpty())
+        assertNull(fixture.store.retryAfterDeadline(fixture.report.binding.binding))
+    }
+
+    @Test
+    fun hostedRetryResponseAfterTurnOffCannotRecreateRetryAfterMetadata() = runTest {
+        val fixture = hostedFixture()
+        val uploadStarted = CompletableDeferred<Unit>()
+        val releaseUpload = CompletableDeferred<Unit>()
+        val mutationRequested = CompletableDeferred<Unit>()
+        val mutationStarted = CompletableDeferred<Unit>()
+        fixture.api.beforeUploadBundle = {
+            uploadStarted.complete(Unit)
+            releaseUpload.await()
+        }
+        fixture.api.uploadFailure = HostedDiagnosticsApiResult.Failure(
+            httpStatus = 429,
+            errorCode = "rate_limited",
+            message = "slow down",
+            retryAfterSeconds = 120,
+        )
+
+        val upload = async { fixture.uploader.upload(fixture.report.id) }
+        uploadStarted.await()
+        val transition = async {
+            mutationRequested.complete(Unit)
+            fixture.identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutationStarted.complete(Unit)
+                fixture.store.purge(fixture.report.binding.binding)
+                fixture.identity.current = null
+            }
+        }
+        mutationRequested.await()
+        runCurrent()
+        assertFalse(mutationStarted.isCompleted, "turn off must wait for an already-started PUT")
+        releaseUpload.complete(Unit)
+        transition.await()
+
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, upload.await())
+        assertNull(fixture.store.load(fixture.report.id))
+        assertNull(fixture.store.retryAfterDeadline(fixture.report.binding.binding))
+        assertEquals(listOf(fixture.report.id), fixture.store.hostedDeletionIntents())
     }
 
     @Test
@@ -395,6 +539,87 @@ class DiagnosticsUploaderTest {
 
         assertEquals(listOf("old-installation-token"), fixture.api.deleteInstallationTokens)
         assertEquals(listOf(requireNotNull(fixture.report.id.toHostedWireReportIdOrNull())), fixture.api.deleteReportIds)
+    }
+
+    @Test
+    fun hostedIdentityChangeWhileInstallationRegistrationIsSuspendedPreventsCreate() = runTest {
+        val fixture = hostedFixture(credentials = null)
+        val registrationStarted = CompletableDeferred<Unit>()
+        val releaseRegistration = CompletableDeferred<Unit>()
+        fixture.api.beforeCreateInstallation = {
+            registrationStarted.complete(Unit)
+            releaseRegistration.await()
+        }
+
+        val uploading = async { fixture.uploader.upload(fixture.report.id) }
+        registrationStarted.await()
+        fixture.identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+            fixture.identity.current = fixture.identity.current?.copy(
+                binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "different-account"),
+                ownershipGeneration = fixture.identityTransitions.generation.value,
+            )
+        }
+        releaseRegistration.complete(Unit)
+
+        assertEquals(DiagnosticsUploadDecision.KeptIdentityChanged, uploading.await())
+        assertTrue(fixture.api.createReportIds.isEmpty())
+        assertNotNull(fixture.store.load(fixture.report.id))
+        assertTrue(
+            fixture.store.loadHostedEnvelope(fixture.report.id) is HostedEnvelopeLoadResult.Available,
+            "the exact sanitized retry envelope remains durable",
+        )
+    }
+
+    @Test
+    fun hostedCreateRequestSerializesAgainstIdentityMutation() = runTest {
+        val fixture = hostedFixture()
+        val createStarted = CompletableDeferred<Unit>()
+        val releaseCreate = CompletableDeferred<Unit>()
+        val mutationRequested = CompletableDeferred<Unit>()
+        val mutationStarted = CompletableDeferred<Unit>()
+        var createReturned = false
+        fixture.api.beforeCreateReport = {
+            createStarted.complete(Unit)
+            releaseCreate.await()
+            createReturned = true
+        }
+
+        val uploading = async { fixture.uploader.upload(fixture.report.id) }
+        createStarted.await()
+        val transition = async {
+            mutationRequested.complete(Unit)
+            fixture.identityTransitions.changing(IdentityTransitionKind.SERVER_SWITCH) {
+                assertTrue(createReturned, "identity mutation must wait for the guarded create request")
+                mutationStarted.complete(Unit)
+                fixture.identity.current = fixture.identity.current?.copy(
+                    binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "different-server-account"),
+                    ownershipGeneration = fixture.identityTransitions.generation.value,
+                )
+            }
+        }
+        mutationRequested.await()
+        runCurrent()
+        assertFalse(mutationStarted.isCompleted)
+
+        releaseCreate.complete(Unit)
+        assertEquals(DiagnosticsUploadDecision.KeptIdentityChanged, uploading.await())
+        transition.await()
+        assertEquals(1, fixture.api.createReportIds.size)
+        assertTrue(fixture.api.uploadReportIds.isEmpty(), "PUT must not start after identity mutation wins")
+        assertTrue(mutationStarted.isCompleted)
+    }
+
+    @Test
+    fun hostedOrdinaryCredentialRefreshDuringRegistrationRemainsAllowed() = runTest {
+        val fixture = hostedFixture(credentials = null)
+        fixture.api.beforeCreateInstallation = {
+            fixture.identity.current = fixture.identity.current?.copy(
+                credentialFingerprint = "rotated-refresh-credential",
+            )
+        }
+
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        assertEquals(1, fixture.api.createReportIds.size)
     }
 
     @Test
@@ -588,12 +813,17 @@ class DiagnosticsUploaderTest {
     private fun hostedFixture(
         artifacts: Map<String, ByteArray> = mapOf("device.json" to "{}".encodeToByteArray()),
         redactionValues: List<String> = listOf("source-access"),
-        credentials: HostedDiagnosticsCredentials = HostedDiagnosticsCredentials(
+        credentials: HostedDiagnosticsCredentials? = HostedDiagnosticsCredentials(
             "installation-1",
             "installation-token",
         ),
     ): HostedFixture {
-        val store = FilePendingReportStore(temporaryFolder.newFolder(), nowMs = { CAPTURED_AT })
+        val store = FilePendingReportStore(
+            temporaryFolder.newFolder(),
+            nowMs = { CAPTURED_AT },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
         val binding = DiagnosticsBinding(HOSTED_DIAGNOSTICS_COLLECTOR_ID, "anonymous-hosted-device")
         val hostedManifest = manifest().copy(
             report = manifest().report.copy(profileId = null),
@@ -632,38 +862,57 @@ class DiagnosticsUploaderTest {
         val sent = FakeSentRecorder()
         val redactionTokens = RecordingRedactionTokenProvider(redactionValues)
         val staleConsent = FakeStaleConsentHandler()
+        val identityTransitions = DefaultIdentityTransitionBarrier()
+        val identity = FakeIdentityResolver(
+            DiagnosticsCaptureContext(
+                binding = binding,
+                profileId = null,
+                profileEligible = true,
+                noticeVersion = 1,
+                status = DiagnosticsAvailabilityStatus.AVAILABLE,
+                ownershipGeneration = 0,
+                localServerId = "source-server",
+                credentialFingerprint = "source-credential",
+                sourceProfileId = "adult-source-profile",
+                destinationKind = DiagnosticsDestinationKind.HOSTED,
+            ),
+        )
         val uploader = DefaultDiagnosticsUploader(
             reports = store,
-            identity = FakeIdentityResolver(
-                DiagnosticsCaptureContext(
-                    binding = binding,
-                    profileId = null,
-                    profileEligible = true,
-                    noticeVersion = 1,
-                    status = DiagnosticsAvailabilityStatus.AVAILABLE,
-                    ownershipGeneration = 7,
-                    sourceProfileId = "adult-source-profile",
-                    destinationKind = DiagnosticsDestinationKind.HOSTED,
-                ),
-            ),
+            identity = identity,
+            identityTransitions = identityTransitions,
             bundleBuilder = FileDiagnosticsBundleBuilder(),
             api = FakeDiagnosticsApi(),
             hostedApi = hostedApi,
             hostedInstallations = installations,
             hostedCapabilities = HostedDiagnosticsCapabilitiesRepository(InMemoryHostedCapabilitiesStore(), hostedApi),
             redactionTokens = redactionTokens,
+            selfHostedAuthorization = DiagnosticsSelfHostedAuthorizationProvider { null },
             sentRecorder = sent,
             consentProvider = FakeConsentProvider(DiagnosticsConsentMode.ASK),
             staleConsentHandler = staleConsent,
             nowMs = { CAPTURED_AT + 1_000 },
         )
-        return HostedFixture(store, report, hostedApi, installations, redactionTokens, sent, staleConsent, uploader)
+        return HostedFixture(
+            store,
+            report,
+            hostedApi,
+            installations,
+            redactionTokens,
+            sent,
+            staleConsent,
+            identity,
+            identityTransitions,
+            uploader,
+        )
     }
 
     private fun fixture(maxBundleBytes: Long = 1_024 * 1_024): Fixture {
         val store = FilePendingReportStore(
             noBackupFilesDir = temporaryFolder.newFolder(),
             nowMs = { CAPTURED_AT },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
         )
         val report = store.save(
             PendingReportCapture(
@@ -680,18 +929,29 @@ class DiagnosticsUploaderTest {
         val sent = FakeSentRecorder()
         val consent = FakeConsentProvider()
         val staleConsent = FakeStaleConsentHandler()
+        val identityTransitions = DefaultIdentityTransitionBarrier()
         val uploader = DefaultDiagnosticsUploader(
             reports = store,
             identity = identity,
+            identityTransitions = identityTransitions,
             bundleBuilder = builder,
             api = api,
             redactionTokens = DiagnosticsRedactionTokenProvider { _ -> listOf("secret-token") },
+            selfHostedAuthorization = DiagnosticsSelfHostedAuthorizationProvider {
+                DiagnosticsUploadAuthorization(
+                    serverId = "local-server-1",
+                    serverUrl = "https://silo.example",
+                    accessToken = "access-token",
+                    activeProfileId = identity.current?.profileId,
+                    identityGeneration = identityTransitions.generation.value,
+                )
+            },
             sentRecorder = sent,
             consentProvider = consent,
             staleConsentHandler = staleConsent,
             nowMs = { CAPTURED_AT + 1_000 },
         )
-        return Fixture(store, report, identity, builder, api, sent, consent, staleConsent, uploader)
+        return Fixture(store, report, identity, identityTransitions, builder, api, sent, consent, staleConsent, uploader)
     }
 
     private fun context(maxBundleBytes: Long) = DiagnosticsCaptureContext(
@@ -700,10 +960,11 @@ class DiagnosticsUploaderTest {
         profileEligible = true,
         noticeVersion = 2,
         status = DiagnosticsAvailabilityStatus.AVAILABLE,
-        ownershipGeneration = 7,
+        ownershipGeneration = 0,
         acceptedSchemaVersions = setOf(1),
         maxBundleBytes = maxBundleBytes,
         maxManifestBytes = 64 * 1_024,
+        localServerId = "local-server-1",
     )
 
     private fun manifest() = DiagnosticsManifest(
@@ -727,7 +988,15 @@ class DiagnosticsUploaderTest {
     )
 
     private class FakeIdentityResolver(var current: DiagnosticsCaptureContext?) : DiagnosticsIdentityResolver {
-        override suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? = current
+        var beforeReturn: suspend (Int) -> Unit = {}
+        private var resolveCalls: Int = 0
+
+        override suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? {
+            val captured = current
+            resolveCalls += 1
+            beforeReturn(resolveCalls)
+            return captured
+        }
     }
 
     private class FakeBundleBuilder : DiagnosticsBundleBuilder {
@@ -746,9 +1015,11 @@ class DiagnosticsUploaderTest {
     private class FakeDiagnosticsApi : DiagnosticsApi {
         var result: DiagnosticsUploadResult = DiagnosticsUploadResult.NetworkError(IllegalStateException("offline"))
         var onUpload: () -> Unit = {}
+        var onUploadSuspending: suspend () -> Unit = {}
         var uploadCalls = 0
         var capturedProfileId: String? = null
         var capturedManifest: DiagnosticsManifest? = null
+        var capturedAuthorization: DiagnosticsUploadAuthorization? = null
         override suspend fun getStatus() = error("unused")
         override suspend fun upload(
             manifestJson: ByteArray,
@@ -756,12 +1027,23 @@ class DiagnosticsUploaderTest {
             capturedProfileId: String?,
         ): DiagnosticsUploadResult {
             onUpload()
+            onUploadSuspending()
             uploadCalls += 1
             this.capturedProfileId = capturedProfileId
             capturedManifest = org.siloserver.silo.model.diagnostics.decodeDiagnosticsManifest(
                 manifestJson.decodeToString(),
             )
             return result
+        }
+
+        override suspend fun upload(
+            manifestJson: ByteArray,
+            bundleBytes: ByteArray,
+            capturedProfileId: String?,
+            authorization: DiagnosticsUploadAuthorization,
+        ): DiagnosticsUploadResult {
+            capturedAuthorization = authorization
+            return upload(manifestJson, bundleBytes, capturedProfileId)
         }
     }
 
@@ -803,6 +1085,9 @@ class DiagnosticsUploaderTest {
         var uploadReceiptOverride: HostedDiagnosticsReportStatusResponse? = null
         var reportStatusResultOverride: HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>? = null
         var beforeReportStatus: suspend () -> Unit = {}
+        var beforeUploadBundle: suspend () -> Unit = {}
+        var beforeCreateInstallation: suspend () -> Unit = {}
+        var beforeCreateReport: suspend () -> Unit = {}
         var deleteResult: HostedDiagnosticsApiResult<Unit> = HostedDiagnosticsApiResult.Success(Unit)
         var nextUploadToken: String = "upload-token"
         var installationCreateCalls: Int = 0
@@ -832,6 +1117,7 @@ class DiagnosticsUploaderTest {
         override suspend fun createInstallation(request: HostedDiagnosticsInstallationRequest):
             HostedDiagnosticsApiResult<HostedDiagnosticsInstallationResponse> {
             installationCreateCalls += 1
+            beforeCreateInstallation()
             return HostedDiagnosticsApiResult.Success(
                 HostedDiagnosticsInstallationResponse("installation-1", "installation-token"),
             )
@@ -840,6 +1126,7 @@ class DiagnosticsUploaderTest {
             installationToken: String,
             request: HostedDiagnosticsCreateReportRequest,
         ): HostedDiagnosticsApiResult<HostedDiagnosticsCreateReportResponse> {
+            beforeCreateReport()
             createReportTokens += installationToken
             createReportIds += request.reportId
             createdRequests += request
@@ -866,6 +1153,7 @@ class DiagnosticsUploaderTest {
             uploadToken: String,
             bundle: ByteArray,
         ): HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse> {
+            beforeUploadBundle()
             uploadReportIds += reportId
             uploadTokens += uploadToken
             uploadFailure?.let { return it }
@@ -939,6 +1227,7 @@ class DiagnosticsUploaderTest {
         val store: FilePendingReportStore,
         val report: PendingReport,
         val identity: FakeIdentityResolver,
+        val identityTransitions: DefaultIdentityTransitionBarrier,
         val builder: FakeBundleBuilder,
         val api: FakeDiagnosticsApi,
         val sent: FakeSentRecorder,
@@ -955,6 +1244,8 @@ class DiagnosticsUploaderTest {
         val redactionTokens: RecordingRedactionTokenProvider,
         val sent: FakeSentRecorder,
         val staleConsent: FakeStaleConsentHandler,
+        val identity: FakeIdentityResolver,
+        val identityTransitions: DefaultIdentityTransitionBarrier,
         val uploader: DefaultDiagnosticsUploader,
     )
 

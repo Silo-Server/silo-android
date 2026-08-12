@@ -258,13 +258,14 @@ class HostedDiagnosticsIdentityResolver(
             // capabilities and installation registration are intentionally send-time.
             val localCapabilities = capabilities.local()
             val localBindingOwner = currentLocalBindingOwner(source.id) ?: return null
+            val credentialFingerprint = currentCredentialFingerprint()
             if (identityTransitions.generation.value != generation) continue
             return localCapabilities.toCaptureContext(
                 sourceServerId = source.id,
                 sourceProfileId = sourceProfileId,
                 profileEligible = profileEligible,
                 generation = generation,
-                credentialFingerprint = currentCredentialFingerprint(),
+                credentialFingerprint = credentialFingerprint,
                 localBindingOwner = localBindingOwner,
             )
         }

@@ -75,6 +75,34 @@ class TokenManagerImpl(
         }
     }
 
+    override suspend fun replaceAccountSession(
+        serverId: String?,
+        serverUrl: String?,
+        accessToken: String,
+        refreshToken: String,
+        expiresIn: Long,
+        profileId: String?,
+        profileToken: String?,
+    ) {
+        tokenWriteMutex.withLock {
+            identityTransitions.changing(
+                kind = IdentityTransitionKind.ACCOUNT_REPLACE,
+                target = { IdentityTransitionTarget(serverId = serverId) },
+            ) {
+                mutex.withLock {
+                    check(temporaryScope == null) { "cannot replace the account inside a temporary auth scope" }
+                    if (serverUrl != null) this.serverUrl = serverUrl.trimEnd('/')
+                    this.profileId = profileId
+                    this.profileToken = profileToken
+                    this.accessToken = accessToken
+                    this.refreshToken = refreshToken
+                    this.tokenExpiry = timeSource.markNow() + expiresIn.seconds
+                    this.tokenLifetimeMs = expiresIn.seconds.inWholeMilliseconds
+                }
+            }
+        }
+    }
+
     private suspend fun saveTokensLocked(accessToken: String, refreshToken: String, expiresIn: Long) {
         mutex.withLock {
             temporaryScope?.let { scope ->
@@ -93,7 +121,10 @@ class TokenManagerImpl(
 
     override suspend fun clearTokens() {
         tokenWriteMutex.withLock {
-            identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+            identityTransitions.changing(
+                kind = IdentityTransitionKind.SIGN_OUT,
+                target = { currentSignOutTarget() },
+            ) {
                 mutex.withLock { clearTokensLocked() }
             }
         }
@@ -101,7 +132,10 @@ class TokenManagerImpl(
 
     override suspend fun invalidateSession() {
         tokenWriteMutex.withLock {
-            identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+            identityTransitions.changing(
+                kind = IdentityTransitionKind.SIGN_OUT,
+                target = { currentSignOutTarget() },
+            ) {
                 mutex.withLock { clearTokensLocked() }
                 // Non-suspending emit so this method can be called from anywhere
                 // without caller cooperation. DROP_OLDEST buffer means a rapid
@@ -196,7 +230,10 @@ class TokenManagerImpl(
     }
     override suspend fun signOutCurrentServer() {
         tokenWriteMutex.withLock {
-            identityTransitions.changing(IdentityTransitionKind.SIGN_OUT) {
+            identityTransitions.changing(
+                kind = IdentityTransitionKind.SIGN_OUT,
+                target = { currentSignOutTarget() },
+            ) {
                 mutex.withLock { clearTokensLocked() }
             }
         }
@@ -218,6 +255,10 @@ class TokenManagerImpl(
         }
 
     override suspend fun hasTemporaryScope(): Boolean = mutex.withLock { temporaryScope != null }
+
+    private suspend fun currentSignOutTarget(): IdentityTransitionTarget = mutex.withLock {
+        IdentityTransitionTarget(serverId = temporaryScope?.serverId)
+    }
 
     private fun clearTokensLocked() {
         if (temporaryScope != null) {

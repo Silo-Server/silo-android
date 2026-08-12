@@ -1,11 +1,20 @@
 package org.siloserver.silo.common.diagnostics
 
-import kotlinx.serialization.json.Json
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
+import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
+import org.siloserver.silo.network.IdentityTransitionKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -74,6 +83,37 @@ class CrashCaptureTest {
         )
         assertFalse(marker.logLines.any { it.contains("stale cached line") })
         assertFalse(marker.logLines.any { it.contains("secret-token") })
+    }
+
+    @Test
+    fun renderedHostedMarkerRoundTripsItsDestinationKindWhileSelfHostedRemainsCompatible() {
+        val hosted = Json.decodeFromString<JvmCrashMarkerRecord>(
+            CrashMarkerRenderer().render(
+                thread = Thread.currentThread(),
+                throwable = IllegalStateException("hosted crash"),
+                runtime = runtime().copy(
+                    binding = PendingReportBinding(
+                        serverInstanceId = HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+                        accountUserId = "anonymous-hosted-device",
+                        profileId = null,
+                        ownershipGeneration = 7,
+                        destinationKind = DiagnosticsDestinationKind.HOSTED,
+                    ),
+                ),
+                occurredAtEpochMs = 1_700_000_000_000,
+            ).decodeToString(),
+        )
+        val selfHosted = Json.decodeFromString<JvmCrashMarkerRecord>(
+            CrashMarkerRenderer().render(
+                thread = Thread.currentThread(),
+                throwable = IllegalStateException("self-hosted crash"),
+                runtime = runtime(),
+                occurredAtEpochMs = 1_700_000_000_000,
+            ).decodeToString(),
+        )
+
+        assertEquals(DiagnosticsDestinationKind.HOSTED, hosted.binding?.destinationKind)
+        assertEquals(DiagnosticsDestinationKind.SELF_HOSTED, selfHosted.binding?.destinationKind)
     }
 
     @Test
@@ -161,6 +201,141 @@ class CrashCaptureTest {
 
         val directory = temporaryFolder.root.resolve("client-diagnostics/crash-markers")
         assertTrue(directory.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun destructiveTransitionAbortsWhenAMatchingCrashMarkerCannotBeDeleted() = runTest {
+        FileCrashMarkerWriter(
+            noBackupFilesDir = temporaryFolder.root,
+            nowMs = { 1_700_000_000_000 },
+            nanoTime = { 1 },
+        ).write(Thread.currentThread(), IllegalStateException("private crash"), runtime())
+        val source = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = { false },
+            syncDirectory = {},
+            listFiles = File::listFiles,
+        )
+        val transitions = DefaultIdentityTransitionBarrier()
+        transitions.installGate { source.purge(DiagnosticsBinding("server-1", "user-1")) }
+        var mutationRan = false
+
+        assertFailsWith<IllegalStateException> {
+            transitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutationRan = true
+            }
+        }
+
+        assertFalse(mutationRan)
+        assertEquals(0, transitions.generation.value)
+        assertEquals(1, source.records().size)
+    }
+
+    @Test
+    fun purgeStrictlyRemovesMatchingMalformedAndTemporaryMarkerEvidence() {
+        FileCrashMarkerWriter(
+            noBackupFilesDir = temporaryFolder.root,
+            nowMs = { 1_700_000_000_000 },
+            nanoTime = { 1 },
+        ).write(Thread.currentThread(), IllegalStateException("private crash"), runtime())
+        val directory = temporaryFolder.root.resolve("client-diagnostics/crash-markers")
+        directory.resolve(".jvm-2-2.tmp").writeText("raw temporary private crash")
+        directory.resolve("jvm-3-3.json").writeText("raw malformed private crash")
+        val source = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = File::delete,
+            syncDirectory = {},
+            listFiles = File::listFiles,
+        )
+
+        source.purge(DiagnosticsBinding("server-1", "user-1"))
+
+        assertTrue(directory.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun destructiveTransitionAbortsWhenCrashMarkerDirectoryCannotBeEnumerated() = runTest {
+        val directory = temporaryFolder.root.resolve("client-diagnostics/crash-markers")
+        assertTrue(directory.mkdirs())
+        directory.resolve("jvm-3-3.json").writeText("raw private crash")
+        val source = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = File::delete,
+            syncDirectory = {},
+            listFiles = { null },
+        )
+        val transitions = DefaultIdentityTransitionBarrier()
+        transitions.installGate { source.purge(DiagnosticsBinding("server-1", "user-1")) }
+        var mutationRan = false
+
+        assertFailsWith<IllegalStateException> {
+            transitions.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutationRan = true
+            }
+        }
+
+        assertFalse(mutationRan)
+        assertTrue(directory.resolve("jvm-3-3.json").exists())
+    }
+
+    @Test
+    fun closeAndPurgeWaitForAnInFlightMarkerPublication() {
+        val gate = JvmCrashMarkerFileGate()
+        val writer = FileCrashMarkerWriter(
+            noBackupFilesDir = temporaryFolder.root,
+            nowMs = { 1_700_000_000_000 },
+            nanoTime = { 1 },
+        )
+        val runtime = AtomicReference(runtime().copy(identityKey = DiagnosticsIdentityKey(
+            binding = DiagnosticsBinding("server-1", "user-1"),
+            profileId = "profile-1",
+            ownershipGeneration = 7,
+        )))
+        val writeEntered = CountDownLatch(1)
+        val releaseWrite = CountDownLatch(1)
+        val transitionStarted = CountDownLatch(1)
+        val transitionFinished = CountDownLatch(1)
+        val handler = CrashExceptionHandler(
+            markerSink = CrashMarkerSink { thread, throwable, snapshot ->
+                writeEntered.countDown()
+                check(releaseWrite.await(5, TimeUnit.SECONDS))
+                writer.write(thread, throwable, snapshot)
+            },
+            runtimeSnapshot = runtime::get,
+            previous = null,
+            writeGate = gate,
+        )
+        val source = FileJvmCrashMarkerSource(
+            noBackupFilesDir = temporaryFolder.root,
+            fileGate = gate,
+            deleteFile = File::delete,
+            syncDirectory = {},
+            listFiles = File::listFiles,
+        )
+        val crashThread = thread(name = "diagnostics-crash-test") {
+            handler.uncaughtException(Thread.currentThread(), IllegalStateException("private crash"))
+        }
+        assertTrue(writeEntered.await(5, TimeUnit.SECONDS))
+        val transitionThread = thread(name = "diagnostics-transition-test") {
+            transitionStarted.countDown()
+            gate.withLock { runtime.set(CrashRuntimeSnapshot.empty()) }
+            source.purge(DiagnosticsBinding("server-1", "user-1"))
+            transitionFinished.countDown()
+        }
+        assertTrue(transitionStarted.await(5, TimeUnit.SECONDS))
+        assertFalse(transitionFinished.await(100, TimeUnit.MILLISECONDS))
+
+        releaseWrite.countDown()
+        crashThread.join(5_000)
+        transitionThread.join(5_000)
+
+        assertFalse(crashThread.isAlive)
+        assertFalse(transitionThread.isAlive)
+        assertEquals(CrashRuntimeSnapshot.empty(), runtime.get())
+        assertTrue(source.records().isEmpty())
     }
 
     private fun runtime(

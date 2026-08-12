@@ -1,6 +1,8 @@
 package org.siloserver.silo.common.diagnostics
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
@@ -137,13 +139,100 @@ class ExitInfoCollectorTest {
         assertEquals(1, fixture.store.list(BINDING).size)
     }
 
+    @Test
+    fun renderedHostedJvmMarkerMatchesHostedRunAndIsCollectedThenDeleted() = runTest {
+        val root = temporaryFolder.newFolder()
+        val hostedBinding = DiagnosticsBinding(
+            HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            "anonymous-hosted-device",
+        )
+        val context = DiagnosticsCaptureContext(
+            binding = hostedBinding,
+            profileId = null,
+            profileEligible = true,
+            noticeVersion = 2,
+            status = DiagnosticsAvailabilityStatus.AVAILABLE,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val ledger = DiagnosticsRunLedger(
+            root,
+            tokenFactory = { RUN_TOKEN },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
+        ledger.beginRun(context, EXIT_AT - 10_000, "hosted-capture")
+        val marker = Json.decodeFromString<JvmCrashMarkerRecord>(
+            CrashMarkerRenderer().render(
+                thread = Thread.currentThread(),
+                throwable = IllegalStateException("hosted crash"),
+                runtime = CrashRuntimeSnapshot(
+                    binding = PendingReportBinding(
+                        serverInstanceId = hostedBinding.serverInstanceId,
+                        accountUserId = hostedBinding.accountUserId,
+                        profileId = null,
+                        ownershipGeneration = context.ownershipGeneration,
+                        destinationKind = DiagnosticsDestinationKind.HOSTED,
+                    ),
+                    captureSessionId = "hosted-capture",
+                    runToken = RUN_TOKEN,
+                    foreground = true,
+                    playbackSessionIds = listOf("private-playback-session"),
+                    deviceSnapshotJson = DEVICE_JSON,
+                ),
+                occurredAtEpochMs = EXIT_AT,
+            ).decodeToString(),
+        )
+        assertEquals(DiagnosticsDestinationKind.HOSTED, marker.binding?.destinationKind)
+        val markers = FakeMarkerSource(listOf(marker))
+        val store = FilePendingReportStore(
+            root,
+            nowMs = { EXIT_AT + 1_000 },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
+        val collector = ExitInfoCollector(
+            source = AndroidExitInfoSource {
+                listOf(exit(reason = AndroidExitReason.JVM_CRASH, timestampMs = EXIT_AT + 100))
+            },
+            ledger = ledger,
+            reports = store,
+            markers = markers,
+            environment = ExitReportEnvironment(
+                appVersion = "1.0",
+                appBuild = "1",
+                platform = DiagnosticsPlatform.ANDROID,
+                osVersion = "Android 36",
+                deviceSummary = DiagnosticsDeviceSummary("Google", "Pixel", "Android 36", "phone"),
+            ),
+            deviceSnapshotBytes = { DEVICE_JSON.encodeToByteArray() },
+            noticeVersion = { 2 },
+        )
+
+        val report = collector.collect().single()
+
+        assertEquals(DiagnosticsDestinationKind.HOSTED, report.binding.destinationKind)
+        assertEquals(hostedBinding, report.binding.binding)
+        assertNull(report.binding.profileId)
+        assertTrue(report.manifest.playbackSessionIds.isEmpty())
+        assertFalse(report.directory.resolve("manifest.json").readText().contains("private-playback-session"))
+        assertEquals(listOf(marker), markers.deleted)
+        assertEquals(listOf(report.id), store.list(hostedBinding).map(PendingReport::id))
+        assertTrue(collector.collect().isEmpty())
+    }
+
     private suspend fun fixture(
         records: List<AndroidExitInfoRecord>,
         markers: FakeMarkerSource = FakeMarkerSource(emptyList()),
         breadcrumbs: DiagnosticsBreadcrumbSource = DiagnosticsBreadcrumbSource.None,
     ): Fixture {
         val root = temporaryFolder.newFolder()
-        val ledger = DiagnosticsRunLedger(root, tokenFactory = { RUN_TOKEN })
+        val ledger = DiagnosticsRunLedger(
+            root,
+            tokenFactory = { RUN_TOKEN },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
         ledger.beginRun(
             context = DiagnosticsCaptureContext(
                 binding = BINDING,
@@ -156,7 +245,12 @@ class ExitInfoCollectorTest {
             processStartedAtEpochMs = EXIT_AT - 10_000,
             captureSessionId = "capture-1",
         )
-        val store = FilePendingReportStore(root, nowMs = { EXIT_AT + 1_000 })
+        val store = FilePendingReportStore(
+            root,
+            nowMs = { EXIT_AT + 1_000 },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
         val collector = ExitInfoCollector(
             source = AndroidExitInfoSource { records },
             ledger = ledger,

@@ -1,10 +1,16 @@
 package org.siloserver.silo.network
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class IdentityTransitionBarrierTest {
     @Test
     fun gateRunsInlineBeforeMutationAndDidChangeRunsAfterward() = runTest {
@@ -59,6 +65,62 @@ class IdentityTransitionBarrierTest {
             observed.map(IdentityTransition::phase),
         )
         assertEquals(listOf(1L, 1L), observed.map(IdentityTransition::generation))
+    }
+
+    @Test
+    fun targetMetadataIsResolvedOnceAndCarriedAcrossBothTransitionPhases() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+        val observed = mutableListOf<IdentityTransition>()
+        var targetReads = 0
+        barrier.installObserverForTests(observed::add)
+
+        barrier.changing(
+            kind = IdentityTransitionKind.SERVER_REMOVE,
+            target = {
+                targetReads += 1
+                IdentityTransitionTarget(
+                    serverId = "server-b",
+                    affectsCurrentIdentity = false,
+                )
+            },
+        ) { }
+
+        assertEquals(1, targetReads)
+        assertEquals(listOf("server-b", "server-b"), observed.map(IdentityTransition::targetServerId))
+        assertEquals(listOf(false, false), observed.map(IdentityTransition::affectsCurrentIdentity))
+    }
+
+    @Test
+    fun currentGenerationFenceSerializesTheGuardedBoundaryWithMutation() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+        val guardedStarted = CompletableDeferred<Unit>()
+        val releaseGuard = CompletableDeferred<Unit>()
+        val mutationRequested = CompletableDeferred<Unit>()
+        val mutationStarted = CompletableDeferred<Unit>()
+
+        val guarded = async {
+            barrier.withCurrentGeneration(0) {
+                guardedStarted.complete(Unit)
+                releaseGuard.await()
+                "sent"
+            }
+        }
+        guardedStarted.await()
+        val mutation = async {
+            mutationRequested.complete(Unit)
+            barrier.changing(IdentityTransitionKind.SIGN_OUT) {
+                mutationStarted.complete(Unit)
+            }
+        }
+        mutationRequested.await()
+        runCurrent()
+        assertFalse(mutationStarted.isCompleted)
+
+        releaseGuard.complete(Unit)
+        assertEquals("sent", guarded.await())
+        mutation.await()
+        assertEquals(1, barrier.generation.value)
+        assertEquals(null, barrier.withCurrentGeneration(0) { "must-not-run" })
     }
 
     @Test

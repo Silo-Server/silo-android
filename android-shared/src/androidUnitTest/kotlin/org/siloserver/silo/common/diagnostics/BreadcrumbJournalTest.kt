@@ -13,6 +13,7 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsLogLevel
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogLine
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -25,6 +26,7 @@ class BreadcrumbJournalTest {
         val journal = BreadcrumbJournal(
             noBackupFilesDir = temporaryFolder.root,
             writerDispatcher = UnconfinedTestDispatcher(testScheduler),
+            directorySync = {},
         )
         val runA = renderedLine("run-a", "foreground")
         val runB = renderedLine("run-b", "background")
@@ -55,6 +57,7 @@ class BreadcrumbJournalTest {
         val previousJournal = BreadcrumbJournal(
             noBackupFilesDir = temporaryFolder.root,
             writerDispatcher = UnconfinedTestDispatcher(testScheduler),
+            directorySync = {},
         )
         previousJournal.setEnabled(IDENTITY_A)
         previousJournal.offer(previous)
@@ -62,6 +65,7 @@ class BreadcrumbJournalTest {
         val journal = BreadcrumbJournal(
             noBackupFilesDir = temporaryFolder.root,
             writerDispatcher = UnconfinedTestDispatcher(testScheduler),
+            directorySync = {},
         )
 
         journal.closeGate()
@@ -72,6 +76,23 @@ class BreadcrumbJournalTest {
         journal.setEnabled(IDENTITY_B)
         advanceUntilIdle()
         assertTrue(journal.linesForRun("previous-run", IDENTITY_A).isEmpty())
+    }
+
+    @Test
+    fun purgeFailsClosedWhenExistingBreadcrumbDirectoryCannotBeEnumerated() = runTest {
+        val root = temporaryFolder.newFolder("unreadable")
+        val directory = root.resolve("client-diagnostics/breadcrumbs")
+        assertTrue(directory.mkdirs())
+        directory.resolve("segment-private-0.jsonl").writeText("private")
+        val journal = BreadcrumbJournal(
+            noBackupFilesDir = root,
+            writerDispatcher = UnconfinedTestDispatcher(testScheduler),
+            listFiles = { null },
+            directorySync = {},
+        )
+
+        assertFailsWith<IllegalStateException> { journal.purge() }
+        assertTrue(directory.resolve("segment-private-0.jsonl").isFile)
     }
 
     private fun renderedLine(run: String, message: String): String = JSON.encodeToString(

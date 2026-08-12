@@ -13,6 +13,9 @@ import org.junit.rules.TemporaryFolder
 import org.siloserver.silo.model.diagnostics.DiagnosticsArchive
 import org.siloserver.silo.model.diagnostics.DiagnosticsConsent
 import org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode
+import org.siloserver.silo.model.diagnostics.DiagnosticsCrashInfo
+import org.siloserver.silo.model.diagnostics.DiagnosticsCrashProvenance
+import org.siloserver.silo.model.diagnostics.DiagnosticsCrashSource
 import org.siloserver.silo.model.diagnostics.DiagnosticsDestination
 import org.siloserver.silo.model.diagnostics.DiagnosticsDeviceSummary
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
@@ -57,8 +60,24 @@ class DiagnosticsBundleBuilderTest {
         assertEquals(bundle.bytes.size.toLong(), bundle.manifest.archive.bytes)
         assertEquals(tarBytes.size.toLong(), bundle.manifest.archive.uncompressedBytes)
         assertEquals(sha256Hex(bundle.bytes), bundle.manifest.archive.sha256)
+        assertEquals(0xff.toByte(), bundle.bytes[9], "self-hosted gzip origin stays runtime-native")
         assertFalse(Json.parseToJsonElement(entries.first().bytes.decodeToString()).jsonObject.containsKey("archive"))
         assertTrue(Json.parseToJsonElement(bundle.manifestBytes.decodeToString()).jsonObject.containsKey("archive"))
+    }
+
+    @Test
+    fun hostedBundleUsesCollectorCanonicalGzipOriginBeforeHashing() {
+        val bundle = builder.build(
+            report(
+                artifacts = mapOf("device.json" to "{}".encodeToByteArray()),
+                destinationKind = DiagnosticsDestinationKind.HOSTED,
+            ),
+            redactionTokens = emptyList(),
+        )
+
+        assertContentEquals(byteArrayOf(0x1f, 0x8b.toByte()), bundle.bytes.copyOfRange(0, 2))
+        assertEquals(0, bundle.bytes[9].toInt())
+        assertEquals(sha256Hex(bundle.bytes), bundle.manifest.archive.sha256)
     }
 
     @Test
@@ -148,7 +167,7 @@ class DiagnosticsBundleBuilderTest {
         assertFalse(hostedLogs[0].getValue("attrs").jsonObject.containsKey("buffered_ms"))
         assertFalse(hostedLogs[0].getValue("attrs").jsonObject.containsKey("failure_code"))
         assertFalse(hostedLogs[0].getValue("msg").jsonPrimitive.content.contains("private-playback-correlation"))
-        assertTrue(hostedLogs[0].getValue("msg").jsonPrimitive.content.contains("[REDACTED_PRIVATE_ID]"))
+        assertTrue(hostedLogs[0].getValue("msg").jsonPrimitive.content.contains("[redacted_private_id]"))
         assertEquals(setOf("state"), hostedLogs[1].getValue("attrs").jsonObject.keys)
         assertEquals(setOf("target", "action"), hostedBreadcrumb.getValue("attrs").jsonObject.keys)
         assertFalse(hostedEntries.containsKey("crash/tombstone.pb"))
@@ -284,23 +303,24 @@ class DiagnosticsBundleBuilderTest {
         ).forEach { leaked -> assertFalse(shipped.contains(leaked), "leaked $leaked in $shipped") }
         assertTrue(shipped.contains("wss://redacted.invalid/items/{id}"), shipped)
         assertTrue(shipped.contains("ws://redacted.invalid/items/{id}"), shipped)
-        assertTrue(shipped.contains("[REDACTED_PRIVATE_ID]"), shipped)
+        assertTrue(shipped.contains("[redacted_private_id]"), shipped)
         Json.parseToJsonElement(shippedDevice)
         shippedLog.lineSequence().filter(String::isNotBlank).forEach { line -> Json.parseToJsonElement(line) }
     }
 
     @Test
     fun hostedBundleCanonicalizesLoopbackIdentityAcrossEveryTextSurfaceOnly() {
-        val device = """{"host":"127.0.0.1","host.name":"LOCALHOST","server_url":"http://127.0.0.2:49152/device/42","server.url":"ws://[::1]:9000/device/42","origin":{"note":"removed"},"safe":{"hostname":"localhost","originUrl":"https://127.0.0.3/origin","base.url":"http://localhost/base","endpoint":"[::1]","address":"127.0.0.4","url":"http://[::1]:9001/device","server_instance_id":"keep","note":"device LOCALHOST 127.0.0.0 127.255.255.255 [::1] ::1 connect http://localhost:8080/items/42 url=http://127.0.0.5/private"}}""".encodeToByteArray()
-        val logs = """{"ts":"2026-08-11T00:00:00Z","run":"::1","lvl":"E","cat":"network","tag":"http://127.0.0.2:49152/items/42","msg":"host=127.0.0.1 throwable LOCALHOST peer [::1] ws://[::1]:9000/users/99 server_instance_id=keep","attrs":{"method":"GET","path":"/items/42","status":500,"duration_ms":2}}"""
+        val device = """{"host":"127.0.0.1","host.name":"LOCALHOST","server_url":"http://127.0.0.2:49152/device/42","server.url":"ws://[::1]:9000/device/42","origin":{"note":"removed"},"safe":{"hostname":"localhost","originUrl":"https://127.0.0.3/origin","base.url":"http://localhost/base","endpoint":"[::1]","address":"127.0.0.4","url":"http://[::1]:9001/device","server_instance_id":"keep","note":"device LOCALHOST 127.0.0.0 127.255.255.255 [::1] ::1 connect http://localhost:8080/items/42 url=http://127.0.0.5/private \"host\":\"127.0.0.12\" 'hostname'='localhost' \"playbackSessionId\":\"device-private-session\""}}""".encodeToByteArray()
+        val logs = """{"ts":"2026-08-11T00:00:00Z","run":"::1","lvl":"E","cat":"network","tag":"http://127.0.0.2:49152/items/42","msg":"host=127.0.0.1 throwable LOCALHOST peer [::1] ws://[::1]:9000/users/99 server_instance_id=keep \"host\":\"127.0.0.13\" 'hostname'='localhost' \"playbackSessionId\":\"log-private-session\"","attrs":{"method":"GET","path":"/items/42","status":500,"duration_ms":2}}"""
             .plus('\n').encodeToByteArray()
-        val breadcrumbs = """{"ts":"2026-08-11T00:00:01Z","run":"run-1","lvl":"I","cat":"focus","tag":"ws://127.0.0.3:9002/library/42","msg":"server_url='ws://[::1]:9001/items/42' origin=https://example.test/private bare 127.255.254.253 and ::1","attrs":{"target":"127.0.0.9","action":"baseUrl=http://localhost:1234/x"}}"""
+        val breadcrumbs = """{"ts":"2026-08-11T00:00:01Z","run":"run-1","lvl":"I","cat":"focus","tag":"ws://127.0.0.3:9002/library/42","msg":"server_url='ws://[::1]:9001/items/42' origin=https://example.test/private bare 127.255.254.253 and ::1 \"host\":\"127.0.0.14\" 'hostname'='localhost' 'playbackSessionId'='breadcrumb-private-session'","attrs":{"target":"127.0.0.9","action":"baseUrl=http://localhost:1234/x"}}"""
             .plus('\n').encodeToByteArray()
-        val crashSummary = """{"summary":"endpoint=http://127.0.0.5:8080/x bare localhost","stack_excerpt":"peer ::1 and [::1] http://127.0.0.6:8080/items/42","thread":"url='http://localhost:9000/private'"}"""
+        val crashSummary = """{"summary":"endpoint=http://127.0.0.5:8080/x bare localhost \"host\":\"127.0.0.15\" \"playbackSessionId\":\"summary-private-session\"","stack_excerpt":"peer ::1 and [::1] http://127.0.0.6:8080/items/42 'hostname'='localhost' 'playbackSessionId'='excerpt-private-session'","thread":"url='http://localhost:9000/private'"}"""
             .encodeToByteArray()
         val crashStack = (
             "IllegalStateException: hostname=\"LOCALHOST\" address=[::1] peer 127.0.0.7 ::1 [::1]\n" +
                 "at ws://[::1]:9000/items/42 endpoint : http://127.0.0.8:8080/private\n" +
+                "\"host\":\"127.0.0.16\" 'hostname'='localhost' \"playbackSessionId\":\"stack-private-session\"\n" +
                 "server=redacted.invalid server_instance_id=keep"
             ).encodeToByteArray()
         val artifacts = mapOf(
@@ -313,7 +333,8 @@ class DiagnosticsBundleBuilderTest {
         fun withLoopbackManifest(report: PendingReport): PendingReport = report.copy(
             manifest = report.manifest.copy(
                 report = report.manifest.report.copy(
-                    captureSessionId = "host=127.0.0.1",
+                    captureSessionId =
+                        "\"host\":\"127.0.0.1\" \"playbackSessionId\":\"manifest-private-session\"",
                     appVersion = "http://localhost:49152/build/42",
                     appBuild = "127.0.0.10",
                     osVersion = "peer ::1",
@@ -341,24 +362,29 @@ class DiagnosticsBundleBuilderTest {
             "crash stack" to hosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString(),
         )
         hostedSurfaces.forEach { (name, text) ->
-            assertTrue(text.contains("redacted.invalid"), "$name: $text")
-            assertTrue(text.contains("[redacted_network_identity]"), "$name: $text")
             assertFalse(text.contains("localhost", ignoreCase = true), "$name: $text")
             assertFalse(text.contains("127."), "$name: $text")
             assertFalse(text.contains("::1"), "$name: $text")
             assertFalse(text.contains("example.test"), "$name: $text")
             assertFalse(text.contains("already-safe"), "$name: $text")
+            assertFalse(text.contains("private-session"), "$name: $text")
         }
         val hostedText = hostedSurfaces.values.joinToString("\n")
         assertTrue(hostedText.contains("http://redacted.invalid:49152/build/{id}"), hostedText)
         assertTrue(hostedText.contains("http://redacted.invalid:49152/items/{id}"), hostedText)
-        assertTrue(hostedText.contains("ws://redacted.invalid:9000/users/{id}"), hostedText)
+        assertTrue(hostedText.contains("ws://redacted.invalid:9000/redacted"), hostedText)
         assertTrue(hostedText.contains("ws://redacted.invalid:9002/library/{id}"), hostedText)
         assertTrue(hostedText.contains("http://redacted.invalid:8080/items/{id}"), hostedText)
-        assertTrue(hostedText.contains("server_instance_id=keep"), hostedText)
+        assertFalse(hostedText.contains("server_instance_id=keep"), hostedText)
         assertFalse(
             Regex(
-                """(?i)\b(?:host(?:[._-]?name)?|server(?:[._-]?url)?|base[._-]?url|origin(?:[._-]?url)?|endpoint(?:[._-]?url)?|address|url)\s*[:=]""",
+                """(?i)(?<![a-z0-9_.\-'\"])[\"']?(?:host(?:[._-]?name)?|server(?:[._-]?url)?|base[._-]?url|origin(?:[._-]?url)?|endpoint(?:[._-]?url)?|address|url)[\"']?(?![a-z0-9_.-])\s*[:=]""",
+            ).containsMatchIn(hostedText),
+            hostedText,
+        )
+        assertFalse(
+            Regex(
+                """(?i)(?<![a-z0-9_.\-'\"])[\"']?(?:playback[_-]?session[_-]?id|session[_-]?id|(?:plan|selected|effective|requested|media)?[_-]?file[_-]?id|item[_-]?id|media[_-]?id|plan[_-]?id|playback[_-]?attempt[_-]?id|plan[_-]?attempt[_-]?key|subtitle[_-]?id|track[_-]?id)[\"']?(?![a-z0-9_.-])\s*[:=]""",
             ).containsMatchIn(hostedText),
             hostedText,
         )
@@ -373,7 +399,7 @@ class DiagnosticsBundleBuilderTest {
         val hostedDevice = Json.parseToJsonElement(hostedSurfaces.getValue("device")).jsonObject
         assertEquals(setOf("safe"), hostedDevice.keys)
         assertEquals(
-            setOf("server_instance_id", "note"),
+            setOf("note"),
             hostedDevice.getValue("safe").jsonObject.keys,
         )
 
@@ -388,10 +414,216 @@ class DiagnosticsBundleBuilderTest {
             selfHosted.manifestBytes.decodeToString(),
             selfHosted.sanitizedEntries.getValue("manifest.json").decodeToString(),
         ).forEach { manifest ->
-            assertTrue(manifest.contains("host=127.0.0.1"), manifest)
+            val captureSessionId = Json.parseToJsonElement(manifest).jsonObject
+                .getValue("report").jsonObject
+                .getValue("capture_session_id").jsonPrimitive.content
+            assertTrue(captureSessionId.contains("\"host\":\"127.0.0.1\""), manifest)
             assertTrue(manifest.contains("http://localhost:49152/build/42"), manifest)
+            assertTrue(manifest.contains("manifest-private-session"), manifest)
             assertFalse(manifest.contains("[redacted_network_identity]"), manifest)
         }
+    }
+
+    @Test
+    fun hostedBundleNormalizesR8ObfuscatedCrashSymbolsWithoutChangingSelfHostedEvidence() {
+        val rawStack = (
+            "a.b: failure\n" +
+                "    at a.b.c(SourceFile:42)\n" +
+                "caused by c.d: nested failure\n" +
+                "    at a.b.invokeSuspend(SourceFile:7)\n" +
+                "java.lang.IllegalStateException: named failure\n" +
+                "    at org.siloserver.silo.Player.play(Player.kt:9)\n"
+            )
+        val artifacts = mapOf(
+            "device.json" to "{}".encodeToByteArray(),
+            "logs.jsonl" to (
+                """{"ts":"2026-08-11T00:00:00Z","run":"run-1","lvl":"E","cat":"crash","tag":"Crash","msg":"playback failed\na.b: failure\ncaused by c.d: nested failure","attrs":{"fingerprint":"safe","source":"ueh"}}""" +
+                    "\n"
+                ).encodeToByteArray(),
+            "crash/summary.json" to
+                """{"throwable_type":"a.b","stack_excerpt":"a.b: failure\n    at a.b.c(SourceFile:42)"}"""
+                    .encodeToByteArray(),
+            "crash/stack.txt" to rawStack.encodeToByteArray(),
+        )
+        fun withCrashManifest(report: PendingReport): PendingReport = report.copy(
+            manifest = report.manifest.copy(
+                report = report.manifest.report.copy(type = DiagnosticsReportType.CRASH),
+                crash = DiagnosticsCrashInfo(
+                    summary = "a.b",
+                    stackExcerpt = rawStack,
+                    thread = "main",
+                    foreground = true,
+                    source = DiagnosticsCrashSource.UEH,
+                    provenance = DiagnosticsCrashProvenance.PRE_FAILURE,
+                    occurredAt = "2026-08-11T00:00:00Z",
+                ),
+            ),
+        )
+
+        val hosted = builder.build(
+            withCrashManifest(report(artifacts, DiagnosticsDestinationKind.HOSTED)),
+            redactionTokens = emptyList(),
+        )
+        val hostedSurfaces = linkedMapOf(
+            "outer manifest" to hosted.manifestBytes.decodeToString(),
+            "embedded manifest" to hosted.sanitizedEntries.getValue("manifest.json").decodeToString(),
+            "logs" to hosted.sanitizedEntries.getValue("logs.jsonl").decodeToString(),
+            "crash summary" to hosted.sanitizedEntries.getValue("crash/summary.json").decodeToString(),
+            "crash stack" to hosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString(),
+        )
+        hostedSurfaces.forEach { (name, text) ->
+            assertTrue(text.contains("android-obfuscated-error"), "$name: $text")
+            listOf("a.b:", "c.d:", "at a.b.").forEach { raw ->
+                assertFalse(text.contains(raw), "$name leaked $raw: $text")
+            }
+        }
+        listOf("outer manifest", "embedded manifest", "crash summary", "crash stack").forEach { name ->
+            assertTrue(
+                hostedSurfaces.getValue(name).contains("android-obfuscated-frame"),
+                "$name: ${hostedSurfaces.getValue(name)}",
+            )
+        }
+        val hostedStack = hostedSurfaces.getValue("crash stack")
+        assertTrue(hostedStack.contains("at android-obfuscated-frame(SourceFile:42)"), hostedStack)
+        assertTrue(hostedStack.contains("at android-obfuscated-frame(SourceFile:7)"), hostedStack)
+        assertTrue(hostedStack.contains("java.lang.IllegalStateException: named failure"), hostedStack)
+        assertTrue(hostedStack.contains("at org.siloserver.silo.Player.play(Player.kt:9)"), hostedStack)
+
+        val selfHosted = builder.build(
+            withCrashManifest(report(artifacts, DiagnosticsDestinationKind.SELF_HOSTED)),
+            redactionTokens = emptyList(),
+        )
+        artifacts.forEach { (path, bytes) ->
+            assertContentEquals(bytes, selfHosted.sanitizedEntries.getValue(path), path)
+        }
+        val selfHostedManifests = listOf(
+            selfHosted.manifestBytes.decodeToString(),
+            selfHosted.sanitizedEntries.getValue("manifest.json").decodeToString(),
+        )
+        selfHostedManifests.forEach { manifest ->
+            assertTrue(manifest.contains("a.b"), manifest)
+            assertFalse(manifest.contains("android-obfuscated-error"), manifest)
+            assertFalse(manifest.contains("android-obfuscated-frame"), manifest)
+        }
+    }
+
+    @Test
+    fun hostedBundleRedactsBareAndPrefixedPrivateIdsButPreservesCanonicalCaptureAndRunFields() {
+        val captureId = "run_0123456789abcdef0123456789abcdef"
+        val structuredRunId = "run_99999999999999999999999999999999"
+        val structuredBreadcrumbRunId = "0198a8f8-5678-4abc-8def-0123456789ab"
+        val freeUuid = "0198a8f8-9999-4abc-8def-0123456789ab"
+        val privateTokens = listOf(
+            "ps-1",
+            "playback_2",
+            "session-3",
+            "file_4",
+            "item-5",
+            "media_6",
+            "plan-7",
+            "attempt_8",
+            "profile-9",
+            "account_10",
+            "user-11",
+            "device_12",
+            "content-13",
+            "library_14",
+            "request-15",
+            "req_16",
+            "correlation-abcdefgh",
+            "server-17",
+            "subtitle-18",
+            "track_19",
+            "run-20",
+        )
+        val semanticTokens = listOf(
+            "request_cancelled",
+            "request_completed",
+            "session_unavailable",
+            "playback_unavailable",
+            "file_not_found",
+            "plan_invalidated",
+            "item_count",
+        )
+        val freeText = (listOf("Request", freeUuid) + privateTokens + semanticTokens).joinToString(" ")
+        val logs =
+            """{"ts":"2026-08-11T00:00:00Z","run":"$structuredRunId","lvl":"E","cat":"crash","tag":"request-15","msg":"$freeText","attrs":{"fingerprint":"correlation-abcdefgh","source":"file_4"}}""" +
+                "\n"
+        val breadcrumbs =
+            """{"ts":"2026-08-11T00:00:01Z","run":"$structuredBreadcrumbRunId","lvl":"I","cat":"focus","tag":"req_16","msg":"$freeText","attrs":{"target":"user-11","action":"request_cancelled"}}""" +
+                "\n"
+        val device =
+            """{"note":"$freeText","nested":{"request":"request_abcdefgh","url_note":"http://redacted.invalid/items/request-15"}}"""
+        val crashSummary = """{"summary":"$freeText","stack_excerpt":"Request $freeUuid failed"}"""
+        val crashStack = "IllegalStateException: $freeText\n    at Safe.Frame.method(Source.kt:1)\n"
+        val artifacts = mapOf(
+            "device.json" to device.encodeToByteArray(),
+            "logs.jsonl" to logs.encodeToByteArray(),
+            "breadcrumbs.jsonl" to breadcrumbs.encodeToByteArray(),
+            "crash/summary.json" to crashSummary.encodeToByteArray(),
+            "crash/stack.txt" to crashStack.encodeToByteArray(),
+        )
+        fun withPrivateManifest(report: PendingReport): PendingReport = report.copy(
+            manifest = report.manifest.copy(
+                report = report.manifest.report.copy(
+                    captureSessionId = captureId,
+                    appVersion = "request_abcdefgh",
+                    appBuild = "request_cancelled",
+                    osVersion = "Request $freeUuid failed",
+                ),
+                deviceSummary = report.manifest.deviceSummary.copy(
+                    manufacturer = "device_12",
+                    model = "request_completed",
+                ),
+            ),
+        )
+
+        val hosted = builder.build(
+            withPrivateManifest(report(artifacts, DiagnosticsDestinationKind.HOSTED)),
+            redactionTokens = emptyList(),
+        )
+        val hostedSurfaces = linkedMapOf(
+            "outer manifest" to hosted.manifestBytes.decodeToString(),
+            "embedded manifest" to hosted.sanitizedEntries.getValue("manifest.json").decodeToString(),
+            "device" to hosted.sanitizedEntries.getValue("device.json").decodeToString(),
+            "logs" to hosted.sanitizedEntries.getValue("logs.jsonl").decodeToString(),
+            "breadcrumbs" to hosted.sanitizedEntries.getValue("breadcrumbs.jsonl").decodeToString(),
+            "crash summary" to hosted.sanitizedEntries.getValue("crash/summary.json").decodeToString(),
+            "crash stack" to hosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString(),
+        )
+        hostedSurfaces.forEach { (name, text) ->
+            assertFalse(text.contains(freeUuid), "$name leaked $freeUuid: $text")
+            privateTokens.forEach { token ->
+                assertFalse(text.contains(token), "$name leaked $token: $text")
+            }
+            assertTrue(text.contains("[redacted_private_id]"), "$name: $text")
+        }
+        val outerManifest = Json.parseToJsonElement(hostedSurfaces.getValue("outer manifest")).jsonObject
+        val embeddedManifest = Json.parseToJsonElement(hostedSurfaces.getValue("embedded manifest")).jsonObject
+        listOf(outerManifest, embeddedManifest).forEach { manifest ->
+            val hostedCaptureId =
+                manifest.getValue("report").jsonObject.getValue("capture_session_id").jsonPrimitive.content
+            assertTrue(CANONICAL_UUID.matches(hostedCaptureId), hostedCaptureId)
+            assertFalse(hostedCaptureId.contains(captureId), hostedCaptureId)
+        }
+        val hostedLog = Json.parseToJsonElement(hostedSurfaces.getValue("logs").trim()).jsonObject
+        val hostedBreadcrumb = Json.parseToJsonElement(hostedSurfaces.getValue("breadcrumbs").trim()).jsonObject
+        assertTrue(CANONICAL_UUID.matches(hostedLog.getValue("run").jsonPrimitive.content))
+        assertEquals(structuredBreadcrumbRunId, hostedBreadcrumb.getValue("run").jsonPrimitive.content)
+        assertTrue(hostedSurfaces.getValue("device").contains("[redacted_private_id]"))
+        semanticTokens.forEach { token ->
+            assertTrue(hostedSurfaces.values.any { it.contains(token) }, "missing semantic token $token")
+        }
+
+        val selfHosted = builder.build(
+            withPrivateManifest(report(artifacts, DiagnosticsDestinationKind.SELF_HOSTED)),
+            redactionTokens = emptyList(),
+        )
+        artifacts.forEach { (path, bytes) ->
+            assertContentEquals(bytes, selfHosted.sanitizedEntries.getValue(path), path)
+        }
+        assertTrue(selfHosted.manifestBytes.decodeToString().contains(freeUuid))
+        assertTrue(selfHosted.manifestBytes.decodeToString().contains("request_abcdefgh"))
     }
 
     @Test
@@ -410,14 +642,103 @@ class DiagnosticsBundleBuilderTest {
             redactionTokens = emptyList(),
         )
 
-        assertContentEquals(
-            boundaryValues.encodeToByteArray(),
-            bundle.sanitizedEntries.getValue("crash/stack.txt"),
+        val sanitized = bundle.sanitizedEntries.getValue("crash/stack.txt").decodeToString()
+        assertEquals("[redacted_private_id]", sanitized)
+
+        val selfHosted = builder.build(
+            report(
+                artifacts = mapOf(
+                    "device.json" to "{}".encodeToByteArray(),
+                    "crash/stack.txt" to boundaryValues.encodeToByteArray(),
+                ),
+                destinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
+            ),
+            redactionTokens = emptyList(),
         )
+        assertEquals(boundaryValues, selfHosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString())
     }
 
     @Test
-    fun hostedDeviceSnapshotOmitsDeterministicRouteAndDeviceIdentifiersOnlyForHosted() {
+    fun hostedBundleNormalizesBareNetworkAndAndroidPathProseAcrossEveryTextSurface() {
+        val privateIp = "192.168.1.44"
+        val privateDns = "silo.home.ArpaServer"
+        val privatePath = "/data/user/0/org.siloserver.silo/files/diagnostics.log"
+        val compactId = "0123456789abcdef0123456789abcdef"
+        val transportError =
+            "java.net.ConnectException: Failed to connect to /$privateIp:8096; " +
+                "java.net.UnknownHostException: Unable to resolve host \"$privateDns\"; file=$privatePath; " +
+                "user_id=alice password=hunter2 request_id=req_abcdefgh peer=0x7f000001; " +
+                "targets 2130706433 017700000001 127.1 127.0x000001; " +
+                "unicode https://silo。home/users/42; routes /api/v1/items/42 and " +
+                "/api?token=secretvalue; request $compactId"
+        val jsonTransportError = transportError.replace("\\", "\\\\").replace("\"", "\\\"")
+        val logs =
+            """{"ts":"2026-08-11T00:00:00.123Z","run":"run_0123456789abcdef0123456789abcdef","lvl":"E","cat":"network","tag":"$privateDns","msg":"$jsonTransportError","attrs":{"method":"GET","path":"/items/42","status":503,"duration_ms":5}}"""
+                .plus('\n').encodeToByteArray()
+        val crashSummary =
+            """{"kind":"jvm_crash","summary":"$jsonTransportError","stack_excerpt":"$jsonTransportError"}"""
+                .encodeToByteArray()
+        val crashStack = (transportError + "\n    at java.net.Socket.connect(Socket.java:42)\n").encodeToByteArray()
+        val device =
+            """{"captured_at":"2026-08-11T00:00:00.987654321Z","note":"$jsonTransportError","user_id":"alice","nested":{"password":"hunter2"}}"""
+                .encodeToByteArray()
+        val artifacts = mapOf(
+            "device.json" to device,
+            "logs.jsonl" to logs,
+            "crash/summary.json" to crashSummary,
+            "crash/stack.txt" to crashStack,
+        )
+        fun withNetworkManifest(report: PendingReport) = report.copy(
+            manifest = report.manifest.copy(
+                report = report.manifest.report.copy(
+                    capturedAt = "2026-08-11T00:00:00.456Z",
+                    captureSessionId = "run_0123456789abcdef0123456789abcdef",
+                    appVersion = privateDns,
+                ),
+                deviceSummary = report.manifest.deviceSummary.copy(model = "peer=$privateIp"),
+            ),
+        )
+
+        val hosted = builder.build(
+            withNetworkManifest(report(artifacts, DiagnosticsDestinationKind.HOSTED)),
+            redactionTokens = emptyList(),
+        )
+        val hostedSurfaces = hosted.sanitizedEntries.values.map(ByteArray::decodeToString) +
+            hosted.manifestBytes.decodeToString()
+        hostedSurfaces.forEach { text ->
+            assertFalse(text.contains(privateIp), text)
+            assertFalse(text.contains(privateDns), text)
+            assertFalse(text.contains(privatePath), text)
+            assertFalse(text.contains("user_id"), text)
+            assertFalse(text.contains("password"), text)
+            assertFalse(text.contains("request_id"), text)
+            assertFalse(text.contains("peer="), text)
+            listOf("2130706433", "017700000001", "127.1", "127.0x000001", "silo。home")
+                .forEach { value -> assertFalse(text.contains(value), text) }
+            assertFalse(text.contains("/api"), text)
+            assertFalse(text.contains(compactId), text)
+        }
+        val hostedText = hostedSurfaces.joinToString("\n")
+        assertTrue(hostedText.contains("[redacted_private_id]"), hostedText)
+        listOf(
+            "2026-08-11T00:00:00.123Z",
+            "2026-08-11T00:00:00.456Z",
+            "2026-08-11T00:00:00.987654321Z",
+        ).forEach { timestamp -> assertTrue(hostedText.contains(timestamp), hostedText) }
+
+        val selfHosted = builder.build(
+            withNetworkManifest(report(artifacts, DiagnosticsDestinationKind.SELF_HOSTED)),
+            redactionTokens = emptyList(),
+        )
+        artifacts.forEach { (path, bytes) ->
+            assertContentEquals(bytes, selfHosted.sanitizedEntries.getValue(path), path)
+        }
+        assertTrue(selfHosted.manifestBytes.decodeToString().contains(privateDns))
+        assertTrue(selfHosted.manifestBytes.decodeToString().contains("peer=$privateIp"))
+    }
+
+    @Test
+    fun hostedDeviceSnapshotOmitsDeterministicRouteDeviceAndBuildIdentifiersOnlyForHosted() {
         val device = """{"identity":{"manufacturer":"NVIDIA","build_fingerprint_hash":"${"a".repeat(32)}"},"audio":{"route_hashes":["${"b".repeat(32)}"],"outputs":[{"type":"hdmi","id":"${"c".repeat(32)}","address":"${"d".repeat(32)}"}]}}"""
         val artifacts = mapOf("device.json" to device.encodeToByteArray())
 
@@ -430,12 +751,46 @@ class DiagnosticsBundleBuilderTest {
             redactionTokens = emptyList(),
         ).sanitizedEntries.getValue("device.json").decodeToString()
 
-        listOf("route_hashes", "\"id\"", "\"address\"", "b".repeat(32), "c".repeat(32), "d".repeat(32))
+        listOf(
+            "build_fingerprint_hash",
+            "route_hashes",
+            "\"id\"",
+            "\"address\"",
+            "a".repeat(32),
+            "b".repeat(32),
+            "c".repeat(32),
+            "d".repeat(32),
+        )
             .forEach { value -> assertFalse(hostedDevice.contains(value), hostedDevice) }
-        assertTrue(hostedDevice.contains("build_fingerprint_hash"), hostedDevice)
+        assertTrue(selfHostedDevice.contains("build_fingerprint_hash"), selfHostedDevice)
         assertTrue(selfHostedDevice.contains("route_hashes"), selfHostedDevice)
         assertTrue(selfHostedDevice.contains("\"id\""), selfHostedDevice)
         assertTrue(selfHostedDevice.contains("\"address\""), selfHostedDevice)
+    }
+
+    @Test
+    fun hostedCrashSummaryOmitsProcessIdentityOnlyForHosted() {
+        val processHash = "e".repeat(32)
+        val summary =
+            """{"kind":"native_crash","process_hash":"$processHash","pid":42,"status":6}"""
+        val artifacts = mapOf(
+            "device.json" to "{}".encodeToByteArray(),
+            "crash/summary.json" to summary.encodeToByteArray(),
+        )
+
+        val hostedSummary = builder.build(
+            report(artifacts, DiagnosticsDestinationKind.HOSTED),
+            redactionTokens = emptyList(),
+        ).sanitizedEntries.getValue("crash/summary.json").decodeToString()
+        val selfHostedSummary = builder.build(
+            report(artifacts, DiagnosticsDestinationKind.SELF_HOSTED),
+            redactionTokens = emptyList(),
+        ).sanitizedEntries.getValue("crash/summary.json").decodeToString()
+
+        assertFalse(hostedSummary.contains("process_hash"), hostedSummary)
+        assertFalse(hostedSummary.contains(processHash), hostedSummary)
+        assertTrue(hostedSummary.contains("\"kind\":\"native_crash\""), hostedSummary)
+        assertEquals(summary, selfHostedSummary)
     }
 
     @Test
@@ -552,5 +907,8 @@ class DiagnosticsBundleBuilderTest {
 
     private companion object {
         const val TAR_BLOCK_SIZE = 512
+        val CANONICAL_UUID = Regex(
+            """(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$""",
+        )
     }
 }

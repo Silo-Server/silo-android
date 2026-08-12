@@ -90,7 +90,7 @@ class TvLoginViewModel(
                         return@launch
                     }
                     deviceLoginJob?.cancel()
-                    tokenManager.saveTokens(
+                    tokenManager.replaceAccountSession(
                         accessToken = result.data.accessToken,
                         refreshToken = result.data.refreshToken,
                         expiresIn = result.data.expiresIn,
@@ -171,7 +171,7 @@ class TvLoginViewModel(
             return
         }
         credentialLoginJob?.cancel()
-        tokenManager.saveTokens(
+        tokenManager.replaceAccountSession(
             accessToken = accessToken,
             refreshToken = refreshToken,
             expiresIn = response.expiresIn ?: 0L,

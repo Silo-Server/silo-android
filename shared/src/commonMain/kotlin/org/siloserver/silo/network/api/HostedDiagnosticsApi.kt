@@ -281,17 +281,7 @@ class DefaultHostedDiagnosticsApi(
         if (response.status == HttpStatusCode.NoContent) {
             HostedDiagnosticsApiResult.Success(Unit)
         } else {
-            val failure = response.failure()
-            if (
-                response.status == HttpStatusCode.NotFound &&
-                failure.errorCode == "report_not_found"
-            ) {
-                // Repeated DELETE can observe 404 after the collector has
-                // already unlinked the report from this installation.
-                HostedDiagnosticsApiResult.Success(Unit)
-            } else {
-                failure
-            }
+            response.failure()
         }
     } catch (error: Throwable) {
         if (error is CancellationException) throw error

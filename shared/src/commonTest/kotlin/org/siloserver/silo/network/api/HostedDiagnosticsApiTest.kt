@@ -274,7 +274,7 @@ class HostedDiagnosticsApiTest {
     }
 
     @Test
-    fun reportNotFoundCompletesAnIdempotentDeleteRetry() = runTest {
+    fun reportNotFoundRemainsAFailureForForeignInstallationOwnership() = runTest {
         val transport = createHostedDiagnosticsClient(
             baseUrl = "https://collector.example",
             platformClient = HttpClient(
@@ -288,9 +288,11 @@ class HostedDiagnosticsApiTest {
             ),
         )
 
-        assertIs<HostedDiagnosticsApiResult.Success<Unit>>(
+        val result = assertIs<HostedDiagnosticsApiResult.Failure>(
             DefaultHostedDiagnosticsApi(transport).deleteReport(INSTALLATION_TOKEN, REPORT_ID),
         )
+        assertEquals(HttpStatusCode.NotFound.value, result.httpStatus)
+        assertEquals("report_not_found", result.errorCode)
         transport.close()
     }
 

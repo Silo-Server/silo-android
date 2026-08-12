@@ -56,14 +56,30 @@ data class SentDiagnosticsReport(
     val state: String = "accepted",
 )
 
+@Serializable
+private data class DiagnosticsBindingIndex(
+    val byLocalServerId: Map<String, List<DiagnosticsBinding>> = emptyMap(),
+)
+
+@Serializable
+private data class DiagnosticsErasureIndex(
+    val bindings: List<DiagnosticsBinding> = emptyList(),
+)
+
 fun interface DiagnosticsBindingPurger {
-    suspend fun purge(binding: DiagnosticsBinding)
+    suspend fun purge(binding: DiagnosticsBinding, includeLiveCapture: Boolean)
+}
+
+fun interface DiagnosticsAllEvidencePurger {
+    suspend fun purge(includeLiveCapture: Boolean)
 }
 
 class DiagnosticsSettingsStore(
     private val dataStore: DataStore<Preferences>,
     private val bindingPurger: DiagnosticsBindingPurger,
     private val historyLimit: Int = DEFAULT_HISTORY_LIMIT,
+    private val afterErasureIntentPersisted: suspend (DiagnosticsBinding) -> Unit = {},
+    private val allEvidencePurger: DiagnosticsAllEvidencePurger? = null,
 ) {
     init {
         require(historyLimit > 0) { "historyLimit must be positive" }
@@ -98,6 +114,9 @@ class DiagnosticsSettingsStore(
         noticeVersion: Int,
     ) {
         require(noticeVersion > 0) { "noticeVersion must be positive" }
+        if (mode != DiagnosticsConsentMode.NEVER) {
+            retryPendingErasure(binding, includeLiveCapture = true)
+        }
         val keys = keys(binding)
         dataStore.edit { preferences ->
             preferences[keys.consentMode] = mode.name
@@ -105,9 +124,43 @@ class DiagnosticsSettingsStore(
             if (mode == DiagnosticsConsentMode.NEVER) {
                 preferences[DEBUG_LOGGING_KEY] = false
                 preferences.remove(keys.sentHistory)
+                val pending = decodeErasureIndex(preferences[ERASURE_INDEX_KEY])
+                preferences.storeErasureIndex(
+                    pending.copy(bindings = (pending.bindings + binding).distinct()),
+                )
             }
         }
-        if (mode == DiagnosticsConsentMode.NEVER) bindingPurger.purge(binding)
+        if (mode == DiagnosticsConsentMode.NEVER) {
+            // Test seam models process death in the only meaningful crash
+            // window: NEVER and its erasure authority are durable, but no
+            // evidence has been removed yet.
+            afterErasureIntentPersisted(binding)
+            retryPendingErasure(binding, includeLiveCapture = true)
+        }
+    }
+
+    suspend fun retryPendingErasures(currentBinding: DiagnosticsBinding? = null) {
+        val pending = pendingErasureBindings()
+        pending.sortedBy { it != currentBinding }.forEach { binding ->
+            retryPendingErasure(binding, includeLiveCapture = binding == currentBinding)
+        }
+    }
+
+    suspend fun pendingErasureBindings(): List<DiagnosticsBinding> =
+        decodeErasureIndex(dataStore.data.first()[ERASURE_INDEX_KEY]).bindings.distinct()
+
+    private suspend fun retryPendingErasure(
+        binding: DiagnosticsBinding,
+        includeLiveCapture: Boolean,
+    ) {
+        if (binding !in pendingErasureBindings()) return
+        bindingPurger.purge(binding, includeLiveCapture)
+        dataStore.edit { preferences ->
+            val pending = decodeErasureIndex(preferences[ERASURE_INDEX_KEY])
+            preferences.storeErasureIndex(
+                pending.copy(bindings = pending.bindings.filterNot { it == binding }),
+            )
+        }
     }
 
     suspend fun demoteAlwaysToAsk(binding: DiagnosticsBinding, noticeVersion: Int): Boolean {
@@ -135,6 +188,30 @@ class DiagnosticsSettingsStore(
         dataStore.data.first()[DESTINATION_KIND_KEY]
             ?.let { raw -> DiagnosticsDestinationKind.entries.firstOrNull { it.name == raw } }
             ?: DiagnosticsDestinationKind.HOSTED
+
+    /**
+     * Fail-closed send-time policy check. Callers perform this while holding
+     * [DiagnosticsPrivacyBarrier], immediately before starting transport.
+     */
+    suspend fun permitsUpload(
+        binding: PendingReportBinding,
+        noticeVersion: Int,
+        requireAlwaysConsent: Boolean,
+    ): Boolean {
+        val preferences = dataStore.data.first()
+        val destination = preferences[DESTINATION_KIND_KEY]
+            ?.let { raw -> DiagnosticsDestinationKind.entries.firstOrNull { it.name == raw } }
+            ?: DiagnosticsDestinationKind.HOSTED
+        if (destination != binding.destinationKind) return false
+        if (binding.binding in decodeErasureIndex(preferences[ERASURE_INDEX_KEY]).bindings) return false
+        if (!requireAlwaysConsent) return true
+
+        val keys = keys(binding.binding)
+        val mode = preferences[keys.consentMode]
+            ?.let { raw -> DiagnosticsConsentMode.entries.firstOrNull { it.name == raw } }
+            ?: DiagnosticsConsentMode.ASK
+        return mode == DiagnosticsConsentMode.ALWAYS && preferences[keys.noticeVersion] == noticeVersion
+    }
 
     suspend fun setDestinationKind(destinationKind: DiagnosticsDestinationKind) {
         dataStore.edit { preferences -> preferences[DESTINATION_KIND_KEY] = destinationKind.name }
@@ -171,7 +248,16 @@ class DiagnosticsSettingsStore(
             sourceProfileId = context.sourceProfileId,
             destinationKind = context.destinationKind,
         )
-        dataStore.edit { preferences -> preferences[CACHED_CONTEXT_KEY] = JSON.encodeToString(cached) }
+        dataStore.edit { preferences ->
+            preferences[CACHED_CONTEXT_KEY] = JSON.encodeToString(cached)
+            context.localServerId?.takeIf(String::isNotBlank)?.let { localServerId ->
+                val index = decodeBindingIndex(preferences[BINDING_INDEX_KEY])
+                val bindings = (index.byLocalServerId[localServerId].orEmpty() + context.binding).distinct()
+                preferences.storeBindingIndex(
+                    index.copy(byLocalServerId = index.byLocalServerId + (localServerId to bindings)),
+                )
+            }
+        }
     }
 
     suspend fun cachedContext(): CachedDiagnosticsContext? =
@@ -198,6 +284,15 @@ class DiagnosticsSettingsStore(
         require(state.isNotBlank()) { "state must not be blank" }
         val keys = keys(binding)
         dataStore.edit { preferences ->
+            val consentMode = preferences[keys.consentMode]
+                ?.let { raw -> DiagnosticsConsentMode.entries.firstOrNull { it.name == raw } }
+            val erasurePending = binding in decodeErasureIndex(preferences[ERASURE_INDEX_KEY]).bindings
+            if (consentMode == DiagnosticsConsentMode.NEVER || erasurePending) {
+                // A direct WorkManager upload can settle after Turn Off has
+                // durably won. Never recreate history for an identity whose
+                // local/remote erasure is pending or whose consent is NEVER.
+                return@edit
+            }
             val existing = decodeHistory(preferences[keys.sentHistory])
             val updated = (listOf(SentDiagnosticsReport(shortId, sentAtEpochMs, state)) + existing)
                 .distinctBy(SentDiagnosticsReport::shortId)
@@ -212,7 +307,35 @@ class DiagnosticsSettingsStore(
             .sortedByDescending(SentDiagnosticsReport::sentAtEpochMs)
             .take(historyLimit)
 
-    suspend fun purgeBinding(binding: DiagnosticsBinding) {
+    suspend fun purgeBinding(
+        binding: DiagnosticsBinding,
+        includeLiveCapture: Boolean = true,
+    ) {
+        scrubBindingMetadata(binding)
+        bindingPurger.purge(binding, includeLiveCapture)
+        dataStore.edit { preferences ->
+            val index = decodeBindingIndex(preferences[BINDING_INDEX_KEY])
+            preferences.storeBindingIndex(
+                index.copy(
+                    byLocalServerId = index.byLocalServerId.mapValues { (_, bindings) ->
+                        bindings.filterNot { it == binding }
+                    }.filterValues { bindings -> bindings.isNotEmpty() },
+                ),
+            )
+            val pending = decodeErasureIndex(preferences[ERASURE_INDEX_KEY])
+            preferences.storeErasureIndex(
+                pending.copy(bindings = pending.bindings.filterNot { it == binding }),
+            )
+        }
+    }
+
+    /**
+     * Removes user-visible metadata without invoking the evidence purger.
+     * The identity gate calls [purgeBinding] synchronously; the coordinator
+     * actor repeats this metadata-only half after any queued upload settles so
+     * late network bookkeeping cannot revive history from the old identity.
+     */
+    suspend fun scrubBindingMetadata(binding: DiagnosticsBinding) {
         val prefix = bindingKey(binding)
         dataStore.edit { preferences ->
             preferences.asMap().keys
@@ -223,12 +346,96 @@ class DiagnosticsSettingsStore(
             }
             if (cached?.binding == binding) preferences.remove(CACHED_CONTEXT_KEY)
         }
-        bindingPurger.purge(binding)
+    }
+
+    suspend fun bindingsForLocalServer(localServerId: String): List<DiagnosticsBinding> {
+        require(localServerId.isNotBlank()) { "localServerId must not be blank" }
+        return decodeBindingIndex(dataStore.data.first()[BINDING_INDEX_KEY])
+            .byLocalServerId[localServerId]
+            .orEmpty()
+            .distinct()
+    }
+
+    suspend fun purgeLocalServer(
+        localServerId: String,
+        fallbackBinding: DiagnosticsBinding? = null,
+    ) {
+        require(localServerId.isNotBlank()) { "localServerId must not be blank" }
+        val persistedIndex = decodeBindingIndex(dataStore.data.first()[BINDING_INDEX_KEY])
+        val indexedBindings = persistedIndex.byLocalServerId[localServerId]
+        if (indexedBindings == null && fallbackBinding == null) {
+            val migrationComplete = dataStore.data.first()[BINDING_INDEX_MIGRATION_COMPLETE_KEY] ?: false
+            if (migrationComplete) {
+                // Once the legacy evidence inventory has been drained, an
+                // absent entry is authoritative: this server never collected
+                // diagnostics under the indexed scheme. Do not erase another
+                // server's evidence merely because this target is new.
+                return
+            }
+            // Upgrade boundary: older builds retained reports without a
+            // localServerId -> binding index. The removed inactive server
+            // cannot be reconstructed from hosted/account hashes, so fail
+            // closed once by removing all persisted diagnostics evidence.
+            checkNotNull(allEvidencePurger) {
+                "legacy diagnostics cleanup requires an all-evidence purger"
+            }.purge(includeLiveCapture = false)
+            dataStore.edit { preferences ->
+                preferences.asMap().keys
+                    .filter { key -> key.name.startsWith("diagnostics.binding.") }
+                    .forEach { key -> preferences.removeUntyped(key) }
+                preferences.remove(CACHED_CONTEXT_KEY)
+                preferences.remove(BINDING_INDEX_KEY)
+                preferences.remove(ERASURE_INDEX_KEY)
+                preferences[BINDING_INDEX_MIGRATION_COMPLETE_KEY] = true
+            }
+            return
+        }
+        val bindings = (indexedBindings.orEmpty() + listOfNotNull(fallbackBinding)).distinct()
+        bindings.forEach { binding ->
+            purgeBinding(binding, includeLiveCapture = false)
+        }
+        dataStore.edit { preferences ->
+            val index = decodeBindingIndex(preferences[BINDING_INDEX_KEY])
+            preferences.storeBindingIndex(
+                index.copy(byLocalServerId = index.byLocalServerId - localServerId),
+            )
+        }
     }
 
     private fun decodeHistory(raw: String?): List<SentDiagnosticsReport> =
         raw?.let { encoded -> runCatching { JSON.decodeFromString<List<SentDiagnosticsReport>>(encoded) }.getOrNull() }
             .orEmpty()
+
+    private fun decodeBindingIndex(raw: String?): DiagnosticsBindingIndex {
+        val index = raw?.let { encoded -> JSON.decodeFromString<DiagnosticsBindingIndex>(encoded) }
+            ?: DiagnosticsBindingIndex()
+        require(index.byLocalServerId.keys.none(String::isBlank)) { "invalid diagnostics binding index" }
+        return index
+    }
+
+    private fun decodeErasureIndex(raw: String?): DiagnosticsErasureIndex =
+        raw?.let { encoded -> JSON.decodeFromString<DiagnosticsErasureIndex>(encoded) }
+            ?: DiagnosticsErasureIndex()
+
+    private fun androidx.datastore.preferences.core.MutablePreferences.storeBindingIndex(
+        index: DiagnosticsBindingIndex,
+    ) {
+        if (index.byLocalServerId.isEmpty()) {
+            remove(BINDING_INDEX_KEY)
+        } else {
+            this[BINDING_INDEX_KEY] = JSON.encodeToString(index)
+        }
+    }
+
+    private fun androidx.datastore.preferences.core.MutablePreferences.storeErasureIndex(
+        index: DiagnosticsErasureIndex,
+    ) {
+        if (index.bindings.isEmpty()) {
+            remove(ERASURE_INDEX_KEY)
+        } else {
+            this[ERASURE_INDEX_KEY] = JSON.encodeToString(index)
+        }
+    }
 
     private fun keys(binding: DiagnosticsBinding): BindingKeys {
         val prefix = bindingKey(binding)
@@ -266,6 +473,10 @@ class DiagnosticsSettingsStore(
         val DESTINATION_KIND_KEY = stringPreferencesKey("diagnostics.device.destination_kind")
         val HOSTED_CAPABILITIES_KEY = stringPreferencesKey("diagnostics.hosted.capabilities")
         val CACHED_CONTEXT_KEY = stringPreferencesKey("diagnostics.last_context")
+        val BINDING_INDEX_KEY = stringPreferencesKey("diagnostics.binding_index")
+        val BINDING_INDEX_MIGRATION_COMPLETE_KEY =
+            booleanPreferencesKey("diagnostics.binding_index_migration_complete")
+        val ERASURE_INDEX_KEY = stringPreferencesKey("diagnostics.erasure_pending")
         val JSON = Json { ignoreUnknownKeys = true }
     }
 }

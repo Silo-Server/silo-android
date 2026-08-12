@@ -86,7 +86,7 @@ class FileDiagnosticsCaptureController(
                 debugLogging = true,
             )
         } finally {
-            frozen.files.firstOrNull()?.parentFile?.deleteRecursively()
+            fileLogger.deleteFrozen(frozen)
             logBuffer.rotateGeneration()
         }
     }
@@ -154,17 +154,21 @@ class FileDiagnosticsCaptureController(
         )
     }
 
-    override suspend fun purge(binding: DiagnosticsBinding) {
+    override suspend fun purgeCurrentEvidence() {
         var failure: Throwable? = null
         suspend fun attempt(block: suspend () -> Unit) {
             runCatching { block() }.onFailure { error -> if (failure == null) failure = error }
         }
         val owned = active.get()
-        if (owned != null && owned.capture.identityKey.binding == binding) attempt { cancelOwned(owned) }
+        if (owned != null) attempt { cancelOwned(owned) }
         attempt { fileLogger.purgeStoredEvidence() }
         attempt { breadcrumbJournal?.purge() }
         attempt { logBuffer.clear() }
         failure?.let { throw it }
+    }
+
+    override suspend fun reconcileStoredEvidence() {
+        fileLogger.reconcileStoredEvidence()
     }
 
     private fun saveManual(

@@ -162,6 +162,7 @@ class DefaultDiagnosticsIdentityResolver(
                 !child
             }
 
+            val credentialFingerprint = currentCredentialFingerprint()
             if (identityTransitions.generation.value != generation) continue
             val context = DiagnosticsCaptureContext(
                 binding = DiagnosticsBinding(status.serverInstanceId, accountUserId),
@@ -175,7 +176,7 @@ class DefaultDiagnosticsIdentityResolver(
                 maxManifestBytes = status.maxManifestBytes,
                 retentionDays = status.retentionDays,
                 localServerId = server.id,
-                credentialFingerprint = currentCredentialFingerprint(),
+                credentialFingerprint = credentialFingerprint,
             )
             return context
         }

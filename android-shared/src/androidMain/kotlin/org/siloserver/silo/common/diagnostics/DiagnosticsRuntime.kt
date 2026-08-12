@@ -18,7 +18,7 @@ class DefaultDiagnosticsRuntimePublisher(
     override fun closeGate() {
         playbackSessions.close()
         active.set(null)
-        CrashCapture.updateSnapshot(CrashRuntimeSnapshot.empty())
+        CrashCapture.closeGate()
     }
 
     override suspend fun publish(context: DiagnosticsCaptureContext) {

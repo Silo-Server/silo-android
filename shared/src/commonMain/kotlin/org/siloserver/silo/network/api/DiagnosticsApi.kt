@@ -21,7 +21,9 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResult
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResponse
 import org.siloserver.silo.network.ApiErrorBody
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.DiagnosticsUploadAuthorization
 import org.siloserver.silo.network.diagnosticsProfileScope
+import org.siloserver.silo.network.diagnosticsUploadAuthorization
 
 interface DiagnosticsApi {
     suspend fun getStatus(): ApiResult<DiagnosticsStatusResponse>
@@ -31,6 +33,18 @@ interface DiagnosticsApi {
         bundleBytes: ByteArray,
         capturedProfileId: String?,
     ): DiagnosticsUploadResult
+
+    /**
+     * Sends against one exact server credential without auth refresh or request
+     * rebasing. Implementations that do not own a Silo transport may delegate to
+     * [upload]; the production implementation overrides this boundary.
+     */
+    suspend fun upload(
+        manifestJson: ByteArray,
+        bundleBytes: ByteArray,
+        capturedProfileId: String?,
+        authorization: DiagnosticsUploadAuthorization,
+    ): DiagnosticsUploadResult = upload(manifestJson, bundleBytes, capturedProfileId)
 }
 
 class DefaultDiagnosticsApi(
@@ -45,9 +59,36 @@ class DefaultDiagnosticsApi(
         manifestJson: ByteArray,
         bundleBytes: ByteArray,
         capturedProfileId: String?,
+    ): DiagnosticsUploadResult = performUpload(
+        manifestJson = manifestJson,
+        bundleBytes = bundleBytes,
+        capturedProfileId = capturedProfileId,
+        authorization = null,
+    )
+
+    override suspend fun upload(
+        manifestJson: ByteArray,
+        bundleBytes: ByteArray,
+        capturedProfileId: String?,
+        authorization: DiagnosticsUploadAuthorization,
+    ): DiagnosticsUploadResult = performUpload(
+        manifestJson = manifestJson,
+        bundleBytes = bundleBytes,
+        capturedProfileId = capturedProfileId,
+        authorization = authorization,
+    )
+
+    private suspend fun performUpload(
+        manifestJson: ByteArray,
+        bundleBytes: ByteArray,
+        capturedProfileId: String?,
+        authorization: DiagnosticsUploadAuthorization?,
     ): DiagnosticsUploadResult = try {
-        val response = client.post("/api/v1/diagnostics/reports") {
+        val endpoint = authorization?.let { "${it.serverUrl.trimEnd('/')}/api/v1/diagnostics/reports" }
+            ?: "/api/v1/diagnostics/reports"
+        val response = client.post(endpoint) {
             diagnosticsProfileScope(capturedProfileId)
+            authorization?.let { diagnosticsUploadAuthorization(it) }
             setBody(
                 MultiPartFormDataContent(
                     formData {
