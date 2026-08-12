@@ -950,7 +950,7 @@ class PlaybackSessionLifecycle(
         const val OUTAGE_TIMEOUT_MS: Long = 90_000L
 
         const val OUTAGE_RECONNECT_MESSAGE: String =
-            "Reconnecting — The server is updating. Playback will resume when it is ready."
+            "Reconnecting. Playback will resume automatically."
         const val OUTAGE_TIMEOUT_MESSAGE: String =
             "The server did not come back online in time."
     }
