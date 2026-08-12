@@ -81,6 +81,36 @@ class DiagnosticsBundleBuilderTest {
     }
 
     @Test
+    fun hostedBundlePreservesCanonicalApplicationVersionMetadata() {
+        val source = report(
+            artifacts = mapOf("device.json" to "{}".encodeToByteArray()),
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        ).let { report ->
+            report.copy(
+                manifest = report.manifest.copy(
+                    report = report.manifest.report.copy(
+                        appVersion = "0.3.11",
+                        appBuild = "14",
+                        osVersion = "16",
+                    ),
+                ),
+            )
+        }
+
+        val bundle = builder.build(source, redactionTokens = emptyList())
+        val embedded = Json.parseToJsonElement(
+            bundle.sanitizedEntries.getValue("manifest.json").decodeToString(),
+        ).jsonObject.getValue("report").jsonObject
+
+        assertEquals("0.3.11", bundle.manifest.report.appVersion)
+        assertEquals("14", bundle.manifest.report.appBuild)
+        assertEquals("16", bundle.manifest.report.osVersion)
+        assertEquals("0.3.11", embedded.getValue("app_version").jsonPrimitive.content)
+        assertEquals("14", embedded.getValue("app_build").jsonPrimitive.content)
+        assertEquals("16", embedded.getValue("os_version").jsonPrimitive.content)
+    }
+
+    @Test
     fun bundleIsDeterministicAndRedactsTextWithoutTouchingBinary() {
         val secret = "secret-token"
         val binary = byteArrayOf(0, 1, 2, 3, 0x7f, 0xff.toByte()) + secret.encodeToByteArray()

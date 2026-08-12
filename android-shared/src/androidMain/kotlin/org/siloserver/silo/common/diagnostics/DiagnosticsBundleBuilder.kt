@@ -334,7 +334,9 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
                 } else {
                     JsonObject(
                         value.mapValues { (reportKey, reportValue) ->
-                            if (
+                            if (reportValue.isSafeHostedReleaseMetadata(reportKey)) {
+                                reportValue
+                            } else if (
                                 reportKey == "capture_session_id" &&
                                 reportValue is JsonPrimitive &&
                                 reportValue.isString
@@ -376,6 +378,13 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             },
         )
     }
+
+    private fun JsonElement.isSafeHostedReleaseMetadata(key: String): Boolean =
+        this is JsonPrimitive && isString && when (key) {
+            "app_version" -> checkNotNull(contentOrNull).matches(APP_VERSION_VALUE)
+            "app_build" -> checkNotNull(contentOrNull).matches(APP_BUILD_VALUE)
+            else -> false
+        }
 
     private fun String.redact(tokens: List<String>): String {
         var output = this
@@ -928,6 +937,8 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             "lifecycle" to setOf("state"),
             "crash" to setOf("fingerprint", "source"),
         )
+        val APP_VERSION_VALUE = Regex("^[0-9]+(?:\\.[0-9]+){1,3}(?:[-+][A-Za-z0-9._-]+)?$")
+        val APP_BUILD_VALUE = Regex("^[0-9]+$")
         val HOSTED_DECODER_FAMILIES = setOf(
             HOSTED_C2_PLATFORM_DECODER,
             HOSTED_C2_VENDOR_DECODER,
