@@ -1936,8 +1936,6 @@ fun TvPlayerScreen(
                         bufferedAheadSec = bufferedAheadSec,
                         chapters = state.chapters,
                         introRange = state.intro,
-                        isBuffering = state.isBuffering,
-                        sleepTimerState = sleepTimerState,
                         // In a room, skip/scrub/seek are routed through the
                         // controller (transport_request → server → broadcast
                         // command → engine applies the seek locally). Solo
@@ -2230,6 +2228,8 @@ fun TvPlayerScreen(
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
             autoPlayNextEnabled = autoPlayNextEnabled,
             introSkipState = introSkipState,
+            isBuffering = state.isBuffering,
+            sleepTimerState = sleepTimerState,
             showSpinner = shouldShowReconnectSpinner(
                 isReconnecting = sessionState is SessionState.Reconnecting,
                 showNextUp = state.showNextUp,
@@ -2269,8 +2269,6 @@ private fun TvPlayerIdleOverlay(
     bufferedAheadSec: Double,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter>,
     introRange: org.siloserver.silo.model.catalog.TimeRange?,
-    isBuffering: Boolean,
-    sleepTimerState: SleepTimerState,
     onPlayPause: () -> Unit,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
@@ -2452,64 +2450,6 @@ private fun TvPlayerIdleOverlay(
                     )
                 },
             )
-        }
-
-        // Top-right status chips — buffering capsule (spinner + "Buffering")
-        // and a sleep-timer countdown chip — mirroring tvOS statusColumn.
-        // Replaces the full-screen buffering spinner during playback.
-        val sleepRemaining = (sleepTimerState as? SleepTimerState.Active)?.remainingSeconds
-        if (isBuffering || sleepRemaining != null) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 64.dp, end = 80.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                if (isBuffering) {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(percent = 50))
-                            .background(Color.Black.copy(alpha = 0.55f))
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        androidx.tv.material3.Text(
-                            text = "Buffering",
-                            color = Color.White.copy(alpha = 0.85f),
-                            style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
-                        )
-                    }
-                }
-                if (sleepRemaining != null) {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(percent = 50))
-                            .background(Color.Black.copy(alpha = 0.55f))
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        androidx.tv.material3.Icon(
-                            imageVector = Icons.Filled.Bedtime,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.85f),
-                            modifier = Modifier.size(16.dp),
-                        )
-                        androidx.tv.material3.Text(
-                            text = formatSleepCountdown(sleepRemaining),
-                            color = Color.White.copy(alpha = 0.85f),
-                            style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
-                        )
-                    }
-                }
-            }
         }
 
         // Quiet bottom-left title footer above the scrubber column (tvOS
@@ -3362,6 +3302,8 @@ private fun TvPlayerOverlays(
     nextUpCountdownTotalSeconds: Int,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
+    isBuffering: Boolean,
+    sleepTimerState: SleepTimerState,
     showSpinner: Boolean,
     onCloseRoom: () -> Unit,
     onCancelLeaveDialog: () -> Unit,
@@ -3429,6 +3371,71 @@ private fun TvPlayerOverlays(
                     waiting = snapshot.playbackState == RoomPlaybackState.Waiting,
                     joinCode = snapshot.code.takeIf { snapshot.selfCanManageRoom && it.isNotBlank() },
                 )
+            }
+        }
+
+        // Top-right status chips: buffering capsule (spinner + "Buffering") and
+        // a sleep-timer countdown chip, mirroring tvOS statusColumn. Lives here
+        // rather than in the idle overlay so a hidden-controls D-pad seek still
+        // reports buffering; the HUD and Up Next own their own feedback.
+        val sleepRemaining = (sleepTimerState as? SleepTimerState.Active)?.remainingSeconds
+        if (!isInPictureInPictureMode && !hudOpen && !showNextUp &&
+            (isBuffering || sleepRemaining != null)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 64.dp, end = 80.dp),
+                contentAlignment = Alignment.TopEnd,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (isBuffering) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(percent = 50))
+                                .background(Color.Black.copy(alpha = 0.55f))
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            androidx.tv.material3.Text(
+                                text = "Buffering",
+                                color = Color.White.copy(alpha = 0.85f),
+                                style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
+                            )
+                        }
+                    }
+                    if (sleepRemaining != null) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(percent = 50))
+                                .background(Color.Black.copy(alpha = 0.55f))
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.tv.material3.Icon(
+                                imageVector = Icons.Filled.Bedtime,
+                                contentDescription = null,
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(16.dp),
+                            )
+                            androidx.tv.material3.Text(
+                                text = formatSleepCountdown(sleepRemaining),
+                                color = Color.White.copy(alpha = 0.85f),
+                                style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
+                            )
+                        }
+                    }
+                }
             }
         }
 
