@@ -75,6 +75,15 @@ val diagnosticsModule = module {
         }
     }
     single { HostedDiagnosticsCapabilitiesRepository(get(), get()) }
+    single<HostedDiagnosticsBindingOwnerStore> {
+        val settings = get<DiagnosticsSettingsStore>()
+        object : HostedDiagnosticsBindingOwnerStore {
+            override suspend fun load(localServerId: String) = settings.hostedBindingOwner(localServerId)
+            override suspend fun save(localServerId: String, owner: String) {
+                settings.cacheHostedBindingOwner(localServerId, owner)
+            }
+        }
+    }
     single<HostedDiagnosticsCredentialStore> {
         EncryptedPreferencesHostedDiagnosticsCredentialStore(get())
     }
@@ -87,8 +96,10 @@ val diagnosticsModule = module {
                 tokenManager = get(),
                 identityTransitions = get(),
                 registry = get(),
+                accountProvider = get(),
                 profileProvider = get(),
                 capabilities = get(),
+                bindingOwners = get(),
             ),
             selfHosted = get(SELF_HOSTED_DIAGNOSTICS_IDENTITY),
         )

@@ -102,6 +102,28 @@ class DiagnosticsCoordinatorTest {
     }
 
     @Test
+    fun manualCaptureFailsClosedWhenLiveDestinationAttestationFails() = runTest {
+        val identity = MutableIdentityResolver(ADULT_A).apply { captureAttestationAllowed = false }
+        val capture = RecordingCaptureController()
+        val fixture = fixture(
+            identity,
+            DefaultIdentityTransitionBarrier(),
+            capture,
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+
+        assertNull(fixture.coordinator.captureNow())
+        fixture.coordinator.startTimedCapture()
+
+        assertEquals(2, identity.captureAttestationCalls)
+        assertEquals(0, capture.captureNowCalls)
+        assertEquals(TimedCaptureStatus.IDLE, fixture.coordinator.state.value.timedCapture.status)
+    }
+
+    @Test
     fun promptAggregatesAccountReportsAcrossProfilesAndTheyRemainVisibleOffline() = runTest {
         val identity = MutableIdentityResolver(ADULT_A)
         val fixture = fixture(
@@ -272,6 +294,30 @@ class DiagnosticsCoordinatorTest {
             fixture.coordinator.state.value.pending.single().expiresAtEpochMs,
             "local pending evidence expires after seven days even though uploaded reports disclose 30-day retention",
         )
+    }
+
+    @Test
+    fun hostedProcessingSchedulesStatusPollingWithoutReportingFailure() = runTest {
+        val hosted = hostedContext()
+        val scheduled = mutableListOf<String>()
+        val fixture = fixture(
+            MutableIdentityResolver(hosted),
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+            uploaderFactory = { DiagnosticsUploader { DiagnosticsUploadDecision.HostedProcessing("ABC123") } },
+            uploadScheduler = DiagnosticsUploadScheduler(scheduled::add),
+        )
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+        val report = fixture.reports.save(reportCapture(hosted, "hosted-processing"))
+
+        val decision = fixture.coordinator.upload(report.id)
+
+        assertEquals(DiagnosticsUploadDecision.HostedProcessing("ABC123"), decision)
+        assertEquals(listOf(report.id), scheduled)
+        assertNotNull(fixture.reports.load(report.id))
     }
 
     @Test
@@ -528,6 +574,49 @@ class DiagnosticsCoordinatorTest {
     }
 
     @Test
+    fun hostedErasureNetworkWaitDoesNotBlockCoordinatorRefresh() = runTest {
+        val hosted = hostedContext()
+        val deletionStarted = CompletableDeferred<Unit>()
+        val releaseDeletion = CompletableDeferred<Unit>()
+        val deleter = HostedDiagnosticsReportDeleter {
+            deletionStarted.complete(Unit)
+            releaseDeletion.await()
+            true
+        }
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val identity = MutableIdentityResolver(hosted)
+        val fixture = fixture(
+            identity,
+            DefaultIdentityTransitionBarrier(),
+            RecordingCaptureController(),
+            backgroundScope,
+            dispatcher,
+            hostedReportDeleter = deleter,
+        )
+        val report = fixture.reports.save(reportCapture(hosted, "hosted-non-blocking-delete"))
+        fixture.reports.markHostedProcessing(report.id, "ABC123")
+        fixture.reports.stageHostedDeletionAndDelete(report.id)
+
+        fixture.coordinator.start()
+        runCurrent()
+        assertTrue(deletionStarted.isCompleted)
+
+        identity.current = null
+        val refresh = async(UnconfinedTestDispatcher(testScheduler)) { fixture.coordinator.refresh() }
+        runCurrent()
+        assertEquals(
+            DiagnosticsAvailabilityUi.OFFLINE,
+            fixture.coordinator.state.value.availability,
+            "remote DELETE polling must run outside the coordinator actor",
+        )
+
+        refresh.cancel()
+        releaseDeletion.complete(Unit)
+        runCurrent()
+        assertTrue(fixture.reports.hostedDeletionIntents().isEmpty())
+    }
+
+    @Test
     fun queuedDeleteAfterHostedReadyStagesReceiptAndEventuallyErasesRemoteReport() = runTest {
         val hosted = hostedContext()
         val uploadStarted = CompletableDeferred<Unit>()
@@ -545,7 +634,7 @@ class DiagnosticsCoordinatorTest {
                     uploadStarted.complete(Unit)
                     releaseUpload.await()
                     reports.recordHostedReadyAndDelete(reportId, report.binding)
-                    DiagnosticsUploadDecision.Uploaded("ABC123", "ready")
+                    DiagnosticsUploadDecision.Uploaded("ABC123")
                 }
             },
             hostedReportDeleter = deleter,
@@ -560,7 +649,7 @@ class DiagnosticsCoordinatorTest {
         assertTrue(deleter.reportIds.isEmpty(), "Delete must remain queued while the manual upload owns the actor")
         releaseUpload.complete(Unit)
 
-        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "ready"), upload.await())
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123"), upload.await())
         assertTrue(deletion.await())
         assertNull(fixture.reports.load(report.id))
         assertEquals(hosted.binding, fixture.reports.hostedReadyBinding(report.id))
@@ -594,7 +683,7 @@ class DiagnosticsCoordinatorTest {
                     uploadStarted.complete(Unit)
                     releaseUpload.await()
                     reports.recordHostedReadyAndDelete(reportId, report.binding)
-                    DiagnosticsUploadDecision.Uploaded("ABC123", "ready")
+                    DiagnosticsUploadDecision.Uploaded("ABC123")
                 }
             },
             hostedReportDeleter = deleter,
@@ -609,7 +698,7 @@ class DiagnosticsCoordinatorTest {
         assertTrue(deleter.reportIds.isEmpty(), "Turn Off must remain queued while the manual upload owns the actor")
         releaseUpload.complete(Unit)
 
-        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "ready"), upload.await())
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123"), upload.await())
         turnOff.await()
         assertEquals(DiagnosticsConsentMode.NEVER, fixture.coordinator.state.value.consent)
         assertNull(fixture.reports.load(report.id))
@@ -644,7 +733,7 @@ class DiagnosticsCoordinatorTest {
                     releaseUpload.await()
                     uploadCalls += 1
                     reports.delete(reportId)
-                    DiagnosticsUploadDecision.Uploaded("ABC123", "ready")
+                    DiagnosticsUploadDecision.Uploaded("ABC123")
                 }
             },
         )
@@ -660,7 +749,7 @@ class DiagnosticsCoordinatorTest {
         runCurrent()
         assertFalse(turnOff.isCompleted, "Turn Off must wait for transport that already won the actor boundary")
         releaseUpload.complete(Unit)
-        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "ready"), upload.await())
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123"), upload.await())
         turnOff.await()
         assertEquals(1, uploadCalls)
         assertEquals(DiagnosticsConsentMode.NEVER, fixture.coordinator.state.value.consent)
@@ -684,7 +773,7 @@ class DiagnosticsCoordinatorTest {
             uploaderFactory = {
                 DiagnosticsUploader {
                     uploadCalls += 1
-                    DiagnosticsUploadDecision.Uploaded("ABC123", "ready")
+                    DiagnosticsUploadDecision.Uploaded("ABC123")
                 }
             },
         )
@@ -721,7 +810,7 @@ class DiagnosticsCoordinatorTest {
                     releaseUpload.await()
                     uploadCalls += 1
                     reports.delete(reportId)
-                    DiagnosticsUploadDecision.Uploaded("ABC123", "ready")
+                    DiagnosticsUploadDecision.Uploaded("ABC123")
                 }
             },
         )
@@ -739,7 +828,7 @@ class DiagnosticsCoordinatorTest {
         runCurrent()
         releaseUpload.complete(Unit)
 
-        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123", "ready"), manual.await())
+        assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123"), manual.await())
         assertEquals(DiagnosticsUploadDecision.KeptInvalid, worker.await())
         assertEquals(1, uploadCalls)
     }
@@ -1555,6 +1644,7 @@ class DiagnosticsCoordinatorTest {
         uploaderFactory: (PendingReportStore) -> DiagnosticsUploader = {
             DiagnosticsUploader { DiagnosticsUploadDecision.KeptUnavailable }
         },
+        uploadScheduler: DiagnosticsUploadScheduler = DiagnosticsUploadScheduler { },
         hostedReportDeleter: HostedDiagnosticsReportDeleter = HostedDiagnosticsReportDeleter.None,
         purgeFailure: (() -> Throwable?)? = null,
         dataStoreDecorator: (DataStore<Preferences>) -> DataStore<Preferences> = { it },
@@ -1600,7 +1690,7 @@ class DiagnosticsCoordinatorTest {
             reports = reports,
             capture = capture,
             uploader = uploaderFactory(reports),
-            uploadScheduler = DiagnosticsUploadScheduler { },
+            uploadScheduler = uploadScheduler,
             hostedReportDeleter = hostedReportDeleter,
             runtimePublisher = runtimePublisher,
             incidentCollector = incidentCollectorFactory(reports),
@@ -1654,9 +1744,15 @@ class DiagnosticsCoordinatorTest {
     ) : DiagnosticsIdentityResolver {
         var trustCachedIdentity = true
         var resolveCalls = 0
+        var captureAttestationAllowed = true
+        var captureAttestationCalls = 0
         override suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? {
             resolveCalls += 1
             return current
+        }
+        override suspend fun resolveForCapture(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? {
+            captureAttestationCalls += 1
+            return if (captureAttestationAllowed) current else null
         }
         override suspend fun matchesCachedIdentity(cached: CachedDiagnosticsContext): Boolean = trustCachedIdentity
     }

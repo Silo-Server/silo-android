@@ -1,6 +1,5 @@
 package org.siloserver.silo.common.diagnostics
 
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URI
 import java.nio.ByteBuffer
@@ -8,7 +7,6 @@ import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.Locale
-import java.util.zip.GZIPOutputStream
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -73,7 +71,7 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             } else {
                 file.readBytes()
             }
-            ArchiveEntry(path, bytes)
+            DiagnosticsArchiveEntry(path, bytes)
         }
         val sanitizedManifest = sanitizeManifest(report.manifest, tokens, hosted).let { manifest ->
             val logs = artifactEntries.firstOrNull { it.name == LOGS_FILE }?.bytes
@@ -92,7 +90,7 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             .encodeToByteArray()
 
         val entries = buildList {
-            add(ArchiveEntry(MANIFEST_FILE, embeddedManifest))
+            add(DiagnosticsArchiveEntry(MANIFEST_FILE, embeddedManifest))
             addAll(artifactEntries)
         }
         require(entries.any { it.name == DEVICE_FILE }) { "device.json is required" }
@@ -121,31 +119,30 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             } else {
                 checkNotNull(cached.sanitizedEntries[name]) { "missing sanitized hosted member: $name" }
             }
-            ArchiveEntry(name, bytes)
+            DiagnosticsArchiveEntry(name, bytes)
         }
         return finalize(reframedManifest, entries, canonicalHostedGzip = true)
     }
 
     private fun finalize(
         manifest: DiagnosticsManifest,
-        entries: List<ArchiveEntry>,
+        entries: List<DiagnosticsArchiveEntry>,
         canonicalHostedGzip: Boolean,
     ): DiagnosticsBundle {
-        val tarBytes = UstarWriter.write(entries)
-        val gzipBytes = gzip(tarBytes, canonicalHostedGzip)
+        val archive = DiagnosticsArchiveEncoder.encode(entries, canonicalHostedGzip)
         val externalManifest = manifest.copy(
             archive = DiagnosticsArchive(
-                entries = entries.map(ArchiveEntry::name),
-                bytes = gzipBytes.size.toLong(),
-                uncompressedBytes = tarBytes.size.toLong(),
-                sha256 = sha256Hex(gzipBytes),
+                entries = entries.map(DiagnosticsArchiveEntry::name),
+                bytes = archive.bytes.size.toLong(),
+                uncompressedBytes = archive.uncompressedBytes,
+                sha256 = archive.sha256,
             ),
         ).also(DiagnosticsManifest::validate)
         val externalManifestBytes = JSON.encodeToString(externalManifest).encodeToByteArray()
         return DiagnosticsBundle(
             externalManifest,
             externalManifestBytes,
-            gzipBytes,
+            archive.bytes,
             entries.associate { entry -> entry.name to entry.bytes },
         )
     }
@@ -893,102 +890,6 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             match.value.lowercase(Locale.ROOT) !in SAFE_SEMANTIC_TOKENS
         }
 
-    private fun gzip(bytes: ByteArray, canonicalHostedGzip: Boolean): ByteArray = ByteArrayOutputStream().use { output ->
-        GZIPOutputStream(output).use { gzip -> gzip.write(bytes) }
-        output.toByteArray().also { compressed ->
-            if (canonicalHostedGzip) {
-                check(
-                    compressed.size >= GZIP_HEADER_BYTES &&
-                        compressed[0] == GZIP_MAGIC_ID1 &&
-                        compressed[1] == GZIP_MAGIC_ID2,
-                ) { "hosted diagnostics gzip header is unavailable" }
-                // java.util.zip emits 255 (unknown) as the gzip origin byte.
-                // Canonicalize hosted output before hashing for the collector's
-                // accepted cross-runtime gzip contract.
-                compressed[GZIP_OS_OFFSET] = GZIP_CANONICAL_OS
-            }
-        }
-    }
-
-    private fun sha256Hex(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString(separator = "") { byte -> "%02x".format(Locale.ROOT, byte.toInt() and 0xff) }
-
-    private data class ArchiveEntry(val name: String, val bytes: ByteArray)
-
-    private object UstarWriter {
-        fun write(entries: List<ArchiveEntry>): ByteArray = ByteArrayOutputStream().use { output ->
-            entries.forEach { entry ->
-                val header = header(entry)
-                output.write(header)
-                output.write(entry.bytes)
-                val padding = (BLOCK_SIZE - entry.bytes.size % BLOCK_SIZE) % BLOCK_SIZE
-                if (padding > 0) output.write(ByteArray(padding))
-            }
-            output.write(ByteArray(BLOCK_SIZE * 2))
-            output.toByteArray()
-        }
-
-        private fun header(entry: ArchiveEntry): ByteArray {
-            val nameBytes = entry.name.encodeToByteArray()
-            require(nameBytes.size <= NAME_BYTES) { "USTAR entry name is too long: ${entry.name}" }
-            require(entry.bytes.size.toLong() <= MAX_ENTRY_BYTES) { "USTAR entry is too large: ${entry.name}" }
-            val header = ByteArray(BLOCK_SIZE)
-            nameBytes.copyInto(header, destinationOffset = 0)
-            writeOctal(header, MODE_OFFSET, MODE_LENGTH, FILE_MODE)
-            writeOctal(header, UID_OFFSET, UID_LENGTH, 0)
-            writeOctal(header, GID_OFFSET, GID_LENGTH, 0)
-            writeOctal(header, SIZE_OFFSET, SIZE_LENGTH, entry.bytes.size.toLong())
-            writeOctal(header, MTIME_OFFSET, MTIME_LENGTH, 0)
-            repeat(CHECKSUM_LENGTH) { header[CHECKSUM_OFFSET + it] = ' '.code.toByte() }
-            header[TYPE_OFFSET] = REGULAR_FILE_TYPE
-            USTAR_MAGIC.copyInto(header, destinationOffset = MAGIC_OFFSET)
-            USTAR_VERSION.copyInto(header, destinationOffset = VERSION_OFFSET)
-            val checksum = header.sumOf { it.toUByte().toLong() }
-            writeChecksum(header, checksum)
-            return header
-        }
-
-        private fun writeOctal(target: ByteArray, offset: Int, length: Int, value: Long) {
-            val encoded = value.toString(8).padStart(length - 1, '0').encodeToByteArray()
-            require(encoded.size == length - 1) { "USTAR numeric field overflow" }
-            encoded.copyInto(target, destinationOffset = offset)
-            target[offset + length - 1] = 0
-        }
-
-        private fun writeChecksum(target: ByteArray, checksum: Long) {
-            val encoded = checksum.toString(8).padStart(CHECKSUM_LENGTH - 2, '0').encodeToByteArray()
-            require(encoded.size == CHECKSUM_LENGTH - 2) { "USTAR checksum overflow" }
-            encoded.copyInto(target, destinationOffset = CHECKSUM_OFFSET)
-            target[CHECKSUM_OFFSET + CHECKSUM_LENGTH - 2] = 0
-            target[CHECKSUM_OFFSET + CHECKSUM_LENGTH - 1] = ' '.code.toByte()
-        }
-
-        private const val BLOCK_SIZE = 512
-        private const val NAME_BYTES = 100
-        private const val MODE_OFFSET = 100
-        private const val MODE_LENGTH = 8
-        private const val UID_OFFSET = 108
-        private const val UID_LENGTH = 8
-        private const val GID_OFFSET = 116
-        private const val GID_LENGTH = 8
-        private const val SIZE_OFFSET = 124
-        private const val SIZE_LENGTH = 12
-        private const val MTIME_OFFSET = 136
-        private const val MTIME_LENGTH = 12
-        private const val CHECKSUM_OFFSET = 148
-        private const val CHECKSUM_LENGTH = 8
-        private const val TYPE_OFFSET = 156
-        private const val MAGIC_OFFSET = 257
-        private const val VERSION_OFFSET = 263
-        private const val FILE_MODE = 420L
-        private const val REGULAR_FILE_TYPE = '0'.code.toByte()
-        private const val MAX_ENTRY_BYTES = 8_589_934_591L
-        private val USTAR_MAGIC = byteArrayOf('u'.code.toByte(), 's'.code.toByte(), 't'.code.toByte(), 'a'.code.toByte(), 'r'.code.toByte(), 0)
-        private val USTAR_VERSION = byteArrayOf('0'.code.toByte(), '0'.code.toByte())
-    }
-
     private companion object {
         const val MANIFEST_FILE = "manifest.json"
         const val DEVICE_FILE = "device.json"
@@ -1007,11 +908,6 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         const val HOSTED_GENERIC_DECODER = "android-decoder"
         const val HOSTED_OBFUSCATED_FRAME = "android-obfuscated-frame"
         const val HOSTED_OBFUSCATED_ERROR = "android-obfuscated-error"
-        const val GZIP_HEADER_BYTES = 10
-        const val GZIP_OS_OFFSET = 9
-        const val GZIP_MAGIC_ID1: Byte = 0x1f
-        const val GZIP_MAGIC_ID2: Byte = -0x75
-        const val GZIP_CANONICAL_OS: Byte = 0
         val REDACTION_FAILURE_SENTINEL = "{\"redaction_failure\":true}\n".encodeToByteArray()
         val HOSTED_URL_SCHEMES = setOf("http", "https", "ws", "wss")
         val TEXT_ENTRIES = CANONICAL_ARCHIVE_ORDER.toSet() - MANIFEST_FILE - "crash/tombstone.pb"

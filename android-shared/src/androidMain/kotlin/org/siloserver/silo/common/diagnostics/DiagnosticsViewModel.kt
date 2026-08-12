@@ -62,6 +62,7 @@ class DiagnosticsViewModel(
                     DiagnosticsUploadDecision.KeptTooLarge,
                     DiagnosticsUploadDecision.KeptServerUpdateRequired,
                     -> Unit
+                    is DiagnosticsUploadDecision.HostedProcessing,
                     DiagnosticsUploadDecision.KeptRetryable,
                     DiagnosticsUploadDecision.KeptIdentityChanged,
                     DiagnosticsUploadDecision.KeptUnavailable,

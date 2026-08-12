@@ -228,6 +228,17 @@ class DiagnosticsSettingsStore(
         }
     }
 
+    suspend fun hostedBindingOwner(localServerId: String): String? {
+        require(localServerId.isNotBlank())
+        return dataStore.data.first()[hostedBindingOwnerKey(localServerId)]?.takeIf(String::isNotBlank)
+    }
+
+    suspend fun cacheHostedBindingOwner(localServerId: String, owner: String) {
+        require(localServerId.isNotBlank())
+        require(owner.isNotBlank())
+        dataStore.edit { preferences -> preferences[hostedBindingOwnerKey(localServerId)] = owner }
+    }
+
     suspend fun setDebugLogging(enabled: Boolean) {
         dataStore.edit { preferences -> preferences[DEBUG_LOGGING_KEY] = enabled }
     }
@@ -361,6 +372,7 @@ class DiagnosticsSettingsStore(
         fallbackBinding: DiagnosticsBinding? = null,
     ) {
         require(localServerId.isNotBlank()) { "localServerId must not be blank" }
+        dataStore.edit { preferences -> preferences.remove(hostedBindingOwnerKey(localServerId)) }
         val persistedIndex = decodeBindingIndex(dataStore.data.first()[BINDING_INDEX_KEY])
         val indexedBindings = persistedIndex.byLocalServerId[localServerId]
         if (indexedBindings == null && fallbackBinding == null) {
@@ -454,6 +466,13 @@ class DiagnosticsSettingsStore(
             digest.forEach { byte -> append("%02x".format(byte.toInt() and 0xff)) }
             append('.')
         }
+    }
+
+    private fun hostedBindingOwnerKey(localServerId: String): Preferences.Key<String> {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(localServerId.encodeToByteArray())
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+        return stringPreferencesKey("diagnostics.hosted.binding_owner.$digest")
     }
 
     private data class BindingKeys(

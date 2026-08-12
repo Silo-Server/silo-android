@@ -20,9 +20,12 @@ import org.siloserver.silo.network.api.HostedDiagnosticsCapabilities
 import org.siloserver.silo.network.api.HostedDiagnosticsInstallationRequest
 import org.siloserver.silo.network.api.HostedDiagnosticsInstallationResponse
 
-enum class DiagnosticsDestinationKind {
-    HOSTED,
-    SELF_HOSTED,
+enum class DiagnosticsDestinationKind(
+    val allowsAutomaticUpload: Boolean,
+    val defaultRetentionDays: Int,
+) {
+    HOSTED(allowsAutomaticUpload = false, defaultRetentionDays = 30),
+    SELF_HOSTED(allowsAutomaticUpload = true, defaultRetentionDays = 7),
 }
 
 const val HOSTED_DIAGNOSTICS_COLLECTOR_ID = "silo-public-diagnostics-v1"
@@ -31,6 +34,11 @@ const val HOSTED_DIAGNOSTICS_RETENTION_DAYS = 30
 interface HostedDiagnosticsCapabilitiesStore {
     suspend fun load(): HostedDiagnosticsCapabilities?
     suspend fun save(capabilities: HostedDiagnosticsCapabilities)
+}
+
+interface HostedDiagnosticsBindingOwnerStore {
+    suspend fun load(localServerId: String): String?
+    suspend fun save(localServerId: String, owner: String)
 }
 
 class HostedDiagnosticsCapabilitiesRepository(
@@ -213,8 +221,10 @@ class HostedDiagnosticsIdentityResolver(
     private val tokenManager: TokenManager,
     private val identityTransitions: IdentityTransitionBarrier,
     private val registry: ServerRegistry,
+    private val accountProvider: DiagnosticsAccountProvider,
     private val profileProvider: DiagnosticsProfileProvider,
     private val capabilities: HostedDiagnosticsCapabilitiesRepository,
+    private val bindingOwners: HostedDiagnosticsBindingOwnerStore,
     private val maxAttempts: Int = 3,
 ) : DiagnosticsIdentityResolver {
     init {
@@ -222,6 +232,28 @@ class HostedDiagnosticsIdentityResolver(
     }
 
     override suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? {
+        val localCapabilities = capabilities.local()
+        return resolveWith(requirePersistentCapture, localCapabilities, requireLiveAccount = false)
+    }
+
+    override suspend fun resolveForCapture(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? {
+        val liveCapabilities = when (val result = capabilities.refresh()) {
+            is HostedDiagnosticsApiResult.Success -> result.value
+            is HostedDiagnosticsApiResult.Failure,
+            is HostedDiagnosticsApiResult.NetworkError,
+            -> return null
+        }
+        return resolveWith(requirePersistentCapture, liveCapabilities, requireLiveAccount = false)
+    }
+
+    override suspend fun resolveForUpload(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? =
+        resolveWith(requirePersistentCapture, capabilities.local(), requireLiveAccount = true)
+
+    private suspend fun resolveWith(
+        requirePersistentCapture: Boolean,
+        resolvedCapabilities: HostedDiagnosticsCapabilities,
+        requireLiveAccount: Boolean,
+    ): DiagnosticsCaptureContext? {
         if (requirePersistentCapture && tokenManager.hasTemporaryScope()) return null
         for (attempt in 0 until maxAttempts) {
             val generation = identityTransitions.generation.value
@@ -254,18 +286,14 @@ class HostedDiagnosticsIdentityResolver(
                 }
                 !child
             }
-            // Capture never depends on the public collector being online. Live
-            // capabilities and installation registration are intentionally send-time.
-            val localCapabilities = capabilities.local()
-            val localBindingOwner = currentLocalBindingOwner(source.id) ?: return null
-            val credentialFingerprint = currentCredentialFingerprint()
+            val localBindingOwner = currentLocalBindingOwner(source.id, requireLiveAccount) ?: return null
             if (identityTransitions.generation.value != generation) continue
-            return localCapabilities.toCaptureContext(
+            return resolvedCapabilities.toCaptureContext(
                 sourceServerId = source.id,
                 sourceProfileId = sourceProfileId,
                 profileEligible = profileEligible,
                 generation = generation,
-                credentialFingerprint = credentialFingerprint,
+                credentialFingerprint = localBindingOwner,
                 localBindingOwner = localBindingOwner,
             )
         }
@@ -275,15 +303,19 @@ class HostedDiagnosticsIdentityResolver(
     override suspend fun matchesCachedIdentity(cached: CachedDiagnosticsContext): Boolean {
         if (cached.destinationKind != DiagnosticsDestinationKind.HOSTED || tokenManager.hasTemporaryScope()) return false
         val sourceServerId = cached.localServerId?.takeIf(String::isNotBlank) ?: return false
-        val fingerprint = cached.credentialFingerprint?.takeIf(String::isNotBlank) ?: return false
+        val owner = cached.credentialFingerprint?.takeIf(String::isNotBlank) ?: return false
         val source = registry.activeEntry.value ?: return false
         return source.id == sourceServerId &&
             tokenManager.getCurrentServerId() == sourceServerId &&
             tokenManager.getServerUrl().trimEnd('/') == source.url.trimEnd('/') &&
             !tokenManager.getAccessToken().isNullOrBlank() &&
             tokenManager.getProfileId() == cached.sourceProfileId &&
-            currentCredentialFingerprint()?.let { current ->
-                MessageDigest.isEqual(current.encodeToByteArray(), fingerprint.encodeToByteArray())
+            currentLocalBindingOwner(
+                sourceServerId,
+                requireLiveAccount = false,
+                allowLiveAccountLookup = false,
+            )?.let { current ->
+                MessageDigest.isEqual(current.encodeToByteArray(), owner.encodeToByteArray())
             } == true
     }
 
@@ -319,24 +351,37 @@ class HostedDiagnosticsIdentityResolver(
         )
     }
 
-    private suspend fun currentCredentialFingerprint(): String? {
-        val credential = tokenManager.getRefreshToken()?.takeIf(String::isNotBlank)
-            ?: tokenManager.getAccessToken()?.takeIf(String::isNotBlank)
+    private suspend fun currentLocalBindingOwner(
+        sourceServerId: String,
+        requireLiveAccount: Boolean,
+        allowLiveAccountLookup: Boolean = true,
+    ): String? {
+        val accessToken = tokenManager.getAccessToken()?.takeIf(String::isNotBlank) ?: return null
+        val liveAccountId = if (allowLiveAccountLookup) {
+            try {
+                accountProvider.accountUserId()?.takeIf(String::isNotBlank)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+        } else {
+            null
+        }
+        if (requireLiveAccount && liveAccountId == null) return null
+        val tokenAccountId = accessToken.jwtUserIdOrNull()
+        val owner = (liveAccountId ?: tokenAccountId)
+            ?.let { userId -> hostedBindingOwner(sourceServerId, userId) }
+            ?: bindingOwners.load(sourceServerId)?.takeIf(String::isNotBlank)
             ?: return null
-        return MessageDigest.getInstance("SHA-256")
-            .digest(credential.encodeToByteArray())
-            .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
+        if (liveAccountId != null || tokenAccountId != null) {
+            bindingOwners.save(sourceServerId, owner)
+        }
+        return owner
     }
 
-    private suspend fun currentLocalBindingOwner(sourceServerId: String): String? {
-        val accessToken = tokenManager.getAccessToken()?.takeIf(String::isNotBlank) ?: return null
-        val stableAccount = accessToken.jwtUserIdOrNull()?.let { userId ->
-            "$sourceServerId|user:$userId"
-        } ?: currentCredentialFingerprint()?.let { fingerprint ->
-            "$sourceServerId|credential:$fingerprint"
-        } ?: return null
-        return "hosted-" + stableAccount.sha256Hex().take(32)
-    }
+    private fun hostedBindingOwner(sourceServerId: String, accountUserId: String): String =
+        "hosted-" + "$sourceServerId|user:$accountUserId".sha256Hex().take(32)
 
     private fun String.jwtUserIdOrNull(): String? = runCatching {
         val segments = split('.')
@@ -361,6 +406,12 @@ class DestinationDiagnosticsIdentityResolver(
 ) : DiagnosticsIdentityResolver {
     override suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? =
         selected().resolve(requirePersistentCapture)
+
+    override suspend fun resolveForCapture(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? =
+        selected().resolveForCapture(requirePersistentCapture)
+
+    override suspend fun resolveForUpload(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? =
+        selected().resolveForUpload(requirePersistentCapture)
 
     override suspend fun matchesCachedIdentity(cached: CachedDiagnosticsContext): Boolean =
         when (cached.destinationKind) {

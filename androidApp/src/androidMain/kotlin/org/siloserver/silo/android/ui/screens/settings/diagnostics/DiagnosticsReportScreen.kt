@@ -57,6 +57,7 @@ fun DiagnosticsReportScreen(
     var sentShortId by remember { mutableStateOf<String?>(null) }
     var sentState by remember { mutableStateOf("processing") }
     var uploadNotice by remember { mutableStateOf<String?>(null) }
+    var uploadNoticeIsError by remember { mutableStateOf(true) }
     Scaffold(
         topBar = { SiloTopBar(title = "Report details", onBackClick = onBackClick) },
         containerColor = MaterialTheme.colorScheme.background,
@@ -140,7 +141,14 @@ fun DiagnosticsReportScreen(
                             }
                         }
                         uploadNotice?.let { notice ->
-                            Text(notice, color = MaterialTheme.colorScheme.error)
+                            Text(
+                                notice,
+                                color = if (uploadNoticeIsError) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                            )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                             Button(
@@ -153,9 +161,16 @@ fun DiagnosticsReportScreen(
                                         when (decision) {
                                             is DiagnosticsUploadDecision.Uploaded -> {
                                                 sentShortId = decision.shortId
-                                                sentState = decision.state
+                                                sentState = decision.state.wireValue
                                             }
-                                            else -> uploadNotice = uploadKeptMessage(decision)
+                                            is DiagnosticsUploadDecision.HostedProcessing -> {
+                                                uploadNoticeIsError = false
+                                                uploadNotice = uploadKeptMessage(decision)
+                                            }
+                                            else -> {
+                                                uploadNoticeIsError = true
+                                                uploadNotice = uploadKeptMessage(decision)
+                                            }
                                         }
                                     }
                                 },
@@ -232,6 +247,8 @@ private fun DiagnosticsSentConfirmation(
 
 internal fun uploadKeptMessage(decision: DiagnosticsUploadDecision): String = when (decision) {
     is DiagnosticsUploadDecision.Uploaded -> "" // handled by the caller
+    is DiagnosticsUploadDecision.HostedProcessing ->
+        "Report ${decision.shortId} was accepted and is still processing. It will be checked again automatically."
     DiagnosticsUploadDecision.KeptRetryable ->
         "The upload didn't go through. The report stays on this device to try again later."
     DiagnosticsUploadDecision.KeptIdentityChanged ->

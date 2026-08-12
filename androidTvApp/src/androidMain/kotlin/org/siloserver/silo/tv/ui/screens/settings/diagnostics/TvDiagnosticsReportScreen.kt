@@ -37,6 +37,7 @@ fun TvDiagnosticsReportScreen(
     var sentShortId by remember { mutableStateOf<String?>(null) }
     var sentState by remember { mutableStateOf("processing") }
     var uploadNotice by remember { mutableStateOf<String?>(null) }
+    var uploadNoticeIsError by remember { mutableStateOf(true) }
     BackHandler(onBack = onBack)
     TvDiagnosticsPage(title = "Report details") {
         val shortId = sentShortId
@@ -99,7 +100,14 @@ fun TvDiagnosticsReportScreen(
                             )
                         }
                         uploadNotice?.let { notice ->
-                            Text(notice, color = MaterialTheme.colorScheme.error)
+                            Text(
+                                notice,
+                                color = if (uploadNoticeIsError) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                            )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             TvDiagnosticsAction(
@@ -113,9 +121,16 @@ fun TvDiagnosticsReportScreen(
                                         when (decision) {
                                             is DiagnosticsUploadDecision.Uploaded -> {
                                                 sentShortId = decision.shortId
-                                                sentState = decision.state
+                                                sentState = decision.state.wireValue
                                             }
-                                            else -> uploadNotice = tvUploadKeptMessage(decision)
+                                            is DiagnosticsUploadDecision.HostedProcessing -> {
+                                                uploadNoticeIsError = false
+                                                uploadNotice = tvUploadKeptMessage(decision)
+                                            }
+                                            else -> {
+                                                uploadNoticeIsError = true
+                                                uploadNotice = tvUploadKeptMessage(decision)
+                                            }
                                         }
                                     }
                                 },
@@ -149,6 +164,8 @@ fun TvDiagnosticsReportScreen(
 
 internal fun tvUploadKeptMessage(decision: DiagnosticsUploadDecision): String = when (decision) {
     is DiagnosticsUploadDecision.Uploaded -> "" // handled by the caller
+    is DiagnosticsUploadDecision.HostedProcessing ->
+        "Report ${decision.shortId} was accepted and is still processing. It will be checked again automatically."
     DiagnosticsUploadDecision.KeptRetryable ->
         "The upload didn't go through. The report stays on this device to try again later."
     DiagnosticsUploadDecision.KeptIdentityChanged ->

@@ -17,7 +17,11 @@ import org.siloserver.silo.network.api.HostedDiagnosticsReportState
 import org.siloserver.silo.network.api.HostedDiagnosticsReportStatusResponse
 
 sealed interface DiagnosticsUploadDecision {
-    data class Uploaded(val shortId: String, val state: String = "ready") : DiagnosticsUploadDecision
+    data class Uploaded(
+        val shortId: String,
+        val state: HostedDiagnosticsReportState = HostedDiagnosticsReportState.READY,
+    ) : DiagnosticsUploadDecision
+    data class HostedProcessing(val shortId: String) : DiagnosticsUploadDecision
     data object KeptRetryable : DiagnosticsUploadDecision
     data object KeptIdentityChanged : DiagnosticsUploadDecision
     data object KeptTooLarge : DiagnosticsUploadDecision
@@ -148,7 +152,7 @@ class DefaultDiagnosticsUploader(
         } else {
             null
         }
-        val beforeBase = identity.resolve(requirePersistentCapture = true)
+        val beforeBase = identity.resolveForUpload(requirePersistentCapture = true)
             ?: return DiagnosticsUploadDecision.KeptUnavailable
         val before = beforeBase.withHostedCapabilities(liveHostedCapabilities)
             ?: return DiagnosticsUploadDecision.KeptIdentityChanged
@@ -233,7 +237,7 @@ class DefaultDiagnosticsUploader(
             return DiagnosticsUploadDecision.KeptTooLarge
         }
 
-        val afterBase = identity.resolve(requirePersistentCapture = true)
+        val afterBase = identity.resolveForUpload(requirePersistentCapture = true)
             ?: return DiagnosticsUploadDecision.KeptIdentityChanged
         val after = afterBase.withHostedCapabilities(liveHostedCapabilities)
             ?: return DiagnosticsUploadDecision.KeptIdentityChanged
@@ -385,7 +389,7 @@ class DefaultDiagnosticsUploader(
                 if (finalized != true) {
                     DiagnosticsUploadDecision.KeptIdentityChanged
                 } else {
-                    DiagnosticsUploadDecision.Uploaded(result.response.shortId, "ready")
+                    DiagnosticsUploadDecision.Uploaded(result.response.shortId)
                 }
             }
             is DiagnosticsUploadResult.NetworkError -> {
@@ -632,10 +636,10 @@ class DefaultDiagnosticsUploader(
             return if (finalized != true) {
                 DiagnosticsUploadDecision.KeptIdentityChanged
             } else {
-                DiagnosticsUploadDecision.Uploaded(uploadShortId, state.wireValue)
+                DiagnosticsUploadDecision.Uploaded(uploadShortId, state)
             }
         }
-        return DiagnosticsUploadDecision.KeptRetryable
+        return DiagnosticsUploadDecision.HostedProcessing(uploadShortId)
     }
 
     private suspend fun pollHostedStatus(
@@ -714,7 +718,7 @@ class DefaultDiagnosticsUploader(
                         if (finalized != true) {
                             DiagnosticsUploadDecision.KeptIdentityChanged
                         } else {
-                            DiagnosticsUploadDecision.Uploaded(expectedShortId, "ready")
+                            DiagnosticsUploadDecision.Uploaded(expectedShortId)
                         }
                     }
                     HostedDiagnosticsReportState.PROCESSING -> {
@@ -737,7 +741,7 @@ class DefaultDiagnosticsUploader(
                         if (finalized != true) {
                             DiagnosticsUploadDecision.KeptIdentityChanged
                         } else {
-                            DiagnosticsUploadDecision.KeptRetryable
+                            DiagnosticsUploadDecision.HostedProcessing(expectedShortId)
                         }
                     }
                     HostedDiagnosticsReportState.REJECTED,

@@ -45,7 +45,7 @@ class HostedDiagnosticsTest {
     }
 
     @Test
-    fun offlineCollectorDoesNotDisablePersistentHostedCapture() = runTest {
+    fun cachedResolutionDoesNotContactCollectorButLiveCaptureFailsClosedOffline() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = context.getSharedPreferences("hosted-offline-${System.nanoTime()}", Context.MODE_PRIVATE)
         val transitions = DefaultIdentityTransitionBarrier()
@@ -61,12 +61,16 @@ class HostedDiagnosticsTest {
             store = InMemoryCapabilitiesStore(),
             api = offlineApi,
         )
+        var accountId = "account-a"
+        val bindingOwners = InMemoryBindingOwnerStore()
         val resolver = HostedDiagnosticsIdentityResolver(
             tokenManager = tokens,
             identityTransitions = transitions,
             registry = registry,
+            accountProvider = DiagnosticsAccountProvider { accountId },
             profileProvider = DiagnosticsProfileProvider { false },
             capabilities = capabilities,
+            bindingOwners = bindingOwners,
         )
 
         val resolved = resolver.resolve(requirePersistentCapture = true)
@@ -79,6 +83,8 @@ class HostedDiagnosticsTest {
         assertTrue(resolved?.profileEligible == true)
         assertTrue(1 in resolved.orThrow().acceptedSchemaVersions)
         assertEquals(30, resolved.retentionDays)
+        assertNull(resolver.resolveForCapture(requirePersistentCapture = true))
+        assertEquals(1, offlineApi.calls, "live capture must attest the public collector")
 
         val redactionTokens = DestinationAwareDiagnosticsRedactionTokenProvider(tokens, registry) { "installation-token" }
         val hostedTokens = redactionTokens.tokens(DiagnosticsDestinationKind.HOSTED)
@@ -95,13 +101,16 @@ class HostedDiagnosticsTest {
         assertFalse("adult-profile" in selfHostedTokens)
 
         tokens.saveTokens("other-account-access", "other-account-refresh", 3_600)
-        val otherAccount = resolver.resolve(requirePersistentCapture = true)
-        assertNotEquals(
+        val rotatedCredential = resolver.resolve(requirePersistentCapture = true)
+        assertEquals(
             resolved.binding.accountUserId,
-            otherAccount?.binding?.accountUserId,
-            "the local-only hosted binding must preserve cross-account report isolation",
+            rotatedCredential?.binding?.accountUserId,
+            "token rotation must not change the hosted binding",
         )
-        assertEquals(0, offlineApi.calls, "account isolation must not contact the public collector")
+        accountId = "account-b"
+        val otherAccount = resolver.resolveForUpload(requirePersistentCapture = true)
+        assertNotEquals(resolved.binding.accountUserId, otherAccount?.binding?.accountUserId)
+        assertEquals(1, offlineApi.calls, "account isolation must not add collector calls")
     }
 
     @Test
@@ -127,6 +136,14 @@ class HostedDiagnosticsTest {
         override suspend fun load(): HostedDiagnosticsCapabilities? = value
         override suspend fun save(capabilities: HostedDiagnosticsCapabilities) {
             value = capabilities
+        }
+    }
+
+    private class InMemoryBindingOwnerStore : HostedDiagnosticsBindingOwnerStore {
+        private val owners = mutableMapOf<String, String>()
+        override suspend fun load(localServerId: String): String? = owners[localServerId]
+        override suspend fun save(localServerId: String, owner: String) {
+            owners[localServerId] = owner
         }
     }
 

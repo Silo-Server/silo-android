@@ -390,7 +390,10 @@ class DiagnosticsUploaderTest {
         assertEquals(0, fixture.api.capabilitiesCalls)
         assertTrue(fixture.api.createdRequests.isEmpty())
 
-        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        assertEquals(
+            DiagnosticsUploadDecision.HostedProcessing("ABC123"),
+            fixture.uploader.upload(fixture.report.id),
+        )
         val processing = assertNotNull(fixture.store.load(fixture.report.id))
         assertEquals("ABC123", processing.state.hostedRemoteShortId)
         assertEquals("processing", processing.state.errorCode)
@@ -401,7 +404,7 @@ class DiagnosticsUploaderTest {
             fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
         )
         assertEquals(
-            DiagnosticsUploadDecision.Uploaded("ABC123", "ready"),
+            DiagnosticsUploadDecision.Uploaded("ABC123"),
             fixture.uploader.uploadAutomatically(fixture.report.id),
         )
         assertEquals(1, fixture.api.capabilitiesCalls, "an accepted report must poll before live capability gating")
@@ -411,9 +414,26 @@ class DiagnosticsUploaderTest {
     }
 
     @Test
+    fun firstHostedUploadRequiresLiveSourceAccountAttestation() = runTest {
+        val fixture = hostedFixture()
+        fixture.identity.uploadAttestationAllowed = false
+
+        val decision = fixture.uploader.upload(fixture.report.id)
+
+        assertEquals(DiagnosticsUploadDecision.KeptUnavailable, decision)
+        assertEquals(1, fixture.identity.uploadAttestationCalls)
+        assertEquals(1, fixture.api.capabilitiesCalls)
+        assertTrue(fixture.api.createdRequests.isEmpty())
+        assertNotNull(fixture.store.load(fixture.report.id))
+    }
+
+    @Test
     fun hostedProcessingReadyRaceWithDeleteKeepsIntentUntilRemoteErasure() = runTest {
         val fixture = hostedFixture()
-        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        assertEquals(
+            DiagnosticsUploadDecision.HostedProcessing("ABC123"),
+            fixture.uploader.upload(fixture.report.id),
+        )
         val statusStarted = CompletableDeferred<Unit>()
         val releaseStatus = CompletableDeferred<Unit>()
         fixture.api.beforeReportStatus = {
@@ -618,7 +638,10 @@ class DiagnosticsUploaderTest {
             )
         }
 
-        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        assertEquals(
+            DiagnosticsUploadDecision.HostedProcessing("ABC123"),
+            fixture.uploader.upload(fixture.report.id),
+        )
         assertEquals(1, fixture.api.createReportIds.size)
     }
 
@@ -662,7 +685,10 @@ class DiagnosticsUploaderTest {
             maxBundleBytes = 10L * 1_024 * 1_024,
             maxManifestBytes = 64L * 1_024,
         )
-        assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+        assertEquals(
+            DiagnosticsUploadDecision.HostedProcessing("ABC123"),
+            fixture.uploader.upload(fixture.report.id),
+        )
         val reframed = (fixture.store.loadHostedEnvelope(fixture.report.id) as HostedEnvelopeLoadResult.Available).bundle
         assertEquals(2, reframed.manifest.consent.noticeVersion)
         assertFalse(reframed.manifest.archive.sha256 == originalEnvelope.manifest.archive.sha256)
@@ -674,7 +700,7 @@ class DiagnosticsUploaderTest {
             fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
         )
         assertEquals(
-            DiagnosticsUploadDecision.Uploaded("ABC123", "ready"),
+            DiagnosticsUploadDecision.Uploaded("ABC123"),
             fixture.uploader.uploadAutomatically(fixture.report.id),
         )
         assertNull(fixture.store.load(fixture.report.id))
@@ -704,7 +730,7 @@ class DiagnosticsUploaderTest {
                 fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
             )
             assertEquals(
-                DiagnosticsUploadDecision.Uploaded("ABC123", "ready"),
+                DiagnosticsUploadDecision.Uploaded("ABC123"),
                 fixture.uploader.upload(fixture.report.id),
                 ambiguousFailure.errorCode,
             )
@@ -737,7 +763,10 @@ class DiagnosticsUploaderTest {
             HostedDiagnosticsReportState.UPLOADED to "invalid_response",
         ).forEach { (remoteState, expectedCode) ->
             val fixture = hostedFixture()
-            assertEquals(DiagnosticsUploadDecision.KeptRetryable, fixture.uploader.upload(fixture.report.id))
+            assertEquals(
+                DiagnosticsUploadDecision.HostedProcessing("ABC123"),
+                fixture.uploader.upload(fixture.report.id),
+            )
             fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
                 fixture.api.status(
                     fixture.report,
@@ -990,12 +1019,19 @@ class DiagnosticsUploaderTest {
     private class FakeIdentityResolver(var current: DiagnosticsCaptureContext?) : DiagnosticsIdentityResolver {
         var beforeReturn: suspend (Int) -> Unit = {}
         private var resolveCalls: Int = 0
+        var uploadAttestationAllowed = true
+        var uploadAttestationCalls = 0
 
         override suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? {
             val captured = current
             resolveCalls += 1
             beforeReturn(resolveCalls)
             return captured
+        }
+
+        override suspend fun resolveForUpload(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? {
+            uploadAttestationCalls += 1
+            return if (uploadAttestationAllowed) resolve(requirePersistentCapture) else null
         }
     }
 

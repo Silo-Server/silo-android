@@ -110,6 +110,8 @@ class DefaultDiagnosticsCoordinator(
     private val actorScope = CoroutineScope(scope.coroutineContext + actorDispatcher)
     private val currentPurgeScope = AtomicReference<DiagnosticsPurgeScope?>(null)
     private val liveEvidenceCleanupPending = AtomicBoolean(false)
+    private val hostedDeletionDrainRunning = AtomicBoolean(false)
+    private val hostedDeletionDrainRequested = AtomicBoolean(false)
 
     private var currentContext: DiagnosticsCaptureContext? = null
     private var activeCapture: ActiveDiagnosticsCapture? = null
@@ -256,7 +258,7 @@ class DefaultDiagnosticsCoordinator(
             failClosedUnresolvedRefresh(selectedDestination)
             return
         }
-        drainHostedDeletionIntents()
+        scheduleHostedDeletionDrain()
         val selectedDestination = runCatching { settings.destinationKind() }
             .getOrDefault(DiagnosticsDestinationKind.HOSTED)
         val resolved = runCatching { identity.resolve(requirePersistentCapture = true) }.getOrNull()
@@ -285,7 +287,7 @@ class DefaultDiagnosticsCoordinator(
                 timedCapture = TimedCaptureState(),
                 sentHistory = emptyList(),
                 destinationKind = selectedDestination,
-                allowsAutomaticUpload = selectedDestination == DiagnosticsDestinationKind.SELF_HOSTED,
+                allowsAutomaticUpload = selectedDestination.allowsAutomaticUpload,
                 retentionDays = resolved?.retentionDays ?: mutableState.value.retentionDays,
             )
             return
@@ -340,10 +342,8 @@ class DefaultDiagnosticsCoordinator(
                     runCatching { settings.sentHistory(context.binding) }.getOrDefault(emptyList())
                 }.orEmpty(),
                 destinationKind = selectedDestination,
-                allowsAutomaticUpload = selectedDestination == DiagnosticsDestinationKind.SELF_HOSTED,
-                retentionDays = cached?.retentionDays ?: if (
-                    selectedDestination == DiagnosticsDestinationKind.HOSTED
-                ) HOSTED_DIAGNOSTICS_RETENTION_DAYS else 7,
+                allowsAutomaticUpload = selectedDestination.allowsAutomaticUpload,
+                retentionDays = cached?.retentionDays ?: selectedDestination.defaultRetentionDays,
             )
             return
         }
@@ -373,7 +373,7 @@ class DefaultDiagnosticsCoordinator(
                 prompt = null,
                 sentHistory = emptyList(),
                 destinationKind = selectedDestination,
-                allowsAutomaticUpload = selectedDestination == DiagnosticsDestinationKind.SELF_HOSTED,
+                allowsAutomaticUpload = selectedDestination.allowsAutomaticUpload,
                 retentionDays = resolved.retentionDays,
             )
             return
@@ -460,11 +460,11 @@ class DefaultDiagnosticsCoordinator(
             },
             sentHistory = guardedRefresh.history,
             destinationKind = resolved.destinationKind,
-            allowsAutomaticUpload = resolved.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED,
+            allowsAutomaticUpload = resolved.destinationKind.allowsAutomaticUpload,
             retentionDays = resolved.retentionDays,
         )
         if (
-            resolved.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED &&
+            resolved.destinationKind.allowsAutomaticUpload &&
             consent.mode == DiagnosticsConsentMode.ALWAYS &&
             resolved.status == DiagnosticsAvailabilityStatus.AVAILABLE
         ) {
@@ -496,7 +496,7 @@ class DefaultDiagnosticsCoordinator(
             timedCapture = TimedCaptureState(),
             sentHistory = emptyList(),
             destinationKind = selectedDestination,
-            allowsAutomaticUpload = selectedDestination == DiagnosticsDestinationKind.SELF_HOSTED,
+            allowsAutomaticUpload = selectedDestination.allowsAutomaticUpload,
             retentionDays = resolved.retentionDays,
         )
     }
@@ -522,7 +522,7 @@ class DefaultDiagnosticsCoordinator(
             timedCapture = TimedCaptureState(),
             sentHistory = emptyList(),
             destinationKind = selectedDestination,
-            allowsAutomaticUpload = selectedDestination == DiagnosticsDestinationKind.SELF_HOSTED,
+            allowsAutomaticUpload = selectedDestination.allowsAutomaticUpload,
         )
     }
 
@@ -532,7 +532,7 @@ class DefaultDiagnosticsCoordinator(
     ) {
         if (expectedNoticeVersion != null) refreshOwnedState()
         val context = currentEligibleContext() ?: return
-        if (mode == DiagnosticsConsentMode.ALWAYS && context.destinationKind == DiagnosticsDestinationKind.HOSTED) return
+        if (mode == DiagnosticsConsentMode.ALWAYS && !context.destinationKind.allowsAutomaticUpload) return
         if (expectedNoticeVersion != null && context.noticeVersion != expectedNoticeVersion) return
         val committed = identityTransitions.withCurrentGeneration(context.ownershipGeneration) {
             privacyBarrier.withRevocation {
@@ -579,7 +579,7 @@ class DefaultDiagnosticsCoordinator(
     }
 
     private suspend fun captureNowOwned(): String? {
-        val context = currentEligibleContext() ?: return null
+        val context = liveCaptureContext() ?: return null
         val captured = identityTransitions.withCurrentGeneration(context.ownershipGeneration) {
             GuardedValue(runCatching { capture.captureNow(context) }.getOrNull())
         } ?: return null
@@ -589,7 +589,7 @@ class DefaultDiagnosticsCoordinator(
     }
 
     private suspend fun startTimedCaptureOwned() {
-        val context = currentEligibleContext() ?: return
+        val context = liveCaptureContext() ?: return
         identityTransitions.withCurrentGeneration(context.ownershipGeneration) {
             activeCapture?.let { previous -> runCatching { capture.cancel(previous) } }
             val active = runCatching { capture.start(context) }.getOrNull() ?: return@withCurrentGeneration Unit
@@ -694,6 +694,9 @@ class DefaultDiagnosticsCoordinator(
         } else {
             uploader.upload(reportId, expectedNoticeVersion)
         }
+        if (decision is DiagnosticsUploadDecision.HostedProcessing) {
+            uploadScheduler.enqueue(reportId)
+        }
         refreshOwnedState()
         return decision
     }
@@ -709,11 +712,17 @@ class DefaultDiagnosticsCoordinator(
         ) {
             return DiagnosticsUploadDecision.KeptIdentityChanged
         }
+        val hostedStatusPoll = report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED &&
+            report.state.hostedRemoteShortId != null
         val consent = settings.consent(context.binding, context.noticeVersion).mode
-        if (consent != DiagnosticsConsentMode.ALWAYS) {
+        if (!hostedStatusPoll && consent != DiagnosticsConsentMode.ALWAYS) {
             return DiagnosticsUploadDecision.KeptConsentReviewRequired
         }
-        val decision = uploader.uploadAutomatically(reportId)
+        val decision = if (hostedStatusPoll) {
+            uploader.upload(reportId)
+        } else {
+            uploader.uploadAutomatically(reportId)
+        }
         refreshOwnedState()
         return decision
     }
@@ -771,6 +780,25 @@ class DefaultDiagnosticsCoordinator(
         return completedAll
     }
 
+    private fun scheduleHostedDeletionDrain() {
+        hostedDeletionDrainRequested.set(true)
+        if (!hostedDeletionDrainRunning.compareAndSet(false, true)) return
+        actorScope.launch {
+            try {
+                while (hostedDeletionDrainRequested.getAndSet(false)) {
+                    drainHostedDeletionIntents()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // The durable intent remains available for the next refresh.
+            } finally {
+                hostedDeletionDrainRunning.set(false)
+                if (hostedDeletionDrainRequested.get()) scheduleHostedDeletionDrain()
+            }
+        }
+    }
+
     private suspend fun declineOwned(reportId: String) {
         val report = reports.load(reportId) ?: return
         val liveBinding = currentEligibleContext()?.binding
@@ -786,6 +814,18 @@ class DefaultDiagnosticsCoordinator(
 
     private fun currentEligibleContext(): DiagnosticsCaptureContext? =
         currentContext?.takeIf(DiagnosticsCaptureContext::profileEligible)
+
+    private suspend fun liveCaptureContext(): DiagnosticsCaptureContext? {
+        val current = currentEligibleContext() ?: return null
+        val live = runCatching { identity.resolveForCapture(requirePersistentCapture = true) }.getOrNull()
+            ?.takeIf { it.profileEligible && it.status == DiagnosticsAvailabilityStatus.AVAILABLE }
+            ?: return null
+        if (live.identityKey != current.identityKey || live.destinationKind != current.destinationKind) {
+            refreshOwnedState()
+            return null
+        }
+        return live
+    }
 
     private suspend fun trustedCachedContext(): CachedDiagnosticsContext? =
         runCatching { settings.cachedContext() }.getOrNull()?.takeIf { cached ->

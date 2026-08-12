@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
 import org.siloserver.silo.network.api.HostedDiagnosticsAvailability
@@ -136,6 +137,7 @@ class DiagnosticsSettingsStoreTest {
         val first = DiagnosticsSettingsStore(dataStore, RecordingBindingPurger())
         first.cacheContext(context(bindingB, "local-b"))
         first.cacheContext(context(bindingA, "local-a"))
+        first.cacheHostedBindingOwner("local-b", "hosted-owner-b")
 
         val purger = RecordingBindingPurger()
         val reconstructed = DiagnosticsSettingsStore(dataStore, purger)
@@ -147,6 +149,7 @@ class DiagnosticsSettingsStoreTest {
         assertEquals(listOf(bindingB to false), purger.calls)
         assertEquals(listOf(bindingA), reconstructed.bindingsForLocalServer("local-a"))
         assertTrue(reconstructed.bindingsForLocalServer("local-b").isEmpty())
+        assertNull(reconstructed.hostedBindingOwner("local-b"))
     }
 
     @Test

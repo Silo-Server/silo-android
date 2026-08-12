@@ -97,6 +97,14 @@ data class DiagnosticsCaptureContext(
 interface DiagnosticsIdentityResolver {
     suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext?
 
+    /** Live attestation used immediately before starting a user-requested capture. */
+    suspend fun resolveForCapture(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? =
+        resolve(requirePersistentCapture)
+
+    /** Live account attestation used immediately before starting a transport. */
+    suspend fun resolveForUpload(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? =
+        resolve(requirePersistentCapture)
+
     /** Local-only attestation used before exposing a cached context while the server is offline. */
     suspend fun matchesCachedIdentity(cached: CachedDiagnosticsContext): Boolean = false
 }

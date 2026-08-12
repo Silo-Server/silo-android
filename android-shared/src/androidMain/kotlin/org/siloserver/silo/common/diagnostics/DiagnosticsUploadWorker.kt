@@ -19,17 +19,19 @@ class DiagnosticsUploadWorker(
         val reportId = inputData.getString(KEY_REPORT_ID)?.takeIf(String::isNotBlank)
             ?: return Result.failure()
         coordinator.start()
+        coordinator.refresh()
         return when (coordinator.uploadAutomatically(reportId)) {
-            DiagnosticsUploadDecision.KeptRetryable -> Result.retry()
+            DiagnosticsUploadDecision.KeptRetryable,
+            DiagnosticsUploadDecision.KeptUnavailable,
+            is DiagnosticsUploadDecision.HostedProcessing,
+            -> Result.retry()
             is DiagnosticsUploadDecision.Uploaded,
             DiagnosticsUploadDecision.KeptIdentityChanged,
             DiagnosticsUploadDecision.KeptTooLarge,
             DiagnosticsUploadDecision.KeptServerUpdateRequired,
-            DiagnosticsUploadDecision.KeptUnavailable,
             DiagnosticsUploadDecision.KeptInvalid,
             -> Result.success()
             DiagnosticsUploadDecision.KeptConsentReviewRequired -> {
-                coordinator.start()
                 coordinator.refresh()
                 Result.success()
             }
