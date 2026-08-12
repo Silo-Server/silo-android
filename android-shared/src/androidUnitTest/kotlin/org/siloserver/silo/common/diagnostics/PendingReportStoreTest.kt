@@ -444,7 +444,7 @@ class PendingReportStoreTest {
         )
         val evidence = temporaryFolder.newFolder("corrupt-receipt-evidence")
         report.directory.copyRecursively(evidence, overwrite = true)
-        store.recordHostedReadyAndDelete(report.id, hostedBinding)
+        store.recordHostedReadyAndDelete(report.id, hostedBinding, "ABC123")
         evidence.copyRecursively(report.directory, overwrite = true)
         files.resolve("client-diagnostics/hosted-ready-receipts.json").writeText("{not-json")
 
@@ -630,6 +630,10 @@ class PendingReportStoreTest {
         assertTrue(store.list(hostedBinding.binding).isEmpty())
         assertFalse(report.directory.exists())
         assertEquals(hostedBinding.binding, store.hostedReadyBinding(report.id))
+        assertEquals(
+            HostedReadyReport(report.id, hostedBinding.binding, "ABC123", day(18)),
+            store.hostedReadyReports().single(),
+        )
         assertTrue(store.hostedDeletionIntents().isEmpty())
 
         store.purge(hostedBinding.binding)
@@ -739,7 +743,7 @@ class PendingReportStoreTest {
         val interruptedCopy = temporaryFolder.newFolder("hosted-ready-interrupted")
         report.directory.copyRecursively(interruptedCopy, overwrite = true)
 
-        store.recordHostedReadyAndDelete(report.id, hostedBinding)
+        store.recordHostedReadyAndDelete(report.id, hostedBinding, "ABC123")
 
         assertNull(store.load(report.id))
         assertFalse(report.directory.exists())
@@ -754,10 +758,12 @@ class PendingReportStoreTest {
         assertFalse(report.directory.exists())
         assertNull(restarted.load(report.id))
         assertEquals(hostedBinding.binding, restarted.hostedReadyBinding(report.id))
+        assertEquals("ABC123", restarted.hostedReadyReports().single().shortId)
 
         restarted.stageHostedDeletionAndDelete(report.id)
         assertEquals(listOf(report.id), restarted.hostedDeletionIntents())
         assertEquals(hostedBinding.binding, restarted.hostedReadyBinding(report.id))
+        assertTrue(restarted.hostedReadyReports().isEmpty())
         restarted.completeHostedDeletion(report.id)
         assertTrue(restarted.hostedDeletionIntents().isEmpty())
         assertNull(restarted.hostedReadyBinding(report.id))

@@ -86,7 +86,9 @@ class HostedDiagnosticsTest {
         assertNull(resolver.resolveForCapture(requirePersistentCapture = true))
         assertEquals(1, offlineApi.calls, "live capture must attest the public collector")
 
-        val redactionTokens = DestinationAwareDiagnosticsRedactionTokenProvider(tokens, registry) { "installation-token" }
+        val redactionTokens = DestinationAwareDiagnosticsRedactionTokenProvider(tokens, registry) {
+            listOf("installation-token", "fallback-installation-token")
+        }
         val hostedTokens = redactionTokens.tokens(DiagnosticsDestinationKind.HOSTED)
         assertTrue("https://private-silo.example" in hostedTokens)
         assertTrue("private-silo.example" in hostedTokens)
@@ -95,6 +97,7 @@ class HostedDiagnosticsTest {
         assertTrue(serverId in hostedTokens)
         assertTrue("adult-profile" in hostedTokens)
         assertTrue("installation-token" in hostedTokens)
+        assertTrue("fallback-installation-token" in hostedTokens)
         val selfHostedTokens = redactionTokens.tokens(DiagnosticsDestinationKind.SELF_HOSTED)
         assertFalse("https://private-silo.example" in selfHostedTokens)
         assertFalse(serverId in selfHostedTokens)
@@ -123,6 +126,9 @@ class HostedDiagnosticsTest {
         assertNull(store.load())
         store.save(credentials)
         assertEquals(credentials, store.load())
+        val fallback = HostedDiagnosticsCredentials("fallback-installation", "fallback-token")
+        store.saveFallback(fallback)
+        assertEquals(listOf(fallback), store.loadFallbacks())
         assertFalse(prefs.contains("access_token"))
         assertFalse(prefs.contains("refresh_token"))
         assertFalse(prefs.contains("profile_token"))

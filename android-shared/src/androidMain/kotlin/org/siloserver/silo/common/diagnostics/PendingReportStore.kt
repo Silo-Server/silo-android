@@ -32,7 +32,7 @@ data class PendingReportBinding(
 }
 
 @Serializable
-enum class PendingReportStatus { PENDING, RETRYABLE, PERMANENT_FAILURE }
+enum class PendingReportStatus { PENDING, PROCESSING, RETRYABLE, PERMANENT_FAILURE }
 
 @Serializable
 data class PendingReportState(
@@ -63,6 +63,13 @@ data class PendingReport(
     val state: PendingReportState,
 )
 
+data class HostedReadyReport(
+    val id: String,
+    val binding: DiagnosticsBinding,
+    val shortId: String,
+    val readyAtEpochMs: Long,
+)
+
 class PendingReportRejectedException(message: String) : IllegalStateException(message)
 
 sealed interface HostedEnvelopeLoadResult {
@@ -79,8 +86,9 @@ interface PendingReportStore {
     fun stageHostedDeletionAndDelete(id: String)
     fun purge(binding: DiagnosticsBinding)
     fun purgeAll()
-    fun recordHostedReadyAndDelete(id: String, binding: PendingReportBinding)
+    fun recordHostedReadyAndDelete(id: String, binding: PendingReportBinding, shortId: String? = null)
     fun hostedReadyBinding(id: String): DiagnosticsBinding?
+    fun hostedReadyReports(): List<HostedReadyReport>
     fun hostedDeletionIntents(): List<String>
     fun completeHostedDeletion(id: String)
     fun markState(id: String, status: PendingReportStatus, errorCode: String? = null)
@@ -260,15 +268,20 @@ class FilePendingReportStore(
         writeIndex(PendingIndex())
     }
 
-    override fun recordHostedReadyAndDelete(id: String, binding: PendingReportBinding) = synchronized(lock) {
+    override fun recordHostedReadyAndDelete(
+        id: String,
+        binding: PendingReportBinding,
+        shortId: String?,
+    ) = synchronized(lock) {
         require(ID_PATTERN.matches(id)) { "invalid hosted report id" }
+        require(shortId == null || shortId.isNotBlank()) { "invalid hosted short id" }
         require(binding.destinationKind == DiagnosticsDestinationKind.HOSTED)
         require(binding.serverInstanceId == HOSTED_DIAGNOSTICS_COLLECTOR_ID)
         pruneHostedReadyReceiptsLocked()
         loadReportDirectoryLocked(id)?.let { report ->
             require(report.binding == binding) { "hosted READY binding changed" }
         }
-        recordHostedHandoffReceiptLocked(id, binding.binding)
+        recordHostedHandoffReceiptLocked(id, binding.binding, shortId)
         deleteDirectory(root.resolve(id))
     }
 
@@ -276,6 +289,16 @@ class FilePendingReportStore(
         if (!ID_PATTERN.matches(id)) return@synchronized null
         pruneHostedReadyReceiptsLocked()
         readHostedReadyReceiptsLocked()[id]?.binding
+    }
+
+    override fun hostedReadyReports(): List<HostedReadyReport> = synchronized(lock) {
+        pruneHostedReadyReceiptsLocked()
+        val deleting = readHostedDeletionIntentsLocked().keys
+        readHostedReadyReceiptsLocked().mapNotNull { (id, receipt) ->
+            receipt.shortId?.takeIf { it.isNotBlank() && id !in deleting }?.let { shortId ->
+                HostedReadyReport(id, receipt.binding, shortId, receipt.readyAtEpochMs)
+            }
+        }
     }
 
     override fun hostedDeletionIntents(): List<String> = synchronized(lock) {
@@ -447,8 +470,8 @@ class FilePendingReportStore(
         require(shortId.isNotBlank())
         val report = loadLocked(id) ?: return@synchronized
         val updated = report.state.copy(
-            status = PendingReportStatus.RETRYABLE,
-            errorCode = "processing",
+            status = PendingReportStatus.PROCESSING,
+            errorCode = null,
             hostedRemoteShortId = shortId,
             updatedAtEpochMs = nowMs(),
         )
@@ -599,18 +622,27 @@ class FilePendingReportStore(
             report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED &&
             report.binding.serverInstanceId == HOSTED_DIAGNOSTICS_COLLECTOR_ID
         ) {
-            recordHostedHandoffReceiptLocked(report.id, report.binding.binding)
+            recordHostedHandoffReceiptLocked(
+                report.id,
+                report.binding.binding,
+                report.state.hostedRemoteShortId,
+            )
         }
         deleteDirectory(report.directory)
     }
 
-    private fun recordHostedHandoffReceiptLocked(id: String, binding: DiagnosticsBinding) {
+    private fun recordHostedHandoffReceiptLocked(
+        id: String,
+        binding: DiagnosticsBinding,
+        shortId: String? = null,
+    ) {
         if (id in readHostedDeletionIntentsLocked()) return
         val receipts = readHostedReadyReceiptsLocked().toMutableMap()
         receipts[id] = HostedReadyReceipt(
             binding = binding,
             destinationKind = DiagnosticsDestinationKind.HOSTED,
             readyAtEpochMs = checkedNow(),
+            shortId = shortId,
         )
         // Publish UUID + ownership before raw evidence is removed. This is
         // also used for expiry/quota eviction where a lost response means the
@@ -768,7 +800,8 @@ class FilePendingReportStore(
                 ID_PATTERN.matches(id) &&
                     receipt.destinationKind == DiagnosticsDestinationKind.HOSTED &&
                     receipt.binding.serverInstanceId == HOSTED_DIAGNOSTICS_COLLECTOR_ID &&
-                    receipt.readyAtEpochMs >= 0
+                    receipt.readyAtEpochMs >= 0 &&
+                    (receipt.shortId == null || receipt.shortId.isNotBlank())
             },
         ) { "invalid hosted READY receipt state" }
         return receipts
@@ -823,6 +856,7 @@ class FilePendingReportStore(
         val binding: DiagnosticsBinding,
         @SerialName("destination_kind") val destinationKind: DiagnosticsDestinationKind,
         @SerialName("ready_at_epoch_ms") val readyAtEpochMs: Long,
+        @SerialName("short_id") val shortId: String? = null,
     )
 
     @Serializable

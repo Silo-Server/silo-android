@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -89,7 +90,15 @@ internal fun DiagnosticsSettingsContent(
     onReportSelected: (String) -> Unit,
 ) {
     var confirmAlways by remember { mutableStateOf(false) }
+    val uriHandler = LocalUriHandler.current
     val model = diagnosticsPhoneScreenModel(state)
+    val effectiveConsent = if (
+        state.consent == DiagnosticsConsentMode.ALWAYS && !state.allowsAutomaticUpload
+    ) {
+        DiagnosticsConsentMode.ASK
+    } else {
+        state.consent
+    }
     Scaffold(
         topBar = { SiloTopBar(title = "Diagnostics", onBackClick = onBackClick) },
         containerColor = MaterialTheme.colorScheme.background,
@@ -120,10 +129,12 @@ internal fun DiagnosticsSettingsContent(
                     }
                     Text(
                         if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) {
-                            "Reports go directly to Silo Diagnostics without server setup. A pseudonymous " +
-                                "installation credential is not linked to your Silo account. Account, profile, " +
-                                "server address, and playback session IDs are omitted. Reports are never sent " +
-                                "automatically and may be retained for up to ${state.retentionDays} days."
+                            "Reports include the Silo app version and build, Android version, device model, " +
+                                "crash details, and diagnostic logs you review. A pseudonymous installation " +
+                                "credential is not linked to an account on your self-hosted server. Username, " +
+                                "email, profile, server address, and playback session IDs are omitted. Reports " +
+                                "are never sent automatically and may be retained for up to " +
+                                "${state.retentionDays} days."
                         } else {
                             "Compatibility mode sends reports to the diagnostics endpoint on your active server."
                         },
@@ -131,6 +142,9 @@ internal fun DiagnosticsSettingsContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    TextButton(onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }) {
+                        Text("Privacy Policy")
+                    }
                 }
             }
             item { DiagnosticsStatusCard(state) }
@@ -159,7 +173,7 @@ internal fun DiagnosticsSettingsContent(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
-                                selected = state.consent == mode,
+                                selected = effectiveConsent == mode,
                                 onClick = null,
                             )
                             Text(label, style = MaterialTheme.typography.bodyLarge)
@@ -296,6 +310,8 @@ internal fun DiagnosticsSettingsContent(
         )
     }
 }
+
+private const val PRIVACY_POLICY_URL = "https://siloserver.org/privacy"
 
 @Composable
 private fun DiagnosticsUnavailableScreen(onBackClick: () -> Unit) {

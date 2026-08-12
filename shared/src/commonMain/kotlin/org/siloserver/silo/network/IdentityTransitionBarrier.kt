@@ -29,11 +29,13 @@ data class IdentityTransition(
     val generation: Long,
     val targetServerId: String? = null,
     val affectsCurrentIdentity: Boolean = true,
+    val purgesPersistentIdentity: Boolean = true,
 )
 
 data class IdentityTransitionTarget(
     val serverId: String? = null,
     val affectsCurrentIdentity: Boolean = true,
+    val purgesPersistentIdentity: Boolean = true,
 )
 
 interface IdentityTransitionBarrier {
@@ -108,6 +110,7 @@ class DefaultIdentityTransitionBarrier : IdentityTransitionBarrier {
                 generation = nextGeneration,
                 targetServerId = resolvedTarget.serverId,
                 affectsCurrentIdentity = resolvedTarget.affectsCurrentIdentity,
+                purgesPersistentIdentity = resolvedTarget.purgesPersistentIdentity,
             )
             // This callback is the privacy boundary. It runs inline before new identity is visible.
             gates.forEach { gate -> gate(willChange) }
@@ -123,6 +126,7 @@ class DefaultIdentityTransitionBarrier : IdentityTransitionBarrier {
                         generation = nextGeneration,
                         targetServerId = resolvedTarget.serverId,
                         affectsCurrentIdentity = resolvedTarget.affectsCurrentIdentity,
+                        purgesPersistentIdentity = resolvedTarget.purgesPersistentIdentity,
                     ),
                 )
             }

@@ -396,7 +396,8 @@ class DiagnosticsUploaderTest {
         )
         val processing = assertNotNull(fixture.store.load(fixture.report.id))
         assertEquals("ABC123", processing.state.hostedRemoteShortId)
-        assertEquals("processing", processing.state.errorCode)
+        assertEquals(PendingReportStatus.PROCESSING, processing.state.status)
+        assertNull(processing.state.errorCode)
         assertTrue(fixture.sent.shortIds.isEmpty(), "processing is not a durable success for the user")
 
         fixture.api.capabilities = fixture.api.capabilities.copy(status = HostedDiagnosticsAvailability.DISABLED)
@@ -707,6 +708,29 @@ class DiagnosticsUploaderTest {
     }
 
     @Test
+    fun hostedCreateConflictReconcilesTheDurablyAcceptedReport() = runTest {
+        val fixture = hostedFixture()
+        fixture.api.createReportFailure = HostedDiagnosticsApiResult.Failure(
+            httpStatus = 409,
+            errorCode = "report_conflict",
+            message = "report already exists",
+        )
+        fixture.api.reportStatusResultOverride = HostedDiagnosticsApiResult.Success(
+            fixture.api.status(fixture.report, HostedDiagnosticsReportState.PROCESSING),
+        )
+
+        assertEquals(
+            DiagnosticsUploadDecision.HostedProcessing("ABC123"),
+            fixture.uploader.upload(fixture.report.id),
+        )
+
+        val retained = assertNotNull(fixture.store.load(fixture.report.id))
+        assertEquals(PendingReportStatus.PROCESSING, retained.state.status)
+        assertEquals("ABC123", retained.state.hostedRemoteShortId)
+        assertEquals(listOf(requireNotNull(fixture.report.id.toHostedWireReportIdOrNull())), fixture.api.statusReportIds)
+    }
+
+    @Test
     fun ambiguousHostedPutFailuresRetryTheExactCreateEnvelopeWithAFreshToken() = runTest {
         listOf(
             HostedDiagnosticsApiResult.Failure(401, "invalid_upload_token", "upload claim expired"),
@@ -741,7 +765,7 @@ class DiagnosticsUploaderTest {
     }
 
     @Test
-    fun invalidHostedInstallationPreservesOwnershipCredentialAndRetryEnvelope() = runTest {
+    fun invalidHostedInstallationRotatesCredentialAndPreservesRetryEnvelope() = runTest {
         val fixture = hostedFixture(
             credentials = HostedDiagnosticsCredentials("stale-installation", "stale-installation-token"),
         )
@@ -752,8 +776,50 @@ class DiagnosticsUploaderTest {
             fixture.uploader.upload(fixture.report.id),
         )
         assertEquals(listOf("stale-installation-token"), fixture.api.createReportTokens)
-        assertEquals(0, fixture.api.installationCreateCalls)
+        assertEquals(1, fixture.api.installationCreateCalls)
+        assertEquals(
+            HostedDiagnosticsCredentials("installation-1", "installation-token"),
+            fixture.installations.current(),
+        )
+        assertEquals(
+            listOf(
+                HostedDiagnosticsCredentials("installation-1", "installation-token"),
+                HostedDiagnosticsCredentials("stale-installation", "stale-installation-token"),
+            ),
+            fixture.installations.credentialsForOutstanding(),
+        )
         assertNotNull(fixture.store.load(fixture.report.id)?.state?.hostedEnvelopeGeneration)
+
+        assertEquals(
+            DiagnosticsUploadDecision.HostedProcessing("ABC123"),
+            fixture.uploader.upload(fixture.report.id),
+        )
+        assertEquals(listOf("stale-installation-token", "installation-token"), fixture.api.createReportTokens)
+    }
+
+    @Test
+    fun hostedStatusUsesRetainedCredentialAfterInstallationRotation() = runTest {
+        val stale = HostedDiagnosticsCredentials("stale-installation", "stale-installation-token")
+        val fixture = hostedFixture(credentials = stale)
+        assertEquals(DiagnosticsUploadDecision.HostedProcessing("ABC123"), fixture.uploader.upload(fixture.report.id))
+        assertNotNull(fixture.installations.recoverIfInvalid(stale))
+        fixture.api.reportStatusResultsByToken["installation-token"] = HostedDiagnosticsApiResult.Failure(
+            httpStatus = 404,
+            errorCode = "report_not_found",
+            message = "report is not owned by this installation",
+        )
+        fixture.api.reportStatusResultsByToken["stale-installation-token"] = HostedDiagnosticsApiResult.Success(
+            fixture.api.status(fixture.report, HostedDiagnosticsReportState.READY),
+        )
+
+        assertEquals(
+            DiagnosticsUploadDecision.Uploaded("ABC123"),
+            fixture.uploader.uploadAutomatically(fixture.report.id),
+        )
+        assertEquals(
+            listOf("stale-installation-token", "installation-token", "stale-installation-token"),
+            fixture.api.statusInstallationTokens,
+        )
     }
 
     @Test
@@ -1095,9 +1161,14 @@ class DiagnosticsUploaderTest {
     private class InMemoryHostedCredentialStore(
         private var credentials: HostedDiagnosticsCredentials?,
     ) : HostedDiagnosticsCredentialStore {
+        private var fallback: HostedDiagnosticsCredentials? = null
         override suspend fun load(): HostedDiagnosticsCredentials? = credentials
         override suspend fun save(credentials: HostedDiagnosticsCredentials) {
             this.credentials = credentials
+        }
+        override suspend fun loadFallbacks(): List<HostedDiagnosticsCredentials> = listOfNotNull(fallback)
+        override suspend fun saveFallback(credentials: HostedDiagnosticsCredentials) {
+            fallback = credentials
         }
         override suspend fun clear() {
             credentials = null
@@ -1120,6 +1191,10 @@ class DiagnosticsUploaderTest {
         var uploadFailure: HostedDiagnosticsApiResult.Failure? = null
         var uploadReceiptOverride: HostedDiagnosticsReportStatusResponse? = null
         var reportStatusResultOverride: HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>? = null
+        val reportStatusResultsByToken = mutableMapOf<
+            String,
+            HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>,
+        >()
         var beforeReportStatus: suspend () -> Unit = {}
         var beforeUploadBundle: suspend () -> Unit = {}
         var beforeCreateInstallation: suspend () -> Unit = {}
@@ -1134,6 +1209,7 @@ class DiagnosticsUploaderTest {
         val uploadReportIds = mutableListOf<String>()
         val uploadTokens = mutableListOf<String>()
         val statusReportIds = mutableListOf<String>()
+        val statusInstallationTokens = mutableListOf<String>()
         val deleteInstallationTokens = mutableListOf<String>()
         val deleteReportIds = mutableListOf<String>()
         var capabilities = HostedDiagnosticsCapabilities(
@@ -1206,7 +1282,9 @@ class DiagnosticsUploaderTest {
             reportId: String,
         ): HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse> {
             statusReportIds += reportId
+            statusInstallationTokens += installationToken
             beforeReportStatus()
+            reportStatusResultsByToken[installationToken]?.let { return it }
             reportStatusResultOverride?.let { return it }
             return HostedDiagnosticsApiResult.Success(
                 HostedDiagnosticsReportStatusResponse(reportId, "ABC123", HostedDiagnosticsReportState.PROCESSING),

@@ -151,7 +151,12 @@ fun TvDiagnosticsReportScreen(
     if (confirmDelete && report != null) {
         TvDiagnosticsConfirmation(
             title = "Delete this report?",
-            message = "The local evidence will be permanently removed from this device.",
+            message = if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                "The local evidence will be removed from this device. If this report was already submitted, " +
+                    "its copy in Silo Diagnostics will also be permanently deleted."
+            } else {
+                "The local evidence will be permanently removed from this device."
+            },
             confirmLabel = "Delete",
             onConfirm = {
                 confirmDelete = false

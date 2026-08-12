@@ -5,6 +5,8 @@ import android.util.Base64
 import java.net.URI
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -94,6 +96,8 @@ data class HostedDiagnosticsCredentials(
 interface HostedDiagnosticsCredentialStore {
     suspend fun load(): HostedDiagnosticsCredentials?
     suspend fun save(credentials: HostedDiagnosticsCredentials)
+    suspend fun loadFallbacks(): List<HostedDiagnosticsCredentials> = emptyList()
+    suspend fun saveFallback(credentials: HostedDiagnosticsCredentials) = Unit
     suspend fun clear()
 }
 
@@ -116,6 +120,24 @@ class EncryptedPreferencesHostedDiagnosticsCredentialStore(
         ) { "unable to persist hosted diagnostics credentials" }
     }
 
+    override suspend fun loadFallbacks(): List<HostedDiagnosticsCredentials> =
+        synchronized(encryptedPreferences) {
+            val id = encryptedPreferences.getString(FALLBACK_INSTALLATION_ID_KEY, null)
+                ?.takeIf(String::isNotBlank)
+            val token = encryptedPreferences.getString(FALLBACK_INSTALLATION_TOKEN_KEY, null)
+                ?.takeIf(String::isNotBlank)
+            if (id == null || token == null) emptyList() else listOf(HostedDiagnosticsCredentials(id, token))
+        }
+
+    override suspend fun saveFallback(credentials: HostedDiagnosticsCredentials) {
+        check(
+            encryptedPreferences.edit()
+                .putString(FALLBACK_INSTALLATION_ID_KEY, credentials.installationId)
+                .putString(FALLBACK_INSTALLATION_TOKEN_KEY, credentials.installationToken)
+                .commit(),
+        ) { "unable to persist fallback hosted diagnostics credentials" }
+    }
+
     override suspend fun clear() {
         check(
             encryptedPreferences.edit()
@@ -128,6 +150,8 @@ class EncryptedPreferencesHostedDiagnosticsCredentialStore(
     internal companion object {
         const val INSTALLATION_ID_KEY = "diagnostics.hosted.installation_id"
         const val INSTALLATION_TOKEN_KEY = "diagnostics.hosted.installation_token"
+        const val FALLBACK_INSTALLATION_ID_KEY = "diagnostics.hosted.fallback_installation_id"
+        const val FALLBACK_INSTALLATION_TOKEN_KEY = "diagnostics.hosted.fallback_installation_token"
     }
 }
 
@@ -137,10 +161,33 @@ class HostedDiagnosticsInstallationManager(
     private val environment: ExitReportEnvironment,
     private val appId: String = "org.siloserver.silo",
 ) {
+    private val mutex = Mutex()
+
     suspend fun current(): HostedDiagnosticsCredentials? = store.load()
 
-    suspend fun getOrCreate(): HostedDiagnosticsCredentials? {
-        store.load()?.let { return it }
+    suspend fun credentialsForOutstanding(
+        preferred: HostedDiagnosticsCredentials? = null,
+    ): List<HostedDiagnosticsCredentials> = mutex.withLock {
+        (listOfNotNull(preferred, store.load()) + store.loadFallbacks()).distinct()
+    }
+
+    suspend fun getOrCreate(): HostedDiagnosticsCredentials? = mutex.withLock {
+        store.load()?.let { return@withLock it }
+        createAndPersist()
+    }
+
+    suspend fun recoverIfInvalid(rejected: HostedDiagnosticsCredentials): HostedDiagnosticsCredentials? =
+        mutex.withLock {
+            val current = store.load()
+            if (current != null && current != rejected) return@withLock current
+            if (current == rejected) {
+                store.saveFallback(rejected)
+                store.clear()
+            }
+            createAndPersist()
+        }
+
+    private suspend fun createAndPersist(): HostedDiagnosticsCredentials? {
         val request = HostedDiagnosticsInstallationRequest(
             platform = environment.platform.wireValue(),
             appId = appId,
@@ -182,26 +229,29 @@ class DefaultHostedDiagnosticsReportDeleter(
 ) : HostedDiagnosticsReportDeleter {
     override suspend fun delete(reportId: String): Boolean {
         val wireReportId = reportId.toHostedWireReportIdOrNull() ?: return false
-        val credentials = installations.current() ?: return false
-        return when (api.deleteReport(credentials.installationToken, wireReportId)) {
-            is HostedDiagnosticsApiResult.Success -> true
-            is HostedDiagnosticsApiResult.Failure,
-            is HostedDiagnosticsApiResult.NetworkError,
-            -> false
+        val credentials = installations.credentialsForOutstanding()
+        for (candidate in credentials) {
+            when (api.deleteReport(candidate.installationToken, wireReportId)) {
+                is HostedDiagnosticsApiResult.Success -> return true
+                is HostedDiagnosticsApiResult.Failure,
+                is HostedDiagnosticsApiResult.NetworkError,
+                -> Unit
+            }
         }
+        return false
     }
 }
 
 class DestinationAwareDiagnosticsRedactionTokenProvider(
     private val tokenManager: TokenManager,
     private val serverRegistry: ServerRegistry? = null,
-    private val hostedInstallationToken: suspend () -> String?,
+    private val hostedInstallationTokens: suspend () -> List<String>,
 ) : DiagnosticsRedactionTokenProvider {
     override suspend fun tokens(destinationKind: DiagnosticsDestinationKind): List<String> = buildList {
         add(tokenManager.getAccessToken())
         add(tokenManager.getRefreshToken())
         add(tokenManager.getProfileToken())
-        add(hostedInstallationToken())
+        addAll(hostedInstallationTokens())
         if (destinationKind == DiagnosticsDestinationKind.HOSTED) {
             val serverUrls = buildList {
                 add(tokenManager.getServerUrl())

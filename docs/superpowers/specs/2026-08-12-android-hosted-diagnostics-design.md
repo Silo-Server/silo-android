@@ -25,7 +25,9 @@ The hosted manifest omits source server, account, and profile identifiers. Local
 sidecar state binds evidence to a one-way owner derived from the active local
 server ID and authenticated Silo account ID. This owner is persisted per local
 server, survives ordinary access/refresh-token rotation, and is erased on
-sign-out, server removal, or account replacement.
+persistent account sign-out, server removal, or account replacement. Clearing a
+temporary TV authentication overlay does not erase the persistent account it
+was layered over.
 
 Immediately before a manual or timed capture starts, the client fetches hosted
 capabilities and requires the exact collector ID. Cached capabilities are useful
@@ -46,11 +48,18 @@ replays it for ambiguous retries. A validated `processing` receipt is an accepte
 remote state, not a failure: local evidence is retained, the reference is shown,
 and WorkManager polls status until `ready` or rejection. Only `ready` records sent
 history and removes the local report. WorkManager refreshes coordinator identity
-state before each attempt and retries source-server unavailability.
+state before each attempt and retries source-server unavailability. If the
+collector rejects the active pseudonymous installation credential, the client
+registers a replacement while retaining one encrypted fallback credential for
+status and erasure of already-submitted reports; exact-value redaction covers
+both credentials.
 
 Remote erasure is intent-first. Local deletion persists the hosted report ID,
 hides/removes local evidence, and reconciles remote DELETE asynchronously so a
-slow collector cannot block diagnostics UI or identity commands.
+slow collector cannot block diagnostics UI or identity commands. A
+network-constrained WorkManager job drains these durable intents after process
+death. Collector failures remain queued because an ownership-hiding response
+cannot prove that the remote report was erased.
 
 ## Bundle boundaries
 

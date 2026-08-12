@@ -110,7 +110,7 @@ val diagnosticsModule = module {
         val tokenManager = get<TokenManager>()
         val hostedInstallations = get<HostedDiagnosticsInstallationManager>()
         DestinationAwareDiagnosticsRedactionTokenProvider(tokenManager, get()) {
-            hostedInstallations.current()?.installationToken
+            hostedInstallations.credentialsForOutstanding().map { it.installationToken }
         }
     }
     single<DiagnosticsUploader> {
@@ -280,6 +280,10 @@ val diagnosticsModule = module {
         val context = androidContext()
         DiagnosticsUploadScheduler { reportId -> DiagnosticsUploadWorker.enqueue(context, reportId) }
     }
+    single<HostedDiagnosticsDeletionScheduler> {
+        val context = androidContext()
+        HostedDiagnosticsDeletionScheduler { HostedDiagnosticsDeletionWorker.enqueue(context) }
+    }
     single<CoroutineScope>(DIAGNOSTICS_SCOPE) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     single<DiagnosticsCoordinator> {
         DefaultDiagnosticsCoordinator(
@@ -292,6 +296,7 @@ val diagnosticsModule = module {
             capture = get(),
             uploader = get(),
             uploadScheduler = get(),
+            hostedDeletionScheduler = get(),
             hostedReportDeleter = get(),
             runtimePublisher = get(),
             incidentCollector = get(),

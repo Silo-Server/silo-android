@@ -153,8 +153,8 @@ class AndroidServerRegistry(
                 val state = RegistryState(entries = updated, activeServerId = resolvedActive)
                 editor.putString(KEY_REGISTRY_STATE, json.encodeToString(state))
                 check(commitEditor(editor)) { "unable to durably remove server" }
-                afterServerRemovalCommit()
                 applyStateLocked(state)
+                afterServerRemovalCommit()
             }
         }
     }

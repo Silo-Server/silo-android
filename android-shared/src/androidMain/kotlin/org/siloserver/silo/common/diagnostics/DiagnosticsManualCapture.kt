@@ -86,8 +86,11 @@ class FileDiagnosticsCaptureController(
                 debugLogging = true,
             )
         } finally {
-            fileLogger.deleteFrozen(frozen)
-            logBuffer.rotateGeneration()
+            try {
+                fileLogger.deleteFrozen(frozen)
+            } finally {
+                logBuffer.rotateGeneration()
+            }
         }
     }
 

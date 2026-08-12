@@ -119,9 +119,11 @@ fun TvDiagnosticsPromptScreen(
                         )
                         if (!allowAlwaysSend) {
                             Text(
-                                "Silo Diagnostics uses an account-unlinked pseudonymous credential; " +
-                                    "account, profile, server address, and playback session IDs are omitted. " +
-                                    "It never sends automatically and may retain a sent report for up to 30 days.",
+                                "The report includes the Silo app version and build, Android version, device " +
+                                    "model, crash details, and diagnostic logs. Its pseudonymous credential is " +
+                                    "not linked to an account on your self-hosted server. Username, email, " +
+                                    "profile, server address, and playback session IDs are omitted. It never " +
+                                    "sends automatically and may be retained for up to 30 days.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }

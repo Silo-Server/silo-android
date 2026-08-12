@@ -1,6 +1,8 @@
 package org.siloserver.silo.common.diagnostics
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -244,6 +246,42 @@ class DiagnosticsSettingsStoreTest {
 
         assertEquals(listOf(bindingA to true), recoveredPurger.calls)
         assertTrue(recovered.pendingErasureBindings().isEmpty())
+    }
+
+    @Test
+    fun corruptIndexesFailClosedThenRepairWithoutPermanentlyBlockingConsent() = runTest {
+        val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope) {
+            temporaryFolder.newFile("diagnostics-corrupt-index.preferences_pb")
+        }
+        dataStore.edit { preferences ->
+            preferences[stringPreferencesKey("diagnostics.erasure_pending")] = "not-json"
+            preferences[stringPreferencesKey("diagnostics.binding_index")] = "not-json"
+        }
+        var allEvidencePurges = 0
+        val store = DiagnosticsSettingsStore(
+            dataStore = dataStore,
+            bindingPurger = RecordingBindingPurger(),
+            allEvidencePurger = DiagnosticsAllEvidencePurger { includeLiveCapture ->
+                assertTrue(includeLiveCapture)
+                allEvidencePurges += 1
+            },
+        )
+        val pending = PendingReportBinding(
+            serverInstanceId = bindingA.serverInstanceId,
+            accountUserId = bindingA.accountUserId,
+            ownershipGeneration = 1,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+
+        assertFalse(store.permitsUpload(pending, noticeVersion = 1, requireAlwaysConsent = false))
+        assertTrue(store.bindingsForLocalServer("local-a").isEmpty())
+
+        store.setConsent(bindingA, DiagnosticsConsentMode.ASK, noticeVersion = 1)
+
+        assertEquals(1, allEvidencePurges)
+        assertTrue(store.pendingErasureBindings().isEmpty())
+        assertTrue(store.permitsUpload(pending, noticeVersion = 1, requireAlwaysConsent = false))
     }
 
     private fun context(binding: DiagnosticsBinding, localServerId: String) = DiagnosticsCaptureContext(

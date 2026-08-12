@@ -192,7 +192,16 @@ fun DiagnosticsReportScreen(
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Delete this report?") },
-            text = { Text("The local evidence will be permanently removed from this device.") },
+            text = {
+                Text(
+                    if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                        "The local evidence will be removed from this device. If this report was already " +
+                            "submitted, its copy in Silo Diagnostics will also be permanently deleted."
+                    } else {
+                        "The local evidence will be permanently removed from this device."
+                    },
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false

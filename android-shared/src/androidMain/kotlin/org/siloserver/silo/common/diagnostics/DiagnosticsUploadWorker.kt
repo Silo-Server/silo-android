@@ -23,10 +23,10 @@ class DiagnosticsUploadWorker(
         return when (coordinator.uploadAutomatically(reportId)) {
             DiagnosticsUploadDecision.KeptRetryable,
             DiagnosticsUploadDecision.KeptUnavailable,
+            DiagnosticsUploadDecision.KeptIdentityChanged,
             is DiagnosticsUploadDecision.HostedProcessing,
             -> Result.retry()
             is DiagnosticsUploadDecision.Uploaded,
-            DiagnosticsUploadDecision.KeptIdentityChanged,
             DiagnosticsUploadDecision.KeptTooLarge,
             DiagnosticsUploadDecision.KeptServerUpdateRequired,
             DiagnosticsUploadDecision.KeptInvalid,

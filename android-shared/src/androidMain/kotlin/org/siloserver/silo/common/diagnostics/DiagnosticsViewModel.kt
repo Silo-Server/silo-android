@@ -58,11 +58,11 @@ class DiagnosticsViewModel(
                 val decision = coordinator.upload(reportId, expectedNoticeVersion = prompt.noticeVersion)
                 when (decision) {
                     is DiagnosticsUploadDecision.Uploaded,
+                    is DiagnosticsUploadDecision.HostedProcessing,
                     DiagnosticsUploadDecision.KeptInvalid,
                     DiagnosticsUploadDecision.KeptTooLarge,
                     DiagnosticsUploadDecision.KeptServerUpdateRequired,
                     -> Unit
-                    is DiagnosticsUploadDecision.HostedProcessing,
                     DiagnosticsUploadDecision.KeptRetryable,
                     DiagnosticsUploadDecision.KeptIdentityChanged,
                     DiagnosticsUploadDecision.KeptUnavailable,

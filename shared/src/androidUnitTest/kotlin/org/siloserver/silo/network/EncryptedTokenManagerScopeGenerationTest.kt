@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.server.ServerEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -153,6 +154,40 @@ class EncryptedTokenManagerScopeGenerationTest {
     }
 
     @Test
+    fun clearingATemporaryOverlayDoesNotAuthorizePersistentIdentityPurge() = runTest {
+        val registry = FakeServerRegistry()
+        val transitions = DefaultIdentityTransitionBarrier()
+        val observed = mutableListOf<IdentityTransition>()
+        transitions.installObserverForTests(observed::add)
+        val manager = EncryptedTokenManagerImpl(
+            prefs = inMemoryPreferences(),
+            registry = registry,
+            identityTransitions = transitions,
+        )
+        manager.saveTokens("saved-access", "saved-refresh", 3600)
+        manager.beginTemporaryScope(
+            TemporaryAuthScope(
+                generationId = "overlay-1",
+                serverId = "overlay-server",
+                serverUrl = "https://overlay.example",
+                accessToken = "overlay-access",
+                refreshToken = "overlay-refresh",
+                profileId = "overlay-profile",
+                profileToken = "overlay-profile-token",
+                expiresAtEpochMs = Long.MAX_VALUE,
+            ),
+        )
+        observed.clear()
+
+        manager.clearTokens()
+
+        assertEquals(listOf(false, false), observed.map(IdentityTransition::purgesPersistentIdentity))
+        assertFalse(manager.hasTemporaryScope())
+        assertEquals("saved-access", manager.getAccessToken())
+        assertEquals("saved-refresh", manager.getRefreshToken())
+    }
+
+    @Test
     fun freshGenerationZeroCompanionScopeRefreshesButTrueUnversionedResponseFailsClosed() = runTest {
         val registry = FakeServerRegistry()
         val transitions = DefaultIdentityTransitionBarrier()
@@ -287,6 +322,77 @@ class EncryptedTokenManagerScopeGenerationTest {
 
         assertEquals("account-b-access", manager.getAccessToken())
         assertEquals("account-b-refresh", manager.getRefreshToken())
+    }
+
+    @Test
+    fun committedRegistryAndTokenStatePublishesEvenWhenPostCommitCallbacksFail() = runTest {
+        val preferences = seededRegistryPreferences(activeServerId = "server-a")
+        val transitions = DefaultIdentityTransitionBarrier()
+        val registry = AndroidServerRegistry(
+            prefs = preferences,
+            identityTransitions = transitions,
+            afterServerRemovalCommit = { error("after removal") },
+        )
+
+        assertFailsWith<IllegalStateException> { registry.remove("server-b") }
+        assertTrue(registry.entries.value.none { it.id == "server-b" })
+
+        val manager = EncryptedTokenManagerImpl(
+            prefs = preferences,
+            registry = registry,
+            identityTransitions = transitions,
+            afterAccountSessionCommit = { error("after session") },
+        )
+        assertFailsWith<IllegalStateException> {
+            manager.replaceAccountSession(
+                serverId = "server-a",
+                accessToken = "committed-access",
+                refreshToken = "committed-refresh",
+                expiresIn = 3600,
+                profileId = "overlay-profile",
+                profileToken = "overlay-profile-token",
+            )
+        }
+        assertEquals("committed-access", manager.getAccessToken())
+        assertEquals("committed-refresh", manager.getRefreshToken())
+    }
+
+    @Test
+    fun rejectedAccountReplacementDoesNotRunPrivacyGatesOrAdvanceGeneration() = runTest {
+        val preferences = seededRegistryPreferences(activeServerId = "server-a", includeServerB = false)
+        val transitions = DefaultIdentityTransitionBarrier()
+        val observed = mutableListOf<IdentityTransition>()
+        transitions.installObserverForTests(observed::add)
+        val registry = AndroidServerRegistry(preferences, identityTransitions = transitions)
+        val manager = EncryptedTokenManagerImpl(preferences, registry, identityTransitions = transitions)
+        manager.beginTemporaryScope(
+            TemporaryAuthScope(
+                generationId = "overlay-1",
+                serverId = "overlay-server",
+                serverUrl = "https://overlay.example",
+                accessToken = "overlay-access",
+                refreshToken = "overlay-refresh",
+                profileId = "overlay-profile",
+                profileToken = "overlay-profile-token",
+                expiresAtEpochMs = Long.MAX_VALUE,
+            ),
+        )
+        observed.clear()
+        val generation = transitions.generation.value
+
+        assertFailsWith<IllegalStateException> {
+            manager.replaceAccountSession(
+                serverId = "server-a",
+                accessToken = "new-access",
+                refreshToken = "new-refresh",
+                expiresIn = 3600,
+                profileId = null,
+                profileToken = null,
+            )
+        }
+
+        assertEquals(generation, transitions.generation.value)
+        assertTrue(observed.isEmpty())
     }
 
     private class FakeServerRegistry : ServerRegistry {

@@ -131,7 +131,9 @@ class DefaultDiagnosticsUploader(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
-                markRetryable(report.id, "status_unavailable")
+                runCatching {
+                    reports.markHostedProcessing(report.id, checkNotNull(report.state.hostedRemoteShortId))
+                }
                 DiagnosticsUploadDecision.KeptRetryable
             }
         }
@@ -445,7 +447,7 @@ class DefaultDiagnosticsUploader(
         requireAlwaysConsent: Boolean,
     ): DiagnosticsUploadDecision {
         val hostedApi = hostedApi ?: return DiagnosticsUploadDecision.KeptUnavailable
-        val createAttempt = identityTransitions.withCurrentGeneration(expectedIdentity.ownershipGeneration) {
+        val createAttempt = identityTransitions.withCurrentGeneration(operationGeneration) {
             privacyBarrier.withTransport {
                 when {
                     !report.canUploadUnder(expectedIdentity) -> HostedCreateAttempt.IdentityChanged
@@ -478,6 +480,19 @@ class DefaultDiagnosticsUploader(
         val created = when (val result = createResult) {
             is HostedDiagnosticsApiResult.Success -> result.value
             is HostedDiagnosticsApiResult.Failure -> {
+                if (result.errorCode == "report_conflict") {
+                    return reconcileHostedConflict(
+                        report = report,
+                        wireReportId = wireReportId,
+                        credentials = credentials,
+                        expectedIdentity = expectedIdentity,
+                        operationGeneration = operationGeneration,
+                        requireAlwaysConsent = requireAlwaysConsent,
+                    )
+                }
+                if (result.errorCode == "invalid_installation_token") {
+                    runCatching { hostedInstallations?.recoverIfInvalid(credentials) }
+                }
                 return mapHostedError(report, result)
             }
             is HostedDiagnosticsApiResult.NetworkError -> {
@@ -522,7 +537,12 @@ class DefaultDiagnosticsUploader(
         }
         val uploadReceipt = when (uploaded) {
             is HostedDiagnosticsApiResult.Success -> uploaded.value
-            is HostedDiagnosticsApiResult.Failure -> return mapHostedError(report, uploaded)
+            is HostedDiagnosticsApiResult.Failure -> {
+                if (uploaded.errorCode == "invalid_installation_token") {
+                    runCatching { hostedInstallations?.recoverIfInvalid(credentials) }
+                }
+                return mapHostedError(report, uploaded)
+            }
             is HostedDiagnosticsApiResult.NetworkError -> {
                 markRetryable(report.id, "network")
                 return DiagnosticsUploadDecision.KeptRetryable
@@ -625,7 +645,7 @@ class DefaultDiagnosticsUploader(
                     ) {
                         false
                     } else {
-                        reports.recordHostedReadyAndDelete(report.id, report.binding)
+                        reports.recordHostedReadyAndDelete(report.id, report.binding, uploadShortId)
                         runCatching {
                             sentRecorder.record(report.binding.binding, uploadShortId, nowMs(), state.wireValue)
                         }
@@ -651,7 +671,7 @@ class DefaultDiagnosticsUploader(
             markPermanent(report.id, "invalid_report_id")
             return DiagnosticsUploadDecision.KeptInvalid
         }
-        val credentials = hostedInstallations?.current() ?: run {
+        val credentials = hostedInstallations?.credentialsForOutstanding()?.firstOrNull() ?: run {
             markRetryable(report.id, "installation_unavailable")
             return DiagnosticsUploadDecision.KeptRetryable
         }
@@ -666,7 +686,7 @@ class DefaultDiagnosticsUploader(
                     ) -> HostedStatusAttempt.Revoked
                     reports.load(report.id) == null -> HostedStatusAttempt.ReportRemoved
                     else -> HostedStatusAttempt.Sent(
-                        api.reportStatus(credentials.installationToken, wireReportId),
+                        reportHostedStatusWithFallback(api, credentials, wireReportId),
                     )
                 }
             }
@@ -678,11 +698,14 @@ class DefaultDiagnosticsUploader(
         }
         return when (result) {
             is HostedDiagnosticsApiResult.NetworkError -> {
-                markRetryable(report.id, "network")
+                reports.markHostedProcessing(report.id, expectedShortId)
                 DiagnosticsUploadDecision.KeptRetryable
             }
             is HostedDiagnosticsApiResult.Failure -> {
-                markRetryable(report.id, result.errorCode.ifBlank { "status_unavailable" })
+                if (result.errorCode == "invalid_installation_token") {
+                    runCatching { hostedInstallations?.recoverIfInvalid(credentials) }
+                }
+                reports.markHostedProcessing(report.id, expectedShortId)
                 DiagnosticsUploadDecision.KeptRetryable
             }
             is HostedDiagnosticsApiResult.Success -> {
@@ -707,7 +730,7 @@ class DefaultDiagnosticsUploader(
                                 ) {
                                     false
                                 } else {
-                                    reports.recordHostedReadyAndDelete(report.id, report.binding)
+                                    reports.recordHostedReadyAndDelete(report.id, report.binding, expectedShortId)
                                     runCatching {
                                         sentRecorder.record(report.binding.binding, expectedShortId, nowMs(), "ready")
                                     }
@@ -760,6 +783,134 @@ class DefaultDiagnosticsUploader(
                 }
             }
         }
+    }
+
+    private suspend fun reconcileHostedConflict(
+        report: PendingReport,
+        wireReportId: String,
+        credentials: HostedDiagnosticsCredentials,
+        expectedIdentity: DiagnosticsCaptureContext,
+        operationGeneration: Long,
+        requireAlwaysConsent: Boolean,
+    ): DiagnosticsUploadDecision {
+        val api = hostedApi ?: return DiagnosticsUploadDecision.KeptUnavailable
+        val statusAttempt = identityTransitions.withCurrentGeneration(operationGeneration) {
+            privacyBarrier.withTransport {
+                when {
+                    !report.canUploadUnder(expectedIdentity) -> HostedStatusAttempt.Revoked
+                    !transportPolicy.permits(
+                        report.binding,
+                        expectedIdentity.noticeVersion,
+                        requireAlwaysConsent,
+                    ) -> HostedStatusAttempt.Revoked
+                    reports.load(report.id) == null -> HostedStatusAttempt.ReportRemoved
+                    else -> HostedStatusAttempt.Sent(
+                        reportHostedStatusWithFallback(api, credentials, wireReportId),
+                    )
+                }
+            }
+        } ?: return DiagnosticsUploadDecision.KeptIdentityChanged
+        val result = when (statusAttempt) {
+            HostedStatusAttempt.Revoked -> return DiagnosticsUploadDecision.KeptConsentReviewRequired
+            HostedStatusAttempt.ReportRemoved -> return DiagnosticsUploadDecision.KeptInvalid
+            is HostedStatusAttempt.Sent -> statusAttempt.result
+        }
+        if (result is HostedDiagnosticsApiResult.Failure && result.errorCode == "invalid_installation_token") {
+            runCatching { hostedInstallations?.recoverIfInvalid(credentials) }
+        }
+        if (result !is HostedDiagnosticsApiResult.Success) {
+            markRetryable(report.id, "report_conflict")
+            return DiagnosticsUploadDecision.KeptRetryable
+        }
+        val status = result.value
+        val shortId = status.shortId?.takeIf(String::isNotBlank)
+        if (status.reportId != wireReportId || shortId == null) {
+            markRetryable(report.id, "report_conflict")
+            return DiagnosticsUploadDecision.KeptRetryable
+        }
+        return when (status.state) {
+            HostedDiagnosticsReportState.PROCESSING -> {
+                val finalized = identityTransitions.withCurrentGeneration(operationGeneration) {
+                    privacyBarrier.withTransport {
+                        if (
+                            !transportPolicy.permits(
+                                report.binding,
+                                expectedIdentity.noticeVersion,
+                                requireAlwaysConsent,
+                            ) || reports.load(report.id) == null
+                        ) {
+                            false
+                        } else {
+                            reports.markHostedProcessing(report.id, shortId)
+                            true
+                        }
+                    }
+                }
+                if (finalized == true) {
+                    DiagnosticsUploadDecision.HostedProcessing(shortId)
+                } else {
+                    DiagnosticsUploadDecision.KeptIdentityChanged
+                }
+            }
+            HostedDiagnosticsReportState.READY -> {
+                val finalized = identityTransitions.withCurrentGeneration(operationGeneration) {
+                    privacyBarrier.withTransport {
+                        if (
+                            !transportPolicy.permits(
+                                report.binding,
+                                expectedIdentity.noticeVersion,
+                                requireAlwaysConsent,
+                            ) || reports.load(report.id) == null
+                        ) {
+                            false
+                        } else {
+                            reports.recordHostedReadyAndDelete(report.id, report.binding, shortId)
+                            runCatching {
+                                sentRecorder.record(
+                                    report.binding.binding,
+                                    shortId,
+                                    nowMs(),
+                                    status.state.wireValue,
+                                )
+                            }
+                            true
+                        }
+                    }
+                }
+                if (finalized == true) {
+                    DiagnosticsUploadDecision.Uploaded(shortId, status.state)
+                } else {
+                    DiagnosticsUploadDecision.KeptIdentityChanged
+                }
+            }
+            HostedDiagnosticsReportState.REJECTED,
+            HostedDiagnosticsReportState.DELETING,
+            HostedDiagnosticsReportState.DELETED,
+            -> {
+                markPermanent(report.id, status.errorCode ?: status.state.wireValue)
+                DiagnosticsUploadDecision.KeptInvalid
+            }
+            HostedDiagnosticsReportState.RECEIVING,
+            HostedDiagnosticsReportState.UPLOADED,
+            -> {
+                markRetryable(report.id, "report_conflict")
+                DiagnosticsUploadDecision.KeptRetryable
+            }
+        }
+    }
+
+    private suspend fun reportHostedStatusWithFallback(
+        api: HostedDiagnosticsApi,
+        preferred: HostedDiagnosticsCredentials,
+        wireReportId: String,
+    ): HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse> {
+        var lastResult: HostedDiagnosticsApiResult<HostedDiagnosticsReportStatusResponse>? = null
+        hostedInstallations?.credentialsForOutstanding(preferred).orEmpty().forEach { credentials ->
+            val result = api.reportStatus(credentials.installationToken, wireReportId)
+            if (result is HostedDiagnosticsApiResult.Success) return result
+            lastResult = result
+        }
+        return checkNotNull(lastResult) { "hosted status requires installation credentials" }
     }
 
     private suspend fun mapHostedError(
@@ -942,7 +1093,6 @@ class DefaultDiagnosticsUploader(
             "privacy_artifact_rejected",
             "wrong_destination",
             "archive_metadata_mismatch",
-            "report_conflict",
             "upload_attempt_limit_exceeded",
             "unsupported_media_type",
             "size_mismatch",

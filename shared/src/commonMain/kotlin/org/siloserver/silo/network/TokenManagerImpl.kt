@@ -87,10 +87,14 @@ class TokenManagerImpl(
         tokenWriteMutex.withLock {
             identityTransitions.changing(
                 kind = IdentityTransitionKind.ACCOUNT_REPLACE,
-                target = { IdentityTransitionTarget(serverId = serverId) },
+                target = {
+                    check(mutex.withLock { temporaryScope == null }) {
+                        "cannot replace the account inside a temporary auth scope"
+                    }
+                    IdentityTransitionTarget(serverId = serverId)
+                },
             ) {
                 mutex.withLock {
-                    check(temporaryScope == null) { "cannot replace the account inside a temporary auth scope" }
                     if (serverUrl != null) this.serverUrl = serverUrl.trimEnd('/')
                     this.profileId = profileId
                     this.profileToken = profileToken
@@ -257,7 +261,11 @@ class TokenManagerImpl(
     override suspend fun hasTemporaryScope(): Boolean = mutex.withLock { temporaryScope != null }
 
     private suspend fun currentSignOutTarget(): IdentityTransitionTarget = mutex.withLock {
-        IdentityTransitionTarget(serverId = temporaryScope?.serverId)
+        val temporary = temporaryScope
+        IdentityTransitionTarget(
+            serverId = temporary?.serverId,
+            purgesPersistentIdentity = temporary == null,
+        )
     }
 
     private fun clearTokensLocked() {

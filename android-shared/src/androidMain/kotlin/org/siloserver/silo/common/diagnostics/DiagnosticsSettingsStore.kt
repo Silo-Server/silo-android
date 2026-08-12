@@ -114,6 +114,7 @@ class DiagnosticsSettingsStore(
         noticeVersion: Int,
     ) {
         require(noticeVersion > 0) { "noticeVersion must be positive" }
+        repairCorruptErasureIndex()
         if (mode != DiagnosticsConsentMode.NEVER) {
             retryPendingErasure(binding, includeLiveCapture = true)
         }
@@ -124,7 +125,7 @@ class DiagnosticsSettingsStore(
             if (mode == DiagnosticsConsentMode.NEVER) {
                 preferences[DEBUG_LOGGING_KEY] = false
                 preferences.remove(keys.sentHistory)
-                val pending = decodeErasureIndex(preferences[ERASURE_INDEX_KEY])
+                val pending = decodeErasureIndex(preferences[ERASURE_INDEX_KEY]) ?: DiagnosticsErasureIndex()
                 preferences.storeErasureIndex(
                     pending.copy(bindings = (pending.bindings + binding).distinct()),
                 )
@@ -147,7 +148,8 @@ class DiagnosticsSettingsStore(
     }
 
     suspend fun pendingErasureBindings(): List<DiagnosticsBinding> =
-        decodeErasureIndex(dataStore.data.first()[ERASURE_INDEX_KEY]).bindings.distinct()
+        decodeErasureIndex(dataStore.data.first()[ERASURE_INDEX_KEY])?.bindings?.distinct()
+            ?: repairCorruptErasureIndex().let { emptyList() }
 
     private suspend fun retryPendingErasure(
         binding: DiagnosticsBinding,
@@ -156,7 +158,7 @@ class DiagnosticsSettingsStore(
         if (binding !in pendingErasureBindings()) return
         bindingPurger.purge(binding, includeLiveCapture)
         dataStore.edit { preferences ->
-            val pending = decodeErasureIndex(preferences[ERASURE_INDEX_KEY])
+            val pending = decodeErasureIndex(preferences[ERASURE_INDEX_KEY]) ?: DiagnosticsErasureIndex()
             preferences.storeErasureIndex(
                 pending.copy(bindings = pending.bindings.filterNot { it == binding }),
             )
@@ -203,7 +205,8 @@ class DiagnosticsSettingsStore(
             ?.let { raw -> DiagnosticsDestinationKind.entries.firstOrNull { it.name == raw } }
             ?: DiagnosticsDestinationKind.HOSTED
         if (destination != binding.destinationKind) return false
-        if (binding.binding in decodeErasureIndex(preferences[ERASURE_INDEX_KEY]).bindings) return false
+        val erasures = decodeErasureIndex(preferences[ERASURE_INDEX_KEY]) ?: return false
+        if (binding.binding in erasures.bindings) return false
         if (!requireAlwaysConsent) return true
 
         val keys = keys(binding.binding)
@@ -297,7 +300,8 @@ class DiagnosticsSettingsStore(
         dataStore.edit { preferences ->
             val consentMode = preferences[keys.consentMode]
                 ?.let { raw -> DiagnosticsConsentMode.entries.firstOrNull { it.name == raw } }
-            val erasurePending = binding in decodeErasureIndex(preferences[ERASURE_INDEX_KEY]).bindings
+            val erasures = decodeErasureIndex(preferences[ERASURE_INDEX_KEY]) ?: return@edit
+            val erasurePending = binding in erasures.bindings
             if (consentMode == DiagnosticsConsentMode.NEVER || erasurePending) {
                 // A direct WorkManager upload can settle after Turn Off has
                 // durably won. Never recreate history for an identity whose
@@ -333,7 +337,7 @@ class DiagnosticsSettingsStore(
                     }.filterValues { bindings -> bindings.isNotEmpty() },
                 ),
             )
-            val pending = decodeErasureIndex(preferences[ERASURE_INDEX_KEY])
+            val pending = decodeErasureIndex(preferences[ERASURE_INDEX_KEY]) ?: DiagnosticsErasureIndex()
             preferences.storeErasureIndex(
                 pending.copy(bindings = pending.bindings.filterNot { it == binding }),
             )
@@ -419,15 +423,30 @@ class DiagnosticsSettingsStore(
             .orEmpty()
 
     private fun decodeBindingIndex(raw: String?): DiagnosticsBindingIndex {
-        val index = raw?.let { encoded -> JSON.decodeFromString<DiagnosticsBindingIndex>(encoded) }
+        val index = raw?.let { encoded ->
+            runCatching { JSON.decodeFromString<DiagnosticsBindingIndex>(encoded) }.getOrNull()
+        }
             ?: DiagnosticsBindingIndex()
-        require(index.byLocalServerId.keys.none(String::isBlank)) { "invalid diagnostics binding index" }
-        return index
+        return index.copy(byLocalServerId = index.byLocalServerId.filterKeys(String::isNotBlank))
     }
 
-    private fun decodeErasureIndex(raw: String?): DiagnosticsErasureIndex =
-        raw?.let { encoded -> JSON.decodeFromString<DiagnosticsErasureIndex>(encoded) }
-            ?: DiagnosticsErasureIndex()
+    private fun decodeErasureIndex(raw: String?): DiagnosticsErasureIndex? {
+        if (raw == null) return DiagnosticsErasureIndex()
+        return runCatching { JSON.decodeFromString<DiagnosticsErasureIndex>(raw) }.getOrNull()
+    }
+
+    private suspend fun repairCorruptErasureIndex() {
+        val raw = dataStore.data.first()[ERASURE_INDEX_KEY] ?: return
+        if (decodeErasureIndex(raw) != null) return
+        checkNotNull(allEvidencePurger) {
+            "corrupt diagnostics erasure state requires an all-evidence purger"
+        }.purge(includeLiveCapture = true)
+        dataStore.edit { preferences ->
+            if (decodeErasureIndex(preferences[ERASURE_INDEX_KEY]) == null) {
+                preferences.remove(ERASURE_INDEX_KEY)
+            }
+        }
+    }
 
     private fun androidx.datastore.preferences.core.MutablePreferences.storeBindingIndex(
         index: DiagnosticsBindingIndex,

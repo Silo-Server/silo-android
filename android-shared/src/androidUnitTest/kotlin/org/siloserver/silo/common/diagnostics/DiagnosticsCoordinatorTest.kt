@@ -297,6 +297,32 @@ class DiagnosticsCoordinatorTest {
     }
 
     @Test
+    fun cachedHostedCapabilitiesCannotOpenPersistentCaptureGates() = runTest {
+        val identity = MutableIdentityResolver(hostedContext()).apply {
+            captureAttestationAllowed = false
+        }
+        val capture = RecordingCaptureController()
+        val runtime = RecordingRuntimePublisher()
+        val fixture = fixture(
+            identity,
+            DefaultIdentityTransitionBarrier(),
+            capture,
+            backgroundScope,
+            UnconfinedTestDispatcher(testScheduler),
+            runtimePublisher = runtime,
+        )
+
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+
+        assertTrue(identity.captureAttestationCalls > 0)
+        assertFalse(runtime.live)
+        assertFalse(capture.debugLoggingEnabled)
+        assertFalse(capture.persistentBreadcrumbsEnabled)
+        assertEquals(DiagnosticsAvailabilityUi.AVAILABLE, fixture.coordinator.state.value.availability)
+    }
+
+    @Test
     fun hostedProcessingSchedulesStatusPollingWithoutReportingFailure() = runTest {
         val hosted = hostedContext()
         val scheduled = mutableListOf<String>()
@@ -330,6 +356,7 @@ class DiagnosticsCoordinatorTest {
             retentionDays = HOSTED_DIAGNOSTICS_RETENTION_DAYS,
         )
         val deleter = RecordingHostedReportDeleter(result = false)
+        var scheduledDeletionRetries = 0
         val fixture = fixture(
             MutableIdentityResolver(hosted),
             DefaultIdentityTransitionBarrier(),
@@ -337,6 +364,7 @@ class DiagnosticsCoordinatorTest {
             backgroundScope,
             UnconfinedTestDispatcher(testScheduler),
             hostedReportDeleter = deleter,
+            hostedDeletionScheduler = HostedDiagnosticsDeletionScheduler { scheduledDeletionRetries += 1 },
         )
         fixture.coordinator.start()
         fixture.coordinator.refresh()
@@ -349,6 +377,7 @@ class DiagnosticsCoordinatorTest {
         assertEquals(null, fixture.reports.load(report.id))
         assertEquals(listOf(report.id), fixture.reports.hostedDeletionIntents())
         assertEquals(listOf(report.id), deleter.reportIds)
+        assertTrue(scheduledDeletionRetries > 0)
         assertTrue(fixture.coordinator.state.value.pending.none { it.id == report.id })
 
         deleter.result = true
@@ -1645,6 +1674,7 @@ class DiagnosticsCoordinatorTest {
             DiagnosticsUploader { DiagnosticsUploadDecision.KeptUnavailable }
         },
         uploadScheduler: DiagnosticsUploadScheduler = DiagnosticsUploadScheduler { },
+        hostedDeletionScheduler: HostedDiagnosticsDeletionScheduler = HostedDiagnosticsDeletionScheduler.None,
         hostedReportDeleter: HostedDiagnosticsReportDeleter = HostedDiagnosticsReportDeleter.None,
         purgeFailure: (() -> Throwable?)? = null,
         dataStoreDecorator: (DataStore<Preferences>) -> DataStore<Preferences> = { it },
@@ -1691,6 +1721,7 @@ class DiagnosticsCoordinatorTest {
             capture = capture,
             uploader = uploaderFactory(reports),
             uploadScheduler = uploadScheduler,
+            hostedDeletionScheduler = hostedDeletionScheduler,
             hostedReportDeleter = hostedReportDeleter,
             runtimePublisher = runtimePublisher,
             incidentCollector = incidentCollectorFactory(reports),

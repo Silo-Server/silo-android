@@ -17,6 +17,7 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionKind
 import org.siloserver.silo.network.IdentityTransitionPhase
+import org.siloserver.silo.network.api.HostedDiagnosticsReportState
 
 data class ActiveDiagnosticsCapture(
     val generation: Long,
@@ -42,6 +43,14 @@ interface DiagnosticsCaptureController {
 
 fun interface DiagnosticsUploadScheduler {
     fun enqueue(reportId: String)
+}
+
+fun interface HostedDiagnosticsDeletionScheduler {
+    fun enqueue()
+
+    data object None : HostedDiagnosticsDeletionScheduler {
+        override fun enqueue() = Unit
+    }
 }
 
 interface DiagnosticsRuntimePublisher {
@@ -97,6 +106,7 @@ class DefaultDiagnosticsCoordinator(
     private val capture: DiagnosticsCaptureController,
     private val uploader: DiagnosticsUploader,
     private val uploadScheduler: DiagnosticsUploadScheduler,
+    private val hostedDeletionScheduler: HostedDiagnosticsDeletionScheduler = HostedDiagnosticsDeletionScheduler.None,
     private val hostedReportDeleter: HostedDiagnosticsReportDeleter = HostedDiagnosticsReportDeleter.None,
     private val runtimePublisher: DiagnosticsRuntimePublisher = DiagnosticsRuntimePublisher.None,
     private val incidentCollector: DiagnosticsIncidentCollector = DiagnosticsIncidentCollector { _, _ -> emptyList() },
@@ -137,19 +147,21 @@ class DefaultDiagnosticsCoordinator(
                 }
                 when (transition.kind) {
                     IdentityTransitionKind.SIGN_OUT -> {
-                        val targetServerId = transition.targetServerId
-                        when {
-                            targetServerId != null -> settings.purgeLocalServer(
-                                localServerId = targetServerId,
-                                fallbackBinding = purgeScope
-                                    ?.takeIf { it.localServerId == targetServerId }
-                                    ?.binding,
-                            )
-                            purgeScope != null -> settings.purgeBinding(
-                                binding = purgeScope.binding,
-                                includeLiveCapture = false,
-                            )
-                            else -> settings.clearCachedContext()
+                        if (transition.purgesPersistentIdentity) {
+                            val targetServerId = transition.targetServerId
+                            when {
+                                targetServerId != null -> settings.purgeLocalServer(
+                                    localServerId = targetServerId,
+                                    fallbackBinding = purgeScope
+                                        ?.takeIf { it.localServerId == targetServerId }
+                                        ?.binding,
+                                )
+                                purgeScope != null -> settings.purgeBinding(
+                                    binding = purgeScope.binding,
+                                    includeLiveCapture = false,
+                                )
+                                else -> settings.clearCachedContext()
+                            }
                         }
                     }
                     IdentityTransitionKind.SERVER_REMOVE,
@@ -173,6 +185,7 @@ class DefaultDiagnosticsCoordinator(
                         kind = transition.kind,
                         previousBinding = purgeScope?.binding,
                         affectsCurrentIdentity = transition.affectsCurrentIdentity,
+                        purgesPersistentIdentity = transition.purgesPersistentIdentity,
                     ),
                 )
             }
@@ -379,6 +392,20 @@ class DefaultDiagnosticsCoordinator(
             return
         }
 
+        val liveCaptureContext = if (resolved.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+            runCatching { identity.resolveForCapture(requirePersistentCapture = true) }
+                .getOrNull()
+                ?.takeIf { live ->
+                    live.profileEligible &&
+                        live.status == DiagnosticsAvailabilityStatus.AVAILABLE &&
+                        live.identityKey == resolved.identityKey &&
+                        live.destinationKind == resolved.destinationKind &&
+                        live.ownershipGeneration == resolved.ownershipGeneration
+                }
+        } else {
+            resolved
+        }
+
         val guardedRefresh = try {
             identityTransitions.withCurrentGeneration(resolved.ownershipGeneration) {
                 if (liveEvidenceCleanupPending.get()) {
@@ -399,24 +426,38 @@ class DefaultDiagnosticsCoordinator(
                     runtimePublisher.closeGate()
                     capture.setDebugLogging(null, false)
                     capture.setPersistentBreadcrumbs(null, false)
-                } else {
+                } else if (liveCaptureContext != null) {
                     // The generation mutex covers every commit that can publish a crash
                     // snapshot or persist identity-owned incident/capture evidence. An
                     // identity mutation either waits and purges this work, or wins first and
                     // prevents this block from running.
-                    runtimePublisher.publish(resolved)
-                    incidentCollector.collect(resolved, consent.mode)
+                    runtimePublisher.publish(liveCaptureContext)
+                    incidentCollector.collect(liveCaptureContext, consent.mode)
                     capture.setDebugLogging(
-                        resolved,
+                        liveCaptureContext,
                         debugLogging && activeCapture == null,
                     )
-                    capture.setPersistentBreadcrumbs(resolved, true)
+                    capture.setPersistentBreadcrumbs(liveCaptureContext, true)
+                } else {
+                    runtimePublisher.closeGate()
+                    capture.setDebugLogging(null, false)
+                    capture.setPersistentBreadcrumbs(null, false)
                 }
 
                 // A store cleanup/enumeration failure is a privacy boundary,
                 // not an empty report list. Let the outer fail-closed path keep
                 // every evidence gate shut until strict cleanup can succeed.
                 val pendingReports = reports.list(resolved.binding)
+                reports.hostedReadyReports()
+                    .filter { receipt -> receipt.binding == resolved.binding }
+                    .forEach { receipt ->
+                        settings.recordSent(
+                            binding = receipt.binding,
+                            shortId = receipt.shortId,
+                            sentAtEpochMs = receipt.readyAtEpochMs,
+                            state = HostedDiagnosticsReportState.READY.wireValue,
+                        )
+                    }
                 val history = runCatching { settings.sentHistory(resolved.binding) }.getOrDefault(emptyList())
                 currentContext = resolved
                 EligibleRefresh(
@@ -439,6 +480,7 @@ class DefaultDiagnosticsCoordinator(
         val summaries = pendingReports.map { report -> report.summary(resolved.retentionDays) }
         val promptReports = pendingReports.filter { report ->
             consent.mode == DiagnosticsConsentMode.ASK &&
+                report.state.status != PendingReportStatus.PROCESSING &&
                 !runCatching {
                     reports.isThrottled(promptThrottleKey(report), PROMPT_THROTTLE_MS)
                 }.getOrDefault(true)
@@ -523,6 +565,7 @@ class DefaultDiagnosticsCoordinator(
             sentHistory = emptyList(),
             destinationKind = selectedDestination,
             allowsAutomaticUpload = selectedDestination.allowsAutomaticUpload,
+            retentionDays = selectedDestination.defaultRetentionDays,
         )
     }
 
@@ -654,6 +697,7 @@ class DefaultDiagnosticsCoordinator(
         invalidateActiveCapture()
         if (
             command.kind in DESTRUCTIVE_IDENTITY_TRANSITIONS &&
+            command.purgesPersistentIdentity &&
             command.previousBinding != null
         ) {
             // The synchronous transition gate already removed evidence and
@@ -751,6 +795,7 @@ class DefaultDiagnosticsCoordinator(
             }
         }
         if (!deleted) return false
+        hostedDeletionScheduler.enqueue()
         refreshOwnedState()
         return true
     }
@@ -786,7 +831,7 @@ class DefaultDiagnosticsCoordinator(
         actorScope.launch {
             try {
                 while (hostedDeletionDrainRequested.getAndSet(false)) {
-                    drainHostedDeletionIntents()
+                    if (!drainHostedDeletionIntents()) hostedDeletionScheduler.enqueue()
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -856,6 +901,7 @@ class DefaultDiagnosticsCoordinator(
             val kind: IdentityTransitionKind,
             val previousBinding: DiagnosticsBinding?,
             val affectsCurrentIdentity: Boolean,
+            val purgesPersistentIdentity: Boolean,
         ) : Command
         data object IdentityDidChange : Command
         data class Refresh(val completion: CompletableDeferred<Unit>? = null) : Command

@@ -182,17 +182,21 @@ class EncryptedTokenManagerImpl(
             ?: serverUrl?.let { registry.addOrUpdate(it) }
             ?: registry.activeServerId.value
             ?: error("account replacement requires a registered server")
+        val androidRegistry = registry as? AndroidServerRegistry
+            ?: error("persistent account replacement requires AndroidServerRegistry")
         tokenWriteMutex.withLock {
             identityTransitions.changing(
                 kind = IdentityTransitionKind.ACCOUNT_REPLACE,
-                target = { IdentityTransitionTarget(serverId = targetServerId) },
+                target = {
+                    check(mutex.withLock { temporaryScope == null }) {
+                        "cannot replace the account inside a temporary auth scope"
+                    }
+                    IdentityTransitionTarget(serverId = targetServerId)
+                },
             ) {
                 mutex.withLock {
-                    check(temporaryScope == null) { "cannot replace the account inside a temporary auth scope" }
                     val lifetimeMs = expiresIn * 1_000L
                     val expiryEpochMs = System.currentTimeMillis() + lifetimeMs
-                    val androidRegistry = registry as? AndroidServerRegistry
-                        ?: error("persistent account replacement requires AndroidServerRegistry")
                     // Registry selection and token/profile slots share the same
                     // encrypted preferences file, so commit them atomically and
                     // synchronously before publishing the cache.
@@ -205,7 +209,6 @@ class EncryptedTokenManagerImpl(
                         expiryEpochMs = expiryEpochMs,
                         lifetimeMs = lifetimeMs,
                     )
-                    afterAccountSessionCommit()
                     activeServerId = targetServerId
                     this.profileId = profileId
                     this.profileToken = profileToken
@@ -214,6 +217,7 @@ class EncryptedTokenManagerImpl(
                     tokenExpiryEpochMs = expiryEpochMs
                     tokenLifetimeMs = lifetimeMs
                     persistentCredentialEpoch += 1
+                    afterAccountSessionCommit()
                 }
             }
         }
@@ -287,6 +291,7 @@ class EncryptedTokenManagerImpl(
 
     private suspend fun clearPersistentTokensLocked() {
         val serverId = activeServerId
+        var committedSignOut = false
         if (serverId != null) {
             val androidRegistry = registry as? AndroidServerRegistry
             if (androidRegistry != null) {
@@ -302,7 +307,7 @@ class EncryptedTokenManagerImpl(
                 check(editor.commit()) { "unable to durably sign out account" }
                 registry.signOut(serverId)
             }
-            afterAccountSignOutCommit()
+            committedSignOut = true
         }
         persistentCredentialEpoch += 1
         accessToken = null
@@ -311,6 +316,7 @@ class EncryptedTokenManagerImpl(
         tokenLifetimeMs = null
         profileId = null
         profileToken = null
+        if (committedSignOut) afterAccountSignOutCommit()
     }
 
     override suspend fun getProfileId(): String? = mutex.withLock {
@@ -742,7 +748,11 @@ class EncryptedTokenManagerImpl(
     /** Resolved under the identity-mutation mutex immediately before privacy gates run. */
     private suspend fun currentSignOutTarget(): IdentityTransitionTarget = mutex.withLock {
         ensureCacheMatchesRegistryLocked()
-        IdentityTransitionTarget(serverId = temporaryScope?.serverId ?: activeServerId)
+        val temporary = temporaryScope
+        IdentityTransitionTarget(
+            serverId = temporary?.serverId ?: activeServerId,
+            purgesPersistentIdentity = temporary == null,
+        )
     }
 
     override suspend fun invalidateSessionForScope(scope: AuthScopeSnapshot): Boolean =

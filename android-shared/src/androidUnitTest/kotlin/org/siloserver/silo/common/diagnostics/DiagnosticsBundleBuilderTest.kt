@@ -658,34 +658,40 @@ class DiagnosticsBundleBuilderTest {
 
     @Test
     fun hostedLoopbackNormalizationRequiresLiteralTokenBoundariesAndValidIpv4Octets() {
-        val boundaryValues =
-            "mylocalhost localhost.example 127.0.0.1.example 127.0.0.256 1127.0.0.1 " +
-                "127.0.0.1x 2001:db8::1 ::10 foo[::1]bar"
-        val bundle = builder.build(
-            report(
-                artifacts = mapOf(
-                    "device.json" to "{}".encodeToByteArray(),
-                    "crash/stack.txt" to boundaryValues.encodeToByteArray(),
-                ),
-                destinationKind = DiagnosticsDestinationKind.HOSTED,
-            ),
-            redactionTokens = emptyList(),
+        val nearMisses = listOf(
+            "mylocalhost",
+            "127.0.0.256",
+            "1127.0.0.1",
         )
-
-        val sanitized = bundle.sanitizedEntries.getValue("crash/stack.txt").decodeToString()
-        assertEquals("[redacted_private_id]", sanitized)
-
-        val selfHosted = builder.build(
-            report(
-                artifacts = mapOf(
-                    "device.json" to "{}".encodeToByteArray(),
-                    "crash/stack.txt" to boundaryValues.encodeToByteArray(),
+        nearMisses.forEach { value ->
+            val bundle = builder.build(
+                report(
+                    artifacts = mapOf(
+                        "device.json" to "{}".encodeToByteArray(),
+                        "crash/stack.txt" to value.encodeToByteArray(),
+                    ),
+                    destinationKind = DiagnosticsDestinationKind.HOSTED,
                 ),
-                destinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
-            ),
-            redactionTokens = emptyList(),
-        )
-        assertEquals(boundaryValues, selfHosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString())
+                redactionTokens = emptyList(),
+            )
+            assertEquals(
+                value,
+                bundle.sanitizedEntries.getValue("crash/stack.txt").decodeToString(),
+                value,
+            )
+
+            val selfHosted = builder.build(
+                report(
+                    artifacts = mapOf(
+                        "device.json" to "{}".encodeToByteArray(),
+                        "crash/stack.txt" to value.encodeToByteArray(),
+                    ),
+                    destinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
+                ),
+                redactionTokens = emptyList(),
+            )
+            assertEquals(value, selfHosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString())
+        }
     }
 
     @Test

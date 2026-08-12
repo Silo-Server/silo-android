@@ -7,6 +7,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.DeviceLoginRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,11 +91,21 @@ class TvLoginViewModel(
                         return@launch
                     }
                     deviceLoginJob?.cancel()
-                    tokenManager.replaceAccountSession(
-                        accessToken = result.data.accessToken,
-                        refreshToken = result.data.refreshToken,
-                        expiresIn = result.data.expiresIn,
-                    )
+                    try {
+                        tokenManager.replaceAccountSession(
+                            accessToken = result.data.accessToken,
+                            refreshToken = result.data.refreshToken,
+                            expiresIn = result.data.expiresIn,
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        authCompleted = false
+                        _uiState.update {
+                            it.copy(isLoading = false, error = "Unable to save this session. Try again.")
+                        }
+                        return@launch
+                    }
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
                 }
                 is ApiResult.Error -> {
@@ -171,11 +182,21 @@ class TvLoginViewModel(
             return
         }
         credentialLoginJob?.cancel()
-        tokenManager.replaceAccountSession(
-            accessToken = accessToken,
-            refreshToken = refreshToken,
-            expiresIn = response.expiresIn ?: 0L,
-        )
+        try {
+            tokenManager.replaceAccountSession(
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                expiresIn = response.expiresIn ?: 0L,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            authCompleted = false
+            _uiState.update {
+                it.copy(isLoading = false, error = "Unable to save this session. Try again.")
+            }
+            return
+        }
         _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
     }
 

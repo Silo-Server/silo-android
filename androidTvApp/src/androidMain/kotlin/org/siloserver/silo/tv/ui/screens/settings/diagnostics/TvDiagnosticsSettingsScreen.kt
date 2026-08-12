@@ -34,6 +34,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,6 +71,14 @@ fun TvDiagnosticsSettingsScreen(
         return
     }
     var confirmAlways by remember { mutableStateOf(false) }
+    val uriHandler = LocalUriHandler.current
+    val effectiveConsent = if (
+        state.consent == DiagnosticsConsentMode.ALWAYS && !state.allowsAutomaticUpload
+    ) {
+        DiagnosticsConsentMode.ASK
+    } else {
+        state.consent
+    }
     val crashFocusRequesters = remember {
         TvDiagnosticsCrashFocus.entries.associateWith { FocusRequester() }
     }
@@ -139,15 +148,21 @@ fun TvDiagnosticsSettingsScreen(
                     )
                     Text(
                         if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) {
-                            "Reports go directly to Silo Diagnostics without server setup. A pseudonymous " +
-                                "installation credential is not linked to your Silo account. Account, profile, " +
-                                "server address, and playback session IDs are omitted. Reports are never sent " +
-                                "automatically and may be retained for up to ${state.retentionDays} days."
+                            "Reports include the Silo app version and build, Android version, device model, " +
+                                "crash details, and diagnostic logs you review. A pseudonymous installation " +
+                                "credential is not linked to an account on your self-hosted server. Username, " +
+                                "email, profile, server address, and playback session IDs are omitted. Reports " +
+                                "are never sent automatically and may be retained for up to " +
+                                "${state.retentionDays} days."
                         } else {
                             "Compatibility mode sends reports to your active server."
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
+                    )
+                    TvDiagnosticsAction(
+                        label = "Privacy Policy",
+                        onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) },
                     )
                 }
             }
@@ -174,7 +189,7 @@ fun TvDiagnosticsSettingsScreen(
                                 DiagnosticsConsentMode.ALWAYS -> "Always send"
                                 DiagnosticsConsentMode.NEVER -> "Never send"
                             },
-                            value = if (state.consent == mode) "Selected" else null,
+                            value = if (effectiveConsent == mode) "Selected" else null,
                             onClick = {
                                 if (tvDiagnosticsConsentAction(state.consent, mode).requiresConfirmation) {
                                     confirmAlways = true
@@ -265,6 +280,8 @@ fun TvDiagnosticsSettingsScreen(
         )
     }
 }
+
+private const val PRIVACY_POLICY_URL = "https://siloserver.org/privacy"
 
 internal enum class TvDiagnosticsCrashFocus { ASK, ALWAYS, NEVER, DEBUG_LOGGING }
 
