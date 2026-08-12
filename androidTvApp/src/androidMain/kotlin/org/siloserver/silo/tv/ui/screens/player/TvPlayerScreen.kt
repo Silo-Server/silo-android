@@ -592,7 +592,8 @@ fun TvPlayerScreen(
     }
 
     fun handleSkipIntroNow(): Boolean {
-        val target = viewModel.uiState.value.intro?.end ?: return false
+        val playerState = viewModel.uiState.value
+        val target = playerState.intro?.end ?: return false
         if (roomController != null) {
             if (tvRoomTransportGate(latestRoomSnapshot, TvTransportIntent.Seek) != TransportGate.Send) {
                 return true
@@ -602,6 +603,12 @@ fun TvPlayerScreen(
         } else {
             val soloTarget = viewModel.onSkipIntroNow() ?: return false
             viewModel.seekImmediate(soloTarget)
+        }
+        // The pill unmounts with the intro state, taking its focus with it, so
+        // aim at the scrubber (where Down from the pill goes). Only with the
+        // controls up: otherwise the overlay owning the scrubber isn't composed.
+        if (playerState.showControls) {
+            requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
         }
         return true
     }
