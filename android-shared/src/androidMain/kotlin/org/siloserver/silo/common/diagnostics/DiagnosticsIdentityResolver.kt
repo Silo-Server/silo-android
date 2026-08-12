@@ -83,6 +83,9 @@ data class DiagnosticsCaptureContext(
     val retentionDays: Int = 7,
     val localServerId: String? = null,
     val credentialFingerprint: String? = null,
+    /** Source profile is retained only in encrypted/local state for privacy gating. */
+    val sourceProfileId: String? = profileId,
+    val destinationKind: DiagnosticsDestinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
 ) {
     val identityKey: DiagnosticsIdentityKey = DiagnosticsIdentityKey(
         binding = binding,
@@ -93,6 +96,14 @@ data class DiagnosticsCaptureContext(
 
 interface DiagnosticsIdentityResolver {
     suspend fun resolve(requirePersistentCapture: Boolean): DiagnosticsCaptureContext?
+
+    /** Live attestation used immediately before starting a user-requested capture. */
+    suspend fun resolveForCapture(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? =
+        resolve(requirePersistentCapture)
+
+    /** Live account attestation used immediately before starting a transport. */
+    suspend fun resolveForUpload(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? =
+        resolve(requirePersistentCapture)
 
     /** Local-only attestation used before exposing a cached context while the server is offline. */
     suspend fun matchesCachedIdentity(cached: CachedDiagnosticsContext): Boolean = false
@@ -159,6 +170,7 @@ class DefaultDiagnosticsIdentityResolver(
                 !child
             }
 
+            val credentialFingerprint = currentCredentialFingerprint()
             if (identityTransitions.generation.value != generation) continue
             val context = DiagnosticsCaptureContext(
                 binding = DiagnosticsBinding(status.serverInstanceId, accountUserId),
@@ -172,7 +184,7 @@ class DefaultDiagnosticsIdentityResolver(
                 maxManifestBytes = status.maxManifestBytes,
                 retentionDays = status.retentionDays,
                 localServerId = server.id,
-                credentialFingerprint = currentCredentialFingerprint(),
+                credentialFingerprint = credentialFingerprint,
             )
             return context
         }

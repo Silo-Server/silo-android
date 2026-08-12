@@ -7,6 +7,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.DeviceLoginRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,11 +91,21 @@ class TvLoginViewModel(
                         return@launch
                     }
                     deviceLoginJob?.cancel()
-                    tokenManager.saveTokens(
-                        accessToken = result.data.accessToken,
-                        refreshToken = result.data.refreshToken,
-                        expiresIn = result.data.expiresIn,
-                    )
+                    try {
+                        tokenManager.replaceAccountSession(
+                            accessToken = result.data.accessToken,
+                            refreshToken = result.data.refreshToken,
+                            expiresIn = result.data.expiresIn,
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        handleSessionPersistenceFailure(
+                            accessToken = result.data.accessToken,
+                            refreshToken = result.data.refreshToken,
+                        )
+                        return@launch
+                    }
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
                 }
                 is ApiResult.Error -> {
@@ -171,12 +182,41 @@ class TvLoginViewModel(
             return
         }
         credentialLoginJob?.cancel()
-        tokenManager.saveTokens(
-            accessToken = accessToken,
-            refreshToken = refreshToken,
-            expiresIn = response.expiresIn ?: 0L,
-        )
+        try {
+            tokenManager.replaceAccountSession(
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                expiresIn = response.expiresIn ?: 0L,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            handleSessionPersistenceFailure(accessToken, refreshToken)
+            return
+        }
         _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
+    }
+
+    private suspend fun handleSessionPersistenceFailure(
+        accessToken: String,
+        refreshToken: String,
+    ) {
+        val committed = runCatching {
+            tokenManager.getAccessToken() == accessToken &&
+                tokenManager.getRefreshToken() == refreshToken
+        }.getOrDefault(false)
+        authCompleted = committed
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                loginSuccess = committed,
+                error = if (committed) {
+                    "Signed in, but local diagnostics cleanup did not finish."
+                } else {
+                    "Unable to save this session. Try again."
+                },
+            )
+        }
     }
 
     private fun tryCompleteAuth(): Boolean {

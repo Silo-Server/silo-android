@@ -6,6 +6,7 @@ import org.junit.rules.TemporaryFolder
 import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -18,7 +19,12 @@ class DiagnosticsRunLedgerTest {
     fun publishesOnlyOpaqueTokenAndPersistsIdentityMappingLocally() = runTest {
         val published = mutableListOf<ByteArray>()
         val root = temporaryFolder.newFolder("ledger")
-        val ledger = DiagnosticsRunLedger(root, ProcessStateSummaryPublisher { published += it })
+        val ledger = DiagnosticsRunLedger(
+            root,
+            ProcessStateSummaryPublisher { published += it },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
         val context = context("server-secret", "user-secret", "profile-secret", generation = 4)
 
         val token = ledger.beginRun(context, processStartedAtEpochMs = 100, captureSessionId = "capture-secret")
@@ -30,7 +36,11 @@ class DiagnosticsRunLedgerTest {
         }
         assertTrue(token.matches(Regex("[0-9a-f]{32}")), token)
 
-        val restored = DiagnosticsRunLedger(root).find(token)
+        val restored = DiagnosticsRunLedger(
+            root,
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        ).find(token)
         assertEquals(context.binding, restored?.binding)
         assertEquals("profile-secret", restored?.profileId)
         assertEquals("capture-secret", restored?.captureSessionId)
@@ -44,6 +54,8 @@ class DiagnosticsRunLedgerTest {
             noBackupFilesDir = temporaryFolder.newFolder("bounded"),
             maxRecords = 2,
             tokenFactory = { "a".repeat(31) + (tokenCounter++).toString(16) },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
         )
 
         val first = ledger.beginRun(context("s", "u", null, 1), 1, "c1")
@@ -58,7 +70,11 @@ class DiagnosticsRunLedgerTest {
 
     @Test
     fun purgeBindingRemovesOnlyOwnedRuns() = runTest {
-        val ledger = DiagnosticsRunLedger(temporaryFolder.newFolder("purge"))
+        val ledger = DiagnosticsRunLedger(
+            temporaryFolder.newFolder("purge"),
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
         val a = ledger.beginRun(context("server-a", "user", null, 1), 1, "a")
         val b = ledger.beginRun(context("server-b", "user", null, 1), 2, "b")
 
@@ -66,6 +82,58 @@ class DiagnosticsRunLedgerTest {
 
         assertNull(ledger.find(a))
         assertEquals("b", ledger.find(b)?.captureSessionId)
+    }
+
+    @Test
+    fun clearRemovesCommittedAndTemporaryLedgersAndPropagatesDirectorySyncFailure() = runTest {
+        val root = temporaryFolder.newFolder("strict-clear")
+        var failSync = false
+        val ledger = DiagnosticsRunLedger(
+            root,
+            directorySync = { if (failSync) error("injected ledger fsync failure") },
+            atomicRename = ::testAtomicRename,
+        )
+        ledger.beginRun(context("server", "user", null, 1), 1, "capture")
+        val temporary = root.resolve("client-diagnostics/run-ledger.json.tmp")
+        temporary.writeText("private stale bytes")
+        failSync = true
+
+        assertFailsWith<IllegalStateException> { ledger.clear() }
+        assertFalse(root.resolve("client-diagnostics/run-ledger.json").exists())
+
+        failSync = false
+        ledger.clear()
+        assertFalse(temporary.exists())
+    }
+
+    @Test
+    fun failedAtomicReplacementPreservesPriorLedgerAndSyncedTemporary() = runTest {
+        val root = temporaryFolder.newFolder("rename-failure")
+        var failReplacement = false
+        var tokenCounter = 0
+        val ledger = DiagnosticsRunLedger(
+            root,
+            tokenFactory = { "b".repeat(31) + (tokenCounter++).toString(16) },
+            directorySync = {},
+            atomicRename = { source, target ->
+                if (failReplacement && target.exists()) error("simulated atomic rename failure")
+                testAtomicRename(source, target)
+            },
+        )
+        val first = ledger.beginRun(context("server", "user", null, 1), 1, "first")
+        failReplacement = true
+
+        assertFailsWith<IllegalStateException> {
+            ledger.beginRun(context("server", "user", null, 1), 2, "second")
+        }
+
+        val restored = DiagnosticsRunLedger(
+            root,
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
+        assertEquals("first", restored.find(first)?.captureSessionId)
+        assertTrue(root.resolve("client-diagnostics/run-ledger.json.tmp").isFile)
     }
 
     private fun context(

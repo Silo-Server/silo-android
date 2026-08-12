@@ -41,6 +41,7 @@ import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.settings.SettingsSectionCard
 import org.siloserver.silo.android.ui.screens.settings.SettingsSectionHeader
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
+import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadDecision
 
 @Composable
@@ -54,7 +55,9 @@ fun DiagnosticsReportScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var uploading by remember { mutableStateOf(false) }
     var sentShortId by remember { mutableStateOf<String?>(null) }
+    var sentState by remember { mutableStateOf("processing") }
     var uploadNotice by remember { mutableStateOf<String?>(null) }
+    var uploadNoticeIsError by remember { mutableStateOf(true) }
     Scaffold(
         topBar = { SiloTopBar(title = "Report details", onBackClick = onBackClick) },
         containerColor = MaterialTheme.colorScheme.background,
@@ -66,6 +69,7 @@ fun DiagnosticsReportScreen(
             // reads as the report having vanished.
             shortId != null -> DiagnosticsSentConfirmation(
                 shortId = shortId,
+                state = sentState,
                 modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
                 onDone = onBackClick,
             )
@@ -76,7 +80,7 @@ fun DiagnosticsReportScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.size(12.dp))
-                        Text("Sending report to your server…")
+                        Text("Sending report…")
                     }
                 } else {
                     Text("This report is no longer on this device.")
@@ -94,8 +98,17 @@ fun DiagnosticsReportScreen(
                             Text(report.capturedAt, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(12.dp))
                             DetailLine("Evidence", formatDiagnosticBytes(report.evidenceBytes))
-                            DetailLine("Destination", report.destinationServerInstanceId)
-                            DetailLine("Captured profile", report.capturedProfileId ?: "Account scoped")
+                            DetailLine(
+                                "Destination",
+                                if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                                    "Silo Diagnostics"
+                                } else {
+                                    report.destinationServerInstanceId
+                                },
+                            )
+                            if (report.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED) {
+                                DetailLine("Captured profile", report.capturedProfileId ?: "Account scoped")
+                            }
                             DetailLine("Expires", formatDiagnosticDate(report.expiresAtEpochMs))
                             DetailLine("Upload state", report.uploadStatus.name.lowercase().replace('_', ' '))
                             report.uploadErrorCode?.let { DetailLine("Last error", it) }
@@ -122,13 +135,20 @@ fun DiagnosticsReportScreen(
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.size(12.dp))
                                 Text(
-                                    "Sending report to your server…",
+                                    "Sending report…",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
                         uploadNotice?.let { notice ->
-                            Text(notice, color = MaterialTheme.colorScheme.error)
+                            Text(
+                                notice,
+                                color = if (uploadNoticeIsError) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                            )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                             Button(
@@ -139,8 +159,18 @@ fun DiagnosticsReportScreen(
                                     viewModel.upload(report.id) { decision ->
                                         uploading = false
                                         when (decision) {
-                                            is DiagnosticsUploadDecision.Uploaded -> sentShortId = decision.shortId
-                                            else -> uploadNotice = uploadKeptMessage(decision)
+                                            is DiagnosticsUploadDecision.Uploaded -> {
+                                                sentShortId = decision.shortId
+                                                sentState = decision.state.wireValue
+                                            }
+                                            is DiagnosticsUploadDecision.HostedProcessing -> {
+                                                uploadNoticeIsError = false
+                                                uploadNotice = uploadKeptMessage(decision)
+                                            }
+                                            else -> {
+                                                uploadNoticeIsError = true
+                                                uploadNotice = uploadKeptMessage(decision)
+                                            }
                                         }
                                     }
                                 },
@@ -162,7 +192,16 @@ fun DiagnosticsReportScreen(
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Delete this report?") },
-            text = { Text("The local evidence will be permanently removed from this device.") },
+            text = {
+                Text(
+                    if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                        "The local evidence will be removed from this device. If this report was already " +
+                            "submitted, its copy in Silo Diagnostics will also be permanently deleted."
+                    } else {
+                        "The local evidence will be permanently removed from this device."
+                    },
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
@@ -177,6 +216,7 @@ fun DiagnosticsReportScreen(
 @Composable
 private fun DiagnosticsSentConfirmation(
     shortId: String,
+    state: String,
     modifier: Modifier,
     onDone: () -> Unit,
 ) {
@@ -200,9 +240,11 @@ private fun DiagnosticsSentConfirmation(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+                DetailLine("Processing state", state.replace('_', ' '))
+                Spacer(Modifier.height(12.dp))
                 Text(
-                    "The report was removed from this device once your server received a copy. " +
-                        "Share the reference ID with your server admin so they can find it.",
+                    "The report was removed from this device after the destination accepted a copy. " +
+                        "Share the reference ID with Silo Diagnostics or your server admin.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -214,6 +256,8 @@ private fun DiagnosticsSentConfirmation(
 
 internal fun uploadKeptMessage(decision: DiagnosticsUploadDecision): String = when (decision) {
     is DiagnosticsUploadDecision.Uploaded -> "" // handled by the caller
+    is DiagnosticsUploadDecision.HostedProcessing ->
+        "Report ${decision.shortId} was accepted and is still processing. It will be checked again automatically."
     DiagnosticsUploadDecision.KeptRetryable ->
         "The upload didn't go through. The report stays on this device to try again later."
     DiagnosticsUploadDecision.KeptIdentityChanged ->

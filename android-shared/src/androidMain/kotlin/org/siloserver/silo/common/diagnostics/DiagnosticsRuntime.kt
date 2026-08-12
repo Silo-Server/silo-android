@@ -18,7 +18,7 @@ class DefaultDiagnosticsRuntimePublisher(
     override fun closeGate() {
         playbackSessions.close()
         active.set(null)
-        CrashCapture.updateSnapshot(CrashRuntimeSnapshot.empty())
+        CrashCapture.closeGate()
     }
 
     override suspend fun publish(context: DiagnosticsCaptureContext) {
@@ -36,7 +36,7 @@ class DefaultDiagnosticsRuntimePublisher(
         }.getOrNull()
         if (snapshot != null) deviceSnapshotCache.update(snapshot)
         val logs = logBuffer.snapshot()
-        val tokens = runCatching { redactionTokens.tokens() }.getOrDefault(emptyList())
+        val tokens = runCatching { redactionTokens.tokens(context.destinationKind) }.getOrDefault(emptyList())
         playbackSessions.commitIfCurrent(playbackScope) { playbackSessionIds ->
             CrashCapture.updateSnapshot(CrashRuntimeSnapshot(
                 identityKey = context.identityKey,
@@ -45,10 +45,15 @@ class DefaultDiagnosticsRuntimePublisher(
                     accountUserId = context.binding.accountUserId,
                     profileId = context.profileId,
                     ownershipGeneration = context.ownershipGeneration,
+                    destinationKind = context.destinationKind,
                 ),
                 captureSessionId = published.captureSessionId,
                 runToken = published.runToken,
-                playbackSessionIds = playbackSessionIds,
+                playbackSessionIds = if (context.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                    emptyList()
+                } else {
+                    playbackSessionIds
+                },
                 deviceSnapshotJson = deviceSnapshotCache.currentBytes()?.decodeToString(),
                 logLines = logs.lines,
                 logDroppedCount = logs.droppedCount,

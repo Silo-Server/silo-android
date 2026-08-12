@@ -36,6 +36,9 @@ class BreadcrumbJournal(
     noBackupFilesDir: File,
     writerDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val maxSegmentBytes: Int = DEFAULT_MAX_SEGMENT_BYTES,
+    private val listFiles: (File) -> Array<File>? = File::listFiles,
+    private val deleteRecursively: (File) -> Boolean = File::deleteRecursively,
+    private val directorySync: (File) -> Unit = ::syncDiagnosticsDirectory,
 ) : DiagnosticsLogSink, DiagnosticsBreadcrumbSource {
     private val root = noBackupFilesDir.resolve("client-diagnostics/breadcrumbs")
     private val scope = CoroutineScope(SupervisorJob() + writerDispatcher)
@@ -138,8 +141,8 @@ class BreadcrumbJournal(
 
         fun resetFiles(nextGeneration: Long, nextOwner: String?) {
             closeOutput()
-            allSegmentFiles().forEach { file ->
-                check(file.delete() || !file.exists()) { "unable to delete breadcrumb segment ${file.name}" }
+            allEvidenceFilesStrictly().forEach { file ->
+                deleteDiagnosticsEvidenceStrictly(file, deleteRecursively, directorySync)
             }
             diskGeneration = nextGeneration
             diskOwner = nextOwner
@@ -161,7 +164,7 @@ class BreadcrumbJournal(
                 closeOutput()
                 activeSegment = 1 - activeSegment
                 val stale = segmentFile(checkNotNull(diskOwner), activeSegment)
-                check(stale.delete() || !stale.exists()) { "unable to rotate breadcrumb segment ${stale.name}" }
+                deleteDiagnosticsEvidenceStrictly(stale, deleteRecursively, directorySync)
             }
             openOutput().apply {
                 write(bytes)
@@ -214,9 +217,11 @@ class BreadcrumbJournal(
     private fun segmentFiles(owner: String): List<File> =
         listOf(segmentFile(owner, 0), segmentFile(owner, 1)).filter(File::isFile)
 
-    private fun allSegmentFiles(): List<File> = root.listFiles { file ->
-        file.isFile && SEGMENT_PATTERN.matches(file.name)
-    }.orEmpty().toList()
+    private fun allEvidenceFilesStrictly(): List<File> {
+        if (!root.exists()) return emptyList()
+        check(root.isDirectory) { "diagnostics breadcrumb path is not a directory" }
+        return checkNotNull(listFiles(root)) { "unable to enumerate diagnostics breadcrumbs" }.toList()
+    }
 
     private fun DiagnosticsIdentityKey.ownerKey(): String {
         val source = listOf(

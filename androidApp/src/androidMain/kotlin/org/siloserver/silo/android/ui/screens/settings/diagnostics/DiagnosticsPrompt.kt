@@ -17,9 +17,10 @@ fun DiagnosticsPromptDialog(
     onSend: () -> Unit,
     onAlwaysSend: () -> Unit,
     onDontSend: () -> Unit,
+    allowAlwaysSend: Boolean = true,
 ) {
     var confirmAlways by remember { mutableStateOf(false) }
-    if (confirmAlways) {
+    if (confirmAlways && allowAlwaysSend) {
         AlertDialog(
             onDismissRequest = { confirmAlways = false },
             title = { Text("Always send crash reports?") },
@@ -37,11 +38,23 @@ fun DiagnosticsPromptDialog(
         onDismissRequest = onDontSend,
         title = { Text("Silo encountered a problem") },
         text = {
-            Text(
+            val reportDescription =
                 if (prompt.reportCount == 1) {
-                    "A ${prompt.reportType.displayName().lowercase()} report is ready. Review it before deciding whether to send it."
+                    "A ${prompt.reportType.displayName().lowercase()} report is ready. " +
+                        "Review it before deciding whether to send it."
                 } else {
-                    "${prompt.reportCount} diagnostics reports are ready. Review them before deciding whether to send them."
+                    "${prompt.reportCount} diagnostics reports are ready. " +
+                        "Review them before deciding whether to send them."
+                }
+            Text(
+                if (allowAlwaysSend) {
+                    reportDescription
+                } else {
+                    "$reportDescription\n\nThe report includes the Silo app version and build, Android version, " +
+                        "device model, crash details, and diagnostic logs. Its pseudonymous credential is not " +
+                        "linked to an account on your self-hosted server. Username, email, profile, server " +
+                        "address, and playback session IDs are omitted. It never sends automatically and may " +
+                        "be retained for up to 30 days."
                 },
             )
         },
@@ -49,7 +62,7 @@ fun DiagnosticsPromptDialog(
             TextButton(onClick = onReview) { Text("Review") }
         },
         dismissButton = {
-            ColumnButtons(onSend, { confirmAlways = true }, onDontSend)
+            ColumnButtons(onSend, if (allowAlwaysSend) ({ confirmAlways = true }) else null, onDontSend)
         },
     )
 }
@@ -57,10 +70,12 @@ fun DiagnosticsPromptDialog(
 @Composable
 private fun ColumnButtons(
     onSend: () -> Unit,
-    onAlwaysSend: () -> Unit,
+    onAlwaysSend: (() -> Unit)?,
     onDontSend: () -> Unit,
 ) {
     TextButton(onClick = onSend) { Text("Send") }
-    TextButton(onClick = onAlwaysSend) { Text("Always send") }
+    onAlwaysSend?.let { action ->
+        TextButton(onClick = action) { Text("Always send") }
+    }
     TextButton(onClick = onDontSend) { Text("Don't send") }
 }

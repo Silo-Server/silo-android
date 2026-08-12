@@ -8,6 +8,7 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -20,7 +21,7 @@ class DiagnosticsFileLoggerTest {
     fun writesJsonLinesUnderNoBackupAndFreezeRetainsAStableSnapshot() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val noBackup = temporaryFolder.newFolder("no-backup")
-        val logger = DiagnosticsFileLogger(noBackup, writerDispatcher = dispatcher)
+        val logger = DiagnosticsFileLogger(noBackup, writerDispatcher = dispatcher, directorySync = {})
 
         logger.start(generation = 7)
         logger.offer("one")
@@ -46,6 +47,7 @@ class DiagnosticsFileLoggerTest {
             channelCapacity = 16,
             maxSegments = 2,
             maxSegmentBytes = 14,
+            directorySync = {},
         )
 
         logger.start(generation = 9)
@@ -68,6 +70,7 @@ class DiagnosticsFileLoggerTest {
             channelCapacity = 2,
             maxSegments = 5,
             maxSegmentBytes = 1_024,
+            directorySync = {},
         )
 
         logger.start(generation = 11)
@@ -87,6 +90,7 @@ class DiagnosticsFileLoggerTest {
             noBackupFilesDir = noBackup,
             writerDispatcher = dispatcher,
             maxSegmentBytes = 8,
+            directorySync = {},
         )
 
         logger.start(generation = 13)
@@ -97,5 +101,98 @@ class DiagnosticsFileLoggerTest {
 
         assertFalse(noBackup.resolve("client-diagnostics/logs/generation-13").exists())
         assertFalse(logger.isActive)
+    }
+
+    @Test
+    fun purgeFailureAtDirectorySyncPropagatesAfterVerifiedRawDeletion() = runTest {
+        val noBackup = temporaryFolder.newFolder("purge-fsync")
+        val root = noBackup.resolve("client-diagnostics/logs")
+        assertTrue(root.mkdirs())
+        root.resolve("raw.jsonl").writeText("private")
+        val logger = DiagnosticsFileLogger(
+            noBackupFilesDir = noBackup,
+            writerDispatcher = StandardTestDispatcher(testScheduler),
+            directorySync = { error("injected fsync failure") },
+        )
+
+        assertFailsWith<IllegalStateException> { logger.purgeStoredEvidence() }
+        assertFalse(root.exists())
+    }
+
+    @Test
+    fun startupReconcilesCrashInterruptedFrozenGeneration() = runTest {
+        val noBackup = temporaryFolder.newFolder("restart-frozen")
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val first = DiagnosticsFileLogger(noBackup, writerDispatcher = dispatcher, directorySync = {})
+        first.start(generation = 17)
+        first.offer("raw captured line")
+        advanceUntilIdle()
+        val frozen = first.freeze(expectedGeneration = 17)
+        val generationDirectory = noBackup.resolve("client-diagnostics/logs/generation-17")
+        assertTrue(generationDirectory.isDirectory)
+        assertTrue(frozen.files.isNotEmpty())
+
+        // Simulates process death after the pending report publish and before raw cleanup.
+        DiagnosticsFileLogger(noBackup, writerDispatcher = dispatcher, directorySync = {})
+
+        assertFalse(generationDirectory.exists())
+    }
+
+    @Test
+    fun partialFrozenCleanupFailsClosedAndRestartRetriesIt() = runTest {
+        val noBackup = temporaryFolder.newFolder("partial-frozen")
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        var failGenerationDelete = false
+        val logger = DiagnosticsFileLogger(
+            noBackupFilesDir = noBackup,
+            writerDispatcher = dispatcher,
+            deleteRecursively = { target ->
+                if (failGenerationDelete && target.name == "generation-19") {
+                    target.resolve("segment-00000.jsonl").delete()
+                    false
+                } else {
+                    target.deleteRecursively()
+                }
+            },
+            directorySync = {},
+        )
+        logger.start(generation = 19)
+        logger.offer("raw captured line")
+        advanceUntilIdle()
+        val frozen = logger.freeze(expectedGeneration = 19)
+        failGenerationDelete = true
+
+        assertFailsWith<IllegalStateException> { logger.deleteFrozen(frozen) }
+        val generationDirectory = noBackup.resolve("client-diagnostics/logs/generation-19")
+        assertTrue(generationDirectory.isDirectory)
+
+        DiagnosticsFileLogger(noBackup, writerDispatcher = dispatcher, directorySync = {})
+
+        assertFalse(generationDirectory.exists())
+    }
+
+    @Test
+    fun failedStartupReconciliationBlocksNewCaptureUntilCleanupRecovers() = runTest {
+        val noBackup = temporaryFolder.newFolder("startup-cleanup-failure")
+        val stale = noBackup.resolve("client-diagnostics/logs/generation-21")
+        assertTrue(stale.mkdirs())
+        stale.resolve("segment-00000.jsonl").writeText("private crash-leftover bytes")
+        var allowDelete = false
+        val logger = DiagnosticsFileLogger(
+            noBackupFilesDir = noBackup,
+            writerDispatcher = StandardTestDispatcher(testScheduler),
+            deleteRecursively = { target -> allowDelete && target.deleteRecursively() },
+            directorySync = {},
+        )
+
+        assertFailsWith<IllegalStateException> { logger.start(generation = 22) }
+        assertFalse(logger.isActive)
+        assertTrue(stale.isDirectory)
+
+        allowDelete = true
+        logger.start(generation = 22)
+        assertTrue(logger.isActive)
+        assertFalse(stale.exists())
+        logger.cancel(expectedGeneration = 22)
     }
 }

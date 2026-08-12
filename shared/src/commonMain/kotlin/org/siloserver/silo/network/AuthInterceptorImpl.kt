@@ -280,9 +280,11 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
         val skipAuth = request.attributes.getOrNull(SkipSiloAuthAttributeKey) == true
         val requireAuth = request.attributes.getOrNull(RequireSiloAuthAttributeKey) == true
         val diagnosticsScope = request.attributes.getOrNull(DiagnosticsRequestScopeKey)
+        val diagnosticsAuthorization = request.attributes.getOrNull(DiagnosticsUploadAuthorizationKey)
         val pinned = request.attributes.getOrNull(AuthScopeAttributeKey)
-        val activeServerIdBefore = if (pinned == null) tokenManager.getCurrentServerId() else null
-        val trustedServerUrl = pinned?.serverUrl ?: tokenManager.getServerUrl()
+        val activeServerIdBefore =
+            if (diagnosticsAuthorization == null && pinned == null) tokenManager.getCurrentServerId() else null
+        val trustedServerUrl = diagnosticsAuthorization?.serverUrl ?: pinned?.serverUrl ?: tokenManager.getServerUrl()
 
         // Shared calls are normally relative. Resolve those against the exact
         // server that owns the credential scope before deciding whether any
@@ -317,6 +319,30 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
 
         if (!sameOrigin) {
             request.removeSiloCredentialHeaders()
+            if (diagnosticsAuthorization != null) {
+                throw SiloAuthUnavailableException(
+                    SiloAuthUnavailableException.REQUIRED_AUTH_UNAVAILABLE,
+                )
+            }
+            return@onRequest
+        }
+
+        // Diagnostics upload owns an identity-transition lease around this call.
+        // Use only the exact credential captured before the lease: consulting the
+        // persistent TokenManager (or refreshing a 401) would re-enter the same
+        // non-reentrant barrier. A rejected token is surfaced to the uploader and
+        // retried after the next normal preflight refresh.
+        if (diagnosticsAuthorization != null) {
+            request.headers.remove(HttpHeaders.Authorization)
+            request.header(HttpHeaders.Authorization, "Bearer ${diagnosticsAuthorization.accessToken}")
+            request.headers.remove("X-Profile-Id")
+            request.headers.remove("X-Profile-Token")
+            request.applyProfileHeaders(
+                diagnosticsScope = diagnosticsScope,
+                activeProfileId = diagnosticsAuthorization.activeProfileId,
+                activeProfileToken = null,
+            )
+            request.attachSiloDeviceMetadataHeaders(deviceMetadataProvider)
             return@onRequest
         }
 
@@ -383,6 +409,18 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
     }
 
     on(Send) { request ->
+        val diagnosticsAuthorization = request.attributes.getOrNull(DiagnosticsUploadAuthorizationKey)
+        if (diagnosticsAuthorization != null) {
+            if (!isSameSiloHttpOrigin(diagnosticsAuthorization.serverUrl, request.url)) {
+                request.removeSiloCredentialHeaders()
+                throw SiloAuthUnavailableException(
+                    SiloAuthUnavailableException.REQUIRED_AUTH_UNAVAILABLE,
+                )
+            }
+            // Exactly one attempt: never proactively refresh, retry a 401, or
+            // invalidate credentials while the caller holds the identity lease.
+            return@on proceed(request)
+        }
         // Pinned scope (Track B): refresh against the *captured* scope, never the
         // active one, and never invalidate the active UI session — a failed
         // pinned refresh just surfaces the 401 so the outbox keeps the op.

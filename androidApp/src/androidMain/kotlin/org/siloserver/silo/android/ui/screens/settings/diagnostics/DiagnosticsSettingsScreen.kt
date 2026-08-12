@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -46,6 +47,7 @@ import org.siloserver.silo.android.ui.screens.settings.SettingsSectionCard
 import org.siloserver.silo.android.ui.screens.settings.SettingsSectionHeader
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode
+import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsUiState
 import org.siloserver.silo.common.diagnostics.TimedCaptureStatus
 
@@ -64,6 +66,7 @@ fun DiagnosticsSettingsScreen(
         state = state,
         onBackClick = onBackClick,
         onConsentChanged = viewModel::setConsent,
+        onDestinationChanged = viewModel::setDestination,
         onDebugLoggingChanged = viewModel::setDebugLogging,
         onSendNow = { viewModel.captureNow(onReportSelected) },
         onStartCapture = viewModel::startTimedCapture,
@@ -78,6 +81,7 @@ internal fun DiagnosticsSettingsContent(
     state: DiagnosticsUiState,
     onBackClick: () -> Unit,
     onConsentChanged: (DiagnosticsConsentMode) -> Unit,
+    onDestinationChanged: (DiagnosticsDestinationKind) -> Unit,
     onDebugLoggingChanged: (Boolean) -> Unit,
     onSendNow: () -> Unit,
     onStartCapture: () -> Unit,
@@ -86,7 +90,15 @@ internal fun DiagnosticsSettingsContent(
     onReportSelected: (String) -> Unit,
 ) {
     var confirmAlways by remember { mutableStateOf(false) }
+    val uriHandler = LocalUriHandler.current
     val model = diagnosticsPhoneScreenModel(state)
+    val effectiveConsent = if (
+        state.consent == DiagnosticsConsentMode.ALWAYS && !state.allowsAutomaticUpload
+    ) {
+        DiagnosticsConsentMode.ASK
+    } else {
+        state.consent
+    }
     Scaffold(
         topBar = { SiloTopBar(title = "Diagnostics", onBackClick = onBackClick) },
         containerColor = MaterialTheme.colorScheme.background,
@@ -96,11 +108,52 @@ internal fun DiagnosticsSettingsContent(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            item { DiagnosticsStatusCard(state.availability) }
+            item {
+                SettingsSectionCard {
+                    SettingsSectionHeader("Send reports to")
+                    DiagnosticsDestinationKind.entries.forEach { destination ->
+                        val label = when (destination) {
+                            DiagnosticsDestinationKind.HOSTED -> "Silo Diagnostics"
+                            DiagnosticsDestinationKind.SELF_HOSTED -> "This Silo server"
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onDestinationChanged(destination) }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = state.destinationKind == destination, onClick = null)
+                            Text(label, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                    Text(
+                        if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                            "Reports include the Silo app version and build, Android version, device model, " +
+                                "crash details, and diagnostic logs you review. A pseudonymous installation " +
+                                "credential is not linked to an account on your self-hosted server. Username, " +
+                                "email, profile, server address, and playback session IDs are omitted. Reports " +
+                                "are never sent automatically and may be retained for up to " +
+                                "${state.retentionDays} days."
+                        } else {
+                            "Compatibility mode sends reports to the diagnostics endpoint on your active server."
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    TextButton(onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }) {
+                        Text("Privacy Policy")
+                    }
+                }
+            }
+            item { DiagnosticsStatusCard(state) }
             item {
                 SettingsSectionCard {
                     SettingsSectionHeader("Crash reports")
-                    DiagnosticsConsentMode.entries.forEach { mode ->
+                    DiagnosticsConsentMode.entries
+                        .filter { it != DiagnosticsConsentMode.ALWAYS || state.allowsAutomaticUpload }
+                        .forEach { mode ->
                         val label = when (mode) {
                             DiagnosticsConsentMode.ASK -> "Ask before sending"
                             DiagnosticsConsentMode.ALWAYS -> "Always send"
@@ -120,7 +173,7 @@ internal fun DiagnosticsSettingsContent(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
-                                selected = state.consent == mode,
+                                selected = effectiveConsent == mode,
                                 onClick = null,
                             )
                             Text(label, style = MaterialTheme.typography.bodyLarge)
@@ -206,7 +259,7 @@ internal fun DiagnosticsSettingsContent(
                                 SettingsRow(label = sent.shortId) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            formatDiagnosticDate(sent.sentAtEpochMs),
+                                            "${sent.state.replace('_', ' ')} · ${formatDiagnosticDate(sent.sentAtEpochMs)}",
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             style = MaterialTheme.typography.bodySmall,
                                         )
@@ -225,7 +278,7 @@ internal fun DiagnosticsSettingsContent(
                             }
                         }
                         Text(
-                            "Sent reports are removed from this device once your server has a copy. " +
+                            "Sent reports are removed from this device once the selected destination has a copy. " +
                                 "Use the reference ID when asking for help.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,
@@ -238,7 +291,7 @@ internal fun DiagnosticsSettingsContent(
         }
     }
 
-    if (confirmAlways) {
+    if (confirmAlways && state.allowsAutomaticUpload) {
         AlertDialog(
             onDismissRequest = { confirmAlways = false },
             title = { Text("Always send crash reports?") },
@@ -258,6 +311,8 @@ internal fun DiagnosticsSettingsContent(
     }
 }
 
+private const val PRIVACY_POLICY_URL = "https://siloserver.org/privacy"
+
 @Composable
 private fun DiagnosticsUnavailableScreen(onBackClick: () -> Unit) {
     Scaffold(
@@ -271,11 +326,12 @@ private fun DiagnosticsUnavailableScreen(onBackClick: () -> Unit) {
 }
 
 @Composable
-private fun DiagnosticsStatusCard(availability: DiagnosticsAvailabilityUi) {
-    val (title, detail) = when (availability) {
-        DiagnosticsAvailabilityUi.AVAILABLE -> "Available" to "Reports can be reviewed and sent to this server."
-        DiagnosticsAvailabilityUi.DISABLED -> "Disabled by server" to "Local reports remain available to inspect or delete."
-        DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE -> "Server storage unavailable" to "Local reports remain on this device."
+private fun DiagnosticsStatusCard(state: DiagnosticsUiState) {
+    val destination = if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) "Silo Diagnostics" else "this server"
+    val (title, detail) = when (state.availability) {
+        DiagnosticsAvailabilityUi.AVAILABLE -> "Available" to "Reports can be reviewed and sent to $destination."
+        DiagnosticsAvailabilityUi.DISABLED -> "Disabled" to "Local reports remain available to inspect or delete."
+        DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE -> "Storage unavailable" to "Local reports remain on this device."
         DiagnosticsAvailabilityUi.OFFLINE -> "Offline" to "Connect to refresh diagnostics availability."
         DiagnosticsAvailabilityUi.INELIGIBLE -> "Unavailable" to "Diagnostics are not available for this profile."
     }

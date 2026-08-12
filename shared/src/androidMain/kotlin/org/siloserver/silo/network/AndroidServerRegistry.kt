@@ -34,6 +34,8 @@ import kotlinx.serialization.json.Json
 class AndroidServerRegistry(
     private val prefs: SharedPreferences,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
+    private val commitEditor: (SharedPreferences.Editor) -> Boolean = SharedPreferences.Editor::commit,
+    private val afterServerRemovalCommit: () -> Unit = {},
 ) : ServerRegistry {
 
     private val mutex = Mutex()
@@ -120,7 +122,15 @@ class AndroidServerRegistry(
     }
 
     override suspend fun remove(serverId: String) {
-        identityTransitions.changing(IdentityTransitionKind.SERVER_REMOVE) {
+        identityTransitions.changing(
+            kind = IdentityTransitionKind.SERVER_REMOVE,
+            target = {
+                IdentityTransitionTarget(
+                    serverId = serverId,
+                    affectsCurrentIdentity = _activeServerId.value == serverId,
+                )
+            },
+        ) {
             mutex.withLock {
                 // Wipe every key in this server's "<serverId>." namespace before
                 // dropping the entry, otherwise they'd linger encrypted on disk
@@ -133,13 +143,18 @@ class AndroidServerRegistry(
                 prefs.all.keys
                     .filter { it.startsWith(scopePrefix) }
                     .forEach { editor.remove(it) }
-                editor.apply()
 
                 val updated = _entries.value.filter { it.id != serverId }
                 val newActive = if (_activeServerId.value == serverId) {
                     updated.maxByOrNull { it.lastUsedAtEpochMs }?.id
                 } else _activeServerId.value
-                persistAndApplyLocked(updated, newActive)
+                val resolvedActive = newActive?.takeIf { id -> updated.any { it.id == id } }
+                    ?: updated.maxByOrNull { it.lastUsedAtEpochMs }?.id
+                val state = RegistryState(entries = updated, activeServerId = resolvedActive)
+                editor.putString(KEY_REGISTRY_STATE, json.encodeToString(state))
+                check(commitEditor(editor)) { "unable to durably remove server" }
+                applyStateLocked(state)
+                afterServerRemovalCommit()
             }
         }
     }
@@ -164,6 +179,68 @@ class AndroidServerRegistry(
                 }
                 persistAndApplyLocked(updated, serverId)
             }
+        }
+    }
+
+    /**
+     * Commits registry selection and its matching account credentials in the
+     * one SharedPreferences transaction available to both owners. In-memory
+     * registry state is published only after the synchronous disk commit.
+     */
+    internal suspend fun commitAccountReplacement(
+        serverId: String,
+        profileId: String?,
+        profileToken: String?,
+        accessToken: String,
+        refreshToken: String,
+        expiryEpochMs: Long,
+        lifetimeMs: Long,
+    ) {
+        mutex.withLock {
+            check(_entries.value.any { it.id == serverId }) { "account replacement target is not registered" }
+            val updated = _entries.value.map { entry ->
+                if (entry.id == serverId) {
+                    entry.copy(
+                        profileId = profileId,
+                        lastUsedAtEpochMs = System.currentTimeMillis(),
+                    )
+                } else {
+                    entry
+                }
+            }
+            val state = RegistryState(entries = updated, activeServerId = serverId)
+            val editor = prefs.edit()
+                .putString(KEY_REGISTRY_STATE, json.encodeToString(state))
+                .putString(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN), accessToken)
+                .putString(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN), refreshToken)
+                .putLong(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY), expiryEpochMs)
+                .putLong(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME), lifetimeMs)
+            val profileIdKey = serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_ID)
+            val profileTokenKey = serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_TOKEN)
+            if (profileId == null) editor.remove(profileIdKey) else editor.putString(profileIdKey, profileId)
+            if (profileToken == null) editor.remove(profileTokenKey) else editor.putString(profileTokenKey, profileToken)
+            check(commitEditor(editor)) { "unable to durably replace account session" }
+            applyStateLocked(state)
+        }
+    }
+
+    internal suspend fun commitAccountSignOut(serverId: String) {
+        mutex.withLock {
+            check(_entries.value.any { it.id == serverId }) { "sign-out target is not registered" }
+            val updated = _entries.value.map { entry ->
+                if (entry.id == serverId) entry.copy(profileId = null) else entry
+            }
+            val state = RegistryState(entries = updated, activeServerId = _activeServerId.value)
+            val editor = prefs.edit()
+                .putString(KEY_REGISTRY_STATE, json.encodeToString(state))
+                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN))
+                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN))
+                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY))
+                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME))
+                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_ID))
+                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_TOKEN))
+            check(commitEditor(editor)) { "unable to durably sign out account" }
+            applyStateLocked(state)
         }
     }
 

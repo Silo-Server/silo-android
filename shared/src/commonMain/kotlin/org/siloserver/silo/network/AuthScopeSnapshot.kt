@@ -24,7 +24,9 @@ import io.ktor.util.AttributeKey
  * [identityGeneration] changes before every server, account, profile, or
  * temporary-scope mutation. It distinguishes a later login that happens to
  * reuse the same server/profile identifiers from the credential identity that
- * was active when this snapshot was captured.
+ * was active when this snapshot was captured. [isIdentityGenerationStamped]
+ * distinguishes a legitimate capture at generation zero from a legacy,
+ * hand-built scope that never captured the generation at all.
  */
 data class AuthScopeSnapshot(
     val serverId: String,
@@ -33,6 +35,7 @@ data class AuthScopeSnapshot(
     val profileToken: String?,
     val credentialGenerationId: String? = null,
     val identityGeneration: Long = 0L,
+    val isIdentityGenerationStamped: Boolean = false,
     /**
      * Bumped every time this server's PERSISTENT credentials are written or
      * cleared — i.e. by sign-in and sign-out, but deliberately NOT by a
@@ -54,7 +57,8 @@ data class AuthScopeSnapshot(
         "AuthScopeSnapshot(" +
             "serverId=<redacted>, profileId=<redacted>, serverUrl=<redacted>, " +
             "profileToken=<redacted>, credentialGenerationId=<redacted>, " +
-            "identityGeneration=<redacted>, credentialEpoch=<redacted>)"
+            "identityGeneration=<redacted>, isIdentityGenerationStamped=<redacted>, " +
+            "credentialEpoch=<redacted>)"
 }
 
 /** Attribute carrying the [AuthScopeSnapshot] that [SiloAuthPlugin] honors. */

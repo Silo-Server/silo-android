@@ -34,6 +34,9 @@ class DiagnosticsFileLogger(
     private val channelCapacity: Int = DEFAULT_CHANNEL_CAPACITY,
     private val maxSegments: Int = DEFAULT_MAX_SEGMENTS,
     private val maxSegmentBytes: Int = DEFAULT_MAX_SEGMENT_BYTES,
+    private val deleteRecursively: (File) -> Boolean = File::deleteRecursively,
+    private val listFiles: (File) -> Array<File>? = File::listFiles,
+    private val directorySync: (File) -> Unit = ::syncDiagnosticsDirectory,
 ) : DiagnosticsLogSink {
     private val root = noBackupFilesDir.resolve("client-diagnostics/logs")
     private val scope = CoroutineScope(SupervisorJob() + writerDispatcher)
@@ -43,6 +46,9 @@ class DiagnosticsFileLogger(
         require(channelCapacity > 0) { "channelCapacity must be positive" }
         require(maxSegments > 0) { "maxSegments must be positive" }
         require(maxSegmentBytes > 0) { "maxSegmentBytes must be positive" }
+        // Construction stays fail-contained so the coordinator can install its identity gate.
+        // Its first refresh and every new capture retry this cleanup strictly.
+        runCatching { reconcileStoredEvidence() }
     }
 
     val isActive: Boolean
@@ -51,8 +57,8 @@ class DiagnosticsFileLogger(
     fun start(generation: Long) {
         require(generation >= 0) { "generation must be non-negative" }
         check(active.get() == null) { "diagnostics file capture is already active" }
+        reconcileStoredEvidence()
         val directory = root.resolve("generation-$generation")
-        if (directory.exists()) directory.deleteRecursively()
         check(directory.mkdirs() || directory.isDirectory) { "unable to create diagnostics log directory" }
 
         val dropped = AtomicLong(0)
@@ -113,12 +119,37 @@ class DiagnosticsFileLogger(
         val capture = detach(expectedGeneration)
         capture.channel.close()
         capture.writer.cancelAndJoin()
-        capture.directory.deleteRecursively()
+        deleteDiagnosticsEvidenceStrictly(capture.directory, deleteRecursively, directorySync)
     }
 
     suspend fun purgeStoredEvidence() {
-        active.get()?.let { capture -> runCatching { cancel(capture.generation) } }
-        if (root.exists()) check(root.deleteRecursively()) { "unable to purge diagnostics logs" }
+        active.get()?.let { capture -> cancel(capture.generation) }
+        deleteDiagnosticsEvidenceStrictly(root, deleteRecursively, directorySync)
+    }
+
+    /** Strictly removes generations that no active writer owns, including crash leftovers. */
+    fun reconcileStoredEvidence() {
+        if (!root.exists()) return
+        check(root.isDirectory) { "diagnostics log root is not a directory" }
+        val activeDirectory = active.get()?.directory?.canonicalFile
+        val entries = checkNotNull(listFiles(root)) { "unable to enumerate diagnostics log root" }
+        entries.forEach { entry ->
+            if (activeDirectory == null || entry.canonicalFile != activeDirectory) {
+                deleteDiagnosticsEvidenceStrictly(entry, deleteRecursively, directorySync)
+            }
+        }
+        if (activeDirectory == null) {
+            deleteDiagnosticsEvidenceStrictly(root, deleteRecursively, directorySync)
+        }
+    }
+
+    /** Removes the detached generation after its bounded bytes have been published. */
+    fun deleteFrozen(frozen: FrozenDiagnosticsLogs) {
+        val directory = root.resolve("generation-${frozen.generation}")
+        require(
+            frozen.files.all { file -> file.parentFile?.canonicalFile == directory.canonicalFile },
+        ) { "frozen diagnostics files do not belong to generation ${frozen.generation}" }
+        deleteDiagnosticsEvidenceStrictly(directory, deleteRecursively, directorySync)
     }
 
     private fun detach(expectedGeneration: Long): ActiveCapture {

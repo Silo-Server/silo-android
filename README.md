@@ -36,7 +36,7 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 | **Networking** | **Ktor** 3.1.2 client · kotlinx.serialization · WebSockets for realtime |
 | **DI** | **Koin** 4.1.0 |
 | **Persistence** | AndroidX DataStore · EncryptedSharedPreferences (tokens) · WorkManager (downloads) |
-| **Diagnostics** | Native bounded capture · local review/consent · self-hosted Silo upload |
+| **Diagnostics** | Native bounded capture · local review/consent · hosted default or self-hosted upload |
 | **Images** | Coil 3 (Ktor-backed) |
 | **SDK** | Android 7.0+ / minSdk 24 · targetSdk 36 · compileSdk 36 · JDK 21 |
 
@@ -99,9 +99,11 @@ Multiple **household profiles** per account (PINs, child profiles, content-ratin
 Add and switch between multiple Silo servers (encrypted per-server token slots), use username/password or device/QR sign-in, and manage household profiles. Admin screens are not currently exposed in the Android apps.
 
 ### Client diagnostics (phone + TV)
-Android-native diagnostics can retain a bounded, redacted local report for crashes, ANRs, playback, networking, focus, cast, downloads, and lifecycle events. A two-segment journal keeps only curated, already-redacted lifecycle breadcrumbs so next-launch ANR/native-crash reports retain pre-exit context; identity transitions rotate it, and Never/sign-out purges it. Adult profiles can review and delete account-scoped reports on-device, choose Ask / Always / Never consent, or run a timed diagnostic capture. Child profiles cannot capture, review, or upload reports. Reports upload only to the originating self-hosted Silo server when that server advertises diagnostics support. Profile transitions close the capture gate and rotate live evidence without discarding retained account reports; sign-out, server removal, and Never consent purge the applicable evidence. One-off manual reports remain available under Never without enabling persistent capture.
+Android-native diagnostics can retain a bounded, redacted local report for crashes, ANRs, playback, networking, focus, cast, downloads, and lifecycle events. A two-segment journal keeps only curated, already-redacted lifecycle breadcrumbs so next-launch ANR/native-crash reports retain pre-exit context; identity transitions rotate it, and Never/sign-out purges it. Adult profiles can review and delete account-scoped reports on-device, choose consent, or run a timed diagnostic capture. Child profiles cannot capture, review, or upload reports.
 
-This feature does not use Sentry, GlitchTip, Crashlytics, OpenTelemetry, ACRA, or another hosted observability SDK. Crash-time work is local and bounded; exact credential values receive a bounded replacement before the app-private marker is written, structural redaction runs during next-launch report assembly, and archive construction and upload occur after restart.
+The default destination is Silo's hosted collector at `diagnostics.siloserver.org`; self-hosted Silo ingest remains an explicit compatibility choice. Hosted collection is manual/Ask-only, verifies the live collector identity before a new capture, and re-attests the authenticated source-server account before a first upload. Self-hosted collection supports Ask / Always / Never when the originating server advertises diagnostics support. Reports are never retargeted across destination, server, account, or profile boundaries. Profile transitions close the capture gate and rotate live evidence without discarding retained account reports; sign-out, server removal, and Never consent purge the applicable evidence. One-off manual reports remain available under Never without enabling persistent capture.
+
+This feature does not use Sentry, GlitchTip, Crashlytics, OpenTelemetry, ACRA, or another hosted observability SDK. Crash-time work is local and bounded; exact credential values receive a bounded replacement before the app-private marker is written, structural redaction runs during next-launch report assembly, and archive construction and upload occur after restart. Hosted reports preserve the exact application version, build number, and OS version; privacy filtering targets server network identity, account or personal identity, and credentials rather than release metadata.
 
 ---
 

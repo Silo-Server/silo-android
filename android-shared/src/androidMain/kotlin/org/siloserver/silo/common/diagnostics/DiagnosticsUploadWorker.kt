@@ -13,23 +13,25 @@ import androidx.work.workDataOf
 class DiagnosticsUploadWorker(
     appContext: Context,
     params: WorkerParameters,
-    private val uploader: DiagnosticsUploader,
     private val coordinator: DiagnosticsCoordinator,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val reportId = inputData.getString(KEY_REPORT_ID)?.takeIf(String::isNotBlank)
             ?: return Result.failure()
-        return when (uploader.uploadAutomatically(reportId)) {
-            DiagnosticsUploadDecision.KeptRetryable -> Result.retry()
-            is DiagnosticsUploadDecision.Uploaded,
+        coordinator.start()
+        coordinator.refresh()
+        return when (coordinator.uploadAutomatically(reportId)) {
+            DiagnosticsUploadDecision.KeptRetryable,
+            DiagnosticsUploadDecision.KeptUnavailable,
             DiagnosticsUploadDecision.KeptIdentityChanged,
+            is DiagnosticsUploadDecision.HostedProcessing,
+            -> Result.retry()
+            is DiagnosticsUploadDecision.Uploaded,
             DiagnosticsUploadDecision.KeptTooLarge,
             DiagnosticsUploadDecision.KeptServerUpdateRequired,
-            DiagnosticsUploadDecision.KeptUnavailable,
             DiagnosticsUploadDecision.KeptInvalid,
             -> Result.success()
             DiagnosticsUploadDecision.KeptConsentReviewRequired -> {
-                coordinator.start()
                 coordinator.refresh()
                 Result.success()
             }

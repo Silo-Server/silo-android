@@ -6,19 +6,26 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
-import org.siloserver.silo.network.NetworkDiagnosticsObserver
 import org.siloserver.silo.model.diagnostics.DiagnosticsDeviceSummary
 import org.siloserver.silo.model.diagnostics.DiagnosticsPlatform
+import org.siloserver.silo.network.NetworkDiagnosticsObserver
+import org.siloserver.silo.network.DiagnosticsUploadAuthorization
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.api.DefaultHostedDiagnosticsApi
+import org.siloserver.silo.network.api.HostedDiagnosticsApi
+import org.siloserver.silo.network.api.createHostedDiagnosticsClient
 
 private val DIAGNOSTICS_DATA_STORE = named("diagnostics-data-store")
 private val DIAGNOSTICS_SCOPE = named("diagnostics-scope")
+private val SELF_HOSTED_DIAGNOSTICS_IDENTITY = named("self-hosted-diagnostics-identity")
+private val HOSTED_DIAGNOSTICS_HTTP = named("hosted-diagnostics-http")
 
 val diagnosticsModule = module {
     single<NetworkDiagnosticsObserver> { DiagnosticsNetworkLogger }
@@ -28,6 +35,7 @@ val diagnosticsModule = module {
         )
     }
     single<PendingReportStore> { FilePendingReportStore(androidContext().noBackupFilesDir) }
+    single { DiagnosticsPrivacyBarrier() }
     single<DiagnosticsLogBuffer> { LogRing() }
     single { DiagnosticsPlaybackSessionTracker() }
     single {
@@ -45,7 +53,7 @@ val diagnosticsModule = module {
     single<DiagnosticsStatusProvider> { ApiDiagnosticsStatusProvider(get()) }
     single<DiagnosticsAccountProvider> { RepositoryDiagnosticsAccountProvider(get()) }
     single<DiagnosticsProfileProvider> { RepositoryDiagnosticsProfileProvider(get()) }
-    single<DiagnosticsIdentityResolver> {
+    single<DiagnosticsIdentityResolver>(SELF_HOSTED_DIAGNOSTICS_IDENTITY) {
         DefaultDiagnosticsIdentityResolver(
             tokenManager = get(),
             identityTransitions = get(),
@@ -55,27 +63,90 @@ val diagnosticsModule = module {
             profileProvider = get(),
         )
     }
+    single<HttpClient>(HOSTED_DIAGNOSTICS_HTTP) { createHostedDiagnosticsClient() }
+    single<HostedDiagnosticsApi> { DefaultHostedDiagnosticsApi(get(HOSTED_DIAGNOSTICS_HTTP)) }
+    single<HostedDiagnosticsCapabilitiesStore> {
+        val settings = get<DiagnosticsSettingsStore>()
+        object : HostedDiagnosticsCapabilitiesStore {
+            override suspend fun load() = settings.hostedCapabilities()
+            override suspend fun save(capabilities: org.siloserver.silo.network.api.HostedDiagnosticsCapabilities) {
+                settings.cacheHostedCapabilities(capabilities)
+            }
+        }
+    }
+    single { HostedDiagnosticsCapabilitiesRepository(get(), get()) }
+    single<HostedDiagnosticsBindingOwnerStore> {
+        val settings = get<DiagnosticsSettingsStore>()
+        object : HostedDiagnosticsBindingOwnerStore {
+            override suspend fun load(localServerId: String) = settings.hostedBindingOwner(localServerId)
+            override suspend fun save(localServerId: String, owner: String) {
+                settings.cacheHostedBindingOwner(localServerId, owner)
+            }
+        }
+    }
+    single<HostedDiagnosticsCredentialStore> {
+        EncryptedPreferencesHostedDiagnosticsCredentialStore(get())
+    }
+    single { HostedDiagnosticsInstallationManager(get(), get(), get()) }
+    single<HostedDiagnosticsReportDeleter> { DefaultHostedDiagnosticsReportDeleter(get(), get()) }
+    single<DiagnosticsIdentityResolver> {
+        DestinationDiagnosticsIdentityResolver(
+            destination = { get<DiagnosticsSettingsStore>().destinationKind() },
+            hosted = HostedDiagnosticsIdentityResolver(
+                tokenManager = get(),
+                identityTransitions = get(),
+                registry = get(),
+                accountProvider = get(),
+                profileProvider = get(),
+                capabilities = get(),
+                bindingOwners = get(),
+            ),
+            selfHosted = get(SELF_HOSTED_DIAGNOSTICS_IDENTITY),
+        )
+    }
 
     single<DiagnosticsBundleBuilder> { FileDiagnosticsBundleBuilder() }
     single<DiagnosticsRedactionTokenProvider> {
         val tokenManager = get<TokenManager>()
-        DiagnosticsRedactionTokenProvider {
-            listOfNotNull(
-                tokenManager.getAccessToken(),
-                tokenManager.getRefreshToken(),
-                tokenManager.getProfileToken(),
-            ).filter(String::isNotBlank)
+        val hostedInstallations = get<HostedDiagnosticsInstallationManager>()
+        DestinationAwareDiagnosticsRedactionTokenProvider(tokenManager, get()) {
+            hostedInstallations.credentialsForOutstanding().map { it.installationToken }
         }
     }
     single<DiagnosticsUploader> {
+        val tokenManager = get<TokenManager>()
+        val settings = get<DiagnosticsSettingsStore>()
         DefaultDiagnosticsUploader(
             reports = get(),
             identity = get(),
+            identityTransitions = get(),
+            privacyBarrier = get(),
             bundleBuilder = get(),
             api = get(),
+            hostedApi = get(),
+            hostedInstallations = get(),
+            hostedCapabilities = get(),
             redactionTokens = get(),
+            selfHostedAuthorization = DiagnosticsSelfHostedAuthorizationProvider {
+                val scope = tokenManager.snapshotCurrentScope()
+                    ?.takeIf { it.credentialGenerationId == null }
+                    ?: return@DiagnosticsSelfHostedAuthorizationProvider null
+                val accessToken = tokenManager.getAccessTokenForScope(scope)
+                    ?.takeIf(String::isNotBlank)
+                    ?: return@DiagnosticsSelfHostedAuthorizationProvider null
+                DiagnosticsUploadAuthorization(
+                    serverId = scope.serverId,
+                    serverUrl = scope.serverUrl,
+                    accessToken = accessToken,
+                    activeProfileId = scope.profileId,
+                    identityGeneration = scope.identityGeneration,
+                )
+            },
             sentRecorder = get(),
             consentProvider = get(),
+            transportPolicy = DiagnosticsTransportPolicy { binding, noticeVersion, requireAlways ->
+                settings.permitsUpload(binding, noticeVersion, requireAlways)
+            },
             staleConsentHandler = get(),
         )
     }
@@ -85,6 +156,10 @@ val diagnosticsModule = module {
     single { DeviceSnapshotCache() }
     single { androidExitReportEnvironment(androidContext(), get()) }
     single { FileJvmCrashMarkerSource(androidContext().noBackupFilesDir) }
+    single<DiagnosticsStoredEvidenceReconciler> {
+        val markers = get<FileJvmCrashMarkerSource>()
+        DiagnosticsStoredEvidenceReconciler(markers::reconcile)
+    }
     single<AndroidExitInfoSource> { FrameworkAndroidExitInfoSource(androidContext()) }
     single<ProcessStateSummaryPublisher> { AndroidProcessStateSummaryPublisher(androidContext()) }
     single { DiagnosticsRunLedger(androidContext().noBackupFilesDir, get()) }
@@ -121,7 +196,10 @@ val diagnosticsModule = module {
         val cache = get<DeviceSnapshotCache>()
         val tokenProvider = get<DiagnosticsRedactionTokenProvider>()
         DiagnosticsIncidentCollector { context, consent ->
-            val tokens = runCatching { tokenProvider.tokens() }.getOrDefault(emptyList())
+            // Exact credentials are part of the hosted redaction boundary. If
+            // they cannot be read, leave the raw marker for a later refresh
+            // instead of assembling evidence with a weaker token set.
+            val tokens = tokenProvider.tokens(context.destinationKind)
             ExitInfoCollector(
                 source = source,
                 ledger = ledger,
@@ -150,19 +228,42 @@ val diagnosticsModule = module {
         val capture = get<DiagnosticsCaptureController>()
         val ledger = get<DiagnosticsRunLedger>()
         val markers = get<FileJvmCrashMarkerSource>()
-        DiagnosticsBindingPurger { binding ->
+        DiagnosticsBindingPurger { binding, includeLiveCapture ->
             var failure: Throwable? = null
             suspend fun attempt(block: suspend () -> Unit) {
                 runCatching { block() }.onFailure { error -> if (failure == null) failure = error }
             }
-            attempt { capture.purge(binding) }
+            if (includeLiveCapture) attempt { capture.purgeCurrentEvidence() }
             attempt { reports.purge(binding) }
             attempt { ledger.purge(binding) }
             attempt { markers.purge(binding) }
             failure?.let { throw it }
         }
     }
-    single { DiagnosticsSettingsStore(get(DIAGNOSTICS_DATA_STORE), get()) }
+    single<DiagnosticsAllEvidencePurger> {
+        val reports = get<PendingReportStore>()
+        val capture = get<DiagnosticsCaptureController>()
+        val ledger = get<DiagnosticsRunLedger>()
+        val markers = get<FileJvmCrashMarkerSource>()
+        DiagnosticsAllEvidencePurger { includeLiveCapture ->
+            var failure: Throwable? = null
+            suspend fun attempt(block: suspend () -> Unit) {
+                runCatching { block() }.onFailure { error -> if (failure == null) failure = error }
+            }
+            if (includeLiveCapture) attempt { capture.purgeCurrentEvidence() }
+            attempt { reports.purgeAll() }
+            attempt { ledger.clear() }
+            attempt { markers.purgeAll() }
+            failure?.let { throw it }
+        }
+    }
+    single {
+        DiagnosticsSettingsStore(
+            dataStore = get(DIAGNOSTICS_DATA_STORE),
+            bindingPurger = get(),
+            allEvidencePurger = get(),
+        )
+    }
     single<DiagnosticsUploadConsentProvider> {
         val settings = get<DiagnosticsSettingsStore>()
         DiagnosticsUploadConsentProvider { binding, noticeVersion ->
@@ -171,7 +272,9 @@ val diagnosticsModule = module {
     }
     single<DiagnosticsSentRecorder> {
         val settings = get<DiagnosticsSettingsStore>()
-        DiagnosticsSentRecorder(settings::recordSent)
+        DiagnosticsSentRecorder { binding, shortId, sentAtEpochMs, state ->
+            settings.recordSent(binding, shortId, sentAtEpochMs, state)
+        }
     }
     single<DiagnosticsStaleConsentHandler> {
         SettingsDiagnosticsStaleConsentHandler(get())
@@ -180,19 +283,27 @@ val diagnosticsModule = module {
         val context = androidContext()
         DiagnosticsUploadScheduler { reportId -> DiagnosticsUploadWorker.enqueue(context, reportId) }
     }
+    single<HostedDiagnosticsDeletionScheduler> {
+        val context = androidContext()
+        HostedDiagnosticsDeletionScheduler { HostedDiagnosticsDeletionWorker.enqueue(context) }
+    }
     single<CoroutineScope>(DIAGNOSTICS_SCOPE) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     single<DiagnosticsCoordinator> {
         DefaultDiagnosticsCoordinator(
             scope = get(DIAGNOSTICS_SCOPE),
             identity = get(),
             identityTransitions = get(),
+            privacyBarrier = get(),
             settings = get(),
             reports = get(),
             capture = get(),
             uploader = get(),
             uploadScheduler = get(),
+            hostedDeletionScheduler = get(),
+            hostedReportDeleter = get(),
             runtimePublisher = get(),
             incidentCollector = get(),
+            storedEvidenceReconciler = get(),
         )
     }
 }

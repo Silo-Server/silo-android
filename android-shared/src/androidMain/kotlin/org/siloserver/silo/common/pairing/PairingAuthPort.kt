@@ -52,24 +52,20 @@ class RegistryPairingAuthPort(
             val previousServerId = serverRegistry.activeServerId.value
             val serverId = serverRegistry.addOrUpdate(serverUrl, fetchedName = serverName)
             try {
-                // Prepare the token slot before publishing the registry switch.
-                // The HTTP client follows ServerRegistry, so observers can
-                // never see the approved server active without credentials.
-                serverRegistry.setProfileId(serverId, null)
-                tokenManager.switchActiveServer(serverId)
-                tokenManager.setProfileId(null)
-                tokenManager.setProfileToken(null)
-                tokenManager.saveTokens(
+                // Same-server approval is still an A -> B account boundary.
+                // The token manager activates the registry and replaces the
+                // complete profile/token identity inside one destructive gate.
+                tokenManager.replaceAccountSession(
+                    serverId = serverId,
                     accessToken = accessToken,
                     refreshToken = refreshToken,
                     expiresIn = expiresIn,
                 )
-                serverRegistry.switchTo(serverId)
             } catch (error: Throwable) {
-                if (previousServerId != null) {
+                if (previousServerId != null && serverRegistry.activeServerId.value != previousServerId) {
                     serverRegistry.switchTo(previousServerId)
                     tokenManager.switchActiveServer(previousServerId)
-                } else {
+                } else if (previousServerId == null) {
                     serverRegistry.remove(serverId)
                 }
                 throw error

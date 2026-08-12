@@ -86,8 +86,11 @@ class FileDiagnosticsCaptureController(
                 debugLogging = true,
             )
         } finally {
-            frozen.files.firstOrNull()?.parentFile?.deleteRecursively()
-            logBuffer.rotateGeneration()
+            try {
+                fileLogger.deleteFrozen(frozen)
+            } finally {
+                logBuffer.rotateGeneration()
+            }
         }
     }
 
@@ -154,17 +157,21 @@ class FileDiagnosticsCaptureController(
         )
     }
 
-    override suspend fun purge(binding: DiagnosticsBinding) {
+    override suspend fun purgeCurrentEvidence() {
         var failure: Throwable? = null
         suspend fun attempt(block: suspend () -> Unit) {
             runCatching { block() }.onFailure { error -> if (failure == null) failure = error }
         }
         val owned = active.get()
-        if (owned != null && owned.capture.identityKey.binding == binding) attempt { cancelOwned(owned) }
+        if (owned != null) attempt { cancelOwned(owned) }
         attempt { fileLogger.purgeStoredEvidence() }
         attempt { breadcrumbJournal?.purge() }
         attempt { logBuffer.clear() }
         failure?.let { throw it }
+    }
+
+    override suspend fun reconcileStoredEvidence() {
+        fileLogger.reconcileStoredEvidence()
     }
 
     private fun saveManual(
@@ -186,6 +193,7 @@ class FileDiagnosticsCaptureController(
             accountUserId = context.binding.accountUserId,
             profileId = context.profileId,
             ownershipGeneration = context.ownershipGeneration,
+            destinationKind = context.destinationKind,
         )
         val manifest = DiagnosticsManifest(
             schemaVersion = 1,
@@ -202,7 +210,11 @@ class FileDiagnosticsCaptureController(
             destination = DiagnosticsDestination(context.binding.serverInstanceId),
             consent = DiagnosticsConsent(DiagnosticsConsentMode.MANUAL, context.noticeVersion),
             deviceSummary = environment.deviceSummary,
-            playbackSessionIds = playbackSessions.snapshot(),
+            playbackSessionIds = if (context.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                emptyList()
+            } else {
+                playbackSessions.snapshot()
+            },
             logSummary = DiagnosticsLogSummaryBuilder.build(logBytes, droppedLines, debugLogging),
             archive = DiagnosticsArchive(
                 entries = CANONICAL_ORDER.filter { it == MANIFEST_FILE || it in artifacts },

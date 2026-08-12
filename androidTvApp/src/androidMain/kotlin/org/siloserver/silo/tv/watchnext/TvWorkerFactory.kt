@@ -9,7 +9,9 @@ import org.siloserver.silo.common.data.sync.SyncEngine
 import org.siloserver.silo.common.data.sync.SyncWorker
 import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadWorker
-import org.siloserver.silo.common.diagnostics.DiagnosticsUploader
+import org.siloserver.silo.common.diagnostics.HostedDiagnosticsDeletionWorker
+import org.siloserver.silo.common.diagnostics.HostedDiagnosticsReportDeleter
+import org.siloserver.silo.common.diagnostics.PendingReportStore
 import org.siloserver.silo.repository.SectionRepository
 import org.koin.core.context.GlobalContext
 
@@ -60,8 +62,16 @@ class TvWorkerFactory : WorkerFactory() {
                 DiagnosticsUploadWorker(
                     appContext = appContext,
                     params = workerParameters,
-                    uploader = koin.get<DiagnosticsUploader>(),
                     coordinator = koin.get<DiagnosticsCoordinator>(),
+                )
+            }
+            HostedDiagnosticsDeletionWorker::class.java.name -> {
+                Log.i(TAG, "Building HostedDiagnosticsDeletionWorker via Koin")
+                HostedDiagnosticsDeletionWorker(
+                    appContext = appContext,
+                    params = workerParameters,
+                    reports = koin.get<PendingReportStore>(),
+                    deleter = koin.get<HostedDiagnosticsReportDeleter>(),
                 )
             }
             else -> {

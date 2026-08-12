@@ -22,6 +22,7 @@ data class DiagnosticsRunRecord(
     val processStartedAtEpochMs: Long,
     val captureSessionId: String,
     val ownershipGeneration: Long,
+    val destinationKind: DiagnosticsDestinationKind = DiagnosticsDestinationKind.SELF_HOSTED,
 )
 
 /** Bounded local mapping from an opaque process-state token to validated capture identity. */
@@ -30,6 +31,9 @@ class DiagnosticsRunLedger(
     private val processStateSummaryPublisher: ProcessStateSummaryPublisher = ProcessStateSummaryPublisher { },
     private val maxRecords: Int = DEFAULT_MAX_RECORDS,
     private val tokenFactory: () -> String = { UUID.randomUUID().toString().replace("-", "") },
+    private val deleteRecursively: (File) -> Boolean = File::deleteRecursively,
+    private val directorySync: (File) -> Unit = ::syncDiagnosticsDirectory,
+    private val atomicRename: (File, File) -> Unit = ::renameDiagnosticsFileAtomically,
 ) {
     private val directory = noBackupFilesDir.resolve("client-diagnostics")
     private val file = directory.resolve("run-ledger.json")
@@ -57,6 +61,7 @@ class DiagnosticsRunLedger(
             processStartedAtEpochMs = processStartedAtEpochMs,
             captureSessionId = captureSessionId,
             ownershipGeneration = context.ownershipGeneration,
+            destinationKind = context.destinationKind,
         )
         mutex.withLock {
             val records = (listOf(record) + load())
@@ -83,7 +88,9 @@ class DiagnosticsRunLedger(
 
     suspend fun clear() {
         mutex.withLock {
-            if (file.exists()) check(file.delete()) { "unable to clear diagnostics run ledger" }
+            listOf(file, temporaryFile()).forEach { evidence ->
+                deleteDiagnosticsEvidenceStrictly(evidence, deleteRecursively, directorySync)
+            }
         }
     }
 
@@ -105,14 +112,17 @@ class DiagnosticsRunLedger(
         check(directory.mkdirs() || directory.isDirectory) { "unable to create diagnostics ledger directory" }
         val encoded = JSON.encodeToString(records.take(maxRecords)).encodeToByteArray()
         check(encoded.size <= MAX_LEDGER_BYTES) { "diagnostics run ledger exceeds byte limit" }
-        val temporary = directory.resolve("run-ledger.json.tmp")
+        val temporary = temporaryFile()
         FileOutputStream(temporary, false).use { stream ->
             stream.write(encoded)
             stream.fd.sync()
         }
-        if (file.exists()) check(file.delete()) { "unable to replace diagnostics run ledger" }
-        check(temporary.renameTo(file)) { "unable to publish diagnostics run ledger" }
+        atomicRename(temporary, file)
+        directorySync(directory)
+        check(file.isFile && !temporary.exists()) { "diagnostics run ledger publish was not durable" }
     }
+
+    private fun temporaryFile(): File = directory.resolve("run-ledger.json.tmp")
 
     private companion object {
         const val DEFAULT_MAX_RECORDS = 64

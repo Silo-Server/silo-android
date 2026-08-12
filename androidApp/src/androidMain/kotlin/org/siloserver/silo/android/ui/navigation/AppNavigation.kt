@@ -1143,6 +1143,7 @@ fun AppNavigation(
                 onSend = { diagnosticsViewModel.uploadPrompt(prompt) },
                 onAlwaysSend = { diagnosticsViewModel.alwaysSendPrompt(prompt) },
                 onDontSend = { diagnosticsViewModel.declinePrompt(prompt) },
+                allowAlwaysSend = diagnosticsState.allowsAutomaticUpload,
             )
         }
         // Menu-less routes (detail screens etc.) get the cast bar as a bottom

@@ -18,6 +18,7 @@ import org.siloserver.silo.model.auth.DeviceLoginDecisionResponse
 import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.pairing.PairingMessage
@@ -122,6 +123,7 @@ class RegistryCompanionPairingServerStore(
 
 class RepositoryCompanionDeviceLoginApprover(
     private val repository: DeviceLoginRepository,
+    private val identityTransitions: IdentityTransitionBarrier,
 ) : CompanionDeviceLoginApprover {
     override suspend fun lookup(
         server: CompanionPairingServer,
@@ -143,6 +145,12 @@ class RepositoryCompanionDeviceLoginApprover(
         serverUrl = url,
         profileId = null,
         profileToken = null,
+        // This inactive-server scope cannot carry the token manager's live
+        // persistent credential epoch. Pin its request to the current identity
+        // generation instead so a late refresh cannot overwrite a same-server
+        // account replacement.
+        identityGeneration = identityTransitions.generation.value,
+        isIdentityGenerationStamped = true,
     )
 }
 

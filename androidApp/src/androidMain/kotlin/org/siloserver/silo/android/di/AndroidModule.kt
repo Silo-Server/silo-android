@@ -186,7 +186,7 @@ val androidModule = module {
     single { SiloCastNsdBrowser(androidContext()) }
     single { CompanionPairingNsdBrowser(androidContext()) }
     single<CompanionPairingServerStore> { RegistryCompanionPairingServerStore(get(), get()) }
-    single<CompanionDeviceLoginApprover> { RepositoryCompanionDeviceLoginApprover(get()) }
+    single<CompanionDeviceLoginApprover> { RepositoryCompanionDeviceLoginApprover(get(), get()) }
     single<CompanionPairingTransportFactory> {
         CompanionPairingTransportFactory { target ->
             TlsPskPairingClientTransport.connect(target.host, target.port)

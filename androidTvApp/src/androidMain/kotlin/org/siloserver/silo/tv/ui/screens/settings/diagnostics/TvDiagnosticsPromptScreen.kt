@@ -41,6 +41,7 @@ fun TvDiagnosticsPromptScreen(
     onSend: () -> Unit,
     onAlwaysSend: () -> Unit,
     onDontSend: () -> Unit,
+    allowAlwaysSend: Boolean = true,
 ) {
     var confirmAlways by remember { mutableStateOf(false) }
     val safeFocus = remember(prompt.reportId, confirmAlways) { FocusRequester() }
@@ -83,7 +84,7 @@ fun TvDiagnosticsPromptScreen(
                     Modifier.width(560.dp).padding(28.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    if (confirmAlways) {
+                    if (confirmAlways && allowAlwaysSend) {
                         Text(
                             "Always send crash reports?",
                             style = MaterialTheme.typography.headlineMedium,
@@ -116,12 +117,24 @@ fun TvDiagnosticsPromptScreen(
                                     "to send them."
                             },
                         )
+                        if (!allowAlwaysSend) {
+                            Text(
+                                "The report includes the Silo app version and build, Android version, device " +
+                                    "model, crash details, and diagnostic logs. Its pseudonymous credential is " +
+                                    "not linked to an account on your self-hosted server. Username, email, " +
+                                    "profile, server address, and playback session IDs are omitted. It never " +
+                                    "sends automatically and may be retained for up to 30 days.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         TvDiagnosticsAction("Review", onClick = onReview)
                         TvDiagnosticsAction("Send", onClick = onSend)
-                        TvDiagnosticsAction(
-                            "Always send",
-                            onClick = { confirmAlways = true },
-                        )
+                        if (allowAlwaysSend) {
+                            TvDiagnosticsAction(
+                                "Always send",
+                                onClick = { confirmAlways = true },
+                            )
+                        }
                         TvDiagnosticsAction(
                             "Don't send",
                             onClick = onDontSend,

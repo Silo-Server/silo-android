@@ -1,6 +1,9 @@
 package org.siloserver.silo.common.diagnostics
 
+import java.io.File
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import org.siloserver.silo.model.diagnostics.DiagnosticsAvailabilityStatus
@@ -11,6 +14,7 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsReportType
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -137,13 +141,97 @@ class ExitInfoCollectorTest {
         assertEquals(1, fixture.store.list(BINDING).size)
     }
 
-    private suspend fun fixture(
-        records: List<AndroidExitInfoRecord>,
-        markers: FakeMarkerSource = FakeMarkerSource(emptyList()),
-        breadcrumbs: DiagnosticsBreadcrumbSource = DiagnosticsBreadcrumbSource.None,
-    ): Fixture {
+    @Test
+    fun renderedHostedJvmMarkerMatchesHostedRunAndIsCollectedThenDeleted() = runTest {
         val root = temporaryFolder.newFolder()
-        val ledger = DiagnosticsRunLedger(root, tokenFactory = { RUN_TOKEN })
+        val hostedBinding = DiagnosticsBinding(
+            HOSTED_DIAGNOSTICS_COLLECTOR_ID,
+            "anonymous-hosted-device",
+        )
+        val context = DiagnosticsCaptureContext(
+            binding = hostedBinding,
+            profileId = null,
+            profileEligible = true,
+            noticeVersion = 2,
+            status = DiagnosticsAvailabilityStatus.AVAILABLE,
+            ownershipGeneration = 7,
+            destinationKind = DiagnosticsDestinationKind.HOSTED,
+        )
+        val ledger = DiagnosticsRunLedger(
+            root,
+            tokenFactory = { RUN_TOKEN },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
+        ledger.beginRun(context, EXIT_AT - 10_000, "hosted-capture")
+        val marker = Json.decodeFromString<JvmCrashMarkerRecord>(
+            CrashMarkerRenderer().render(
+                thread = Thread.currentThread(),
+                throwable = IllegalStateException("hosted crash"),
+                runtime = CrashRuntimeSnapshot(
+                    binding = PendingReportBinding(
+                        serverInstanceId = hostedBinding.serverInstanceId,
+                        accountUserId = hostedBinding.accountUserId,
+                        profileId = null,
+                        ownershipGeneration = context.ownershipGeneration,
+                        destinationKind = DiagnosticsDestinationKind.HOSTED,
+                    ),
+                    captureSessionId = "hosted-capture",
+                    runToken = RUN_TOKEN,
+                    foreground = true,
+                    playbackSessionIds = listOf("private-playback-session"),
+                    deviceSnapshotJson = DEVICE_JSON,
+                ),
+                occurredAtEpochMs = EXIT_AT,
+            ).decodeToString(),
+        )
+        assertEquals(DiagnosticsDestinationKind.HOSTED, marker.binding?.destinationKind)
+        val markers = FakeMarkerSource(listOf(marker))
+        val store = FilePendingReportStore(
+            root,
+            nowMs = { EXIT_AT + 1_000 },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
+        val collector = ExitInfoCollector(
+            source = AndroidExitInfoSource {
+                listOf(exit(reason = AndroidExitReason.JVM_CRASH, timestampMs = EXIT_AT + 100))
+            },
+            ledger = ledger,
+            reports = store,
+            markers = markers,
+            environment = ExitReportEnvironment(
+                appVersion = "1.0",
+                appBuild = "1",
+                platform = DiagnosticsPlatform.ANDROID,
+                osVersion = "Android 36",
+                deviceSummary = DiagnosticsDeviceSummary("Google", "Pixel", "Android 36", "phone"),
+            ),
+            deviceSnapshotBytes = { DEVICE_JSON.encodeToByteArray() },
+            noticeVersion = { 2 },
+        )
+
+        val report = collector.collect().single()
+
+        assertEquals(DiagnosticsDestinationKind.HOSTED, report.binding.destinationKind)
+        assertEquals(hostedBinding, report.binding.binding)
+        assertNull(report.binding.profileId)
+        assertTrue(report.manifest.playbackSessionIds.isEmpty())
+        assertFalse(report.directory.resolve("manifest.json").readText().contains("private-playback-session"))
+        assertEquals(listOf(marker), markers.deleted)
+        assertEquals(listOf(report.id), store.list(hostedBinding).map(PendingReport::id))
+        assertTrue(collector.collect().isEmpty())
+    }
+
+    @Test
+    fun recentRealMarkerMatchesLedgerPersistsReportAndIsDeletedDurably() = runTest {
+        val root = temporaryFolder.newFolder()
+        val ledger = DiagnosticsRunLedger(
+            root,
+            tokenFactory = { RUN_TOKEN },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
         ledger.beginRun(
             context = DiagnosticsCaptureContext(
                 binding = BINDING,
@@ -156,7 +244,118 @@ class ExitInfoCollectorTest {
             processStartedAtEpochMs = EXIT_AT - 10_000,
             captureSessionId = "capture-1",
         )
-        val store = FilePendingReportStore(root, nowMs = { EXIT_AT + 1_000 })
+        FileCrashMarkerWriter(
+            noBackupFilesDir = root,
+            nowMs = { EXIT_AT },
+            nanoTime = { 1 },
+        ).write(
+            Thread.currentThread(),
+            IllegalStateException("recent crash"),
+            CrashRuntimeSnapshot(
+                binding = PendingReportBinding("server-1", "user-1", "profile-1", 7),
+                captureSessionId = "capture-1",
+                runToken = RUN_TOKEN,
+                deviceSnapshotJson = DEVICE_JSON,
+            ),
+        )
+        val markerDirectory = root.resolve("client-diagnostics/crash-markers")
+        var directorySyncs = 0
+        val markers = FileJvmCrashMarkerSource(
+            noBackupFilesDir = root,
+            nowMs = { EXIT_AT + 1_000 },
+            fileGate = JvmCrashMarkerFileGate(),
+            deleteFile = File::delete,
+            syncDirectory = { directorySyncs += 1 },
+            listFiles = File::listFiles,
+        )
+        val store = FilePendingReportStore(
+            root,
+            nowMs = { EXIT_AT + 1_000 },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
+        val collector = ExitInfoCollector(
+            source = AndroidExitInfoSource { emptyList() },
+            ledger = ledger,
+            reports = store,
+            markers = markers,
+            environment = ExitReportEnvironment(
+                appVersion = "1.0",
+                appBuild = "1",
+                platform = DiagnosticsPlatform.ANDROID,
+                osVersion = "Android 36",
+                deviceSummary = DiagnosticsDeviceSummary("Google", "Pixel", "Android 36", "phone"),
+            ),
+            deviceSnapshotBytes = { DEVICE_JSON.encodeToByteArray() },
+            noticeVersion = { 2 },
+        )
+
+        val report = collector.collect().single()
+
+        assertEquals(DiagnosticsCrashSource.UEH, report.manifest.crash?.source)
+        assertTrue(markerDirectory.listFiles().orEmpty().isEmpty())
+        assertEquals(1, directorySyncs)
+        assertEquals(listOf(report.id), store.list(BINDING).map(PendingReport::id))
+    }
+
+    @Test
+    fun terminallyUnresolvableJvmMarkersAreDeletedInsteadOfRetained() = runTest {
+        val missingToken = marker(runToken = null)
+        val missingLedger = marker(runToken = "f".repeat(32))
+        val mismatchedBinding = marker(
+            binding = PendingReportBinding("different-server", "different-user", "profile-1", 7),
+        )
+        val markers = FakeMarkerSource(listOf(missingToken, missingLedger, mismatchedBinding))
+        val fixture = fixture(records = emptyList(), markers = markers)
+
+        assertTrue(fixture.collector.collect().isEmpty())
+        assertEquals(listOf(missingToken, missingLedger, mismatchedBinding), markers.deleted)
+        assertTrue(fixture.store.list(BINDING).isEmpty())
+    }
+
+    @Test
+    fun markerDeletionFailurePropagatesAfterSuccessfulReportPersistence() = runTest {
+        val marker = marker()
+        val markers = object : JvmCrashMarkerSource {
+            override fun records() = listOf(marker)
+            override fun delete(marker: JvmCrashMarkerRecord) = error("delete failed")
+        }
+        val fixture = fixture(records = emptyList(), markers = markers)
+
+        assertFailsWith<IllegalStateException> { fixture.collector.collect() }
+        assertEquals(1, fixture.store.list(BINDING).size)
+    }
+
+    private suspend fun fixture(
+        records: List<AndroidExitInfoRecord>,
+        markers: JvmCrashMarkerSource = FakeMarkerSource(emptyList()),
+        breadcrumbs: DiagnosticsBreadcrumbSource = DiagnosticsBreadcrumbSource.None,
+    ): Fixture {
+        val root = temporaryFolder.newFolder()
+        val ledger = DiagnosticsRunLedger(
+            root,
+            tokenFactory = { RUN_TOKEN },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
+        ledger.beginRun(
+            context = DiagnosticsCaptureContext(
+                binding = BINDING,
+                profileId = "profile-1",
+                profileEligible = true,
+                noticeVersion = 2,
+                status = DiagnosticsAvailabilityStatus.AVAILABLE,
+                ownershipGeneration = 7,
+            ),
+            processStartedAtEpochMs = EXIT_AT - 10_000,
+            captureSessionId = "capture-1",
+        )
+        val store = FilePendingReportStore(
+            root,
+            nowMs = { EXIT_AT + 1_000 },
+            directorySync = {},
+            atomicRename = ::testAtomicRename,
+        )
         val collector = ExitInfoCollector(
             source = AndroidExitInfoSource { records },
             ledger = ledger,
@@ -195,6 +394,27 @@ class ExitInfoCollectorTest {
             return trace?.copyOf(maxBytes.coerceAtMost(trace.size))
         }
     }
+
+    private fun marker(
+        runToken: String? = RUN_TOKEN,
+        binding: PendingReportBinding = PendingReportBinding("server-1", "user-1", "profile-1", 7),
+    ) = JvmCrashMarkerRecord(
+        occurredAtEpochMs = EXIT_AT,
+        threadName = "main",
+        threadId = 1,
+        throwableType = "java.lang.IllegalStateException",
+        stack = "java.lang.IllegalStateException: crash",
+        binding = binding,
+        captureSessionId = "capture-1",
+        runToken = runToken,
+        playbackSessionIds = emptyList(),
+        deviceSnapshotJson = DEVICE_JSON,
+        logLines = emptyList(),
+        logDroppedCount = 0,
+        logTornCount = 0,
+        logGeneration = 7,
+        truncated = false,
+    )
 
     private class FakeMarkerSource(private val markers: List<JvmCrashMarkerRecord>) : JvmCrashMarkerSource {
         val deleted = mutableListOf<JvmCrashMarkerRecord>()

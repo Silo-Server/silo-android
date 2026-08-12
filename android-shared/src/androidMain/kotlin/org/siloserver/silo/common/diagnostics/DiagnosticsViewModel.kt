@@ -24,6 +24,10 @@ class DiagnosticsViewModel(
         viewModelScope.launch { coordinator.setConsent(mode) }
     }
 
+    fun setDestination(destinationKind: DiagnosticsDestinationKind) {
+        viewModelScope.launch { coordinator.setDestination(destinationKind) }
+    }
+
     fun setDebugLogging(enabled: Boolean) {
         viewModelScope.launch { coordinator.setDebugLogging(enabled) }
     }
@@ -54,6 +58,7 @@ class DiagnosticsViewModel(
                 val decision = coordinator.upload(reportId, expectedNoticeVersion = prompt.noticeVersion)
                 when (decision) {
                     is DiagnosticsUploadDecision.Uploaded,
+                    is DiagnosticsUploadDecision.HostedProcessing,
                     DiagnosticsUploadDecision.KeptInvalid,
                     DiagnosticsUploadDecision.KeptTooLarge,
                     DiagnosticsUploadDecision.KeptServerUpdateRequired,
@@ -79,8 +84,7 @@ class DiagnosticsViewModel(
 
     fun delete(reportId: String, onDeleted: () -> Unit = {}) {
         viewModelScope.launch {
-            coordinator.delete(reportId)
-            onDeleted()
+            if (coordinator.delete(reportId)) onDeleted()
         }
     }
 

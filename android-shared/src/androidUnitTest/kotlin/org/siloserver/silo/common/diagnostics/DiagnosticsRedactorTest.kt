@@ -65,6 +65,23 @@ class DiagnosticsRedactorTest {
     }
 
     @Test
+    fun websocketUrlsAndPrivatePathIdsUseTheSameRedactionBoundary() {
+        val output = redactor.sanitize(
+            "wss://secret.example/items/42?access_token=secret " +
+                "ws://media.internal/users/0123456789abcdef#private",
+        )
+
+        assertFalse(output.contains("secret.example"), output)
+        assertFalse(output.contains("media.internal"), output)
+        assertFalse(output.contains("access_token"), output)
+        assertFalse(output.contains("/items/42"), output)
+        assertFalse(output.contains("0123456789abcdef"), output)
+        assertTrue(output.contains("wss://host_"), output)
+        assertTrue(output.contains("/items/{id}"), output)
+        assertTrue(output.contains("/users/{id}"), output)
+    }
+
+    @Test
     fun structurallyValidJwtIsRedactedWithoutRedactingDottedCodecNames() {
         val jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"
 

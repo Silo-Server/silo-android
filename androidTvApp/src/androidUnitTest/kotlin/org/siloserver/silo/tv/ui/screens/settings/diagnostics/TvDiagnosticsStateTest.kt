@@ -42,6 +42,23 @@ class TvDiagnosticsStateTest {
     }
 
     @Test
+    fun hostedCollectorSkipsAlwaysInTheFocusGraph() {
+        assertEquals(
+            TvDiagnosticsCrashFocus.NEVER,
+            nextTvDiagnosticsCrashFocus(
+                current = TvDiagnosticsCrashFocus.ASK,
+                direction = TvDiagnosticsFocusDirection.Down,
+                debugLoggingEnabled = true,
+                allowAlways = false,
+            ),
+        )
+        assertEquals(
+            TvDiagnosticsCrashFocus.ASK,
+            initialTvDiagnosticsCrashFocus(DiagnosticsConsentMode.ALWAYS, allowAlways = false),
+        )
+    }
+
+    @Test
     fun downTraversesConsentChoicesThenDebugLogging() {
         assertEquals(
             TvDiagnosticsCrashFocus.DEBUG_LOGGING,

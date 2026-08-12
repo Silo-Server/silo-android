@@ -59,14 +59,24 @@ fun interface CrashMarkerSink {
     fun write(thread: Thread, throwable: Throwable, runtime: CrashRuntimeSnapshot)
 }
 
-class CrashExceptionHandler(
+internal class JvmCrashMarkerFileGate {
+    private val monitor = Any()
+
+    fun <T> withLock(block: () -> T): T = synchronized(monitor, block)
+}
+
+internal val JVM_CRASH_MARKER_FILE_GATE = JvmCrashMarkerFileGate()
+
+internal class CrashExceptionHandler(
     private val markerSink: CrashMarkerSink,
     private val runtimeSnapshot: () -> CrashRuntimeSnapshot,
     private val previous: Thread.UncaughtExceptionHandler?,
+    private val writeGate: JvmCrashMarkerFileGate? = null,
 ) : Thread.UncaughtExceptionHandler {
     override fun uncaughtException(thread: Thread, throwable: Throwable) {
         try {
-            markerSink.write(thread, throwable, runtimeSnapshot())
+            val write = { markerSink.write(thread, throwable, runtimeSnapshot()) }
+            writeGate?.withLock(write) ?: write()
         } catch (_: Throwable) {
             // The platform/default handler remains authoritative even if evidence capture fails.
         } finally {
@@ -242,6 +252,7 @@ class CrashMarkerRenderer {
             append(",\"account_user_id\":").appendJsonString(binding.accountUserId)
             binding.profileId?.let { append(",\"profile_id\":").appendJsonString(it) }
             append(",\"ownership_generation\":").append(binding.ownershipGeneration)
+            append(",\"destination_kind\":").appendJsonString(binding.destinationKind.name)
             append('}')
         } ?: append("null")
         marker.captureSessionId?.let { append(",\"capture_session_id\":").appendJsonString(it) }
@@ -360,14 +371,23 @@ object CrashCapture {
     fun install(context: Context) {
         if (!installed.compareAndSet(false, true)) return
         val previous = Thread.getDefaultUncaughtExceptionHandler()
+        val writer = FileCrashMarkerWriter(context.noBackupFilesDir)
         val handler = CrashExceptionHandler(
-            markerSink = FileCrashMarkerWriter(context.noBackupFilesDir),
+            markerSink = CrashMarkerSink { thread, throwable, snapshot ->
+                // Once the runtime privacy gate is closed, no raw unbound crash
+                // marker should be created. The same file gate serializes this
+                // decision and publication with close+purge during identity change.
+                if (snapshot.identityKey != null && snapshot.binding != null) {
+                    writer.write(thread, throwable, snapshot)
+                }
+            },
             runtimeSnapshot = {
                 runtime.get().let { snapshot ->
                     if (snapshot.identityKey == null) snapshot else snapshot.copy(logBuffer = logBuffer.get())
                 }
             },
             previous = previous,
+            writeGate = JVM_CRASH_MARKER_FILE_GATE,
         )
         Thread.setDefaultUncaughtExceptionHandler(handler)
     }
@@ -377,26 +397,45 @@ object CrashCapture {
     }
 
     fun updateSnapshot(snapshot: CrashRuntimeSnapshot) {
-        runtime.set(
-            snapshot.copy(
-                playbackSessionIds = snapshot.playbackSessionIds.toList(),
-                logLines = snapshot.logLines.toList(),
-                redactionTokens = snapshot.redactionTokens.filter(String::isNotEmpty).toList(),
-            ),
-        )
+        JVM_CRASH_MARKER_FILE_GATE.withLock {
+            runtime.set(
+                snapshot.copy(
+                    playbackSessionIds = snapshot.playbackSessionIds.toList(),
+                    logLines = snapshot.logLines.toList(),
+                    redactionTokens = snapshot.redactionTokens.filter(String::isNotEmpty).toList(),
+                ),
+            )
+        }
+    }
+
+    fun closeGate() {
+        JVM_CRASH_MARKER_FILE_GATE.withLock {
+            runtime.set(CrashRuntimeSnapshot.empty())
+        }
     }
 
     fun updatePlaybackSessionIds(identityKey: DiagnosticsIdentityKey, sessionIds: List<String>) {
-        runtime.updateAndGet { current ->
-            if (current.identityKey == identityKey) {
-                current.copy(playbackSessionIds = sessionIds.toList())
-            } else {
-                current
+        JVM_CRASH_MARKER_FILE_GATE.withLock {
+            runtime.updateAndGet { current ->
+                if (current.identityKey == identityKey) {
+                    current.copy(
+                        playbackSessionIds = if (
+                            current.binding?.destinationKind == DiagnosticsDestinationKind.HOSTED
+                        ) {
+                            emptyList()
+                        } else {
+                            sessionIds.toList()
+                        },
+                    )
+                } else {
+                    current
+                }
             }
         }
     }
 
-    internal fun currentSnapshotForTests(): CrashRuntimeSnapshot = runtime.get()
+    internal fun currentSnapshotForTests(): CrashRuntimeSnapshot =
+        JVM_CRASH_MARKER_FILE_GATE.withLock(runtime::get)
 }
 
 private fun PendingReportBinding.bounded(): PendingReportBinding = copy(

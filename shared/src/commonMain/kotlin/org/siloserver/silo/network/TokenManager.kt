@@ -43,6 +43,30 @@ interface TokenManager {
     suspend fun getAccessToken(): String?
     suspend fun getRefreshToken(): String?
     suspend fun saveTokens(accessToken: String, refreshToken: String, expiresIn: Long)
+
+    /**
+     * Installs credentials returned by an explicit login/account-approval flow.
+     * Unlike [saveTokens], this is always an identity boundary, even when the
+     * target server is already active and credentials already exist.
+     *
+     * Persistent implementations must override this and place server
+     * activation, profile reset, and all credential writes inside one
+     * [IdentityTransitionKind.ACCOUNT_REPLACE] mutation.
+     */
+    suspend fun replaceAccountSession(
+        serverId: String? = null,
+        serverUrl: String? = null,
+        accessToken: String,
+        refreshToken: String,
+        expiresIn: Long,
+        profileId: String? = null,
+        profileToken: String? = null,
+    ) {
+        if (serverUrl != null) setServerUrl(serverUrl)
+        if (serverId != null) switchActiveServer(serverId)
+        setProfileIdentity(profileId, profileToken)
+        saveTokens(accessToken, refreshToken, expiresIn)
+    }
     suspend fun clearTokens()
 
     /**

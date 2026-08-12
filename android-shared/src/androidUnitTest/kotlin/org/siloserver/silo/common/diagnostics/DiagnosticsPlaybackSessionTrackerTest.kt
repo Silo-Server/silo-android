@@ -58,11 +58,15 @@ class DiagnosticsPlaybackSessionTrackerTest {
     fun runtimePublisherIncludesSessionsAndPrivacyGateClearsThem() = runTest {
         val tracker = DiagnosticsPlaybackSessionTracker()
         val publisher = DefaultDiagnosticsRuntimePublisher(
-            ledger = DiagnosticsRunLedger(temporaryFolder.newFolder()),
+            ledger = DiagnosticsRunLedger(
+                temporaryFolder.newFolder(),
+                directorySync = {},
+                atomicRename = ::testAtomicRename,
+            ),
             logBuffer = LogRing(),
             deviceSnapshots = DeviceSnapshotCollector(EmptyProbe),
             deviceSnapshotCache = DeviceSnapshotCache(),
-            redactionTokens = DiagnosticsRedactionTokenProvider { emptyList() },
+            redactionTokens = DiagnosticsRedactionTokenProvider { _ -> emptyList() },
             playbackSessions = tracker,
             captureSessionIdFactory = { "capture-1" },
         )

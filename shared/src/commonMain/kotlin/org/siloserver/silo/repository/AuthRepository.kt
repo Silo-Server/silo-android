@@ -28,11 +28,17 @@ class AuthRepository(
      * scope and unwraps the [User] — the shared tail of every path that ends
      * a signed-out state (login, signup, setup, invitation claim).
      */
-    private suspend fun persistSession(result: ApiResult<LoginResponse>): ApiResult<User> =
+    private suspend fun persistSession(
+        result: ApiResult<LoginResponse>,
+        targetServerId: String? = null,
+        targetServerUrl: String? = null,
+    ): ApiResult<User> =
         when (result) {
             is ApiResult.Success -> {
                 val data = result.data
-                tokenManager.saveTokens(
+                tokenManager.replaceAccountSession(
+                    serverId = targetServerId ?: tokenManager.getCurrentServerId(),
+                    serverUrl = targetServerUrl,
                     accessToken = data.accessToken,
                     refreshToken = data.refreshToken,
                     expiresIn = data.expiresIn,
@@ -123,18 +129,15 @@ class AuthRepository(
         password: String,
     ): ApiResult<User> {
         val result = authApi.acceptInvitation(serverUrl, token, password)
-        if (result is ApiResult.Success) {
-            setServerUrl(serverUrl)
-            // The server may already be registered with a previous account's
-            // profile scope, which setServerUrl just restored. The claimed
-            // account is a different identity — drop the stale profile id +
-            // token so its first requests don't carry another user's profile
-            // headers, and so the app lands on profile selection.
-            tokenManager.setProfileId(null)
-            tokenManager.setProfileToken(null)
-            tokenManager.getCurrentServerId()?.let { serverRegistry?.setProfileId(it, null) }
-        }
-        return persistSession(result)
+        if (result !is ApiResult.Success) return persistSession(result)
+        val targetServerId = serverRegistry?.addOrUpdate(serverUrl)
+        val persisted = persistSession(
+            result = result,
+            targetServerId = targetServerId,
+            targetServerUrl = serverUrl.takeIf { serverRegistry == null },
+        )
+        if (persisted is ApiResult.Success) refreshActiveServerName()
+        return persisted
     }
 
     /** Checks whether public signups are enabled. */
@@ -158,11 +161,7 @@ class AuthRepository(
         try {
             authApi.logout()
         } finally {
-            val activeId = tokenManager.getCurrentServerId()
             tokenManager.signOutCurrentServer()
-            if (activeId != null) {
-                serverRegistry?.signOut(activeId)
-            }
         }
     }
 

@@ -4,8 +4,11 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
+import android.system.Os
+import android.system.OsConstants
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileDescriptor
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
@@ -116,37 +119,187 @@ interface JvmCrashMarkerSource {
     }
 }
 
-class FileJvmCrashMarkerSource(noBackupFilesDir: File) : JvmCrashMarkerSource {
+class FileJvmCrashMarkerSource internal constructor(
+    noBackupFilesDir: File,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+    private val fileGate: JvmCrashMarkerFileGate,
+    private val deleteFile: (File) -> Boolean,
+    private val syncDirectory: (File) -> Unit,
+    private val listFiles: (File) -> Array<File>?,
+) : JvmCrashMarkerSource {
     private val directory = noBackupFilesDir.resolve("client-diagnostics/crash-markers")
 
-    override fun records(): List<JvmCrashMarkerRecord> {
-        directory.listFiles().orEmpty().filter { it.name.endsWith(".tmp") }.forEach(File::delete)
-        val files = directory.listFiles().orEmpty()
-            .filter { it.isFile && MARKER_NAME.matches(it.name) && it.length() in 1..CrashMarkerRenderer.MAX_MARKER_BYTES.toLong() }
-            .sortedBy(File::lastModified)
-        files.dropLast(MAX_MARKERS).forEach(File::delete)
-        return files.takeLast(MAX_MARKERS)
-            .mapNotNull { file ->
-                runCatching { JSON.decodeFromString<JvmCrashMarkerRecord>(file.readText()) }
-                    .getOrNull()
-                    ?.takeIf { marker -> marker.schemaVersion == 1 && marker.occurredAtEpochMs >= 0 }
-                    ?.copy(sourceFileName = file.name)
-            }
-            .sortedBy(JvmCrashMarkerRecord::occurredAtEpochMs)
+    constructor(noBackupFilesDir: File) : this(
+        noBackupFilesDir = noBackupFilesDir,
+        nowMs = System::currentTimeMillis,
+        fileGate = JVM_CRASH_MARKER_FILE_GATE,
+        deleteFile = File::delete,
+        syncDirectory = ::syncJvmCrashMarkerDirectory,
+        listFiles = File::listFiles,
+    )
+
+    /**
+     * Enforces the raw-marker retention boundary without turning a marker into a report. This is
+     * called before network or identity resolution on every coordinator refresh, including while
+     * offline, ineligible, or opted out.
+     */
+    fun reconcile() {
+        fileGate.withLock { reconciledRecordsLocked() }
     }
 
+    override fun records(): List<JvmCrashMarkerRecord> =
+        fileGate.withLock { reconciledRecordsLocked() }
+
     override fun delete(marker: JvmCrashMarkerRecord) {
-        marker.sourceFileName
-            ?.takeIf(MARKER_NAME::matches)
-            ?.let(directory::resolve)
-            ?.takeIf(File::exists)
-            ?.delete()
+        fileGate.withLock {
+            val sourceFileName = marker.sourceFileName
+                ?.takeIf(MARKER_NAME::matches)
+                ?: return@withLock
+            val file = checkNotNull(listFiles(directory)) {
+                "unable to enumerate JVM crash markers"
+            }.firstOrNull { entry -> entry.name == sourceFileName } ?: return@withLock
+            deleteStrict(file)
+            syncAndVerify(files = listOf(file))
+        }
     }
+
+    override fun purge(binding: DiagnosticsBinding) {
+        fileGate.withLock {
+            if (!directory.exists()) return@withLock
+            check(!isSymbolicLink(directory)) { "JVM crash marker path is a symbolic link" }
+            check(directory.isDirectory) { "JVM crash marker path is not a directory" }
+            val removed = checkNotNull(listFiles(directory)) {
+                "unable to enumerate JVM crash markers"
+            }
+                .filter { file ->
+                    when {
+                        !isBoundedMarkerFile(file) -> true
+                        else -> decodeMarker(file)?.binding?.binding?.let { it == binding } ?: true
+                    }
+                }
+            removed.forEach(::deleteStrict)
+            syncAndVerify(removed)
+        }
+    }
+
+    fun purgeAll() {
+        fileGate.withLock {
+            if (!directory.exists()) return@withLock
+            check(!isSymbolicLink(directory)) { "JVM crash marker path is a symbolic link" }
+            check(directory.isDirectory) { "JVM crash marker path is not a directory" }
+            val removed = checkNotNull(listFiles(directory)) {
+                "unable to enumerate JVM crash markers"
+            }.toList()
+            removed.forEach(::deleteStrict)
+            syncAndVerify(removed)
+        }
+    }
+
+    private fun isBoundedMarkerFile(file: File): Boolean =
+        file.isFile &&
+            !isSymbolicLink(file) &&
+            MARKER_NAME.matches(file.name) &&
+            file.length() in 1..CrashMarkerRenderer.MAX_MARKER_BYTES.toLong()
+
+    private fun isSymbolicLink(file: File): Boolean =
+        File(checkNotNull(file.parentFile).canonicalFile, file.name).let { canonicalParentEntry ->
+            canonicalParentEntry.absoluteFile != canonicalParentEntry.canonicalFile
+        }
+
+    private fun reconciledRecordsLocked(): List<JvmCrashMarkerRecord> {
+        if (!directory.exists()) return emptyList()
+        check(!isSymbolicLink(directory)) { "JVM crash marker path is a symbolic link" }
+        check(directory.isDirectory) { "JVM crash marker path is not a directory" }
+        val files = checkNotNull(listFiles(directory)) {
+            "unable to enumerate JVM crash markers"
+        }.toList()
+        val now = nowMs()
+        check(now >= 0) { "JVM crash marker clock must be non-negative" }
+        val invalid = mutableListOf<File>()
+        val decoded = buildList {
+            files.forEach { file ->
+                if (!isBoundedMarkerFile(file)) {
+                    invalid += file
+                    return@forEach
+                }
+                val marker = decodeMarker(file)
+                if (marker == null || !isWithinRetention(marker.occurredAtEpochMs, now)) {
+                    invalid += file
+                } else {
+                    add(file to marker)
+                }
+            }
+        }
+        val retained = decoded
+            .sortedWith(compareBy<Pair<File, JvmCrashMarkerRecord>>(
+                { (_, marker) -> marker.occurredAtEpochMs },
+                { (file, _) -> file.name },
+            ))
+            .takeLast(MAX_MARKERS)
+        val retainedFiles = retained.mapTo(mutableSetOf()) { (file, _) -> file }
+        val removed = invalid + decoded.map(Pair<File, JvmCrashMarkerRecord>::first)
+            .filterNot(retainedFiles::contains)
+        removed.forEach(::deleteStrict)
+        syncAndVerify(removed)
+        return retained.map(Pair<File, JvmCrashMarkerRecord>::second)
+    }
+
+    private fun isWithinRetention(occurredAtEpochMs: Long, nowEpochMs: Long): Boolean {
+        val oldestAllowed = (nowEpochMs - RETENTION_MS).coerceAtLeast(0)
+        val newestAllowed = if (nowEpochMs > Long.MAX_VALUE - MAX_FUTURE_SKEW_MS) {
+            Long.MAX_VALUE
+        } else {
+            nowEpochMs + MAX_FUTURE_SKEW_MS
+        }
+        return occurredAtEpochMs in oldestAllowed..newestAllowed
+    }
+
+    private fun decodeMarker(file: File): JvmCrashMarkerRecord? =
+        runCatching { JSON.decodeFromString<JvmCrashMarkerRecord>(file.readText()) }
+            .getOrNull()
+            ?.takeIf { marker ->
+                marker.schemaVersion == 1 &&
+                    marker.occurredAtEpochMs >= 0 &&
+                    marker.occurredAtEpochMs == markerTimestamp(file.name)
+            }
+            ?.copy(sourceFileName = file.name)
+
+    private fun markerTimestamp(fileName: String): Long? =
+        MARKER_NAME.matchEntire(fileName)?.groupValues?.get(1)?.toLongOrNull()
+
+    private fun deleteStrict(file: File) {
+        check(deleteFile(file)) { "unable to delete JVM crash marker ${file.name}" }
+        check(!directoryEntryExists(file.name)) { "JVM crash marker still exists after deletion: ${file.name}" }
+    }
+
+    private fun syncAndVerify(files: List<File>) {
+        if (files.isEmpty()) return
+        syncDirectory(directory)
+        check(files.none { file -> directoryEntryExists(file.name) }) {
+            "JVM crash marker deletion was not durable"
+        }
+    }
+
+    private fun directoryEntryExists(name: String): Boolean =
+        checkNotNull(listFiles(directory)) { "unable to verify JVM crash marker deletion" }
+            .any { entry -> entry.name == name }
 
     private companion object {
         const val MAX_MARKERS = 3
-        val MARKER_NAME = Regex("^jvm-[0-9]+-[0-9]+\\.json$")
+        const val RETENTION_MS = PENDING_DIAGNOSTICS_RETENTION_DAYS * 24L * 60 * 60 * 1_000
+        const val MAX_FUTURE_SKEW_MS = 5L * 60 * 1_000
+        val MARKER_NAME = Regex("^jvm-([0-9]+)-[0-9]+\\.json$")
         val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    }
+}
+
+private fun syncJvmCrashMarkerDirectory(directory: File) {
+    var descriptor: FileDescriptor? = null
+    try {
+        descriptor = Os.open(directory.absolutePath, OsConstants.O_RDONLY, 0)
+        Os.fsync(checkNotNull(descriptor))
+    } finally {
+        descriptor?.let(Os::close)
     }
 }
 
@@ -180,13 +333,16 @@ class ExitInfoCollector(
             val trace = runCatching { record.trace(MAX_TRACE_BYTES) }.getOrNull()
             exits += CollectedExit(record, trace, run)
         }
-        val markerRecords = runCatching(markers::records).getOrDefault(emptyList())
+        val markerRecords = markers.records()
         val saved = mutableListOf<PendingReport>()
 
         markerRecords.forEach { marker ->
-            val runToken = marker.runToken ?: return@forEach
-            val run = ledger.find(runToken) ?: return@forEach
-            if (!run.profileEligible || !marker.matches(run)) return@forEach
+            val runToken = marker.runToken
+            val run = runToken?.let { ledger.find(it) }
+            if (run == null || !run.profileEligible || !marker.matches(run)) {
+                markers.delete(marker)
+                return@forEach
+            }
             val matchingExit = exits.firstOrNull { exit ->
                 exit.record.reason == AndroidExitReason.JVM_CRASH &&
                     exit.run.token == runToken &&
@@ -194,12 +350,12 @@ class ExitInfoCollector(
             }
             val fingerprint = matchingExit?.let(::exitFingerprint) ?: markerFingerprint(marker)
             if (reports.hasSeenFingerprint(fingerprint)) {
-                runCatching { markers.delete(marker) }
+                markers.delete(marker)
                 return@forEach
             }
             runCatching { saveMarker(marker, run, fingerprint) }.getOrNull()?.let { report ->
                 saved += report
-                runCatching { markers.delete(marker) }
+                markers.delete(marker)
             }
         }
 
@@ -380,7 +536,11 @@ class ExitInfoCollector(
                 appBuild = environment.appBuild.take(64),
                 platform = environment.platform,
                 osVersion = environment.osVersion.take(128),
-                profileId = profileId?.take(128),
+                profileId = if (binding.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                    null
+                } else {
+                    profileId?.take(128)
+                },
             ),
             destination = DiagnosticsDestination(binding.serverInstanceId),
             consent = DiagnosticsConsent(consentMode(), noticeVersion().coerceAtLeast(1)),
@@ -394,7 +554,11 @@ class ExitInfoCollector(
                 occurredAt = rfc3339(capturedAtEpochMs),
             ),
             deviceSummary = environment.deviceSummary,
-            playbackSessionIds = playbackSessionIds.take(20).map { it.take(128) },
+            playbackSessionIds = if (binding.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                emptyList()
+            } else {
+                playbackSessionIds.take(20).map { it.take(128) }
+            },
             logSummary = logSummary,
             archive = DiagnosticsArchive(
                 entries = CANONICAL_ARCHIVE_ORDER.filter { it == "manifest.json" || it in artifacts },
@@ -422,6 +586,7 @@ class ExitInfoCollector(
         accountUserId = binding.accountUserId,
         profileId = profileId,
         ownershipGeneration = ownershipGeneration,
+        destinationKind = destinationKind,
     )
 
     private fun DiagnosticsRunRecord.identityKey() = DiagnosticsIdentityKey(

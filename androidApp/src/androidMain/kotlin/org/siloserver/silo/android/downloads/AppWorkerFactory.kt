@@ -13,7 +13,9 @@ import org.siloserver.silo.common.downloads.DownloadSubscriptionWorker
 import org.siloserver.silo.common.downloads.DownloadWorker
 import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadWorker
-import org.siloserver.silo.common.diagnostics.DiagnosticsUploader
+import org.siloserver.silo.common.diagnostics.HostedDiagnosticsDeletionWorker
+import org.siloserver.silo.common.diagnostics.HostedDiagnosticsReportDeleter
+import org.siloserver.silo.common.diagnostics.PendingReportStore
 import org.siloserver.silo.repository.DownloadSubscriptionRepository
 import org.siloserver.silo.repository.DownloadsRepository
 import io.ktor.client.HttpClient
@@ -83,8 +85,16 @@ class AppWorkerFactory : WorkerFactory() {
                 DiagnosticsUploadWorker(
                     appContext = appContext,
                     params = workerParameters,
-                    uploader = koin.get<DiagnosticsUploader>(),
                     coordinator = koin.get<DiagnosticsCoordinator>(),
+                )
+            }
+            HostedDiagnosticsDeletionWorker::class.java.name -> {
+                Log.i(TAG, "Building HostedDiagnosticsDeletionWorker via Koin")
+                HostedDiagnosticsDeletionWorker(
+                    appContext = appContext,
+                    params = workerParameters,
+                    reports = koin.get<PendingReportStore>(),
+                    deleter = koin.get<HostedDiagnosticsReportDeleter>(),
                 )
             }
             else -> {
