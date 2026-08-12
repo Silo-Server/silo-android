@@ -1888,7 +1888,10 @@ fun TvPlayerScreen(
                                 isFocusable = false
                                 isFocusableInTouchMode = false
                                 descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                                setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                                // Buffering is surfaced by our own "Buffering"
+                                // capsule, not PlayerView's centered spinner.
+                                // Enabling both draws two indicators at once.
+                                setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
                                 // Capture the inflated view so the subtitle
                                 // appearance LaunchedEffect can target it.
                                 playerViewRef = this
