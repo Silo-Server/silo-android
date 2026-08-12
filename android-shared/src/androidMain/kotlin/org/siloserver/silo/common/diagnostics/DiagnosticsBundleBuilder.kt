@@ -1200,7 +1200,7 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         val PRIVATE_ID_PATH_SEGMENT = Regex(
             "(?i)^(?:$HIGH_CONFIDENCE_PRIVATE_ID_PREFIXES)[_-][A-Za-z0-9_-]{4,}$",
         )
-        val TEMPLATE_SEGMENT = Regex("^\\{[A-Za-z][A-Za-z0-9_]*}$")
+        val TEMPLATE_SEGMENT = Regex("^\\{[A-Za-z][A-Za-z0-9_]*\\}$")
         val SAFE_VERSION_SEGMENT = Regex("(?i)^v[0-9]+$")
         val PATH_CANDIDATE_DELIMITER = Regex("[.,;:()\\[\\]]+")
         val PATH_SEGMENT_PUNCTUATION = charArrayOf('(', '[', ']', '"', '\'', '.', ',', ';', '!', ':', ')')
