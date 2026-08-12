@@ -374,12 +374,14 @@ class DiagnosticsSettingsStore(
     suspend fun purgeLocalServer(
         localServerId: String,
         fallbackBinding: DiagnosticsBinding? = null,
+        allowLegacyAllEvidenceFallback: Boolean = true,
     ) {
         require(localServerId.isNotBlank()) { "localServerId must not be blank" }
         dataStore.edit { preferences -> preferences.remove(hostedBindingOwnerKey(localServerId)) }
         val persistedIndex = decodeBindingIndex(dataStore.data.first()[BINDING_INDEX_KEY])
         val indexedBindings = persistedIndex.byLocalServerId[localServerId]
         if (indexedBindings == null && fallbackBinding == null) {
+            if (!allowLegacyAllEvidenceFallback) return
             val migrationComplete = dataStore.data.first()[BINDING_INDEX_MIGRATION_COMPLETE_KEY] ?: false
             if (migrationComplete) {
                 // Once the legacy evidence inventory has been drained, an

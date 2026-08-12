@@ -630,10 +630,7 @@ class PendingReportStoreTest {
         assertTrue(store.list(hostedBinding.binding).isEmpty())
         assertFalse(report.directory.exists())
         assertEquals(hostedBinding.binding, store.hostedReadyBinding(report.id))
-        assertEquals(
-            HostedReadyReport(report.id, hostedBinding.binding, "ABC123", day(18)),
-            store.hostedReadyReports().single(),
-        )
+        assertTrue(store.hostedReadyReports().isEmpty())
         assertTrue(store.hostedDeletionIntents().isEmpty())
 
         store.purge(hostedBinding.binding)
@@ -652,6 +649,7 @@ class PendingReportStoreTest {
         assertNull(store.load(evicted.id))
         assertNotNull(store.load(retained.id))
         assertEquals(hostedBinding.binding, store.hostedReadyBinding(evicted.id))
+        assertTrue(store.hostedReadyReports().isEmpty())
         assertTrue(store.hostedDeletionIntents().isEmpty())
 
         store.purge(hostedBinding.binding)

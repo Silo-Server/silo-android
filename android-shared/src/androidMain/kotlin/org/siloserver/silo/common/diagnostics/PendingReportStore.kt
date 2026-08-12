@@ -625,7 +625,6 @@ class FilePendingReportStore(
             recordHostedHandoffReceiptLocked(
                 report.id,
                 report.binding.binding,
-                report.state.hostedRemoteShortId,
             )
         }
         deleteDirectory(report.directory)

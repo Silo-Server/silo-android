@@ -155,6 +155,7 @@ class DefaultDiagnosticsCoordinator(
                                     fallbackBinding = purgeScope
                                         ?.takeIf { it.localServerId == targetServerId }
                                         ?.binding,
+                                    allowLegacyAllEvidenceFallback = false,
                                 )
                                 purgeScope != null -> settings.purgeBinding(
                                     binding = purgeScope.binding,
@@ -164,9 +165,7 @@ class DefaultDiagnosticsCoordinator(
                             }
                         }
                     }
-                    IdentityTransitionKind.SERVER_REMOVE,
-                    IdentityTransitionKind.ACCOUNT_REPLACE,
-                    -> {
+                    IdentityTransitionKind.SERVER_REMOVE -> {
                         val targetServerId = requireNotNull(transition.targetServerId) {
                             "${transition.kind} requires a target server id"
                         }
@@ -175,6 +174,18 @@ class DefaultDiagnosticsCoordinator(
                             fallbackBinding = purgeScope
                                 ?.takeIf { it.localServerId == targetServerId }
                                 ?.binding,
+                        )
+                    }
+                    IdentityTransitionKind.ACCOUNT_REPLACE -> {
+                        val targetServerId = requireNotNull(transition.targetServerId) {
+                            "${transition.kind} requires a target server id"
+                        }
+                        settings.purgeLocalServer(
+                            localServerId = targetServerId,
+                            fallbackBinding = purgeScope
+                                ?.takeIf { it.localServerId == targetServerId }
+                                ?.binding,
+                            allowLegacyAllEvidenceFallback = false,
                         )
                     }
                     else -> Unit

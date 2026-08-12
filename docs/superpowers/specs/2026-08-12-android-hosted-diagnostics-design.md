@@ -54,6 +54,11 @@ registers a replacement while retaining one encrypted fallback credential for
 status and erasure of already-submitted reports; exact-value redaction covers
 both credentials.
 
+Local retention or quota eviction of an accepted but still-processing report
+keeps only its UUID and binding as remote-erasure authority. It does not promote
+the processing reference into READY history; only a validated READY response
+may do that.
+
 Remote erasure is intent-first. Local deletion persists the hosted report ID,
 hides/removes local evidence, and reconciles remote DELETE asynchronously so a
 slow collector cannot block diagnostics UI or identity commands. A

@@ -100,10 +100,10 @@ class TvLoginViewModel(
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Throwable) {
-                        authCompleted = false
-                        _uiState.update {
-                            it.copy(isLoading = false, error = "Unable to save this session. Try again.")
-                        }
+                        handleSessionPersistenceFailure(
+                            accessToken = result.data.accessToken,
+                            refreshToken = result.data.refreshToken,
+                        )
                         return@launch
                     }
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
@@ -191,13 +191,32 @@ class TvLoginViewModel(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
-            authCompleted = false
-            _uiState.update {
-                it.copy(isLoading = false, error = "Unable to save this session. Try again.")
-            }
+            handleSessionPersistenceFailure(accessToken, refreshToken)
             return
         }
         _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
+    }
+
+    private suspend fun handleSessionPersistenceFailure(
+        accessToken: String,
+        refreshToken: String,
+    ) {
+        val committed = runCatching {
+            tokenManager.getAccessToken() == accessToken &&
+                tokenManager.getRefreshToken() == refreshToken
+        }.getOrDefault(false)
+        authCompleted = committed
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                loginSuccess = committed,
+                error = if (committed) {
+                    "Signed in, but local diagnostics cleanup did not finish."
+                } else {
+                    "Unable to save this session. Try again."
+                },
+            )
+        }
     }
 
     private fun tryCompleteAuth(): Boolean {

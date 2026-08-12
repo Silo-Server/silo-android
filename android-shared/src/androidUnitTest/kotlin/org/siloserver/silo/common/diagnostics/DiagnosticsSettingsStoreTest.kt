@@ -195,6 +195,31 @@ class DiagnosticsSettingsStoreTest {
     }
 
     @Test
+    fun accountScopedPurgeNeverUsesLegacyFallbackAgainstOtherServers() = runTest {
+        var allEvidenceCalls = 0
+        val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope) {
+            temporaryFolder.newFile("diagnostics-scoped-purge.preferences_pb")
+        }
+        val purger = RecordingBindingPurger()
+        val store = DiagnosticsSettingsStore(
+            dataStore = dataStore,
+            bindingPurger = purger,
+            allEvidencePurger = DiagnosticsAllEvidencePurger { allEvidenceCalls += 1 },
+        )
+        store.cacheContext(context(bindingB, "local-b"))
+
+        store.purgeLocalServer(
+            localServerId = "local-a",
+            allowLegacyAllEvidenceFallback = false,
+        )
+
+        assertEquals(0, allEvidenceCalls)
+        assertTrue(purger.calls.isEmpty())
+        assertEquals(listOf(bindingB), store.bindingsForLocalServer("local-b"))
+    }
+
+    @Test
     fun crashAfterNeverCommitLeavesDurableErasureForReconstructedStore() = runTest {
         val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
         val dataStore = PreferenceDataStoreFactory.create(scope = scope) {

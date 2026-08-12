@@ -196,7 +196,10 @@ val diagnosticsModule = module {
         val cache = get<DeviceSnapshotCache>()
         val tokenProvider = get<DiagnosticsRedactionTokenProvider>()
         DiagnosticsIncidentCollector { context, consent ->
-            val tokens = runCatching { tokenProvider.tokens(context.destinationKind) }.getOrDefault(emptyList())
+            // Exact credentials are part of the hosted redaction boundary. If
+            // they cannot be read, leave the raw marker for a later refresh
+            // instead of assembling evidence with a weaker token set.
+            val tokens = tokenProvider.tokens(context.destinationKind)
             ExitInfoCollector(
                 source = source,
                 ledger = ledger,
