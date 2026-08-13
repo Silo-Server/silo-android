@@ -48,8 +48,8 @@ import org.siloserver.silo.model.catalog.VersionChapter
  * iOS `MobilePlayerControls.progressSlider`:
  *
  * - three track regions — played, buffered (safe to seek into), base;
- * - the intro range tinted cyan (credits is deliberately NOT drawn — iOS
- *   only tints the intro);
+ * - detected marker ranges tinted as bands (intro cyan, recap green,
+ *   credits orange, preview purple);
  * - a 2dp chapter tick per chapter, drawn under the played fill;
  * - while scrubbing, a preview bubble above the thumb with the target time
  *   and the chapter title at that point (text only — iOS has no thumbnail
@@ -66,6 +66,9 @@ fun PlayerProgressBar(
     enabled: Boolean = true,
     chapters: List<VersionChapter> = emptyList(),
     intro: TimeRange? = null,
+    credits: TimeRange? = null,
+    recap: TimeRange? = null,
+    preview: TimeRange? = null,
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableFloatStateOf(0f) }
@@ -177,20 +180,28 @@ fun PlayerProgressBar(
                             .fillMaxHeight()
                             .background(Color.White.copy(alpha = 0.52f)),
                     )
-                    // Intro tint — iOS draws the intro range cyan at 0.4.
+                    // Marker bands — tinted segments for each detected marker
+                    // kind (intro/recap/credits/preview), drawn under the played
+                    // fill so the playhead still reads clearly over them.
                     if (hasKnownDuration) {
-                        intro?.let { range ->
+                        val density = LocalDensity.current
+                        val barWidthDp = with(density) { barWidthPx.toDp() }
+                        val markers = listOfNotNull(
+                            intro?.let { it to Color.Cyan },
+                            recap?.let { it to Color(0xFF8BC34A) },
+                            credits?.let { it to Color(0xFFFFB74D) },
+                            preview?.let { it to Color(0xFFBA68C8) },
+                        )
+                        markers.forEach { (range, color) ->
                             val startFraction = (range.start / maxDuration).toFloat().coerceIn(0f, 1f)
                             val endFraction = (range.end / maxDuration).toFloat().coerceIn(startFraction, 1f)
                             if (endFraction > startFraction) {
-                                val density = LocalDensity.current
-                                val barWidthDp = with(density) { barWidthPx.toDp() }
                                 Box(
                                     modifier = Modifier
                                         .offset(x = barWidthDp * startFraction)
                                         .width(barWidthDp * (endFraction - startFraction))
                                         .fillMaxHeight()
-                                        .background(Color.Cyan.copy(alpha = 0.4f)),
+                                        .background(color.copy(alpha = 0.4f)),
                                 )
                             }
                         }

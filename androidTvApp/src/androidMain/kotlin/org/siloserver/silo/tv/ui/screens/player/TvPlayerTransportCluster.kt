@@ -3,7 +3,6 @@ package org.siloserver.silo.tv.ui.screens.player
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -177,11 +176,6 @@ private fun TransportIconButton(
             .size(buttonSize)
             .clip(CircleShape)
             .background(focusBg)
-            .border(
-                width = 0.5.dp,
-                color = if (isFocused) Color.Transparent else Color.White.copy(alpha = 0.22f),
-                shape = CircleShape,
-            )
             .let { mod -> if (focusRequester != null) mod.focusRequester(focusRequester) else mod }
             .focusable(interactionSource = interactionSource)
             .onPreviewKeyEvent { event ->

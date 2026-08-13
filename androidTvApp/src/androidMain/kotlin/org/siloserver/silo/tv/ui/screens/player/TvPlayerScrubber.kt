@@ -104,9 +104,12 @@ fun TvPlayerScrubber(
     scrubPreviewSec: Double,
     chapters: List<ChapterInfo>,
     cancelOnBlur: Boolean,
-    // Intro / skip region [startSec, endSec] drawn as a cyan band on the track
-    // when known (mirrors tvOS TVPlayerScrubber.introRegion). Null = no band.
+    // Detected marker bands [startSec, endSec] drawn on the track when known.
+    // Null = no band. Mirrors tvOS TVPlayerScrubber.introRegion.
     introRangeSec: ClosedRange<Double>? = null,
+    creditsRangeSec: ClosedRange<Double>? = null,
+    recapRangeSec: ClosedRange<Double>? = null,
+    previewRangeSec: ClosedRange<Double>? = null,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
     onBeginScrub: () -> Unit,
@@ -415,26 +418,31 @@ fun TvPlayerScrubber(
                     ),
             )
 
-            // Intro / skip region — cyan band on the track (tvOS introRegion).
-            // Drawn above the bare track but below the played fill / ticks so
-            // the playhead still reads clearly over it.
-            if (introRangeSec != null && durationSec > 0) {
-                val introStart = (introRangeSec.start / durationSec).toFloat().coerceIn(0f, 1f)
-                val introEnd = (introRangeSec.endInclusive / durationSec).toFloat().coerceIn(0f, 1f)
-                if (introEnd > introStart) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .offset(x = barWidthDp * introStart)
-                            .fillMaxWidth(introEnd - introStart)
-                            .height(trackHeight)
-                            .clip(RoundedCornerShape(percent = 50))
-                            .background(
-                                Color.Cyan.copy(
-                                    alpha = if (isTimelineScrubbing || isFocused) 0.45f else 0.34f,
-                                ),
-                            ),
-                    )
+            // Marker bands — intro/recap/credits/preview, each a tinted band on
+            // the track. Drawn above the bare track but below the played fill /
+            // ticks so the playhead still reads clearly over it.
+            if (durationSec > 0) {
+                val bandAlpha = if (isTimelineScrubbing || isFocused) 0.45f else 0.34f
+                val markers = listOfNotNull(
+                    introRangeSec?.let { it to Color.Cyan },
+                    recapRangeSec?.let { it to Color(0xFF8BC34A) },
+                    creditsRangeSec?.let { it to Color(0xFFFFB74D) },
+                    previewRangeSec?.let { it to Color(0xFFBA68C8) },
+                )
+                for ((range, color) in markers) {
+                    val start = (range.start / durationSec).toFloat().coerceIn(0f, 1f)
+                    val end = (range.endInclusive / durationSec).toFloat().coerceIn(0f, 1f)
+                    if (end > start) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .offset(x = barWidthDp * start)
+                                .fillMaxWidth(end - start)
+                                .height(trackHeight)
+                                .clip(RoundedCornerShape(percent = 50))
+                                .background(color.copy(alpha = bandAlpha)),
+                        )
+                    }
                 }
             }
 

@@ -1048,6 +1048,8 @@ class TvPlayerViewModel(
         // intro auto-skip observer and (eventually) the next-up promote.
         val intro: TimeRange? = null,
         val credits: TimeRange? = null,
+        val recap: TimeRange? = null,
+        val preview: TimeRange? = null,
         // Chapters from the selected FileVersion (server-extracted via FFprobe
         // at ingest, mirrors Apple's `VersionChapter` consumption). Empty list
         // when the file has no embedded chapters. The HUD Chapters pane
@@ -2039,6 +2041,8 @@ class TvPlayerViewModel(
                                 showForcedSubtitles = result.showForcedSubtitles,
                                 intro = result.intro,
                                 credits = result.credits,
+                                recap = result.recap,
+                                preview = result.preview,
                                 chapters = result.chapters,
                                 seriesId = result.seriesId,
                                 seasonNumber = result.seasonNumber,
@@ -3486,8 +3490,8 @@ class TvPlayerViewModel(
      * Skip-intro and the credits-based F2 trigger read these from UiState, so the
      * update takes effect immediately; `null` clears a marker the server dropped.
      */
-    fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?) {
-        _uiState.update { it.copy(intro = intro, credits = credits) }
+    fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+        _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
     }
 
     // ---- Next-episode auto-advance (F2) ----

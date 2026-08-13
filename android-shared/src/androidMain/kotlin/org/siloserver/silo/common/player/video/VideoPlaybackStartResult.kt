@@ -46,6 +46,8 @@ sealed interface VideoPlaybackStartResult {
         val showForcedSubtitles: Boolean = true,
         val intro: TimeRange? = null,
         val credits: TimeRange? = null,
+        val recap: TimeRange? = null,
+        val preview: TimeRange? = null,
         val chapters: List<VersionChapter> = emptyList(),
         // Episode context for next-episode auto-advance (null for movies).
         val seriesId: String? = null,

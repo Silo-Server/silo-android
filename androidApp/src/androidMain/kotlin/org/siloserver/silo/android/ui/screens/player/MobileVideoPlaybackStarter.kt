@@ -405,6 +405,8 @@ internal class MobileVideoPlaybackStarter(
                     ?: true,
                 intro = watchDetail.intro,
                 credits = watchDetail.credits,
+                recap = watchDetail.recap,
+                preview = watchDetail.preview,
                 chapters = effectiveVersion?.chapters.orEmpty(),
                 seriesId = watchDetail.seriesId,
                 seasonNumber = watchDetail.seasonNumber,
