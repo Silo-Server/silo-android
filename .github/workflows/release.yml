@@ -125,27 +125,18 @@ jobs:
               echo "::error::Tag must look like v1.2.3, v1.2.3+2, or v1.2.3-rc.1."
               exit 1
             fi
+            # A prerelease suffix deliberately does NOT feed the build counter.
+            # The counter is folded into the versionCode, so deriving it from
+            # -rc.N would make a sideloaded v1.2.3-rc.2 (base+2) outrank the
+            # official v1.2.3 (base+1) and block that upgrade on the device —
+            # and it would still not tell -rc.2 apart from +2, which resolve to
+            # the same counter. Prerelease artifacts are distinguished by their
+            # tag; see the note in the PR for the reporting limitation.
             if [[ "${version}" == *+* ]]; then
               build="${version##*+}"
-            elif [[ "${version}" == *-* ]]; then
-              # A prerelease tag carries its counter in the suffix: -rc.2 is
-              # build 2. Without this every -rc.N of one version resolves to
-              # build 1, so two sideload artifacts would report an identical
-              # version/build pair and stay indistinguishable in admin
-              # Activity — the exact thing the build number exists to fix.
-              # A suffix with no trailing number (-beta) still means build 1.
-              prerelease="${version#*-}"
-              if [[ "${prerelease}" =~ ([0-9]+)$ ]]; then
-                build="${BASH_REMATCH[1]}"
-              else
-                build=1
-              fi
             else
               build=1
             fi
-            # Canonical form, so "-rc.02" and "+02" report the same counter
-            # Gradle derives from them rather than a zero-padded variant.
-            build=$((10#$build))
             if [[ "${version}" == *-* ]]; then
               echo "Prerelease tag ${GH_REF_NAME} — skipping Play publish (sideload-only release)."
               play_publish=false
