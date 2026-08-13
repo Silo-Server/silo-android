@@ -209,6 +209,8 @@ internal class MobileVideoPlaybackStarter(
                 ?: capabilityDetector.detectPlaybackContext(
                     formFactor = "mobile",
                     appVersion = BuildConfig.VERSION_NAME,
+                    appBuild = BuildConfig.BUILD_NUMBER,
+                    appChannel = if (BuildConfig.DEBUG) "dev" else "release",
                     dolbyVision = dolbyVision,
                     capabilities = capabilities,
                 )

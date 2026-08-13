@@ -349,6 +349,7 @@ jobs:
           SILO_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SILO_RELEASE_KEYSTORE_PASSWORD }}
           SILO_RELEASE_KEY_PASSWORD: ${{ secrets.SILO_RELEASE_KEY_PASSWORD }}
           SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
+          SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
         run: |
           set -euo pipefail
 
@@ -358,6 +359,7 @@ jobs:
             "-PsiloVersionName=${SILO_VERSION_NAME}" \
             "-PsiloDisplayVersion=${SILO_DISPLAY_VERSION}" \
             "-PsiloVersionCode=${SILO_VERSION_CODE}" \
+            "-PsiloBuildNumber=${SILO_BUILD_NUMBER}" \
             --max-workers=2
 
       - name: Collect release APKs

@@ -32,6 +32,7 @@ import org.siloserver.silo.common.player.cast.CastPlaybackPreparer
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
+import org.siloserver.silo.android.BuildConfig
 import org.siloserver.silo.common.network.AndroidDeviceMetadataProvider
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.DataStoreCleartextConsentStore
@@ -181,7 +182,12 @@ val androidModule = module {
     // App-wide services
     single<AndroidServerSettingsCache> { AndroidServerSettingsCache(androidContext()) }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
-        AndroidDeviceMetadataProvider(androidContext(), platform = "android")
+        AndroidDeviceMetadataProvider(
+            androidContext(),
+            platform = "android",
+            buildNumber = BuildConfig.BUILD_NUMBER,
+            channel = if (BuildConfig.DEBUG) "dev" else "release",
+        )
     }
     single { SiloCastNsdBrowser(androidContext()) }
     single { CompanionPairingNsdBrowser(androidContext()) }

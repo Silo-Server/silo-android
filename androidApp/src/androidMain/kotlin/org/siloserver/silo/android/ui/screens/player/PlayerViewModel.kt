@@ -1652,6 +1652,8 @@ class PlayerViewModel(
             val playbackContext = capabilityDetector.detectPlaybackContext(
                 formFactor = "mobile",
                 appVersion = BuildConfig.VERSION_NAME,
+                appBuild = BuildConfig.BUILD_NUMBER,
+                appChannel = if (BuildConfig.DEBUG) "dev" else "release",
                 dolbyVision = dolbyVision,
                 capabilities = capabilities,
             )
@@ -2867,6 +2869,8 @@ class PlayerViewModel(
                 title = state.title,
                 posterUrl = state.artworkUrl,
                 appVersion = BuildConfig.VERSION_NAME,
+                appBuild = BuildConfig.BUILD_NUMBER,
+                appChannel = if (BuildConfig.DEBUG) "dev" else "release",
             ),
         )
     }

@@ -4,6 +4,7 @@ package org.siloserver.silo.tv.di
 
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SettingsRepository
+import org.siloserver.silo.tv.BuildConfig
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.tv.data.preferences.TvLibrarySelectionStore
 import org.siloserver.silo.common.network.AndroidDeviceMetadataProvider
@@ -142,7 +143,12 @@ val androidTvModule = module {
 
     single<AndroidServerSettingsCache> { AndroidServerSettingsCache(androidContext()) }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
-        AndroidDeviceMetadataProvider(androidContext(), platform = "android-tv")
+        AndroidDeviceMetadataProvider(
+            androidContext(),
+            platform = "android-tv",
+            buildNumber = BuildConfig.BUILD_NUMBER,
+            channel = if (BuildConfig.DEBUG) "dev" else "release",
+        )
     }
     // Player infrastructure (duplicate-for-now; extract to :android-player later).
     single {

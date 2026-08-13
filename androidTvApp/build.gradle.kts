@@ -20,6 +20,21 @@ val siloDisplayVersion = providers
     .orElse(providers.environmentVariable("SILO_DISPLAY_VERSION"))
     .orElse(siloVersionName)
 
+// The per-marketing-version build counter (TestFlight-style). It is folded into
+// the versionCode by CI, but the app also reports it verbatim to the server
+// (X-Silo-Client-Build), so it has to survive as its own value rather than
+// being reverse-engineered from the versionCode.
+val siloBuildNumber = providers
+    .gradleProperty("siloBuildNumber")
+    .orElse(providers.environmentVariable("SILO_BUILD_NUMBER"))
+    .map { value ->
+        val build = value.toIntOrNull() ?: error("siloBuildNumber must be an integer.")
+        require(build >= 0) { "siloBuildNumber must be non-negative." }
+        build.toString()
+    }
+    // Local/dev builds have no CI build number; 0 marks "not a release build".
+    .orElse("0")
+
 val siloVersionCode = providers
     .gradleProperty("siloVersionCode")
     .orElse(providers.environmentVariable("SILO_VERSION_CODE"))
@@ -149,6 +164,9 @@ android {
         versionCode = siloVersionCode.get() * 2 + 1
         versionName = siloVersionName.get()
         buildConfigField("String", "DISPLAY_VERSION", "\"${siloDisplayVersion.get()}\"")
+        // Reported to the server as X-Silo-Client-Build so admin Activity can
+        // say "Silo Android TV 1.0.0 (build 5)".
+        buildConfigField("String", "BUILD_NUMBER", "\"${siloBuildNumber.get()}\"")
         // Shadow the android-shared BuildConfig field so per-app flavors can
         // override without rebuilding the shared module. See androidApp's
         // build.gradle.kts for rationale.

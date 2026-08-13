@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.android.BuildConfig
+import org.siloserver.silo.common.network.normalizedClientBuildNumber
 
 /**
  * Connection section. Mirrors the iOS phone Settings `Server` row: a
@@ -32,7 +33,13 @@ fun ServerInfoSection(
             title = "Version",
             icon = Icons.Default.Info,
             badgeColor = SettingsBadgeGray,
-            value = BuildConfig.VERSION_NAME,
+            // Includes the build number so a support report and the server's
+            // admin Activity page name the exact same build. Unstamped local
+            // builds show the bare version rather than a meaningless "(0)",
+            // matching what those builds report to the server.
+            value = normalizedClientBuildNumber(BuildConfig.BUILD_NUMBER)
+                ?.let { build -> "${BuildConfig.VERSION_NAME} ($build)" }
+                ?: BuildConfig.VERSION_NAME,
         )
     }
 }

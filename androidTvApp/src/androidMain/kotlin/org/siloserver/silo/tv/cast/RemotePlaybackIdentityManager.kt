@@ -74,7 +74,8 @@ class RemotePlaybackIdentityManager(
         val started = deviceLoginApi.startRemotePlaybackAt(
             serverUrl = offer.serverURL,
             deviceName = deviceNameProvider(),
-            devicePlatform = "android_tv",
+            // Matches the X-Silo-Device-Platform header spelling.
+            devicePlatform = "android-tv",
         ).successOrThrow()
         require(started.clientPurpose == "remote_playback" && started.temporary == true) {
             "The server did not create a temporary remote playback session."

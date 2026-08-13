@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import org.siloserver.silo.common.network.normalizedClientBuildNumber
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.StagedVideoReplan
@@ -85,7 +86,11 @@ class CastPlaybackPreparer(
             fileId = request.fileId,
             profileId = request.profileId,
             capabilities = chromecastCodecCapabilities(),
-            clientPlaybackContext = chromecastPlaybackContext(request.appVersion),
+            clientPlaybackContext = chromecastPlaybackContext(
+                appVersion = request.appVersion,
+                appBuild = request.appBuild,
+                appChannel = request.appChannel,
+            ),
             audioTrackIndex = request.audioTrackIndex,
             subtitleTrackIndex = request.subtitleTrackIndex,
             qualityPreference = "auto",
@@ -353,6 +358,8 @@ data class CastPrepareRequest(
     val title: String,
     val posterUrl: String?,
     val appVersion: String,
+    val appBuild: String? = null,
+    val appChannel: String? = null,
 )
 
 /** Self-contained media descriptor handed to the Cast receiver. */
@@ -737,10 +744,18 @@ fun chromecastCodecCapabilities(): ClientCodecCapabilities = ClientCodecCapabili
  * phone's probed one. Progressive delivery is deliberately absent — see the
  * inline note.
  */
-fun chromecastPlaybackContext(appVersion: String): ClientPlaybackContext =
+fun chromecastPlaybackContext(
+    appVersion: String,
+    appBuild: String? = null,
+    appChannel: String? = null,
+): ClientPlaybackContext =
     ClientPlaybackContext(
         formFactor = "mobile",
         appVersion = appVersion,
+        // Same normalization as the detector's context: a build CI never
+        // stamped is reported as absent, not as build zero.
+        appBuild = normalizedClientBuildNumber(appBuild),
+        appChannel = appChannel,
         device = PlaybackDeviceContext(),
         output = PlaybackOutputContext(
             hdrDetails = null,

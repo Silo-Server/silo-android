@@ -21,6 +21,26 @@ val siloVersionName = providers
     // android-build.yml. Keep local/dev builds aligned with the latest release.
     .orElse("0.3.11")
 
+val siloDisplayVersion = providers
+    .gradleProperty("siloDisplayVersion")
+    .orElse(providers.environmentVariable("SILO_DISPLAY_VERSION"))
+    .orElse(siloVersionName)
+
+// The per-marketing-version build counter (TestFlight-style). It is folded into
+// the versionCode by CI, but the app also reports it verbatim to the server
+// (X-Silo-Client-Build) and shows it on the About row, so it has to survive as
+// its own value rather than being reverse-engineered from the versionCode.
+val siloBuildNumber = providers
+    .gradleProperty("siloBuildNumber")
+    .orElse(providers.environmentVariable("SILO_BUILD_NUMBER"))
+    .map { value ->
+        val build = value.toIntOrNull() ?: error("siloBuildNumber must be an integer.")
+        require(build >= 0) { "siloBuildNumber must be non-negative." }
+        build.toString()
+    }
+    // Local/dev builds have no CI build number; 0 marks "not a release build".
+    .orElse("0")
+
 val siloVersionCode = providers
     .gradleProperty("siloVersionCode")
     .orElse(providers.environmentVariable("SILO_VERSION_CODE"))
@@ -150,6 +170,12 @@ android {
         // base*2, TV = base*2+1, so each release bumps both by 2 with no reuse.
         versionCode = siloVersionCode.get() * 2
         versionName = siloVersionName.get()
+        // The complete release tag (may carry -rc/+build suffixes), matching the
+        // TV app's field so both apps can label a build the same way.
+        buildConfigField("String", "DISPLAY_VERSION", "\"${siloDisplayVersion.get()}\"")
+        // Reported to the server as X-Silo-Client-Build and shown on the About
+        // row, so admin Activity can say "1.0.0 (build 5)".
+        buildConfigField("String", "BUILD_NUMBER", "\"${siloBuildNumber.get()}\"")
         // Shadow the android-shared BuildConfig field so per-app flavors
         // (e.g., a "no-FFmpeg" sideload build for size-constrained QA) can
         // override without rebuilding the shared module. The runtime reads
