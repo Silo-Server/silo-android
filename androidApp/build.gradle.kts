@@ -21,11 +21,6 @@ val siloVersionName = providers
     // android-build.yml. Keep local/dev builds aligned with the latest release.
     .orElse("0.3.11")
 
-val siloDisplayVersion = providers
-    .gradleProperty("siloDisplayVersion")
-    .orElse(providers.environmentVariable("SILO_DISPLAY_VERSION"))
-    .orElse(siloVersionName)
-
 // The per-marketing-version build counter (TestFlight-style). It is folded into
 // the versionCode by CI, but the app also reports it verbatim to the server
 // (X-Silo-Client-Build) and shows it on the About row, so it has to survive as
@@ -35,7 +30,12 @@ val siloBuildNumber = providers
     .orElse(providers.environmentVariable("SILO_BUILD_NUMBER"))
     .map { value ->
         val build = value.toIntOrNull() ?: error("siloBuildNumber must be an integer.")
-        require(build >= 0) { "siloBuildNumber must be non-negative." }
+        // The same 0..999 window release.yml and the Fastfile enforce, so a
+        // hand-run build can't stamp a counter the release scheme could never
+        // produce. 0 is the unstamped local default; CI itself requires 1..999.
+        require(build in 0..999) {
+            "siloBuildNumber must be between 0 and 999 (0 marks an unstamped local build)."
+        }
         build.toString()
     }
     // Local/dev builds have no CI build number; 0 marks "not a release build".
@@ -170,11 +170,10 @@ android {
         // base*2, TV = base*2+1, so each release bumps both by 2 with no reuse.
         versionCode = siloVersionCode.get() * 2
         versionName = siloVersionName.get()
-        // The complete release tag (may carry -rc/+build suffixes), matching the
-        // TV app's field so both apps can label a build the same way.
-        buildConfigField("String", "DISPLAY_VERSION", "\"${siloDisplayVersion.get()}\"")
         // Reported to the server as X-Silo-Client-Build and shown on the About
-        // row, so admin Activity can say "1.0.0 (build 5)".
+        // row, so both name the same build the way Play and TestFlight do:
+        // "1.0.0 (5)". Matches silo-apple, where CFBundleVersion feeds the
+        // header, the playback context and diagnostics alike.
         buildConfigField("String", "BUILD_NUMBER", "\"${siloBuildNumber.get()}\"")
         // Shadow the android-shared BuildConfig field so per-app flavors
         // (e.g., a "no-FFmpeg" sideload build for size-constrained QA) can
@@ -207,7 +206,22 @@ android {
         }
     }
     buildTypes {
+        debug {
+            buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
+        }
         release {
+            // How this artifact reaches a user, reported as X-Silo-Client-Channel
+            // so admin Activity can tell a Play install from a sideloaded APK.
+            // The release build type serves both: the Play AAB is built by a
+            // `bundle*` task (see isBuildingBundle) and the sideload APKs by
+            // `assemble*`, which is exactly the distinction, so it is read off
+            // the invoked task rather than from a second Gradle property CI
+            // would have to remember to pass.
+            buildConfigField(
+                "String",
+                "RELEASE_CHANNEL",
+                if (isBuildingBundle) "\"release\"" else "\"sideload\"",
+            )
             // Launch-prep: full R8 + resource shrinking. Keep rules for this
             // reflection/JNI-heavy stack live in the shared root proguard-rules.pro
             // (Koin, kotlinx.serialization, Media3 FFmpeg, BouncyCastle,

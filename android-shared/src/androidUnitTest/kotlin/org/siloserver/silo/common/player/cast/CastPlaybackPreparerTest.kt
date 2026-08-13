@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.player.cast
 
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackPlanV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
@@ -18,7 +19,12 @@ class CastPlaybackPreparerTest {
     fun castContextDoesNotAdvertiseThePreNeutralSidecarFeature() {
         assertFalse(
             "external_text_sidecar_set_v1" in
-                playbackClientFeaturesV3(chromecastPlaybackContext("test")),
+                playbackClientFeaturesV3(
+                    chromecastPlaybackContext(
+                        appVersion = "test",
+                        buildIdentity = SiloClientBuildIdentity(buildNumber = "5", channel = "release"),
+                    ),
+                ),
         )
     }
 

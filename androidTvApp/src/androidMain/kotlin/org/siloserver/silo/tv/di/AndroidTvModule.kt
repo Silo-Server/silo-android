@@ -8,6 +8,7 @@ import org.siloserver.silo.tv.BuildConfig
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.tv.data.preferences.TvLibrarySelectionStore
 import org.siloserver.silo.common.network.AndroidDeviceMetadataProvider
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.DataStoreCleartextConsentStore
 import org.siloserver.silo.common.settings.AndroidServerSettingsCache
@@ -142,12 +143,15 @@ val androidTvModule = module {
     }
 
     single<AndroidServerSettingsCache> { AndroidServerSettingsCache(androidContext()) }
+    // The one place the TV app's BuildConfig crosses into android-shared; see
+    // androidModule for why every identity reporter resolves this instead of
+    // deriving its own answer.
+    single { SiloClientBuildIdentity(BuildConfig.BUILD_NUMBER, BuildConfig.RELEASE_CHANNEL) }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
         AndroidDeviceMetadataProvider(
             androidContext(),
             platform = "android-tv",
-            buildNumber = BuildConfig.BUILD_NUMBER,
-            channel = if (BuildConfig.DEBUG) "dev" else "release",
+            buildIdentity = get(),
         )
     }
     // Player infrastructure (duplicate-for-now; extract to :android-player later).
@@ -166,7 +170,7 @@ val androidTvModule = module {
         )
     }
     single { AudioCapabilityManager(androidContext()) }
-    single { PlaybackCapabilityDetector(androidContext(), get(), get()) }
+    single { PlaybackCapabilityDetector(androidContext(), get(), get(), get()) }
     single {
         SiloPlayerFactory(
             context = androidContext(),

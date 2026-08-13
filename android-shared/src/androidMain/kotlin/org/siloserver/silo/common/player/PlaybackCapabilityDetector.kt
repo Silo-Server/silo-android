@@ -2,7 +2,6 @@ package org.siloserver.silo.common.player
 
 import android.app.UiModeManager
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import android.media.MediaCodecList
 import android.media.MediaFormat
@@ -11,7 +10,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import org.siloserver.silo.common.network.normalizedClientBuildNumber
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.player.DolbyVisionPolicy
 import org.siloserver.silo.common.player.video.media3OriginalPlaybackContainers
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -56,6 +55,12 @@ class PlaybackCapabilityDetector(
     private val context: Context,
     private val audioCapabilityManager: AudioCapabilityManager,
     private val libassBridge: LibassBridge,
+    /**
+     * Public so the Cast path can report the same build and channel this
+     * detector puts on a local session — `CastPrepareRequest` describes the
+     * phone driving the cast, not the receiver.
+     */
+    val buildIdentity: SiloClientBuildIdentity,
 ) {
     val outputRouteGeneration: StateFlow<Long> = audioCapabilityManager.outputRouteGeneration
     private val planningSnapshots = PlaybackPlanningSnapshotRegistry(
@@ -274,21 +279,9 @@ class PlaybackCapabilityDetector(
     /** The installed version name, for the same shared callers. */
     fun detectedAppVersion(): String = androidAppVersion(context)
 
-    /**
-     * The distribution channel implied by the installed package, for shared
-     * callers that cannot see either app's `BuildConfig.DEBUG`. There is no
-     * equivalent fallback for the build number: the installed `versionCode` is
-     * the form-factor-doubled release code, not CI's build counter, so shared
-     * callers report no build rather than an invented one.
-     */
-    fun detectedAppChannel(): String =
-        if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) "dev" else "release"
-
     fun detectPlaybackContext(
         formFactor: String = detectedFormFactor(),
         appVersion: String = detectedAppVersion(),
-        appBuild: String? = null,
-        appChannel: String? = detectedAppChannel(),
         ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
         dolbyVision: DolbyVisionPolicy.Snapshot = DolbyVisionPolicy.Snapshot(),
         capabilities: ClientCodecCapabilities? = null,
@@ -310,10 +303,11 @@ class PlaybackCapabilityDetector(
         return ClientPlaybackContext(
             formFactor = formFactor,
             appVersion = appVersion,
-            // Normalized here, not at each caller, so every site that routes
-            // through this function reports an unstamped build as absent.
-            appBuild = normalizedClientBuildNumber(appBuild),
-            appChannel = appChannel,
+            // Taken from the injected identity rather than a per-caller
+            // argument, so the shared audiobook player reports the same build
+            // and channel as the two video players instead of omitting them.
+            appBuild = buildIdentity.reportedBuildNumber,
+            appChannel = buildIdentity.reportedChannel,
             device = PlaybackDeviceContext(
                 platform = "android",
                 osVersion = Build.VERSION.RELEASE,

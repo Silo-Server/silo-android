@@ -9,7 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
-import org.siloserver.silo.common.network.normalizedClientBuildNumber
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.StagedVideoReplan
@@ -88,8 +88,7 @@ class CastPlaybackPreparer(
             capabilities = chromecastCodecCapabilities(),
             clientPlaybackContext = chromecastPlaybackContext(
                 appVersion = request.appVersion,
-                appBuild = request.appBuild,
-                appChannel = request.appChannel,
+                buildIdentity = request.buildIdentity,
             ),
             audioTrackIndex = request.audioTrackIndex,
             subtitleTrackIndex = request.subtitleTrackIndex,
@@ -358,8 +357,7 @@ data class CastPrepareRequest(
     val title: String,
     val posterUrl: String?,
     val appVersion: String,
-    val appBuild: String? = null,
-    val appChannel: String? = null,
+    val buildIdentity: SiloClientBuildIdentity,
 )
 
 /** Self-contained media descriptor handed to the Cast receiver. */
@@ -746,16 +744,16 @@ fun chromecastCodecCapabilities(): ClientCodecCapabilities = ClientCodecCapabili
  */
 fun chromecastPlaybackContext(
     appVersion: String,
-    appBuild: String? = null,
-    appChannel: String? = null,
+    buildIdentity: SiloClientBuildIdentity,
 ): ClientPlaybackContext =
     ClientPlaybackContext(
         formFactor = "mobile",
         appVersion = appVersion,
-        // Same normalization as the detector's context: a build CI never
-        // stamped is reported as absent, not as build zero.
-        appBuild = normalizedClientBuildNumber(appBuild),
-        appChannel = appChannel,
+        // Required rather than defaulted: this context describes the phone
+        // driving the cast, so a caller that forgot the identity would report
+        // a session with no build at all.
+        appBuild = buildIdentity.reportedBuildNumber,
+        appChannel = buildIdentity.reportedChannel,
         device = PlaybackDeviceContext(),
         output = PlaybackOutputContext(
             hdrDetails = null,

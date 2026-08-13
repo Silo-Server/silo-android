@@ -29,7 +29,12 @@ val siloBuildNumber = providers
     .orElse(providers.environmentVariable("SILO_BUILD_NUMBER"))
     .map { value ->
         val build = value.toIntOrNull() ?: error("siloBuildNumber must be an integer.")
-        require(build >= 0) { "siloBuildNumber must be non-negative." }
+        // The same 0..999 window release.yml and the Fastfile enforce, so a
+        // hand-run build can't stamp a counter the release scheme could never
+        // produce. 0 is the unstamped local default; CI itself requires 1..999.
+        require(build in 0..999) {
+            "siloBuildNumber must be between 0 and 999 (0 marks an unstamped local build)."
+        }
         build.toString()
     }
     // Local/dev builds have no CI build number; 0 marks "not a release build".
@@ -164,8 +169,9 @@ android {
         versionCode = siloVersionCode.get() * 2 + 1
         versionName = siloVersionName.get()
         buildConfigField("String", "DISPLAY_VERSION", "\"${siloDisplayVersion.get()}\"")
-        // Reported to the server as X-Silo-Client-Build so admin Activity can
-        // say "Silo Android TV 1.0.0 (build 5)".
+        // Reported to the server as X-Silo-Client-Build and shown on the About
+        // row, so both name the same build the way Play and TestFlight do:
+        // "Silo Android TV 1.0.0 (5)".
         buildConfigField("String", "BUILD_NUMBER", "\"${siloBuildNumber.get()}\"")
         // Shadow the android-shared BuildConfig field so per-app flavors can
         // override without rebuilding the shared module. See androidApp's
@@ -196,7 +202,18 @@ android {
         }
     }
     buildTypes {
+        debug {
+            buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
+        }
         release {
+            // How this artifact reaches a user, reported as X-Silo-Client-Channel.
+            // See androidApp's build.gradle.kts for why it is read off the
+            // invoked task (bundle = Play, assemble = sideload).
+            buildConfigField(
+                "String",
+                "RELEASE_CHANNEL",
+                if (isBuildingBundle) "\"release\"" else "\"sideload\"",
+            )
             // Launch-prep: full R8 + resource shrinking, sharing the root
             // proguard-rules.pro with :androidApp (same reflection/JNI-heavy
             // shared + android-shared stack). R8 breakage is runtime-only, so a

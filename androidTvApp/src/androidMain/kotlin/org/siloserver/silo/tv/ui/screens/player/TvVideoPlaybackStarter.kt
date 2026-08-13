@@ -122,8 +122,6 @@ class TvVideoPlaybackStarter(
                 ?: capabilityDetector.detectPlaybackContext(
                     formFactor = "tv",
                     appVersion = BuildConfig.VERSION_NAME,
-                    appBuild = BuildConfig.BUILD_NUMBER,
-                    appChannel = if (BuildConfig.DEBUG) "dev" else "release",
                     dolbyVision = dolbyVision,
                     capabilities = capabilities,
                 )
