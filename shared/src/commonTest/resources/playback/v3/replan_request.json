@@ -69,7 +69,7 @@
     "form_factor": "tv",
     "app_version": "3.0-test",
     "app_build": "5",
-    "app_channel": "release",
+    "app_channel": "production",
     "device": {
       "platform": "android",
       "os_version": "15",

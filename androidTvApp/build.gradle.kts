@@ -9,7 +9,7 @@ plugins {
 }
 
 // See androidApp's build.gradle.kts for the channel rationale.
-val SILO_RELEASE_CHANNELS = listOf("internal", "alpha", "beta", "production", "sideload", "dev")
+val siloReleaseChannels = listOf("internal", "alpha", "beta", "production", "sideload", "dev")
 
 val siloVersionName = providers
     .gradleProperty("siloVersionName")
@@ -50,8 +50,8 @@ val siloReleaseChannel = providers
     .orElse(providers.environmentVariable("SILO_RELEASE_CHANNEL"))
     .map { value ->
         val channel = value.trim().lowercase()
-        require(channel in SILO_RELEASE_CHANNELS) {
-            "siloReleaseChannel must be one of ${SILO_RELEASE_CHANNELS.joinToString("/")} (got '$value')."
+        require(channel in siloReleaseChannels) {
+            "siloReleaseChannel must be one of ${siloReleaseChannels.joinToString("/")} (got '$value')."
         }
         channel
     }

@@ -377,7 +377,7 @@ class PlaybackProtocolV3ConformanceTest {
                 .jsonObject["client_playback_context"]!!.jsonObject
 
             assertEquals("5", context["app_build"]?.jsonPrimitive?.content, "$name: app_build")
-            assertEquals("release", context["app_channel"]?.jsonPrimitive?.content, "$name: app_channel")
+            assertEquals("production", context["app_channel"]?.jsonPrimitive?.content, "$name: app_channel")
         }
 
         val encoded = json.encodeToJsonElement(
@@ -386,12 +386,12 @@ class PlaybackProtocolV3ConformanceTest {
                 formFactor = "tv",
                 appVersion = "3.0-test",
                 appBuild = "5",
-                appChannel = "release",
+                appChannel = "production",
             ),
         ).jsonObject
 
         assertEquals("5", encoded["app_build"]?.jsonPrimitive?.content)
-        assertEquals("release", encoded["app_channel"]?.jsonPrimitive?.content)
+        assertEquals("production", encoded["app_channel"]?.jsonPrimitive?.content)
     }
 
     /**
