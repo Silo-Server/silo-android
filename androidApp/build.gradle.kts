@@ -14,6 +14,10 @@ if (file("google-services.json").isFile) {
     apply(plugin = "com.google.gms.google-services")
 }
 
+// Play's own track vocabulary, plus the two ways a build reaches a device
+// without Play. Validated so a typo can't reach the server as a header value.
+val SILO_RELEASE_CHANNELS = listOf("internal", "alpha", "beta", "production", "sideload", "dev")
+
 val siloVersionName = providers
     .gradleProperty("siloVersionName")
     .orElse(providers.environmentVariable("SILO_VERSION_NAME"))
@@ -40,6 +44,23 @@ val siloBuildNumber = providers
     }
     // Local/dev builds have no CI build number; 0 marks "not a release build".
     .orElse("0")
+
+// How the artifact reaches a user, reported as X-Silo-Client-Channel. Release
+// pipelines state it: the Fastfile passes the Play track it is actually
+// uploading to, so a beta-track tester and a production user are told apart
+// rather than both reporting "release". Everything else is a hand-built or
+// sideloaded artifact, which is not on any track.
+val siloReleaseChannel = providers
+    .gradleProperty("siloReleaseChannel")
+    .orElse(providers.environmentVariable("SILO_RELEASE_CHANNEL"))
+    .map { value ->
+        val channel = value.trim().lowercase()
+        require(channel in SILO_RELEASE_CHANNELS) {
+            "siloReleaseChannel must be one of ${SILO_RELEASE_CHANNELS.joinToString("/")} (got '$value')."
+        }
+        channel
+    }
+    .orElse("sideload")
 
 val siloVersionCode = providers
     .gradleProperty("siloVersionCode")
@@ -210,18 +231,7 @@ android {
             buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
         }
         release {
-            // How this artifact reaches a user, reported as X-Silo-Client-Channel
-            // so admin Activity can tell a Play install from a sideloaded APK.
-            // The release build type serves both: the Play AAB is built by a
-            // `bundle*` task (see isBuildingBundle) and the sideload APKs by
-            // `assemble*`, which is exactly the distinction, so it is read off
-            // the invoked task rather than from a second Gradle property CI
-            // would have to remember to pass.
-            buildConfigField(
-                "String",
-                "RELEASE_CHANNEL",
-                if (isBuildingBundle) "\"release\"" else "\"sideload\"",
-            )
+            buildConfigField("String", "RELEASE_CHANNEL", "\"${siloReleaseChannel.get()}\"")
             // Launch-prep: full R8 + resource shrinking. Keep rules for this
             // reflection/JNI-heavy stack live in the shared root proguard-rules.pro
             // (Koin, kotlinx.serialization, Media3 FFmpeg, BouncyCastle,

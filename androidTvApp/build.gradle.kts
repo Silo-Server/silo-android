@@ -8,6 +8,9 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
 }
 
+// See androidApp's build.gradle.kts for the channel rationale.
+val SILO_RELEASE_CHANNELS = listOf("internal", "alpha", "beta", "production", "sideload", "dev")
+
 val siloVersionName = providers
     .gradleProperty("siloVersionName")
     .orElse(providers.environmentVariable("SILO_VERSION_NAME"))
@@ -39,6 +42,20 @@ val siloBuildNumber = providers
     }
     // Local/dev builds have no CI build number; 0 marks "not a release build".
     .orElse("0")
+
+// The Play track this artifact is uploaded to, or how it reaches a device
+// without Play. See androidApp's build.gradle.kts.
+val siloReleaseChannel = providers
+    .gradleProperty("siloReleaseChannel")
+    .orElse(providers.environmentVariable("SILO_RELEASE_CHANNEL"))
+    .map { value ->
+        val channel = value.trim().lowercase()
+        require(channel in SILO_RELEASE_CHANNELS) {
+            "siloReleaseChannel must be one of ${SILO_RELEASE_CHANNELS.joinToString("/")} (got '$value')."
+        }
+        channel
+    }
+    .orElse("sideload")
 
 val siloVersionCode = providers
     .gradleProperty("siloVersionCode")
@@ -206,14 +223,7 @@ android {
             buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
         }
         release {
-            // How this artifact reaches a user, reported as X-Silo-Client-Channel.
-            // See androidApp's build.gradle.kts for why it is read off the
-            // invoked task (bundle = Play, assemble = sideload).
-            buildConfigField(
-                "String",
-                "RELEASE_CHANNEL",
-                if (isBuildingBundle) "\"release\"" else "\"sideload\"",
-            )
+            buildConfigField("String", "RELEASE_CHANNEL", "\"${siloReleaseChannel.get()}\"")
             // Launch-prep: full R8 + resource shrinking, sharing the root
             // proguard-rules.pro with :androidApp (same reflection/JNI-heavy
             // shared + android-shared stack). R8 breakage is runtime-only, so a

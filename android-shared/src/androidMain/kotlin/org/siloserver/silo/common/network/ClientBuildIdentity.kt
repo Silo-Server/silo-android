@@ -45,9 +45,11 @@ fun clientVersionLabel(version: String, rawBuildNumber: String?): String =
  *   per-marketing-version build counter. The Gradle default `"0"` means "not
  *   built by CI"; prefer [reportedBuildNumber] on any path where absence is
  *   representable.
- * @param channel the app module's `BuildConfig.RELEASE_CHANNEL` — how the
- *   build was distributed ("release" / "sideload" / "dev"); opaque to the
- *   server.
+ * @param channel the app module's `BuildConfig.RELEASE_CHANNEL` — how the build
+ *   was distributed. Play's own track vocabulary where the build came from a
+ *   track ("internal" / "alpha" / "beta" / "production"), otherwise "sideload"
+ *   for an APK installed outside Play or "dev" for a local debug build. Opaque
+ *   to the server, which stores it as reported.
  */
 data class SiloClientBuildIdentity(
     val buildNumber: String,
