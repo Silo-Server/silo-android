@@ -99,6 +99,9 @@ fun PlayerControls(
     hasMultipleVersions: Boolean,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter> = emptyList(),
     intro: org.siloserver.silo.model.catalog.TimeRange? = null,
+    credits: org.siloserver.silo.model.catalog.TimeRange? = null,
+    recap: org.siloserver.silo.model.catalog.TimeRange? = null,
+    preview: org.siloserver.silo.model.catalog.TimeRange? = null,
     isOrientationLocked: Boolean,
     orientationLockSupported: Boolean = true,
     tabletopMode: Boolean = false,
@@ -192,6 +195,9 @@ fun PlayerControls(
                 enabled = seekEnabled,
                 chapters = chapters,
                 intro = intro,
+                credits = credits,
+                recap = recap,
+                preview = preview,
             )
         }
 

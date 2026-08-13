@@ -7,15 +7,18 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
 
 /**
- * Parsed `markers_updated` server event: the server recomputed intro/credits
- * ranges for a file (e.g. detection finished mid-playback) and the player should
- * adopt the fresh values so skip-intro and the credits-based auto-advance use
- * them. Only [intro] and [credits] are surfaced — recap/preview have no client
- * feature yet. A `null` range means "no such marker" (the server clears it).
+ * Parsed `markers_updated` server event: the server recomputed marker ranges
+ * for a file (e.g. detection finished mid-playback) and the player should adopt
+ * the fresh values so skip-intro, the credits-based auto-advance, and the
+ * timeline marker bands use them. All four marker kinds are surfaced; only
+ * [intro] drives auto-skip and only [credits] drives auto-advance. A `null`
+ * range means "no such marker" (the server clears it).
  */
 data class PlaybackMarkersUpdate(
     val intro: TimeRange?,
     val credits: TimeRange?,
+    val recap: TimeRange?,
+    val preview: TimeRange?,
 )
 
 /**
@@ -33,7 +36,12 @@ fun decodeMarkersUpdate(payload: JsonObject): PlaybackMarkersUpdate {
         val end = num("end") ?: return null
         return TimeRange(start = start, end = end)
     }
-    return PlaybackMarkersUpdate(intro = range("intro"), credits = range("credits"))
+    return PlaybackMarkersUpdate(
+        intro = range("intro"),
+        credits = range("credits"),
+        recap = range("recap"),
+        preview = range("preview"),
+    )
 }
 
 /**

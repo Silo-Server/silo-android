@@ -190,6 +190,8 @@ data class ItemDetail(
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
     val intro: TimeRange? = null,
     val credits: TimeRange? = null,
+    val recap: TimeRange? = null,
+    val preview: TimeRange? = null,
     /** Populated only when [type] is "audiobook". Forward-compat — the
      *  server may stop returning it once a dedicated /api/v1/audiobooks
      *  endpoint lands; until then it rides on ItemDetail. */
@@ -482,6 +484,8 @@ data class WatchDetail(
     val subtitles: List<SubtitleInfo> = emptyList(),
     val intro: TimeRange? = null,
     val credits: TimeRange? = null,
+    val recap: TimeRange? = null,
+    val preview: TimeRange? = null,
     @SerialName("user_data") val userData: LeafItemUserData? = null,
     @SerialName("series_id") val seriesId: String? = null,
     @SerialName("series_title") val seriesTitle: String? = null,

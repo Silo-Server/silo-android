@@ -16,6 +16,18 @@ class PlaybackMarkersUpdateTest {
         )
         assertEquals(TimeRange(0.0, 30.0), m.intro)
         assertEquals(TimeRange(1200.0, 1260.0), m.credits)
+        assertNull(m.recap)
+        assertNull(m.preview)
+    }
+
+    @Test fun decodesRecapAndPreview() {
+        val m = decodeMarkersUpdate(
+            payload("""{"file_id":7,"recap":{"start":0.0,"end":45.0},"preview":{"start":1500.0,"end":1530.0}}"""),
+        )
+        assertNull(m.intro)
+        assertNull(m.credits)
+        assertEquals(TimeRange(0.0, 45.0), m.recap)
+        assertEquals(TimeRange(1500.0, 1530.0), m.preview)
     }
 
     @Test fun nullMarkerClears() {
