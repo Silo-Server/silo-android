@@ -1748,6 +1748,10 @@ fun TvPlayerScreen(
         subtitleManager.applyAppearance(pv, subtitleAppearance)
     }
 
+    // The video branch of the player's `when` below — the only state in which
+    // the PlayerView is mounted and video-scoped overlays should draw.
+    val videoActive = state.streamUrl != null && !state.isLoading && state.error == null
+
     LaunchedEffect(
         context,
         mediaController,
@@ -1765,7 +1769,7 @@ fun TvPlayerScreen(
             surface = SiloPictureInPictureSurface.Tv,
             state = SiloPictureInPicturePlaybackState(
                 enabled = false,
-                videoActive = state.streamUrl != null && !state.isLoading && state.error == null,
+                videoActive = videoActive,
                 isPlaying = state.isPlaying && !state.isPaused,
                 videoWidth = pictureInPictureVideoWidth,
                 videoHeight = pictureInPictureVideoHeight,
@@ -2228,6 +2232,7 @@ fun TvPlayerScreen(
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
             autoPlayNextEnabled = autoPlayNextEnabled,
             introSkipState = introSkipState,
+            videoActive = videoActive,
             isBuffering = state.isBuffering,
             sleepTimerState = sleepTimerState,
             showSpinner = shouldShowReconnectSpinner(
@@ -3302,6 +3307,8 @@ private fun TvPlayerOverlays(
     nextUpCountdownTotalSeconds: Int,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
+    /** True only while the video branch is composed — not loading, not errored. */
+    videoActive: Boolean,
     isBuffering: Boolean,
     sleepTimerState: SleepTimerState,
     showSpinner: Boolean,
@@ -3377,19 +3384,42 @@ private fun TvPlayerOverlays(
         // Top-right status chips: buffering capsule (spinner + "Buffering") and
         // a sleep-timer countdown chip, mirroring tvOS statusColumn. Lives here
         // rather than in the idle overlay so a hidden-controls D-pad seek still
-        // reports buffering; the HUD and Up Next own their own feedback.
+        // reports buffering.
         val sleepRemaining = (sleepTimerState as? SleepTimerState.Active)?.remainingSeconds
         // A stalled player reports buffering during an outage too, but the
-        // centered reconnect spinner and the notice toast already say more
-        // than the capsule would, so the capsule stands down while it shows.
+        // centered reconnect spinner and the notice toast already say more than
+        // the capsule would, so the capsule stands down while that one shows.
+        //
+        // Otherwise it stays up unconditionally, because PlayerView's own
+        // spinner is off (SHOW_BUFFERING_NEVER) and this capsule is now the
+        // only buffering feedback there is. In particular it must survive the
+        // HUD — picking a quality or version restarts the whole session with
+        // the HUD still open (closeOnSelect closes only the picker), which is
+        // the longest rebuffer in the app — and Up Next, where video keeps
+        // playing behind the mini-player frame until the credits end. Neither
+        // surface has a loading state of its own.
         val showBufferingChip = isBuffering && !showSpinner
-        if (!isInPictureInPictureMode && !hudOpen && !showNextUp &&
-            (showBufferingChip || sleepRemaining != null)
-        ) {
+        // The sleep countdown is ambient rather than urgent, so it yields the
+        // corner to the HUD and Up Next instead of competing with them.
+        val showSleepChip = sleepRemaining != null && !hudOpen && !showNextUp
+        // Chips belong to the playing video. The loading and error screens are
+        // separate branches of the player's `when` and own their whole surface,
+        // so a stale "Buffering" capsule must not float over either of them —
+        // `fail()` sets `error` without clearing `isBuffering`.
+        if (!isInPictureInPictureMode && videoActive && (showBufferingChip || showSleepChip)) {
+            // The HUD is a top-center card (top 56dp, up to 680dp wide, up to
+            // 360dp tall), so at the usual 960dp TV width its right edge runs
+            // under the chip's 80dp end inset. Drop below it rather than over
+            // it; nothing else occupies that band.
+            val chipTopPadding = if (hudOpen) 440.dp else 64.dp
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 64.dp, end = 80.dp),
+                    .padding(top = chipTopPadding, end = 80.dp)
+                    // Up Next composes after this block and paints a
+                    // full-screen scrim, so lift the chips above it (still
+                    // under the remote-message toast at 10f).
+                    .zIndex(5f),
                 contentAlignment = Alignment.TopEnd,
             ) {
                 Column(
@@ -3417,7 +3447,7 @@ private fun TvPlayerOverlays(
                             )
                         }
                     }
-                    if (sleepRemaining != null) {
+                    if (showSleepChip && sleepRemaining != null) {
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(percent = 50))
@@ -3498,8 +3528,8 @@ private fun TvPlayerOverlays(
         // Buffering capsule (mirroring tvOS), so this centered spinner is
         // reserved for the lifecycle Reconnecting state: the server-outage
         // probe loop, which the player itself can't observe. The capsule
-        // stands down while this shows, so the two never stack. The Up-Next
-        // overlay owns its own loading state, so no spinner there either.
+        // stands down while this shows, so the two never stack. Up Next keeps
+        // the capsule instead, so it gets no centered spinner.
         if (showSpinner) {
             Box(
                 modifier = Modifier.fillMaxSize(),
