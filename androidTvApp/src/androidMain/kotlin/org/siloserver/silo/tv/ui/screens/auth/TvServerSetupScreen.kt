@@ -33,6 +33,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -50,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -249,7 +251,7 @@ fun TvServerSetupScreen(
                     BrandHeader()
                     AuroraJourneyProgress(
                         currentStep = 1,
-                        modifier = Modifier.width(230.dp),
+                        modifier = Modifier.width(215.dp),
                     )
                 }
 
@@ -344,12 +346,12 @@ private fun PhoneSetupCard(
             )
             .padding(24.dp),
     ) {
+        // Top-leading pill, matching tvOS TVServerSetupView.phoneCard.
         Text(
             text = "RECOMMENDED · USE PHONE",
             style = TvServerSetupTextStyles.Pill,
             color = Color.White.copy(alpha = 0.70f),
             modifier = Modifier
-                .align(Alignment.CenterHorizontally)
                 .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(50))
                 .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(50))
                 .padding(horizontal = 14.dp, vertical = 7.dp),
@@ -368,29 +370,30 @@ private fun PhoneSetupCard(
 
 @Composable
 private fun PhoneSetupBody(modifier: Modifier = Modifier) {
+    // Beacon centered, copy left-aligned beneath it — mirrors tvOS
+    // TVServerSetupView.phoneCard (iPhone → phone).
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
         SearchingBeacon(
-            modifier = Modifier.size(PHONE_SETUP_BEACON_SIZE),
+            modifier = Modifier
+                .size(PHONE_SETUP_BEACON_SIZE)
+                .align(Alignment.CenterHorizontally),
         )
 
         Text(
-            text = "Looking for your phone…",
+            text = "Looking for a phone…",
             style = TvServerSetupTextStyles.Headline,
             color = Color.White,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            text = "Open Silo on your phone on this Wi-Fi to set up this TV without typing.",
+            text = "Open Silo on a phone connected to the same Wi-Fi. Accept the " +
+                "setup card and Silo will securely bring over the server and account.",
             style = TvServerSetupTextStyles.PairingDetail,
             color = Color.White.copy(alpha = 0.72f),
-            maxLines = 2,
+            maxLines = 4,
             overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
     }
@@ -423,7 +426,7 @@ private fun ManualEntryCard(
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
             Text(
-                text = "Enter it here",
+                text = "Enter the server address",
                 style = TvServerSetupTextStyles.Headline,
                 color = Color.White,
             )
@@ -439,7 +442,7 @@ private fun ManualEntryCard(
                 onValueChange = onServerUrlChanged,
                 placeholder = {
                     Text(
-                        text = "media.example.com",
+                        text = "silo.example.com",
                         style = TvServerSetupTextStyles.FieldText,
                     )
                 },
@@ -496,11 +499,31 @@ private fun ManualEntryCard(
                 style = TvServerSetupTextStyles.Error,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        } else {
+            // Mirrors tvOS's lock.shield reassurance line. Truthful here too:
+            // bare hosts probe https:// first and fall to http:// only when
+            // the viewer typed it (probeTvServerSetupCandidates).
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.72f),
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = "Secure HTTPS is tried automatically.",
+                    style = TvServerSetupTextStyles.PairingDetail,
+                    color = Color.White.copy(alpha = 0.72f),
+                )
+            }
         }
 
         Box {
             AuroraPrimaryButton(
-                label = if (state.isLoading) "Connecting…" else "Connect",
+                label = if (state.isLoading) "Connecting…" else "Connect to server",
                 icon = null,
                 enabled = canSubmitTvServerUrl(state.serverUrl, state.isLoading),
                 onClick = {
@@ -555,11 +578,16 @@ private fun OrDivider(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.Center,
         modifier = modifier,
     ) {
+        // Hairlines fade toward the screen edges, matching tvOS orDivider.
         Box(
             modifier = Modifier
                 .width(1.dp)
                 .weight(1f)
-                .background(Color.White.copy(alpha = 0.16f)),
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.White.copy(alpha = 0.16f)),
+                    ),
+                ),
         )
         Text(
             text = "OR",
@@ -571,7 +599,11 @@ private fun OrDivider(modifier: Modifier = Modifier) {
             modifier = Modifier
                 .width(1.dp)
                 .weight(1f)
-                .background(Color.White.copy(alpha = 0.16f)),
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.White.copy(alpha = 0.16f), Color.Transparent),
+                    ),
+                ),
         )
     }
 }
@@ -925,10 +957,11 @@ private object TvServerSetupTextStyles {
         color = Color.White,
     )
 
+    /** tvOS continuumHeadline (36pt → 18dp at the 0.5x map, +2 readability). */
     val Headline = TextStyle(
         fontWeight = FontWeight.SemiBold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
+        fontSize = 20.sp,
+        lineHeight = 26.sp,
         letterSpacing = 0.sp,
     )
 

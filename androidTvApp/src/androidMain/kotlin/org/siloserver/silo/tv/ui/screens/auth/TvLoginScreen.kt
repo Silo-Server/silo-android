@@ -165,7 +165,7 @@ fun TvLoginScreen(
                 BrandHeader()
                 AuroraJourneyProgress(
                     currentStep = 2,
-                    modifier = Modifier.width(230.dp),
+                    modifier = Modifier.width(215.dp),
                 )
             }
 
