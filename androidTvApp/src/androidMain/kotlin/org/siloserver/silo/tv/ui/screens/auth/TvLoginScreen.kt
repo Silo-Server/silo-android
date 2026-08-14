@@ -146,9 +146,13 @@ fun TvLoginScreen(
                 .align(Alignment.TopCenter)
                 .fillMaxSize()
                 .verticalScroll(formScrollState)
+                // Vertical padding sits at the overscan floor (Spacing
+                // .safeAreaVertical) so the phone-first branch fits a 540dp
+                // viewport without scrolling; anything taller silently scrolls
+                // the header chrome off-screen with no D-pad way back.
                 .padding(
-                    top = if (showPasswordForm) 20.dp else 32.dp,
-                    bottom = 32.dp,
+                    top = if (showPasswordForm) 20.dp else Spacing.safeAreaVertical,
+                    bottom = Spacing.safeAreaVertical,
                     start = 54.dp,
                     end = 54.dp,
                 ),
@@ -165,10 +169,10 @@ fun TvLoginScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(if (showPasswordForm) Spacing.sm else Spacing.lg))
+            Spacer(modifier = Modifier.height(Spacing.sm))
 
             AuroraEyebrow(text = "Account")
-            Spacer(modifier = Modifier.height(if (showPasswordForm) Spacing.md else Spacing.xl))
+            Spacer(modifier = Modifier.height(Spacing.md))
 
             if (showPasswordForm) {
                 CredentialFormCard(
@@ -206,7 +210,7 @@ fun TvLoginScreen(
                         onUsePassword = { showPasswordForm = true },
                         onChangeServer = onChangeServer,
                         usePasswordFocus = usePasswordFocus,
-                        modifier = Modifier.width(300.dp),
+                        modifier = Modifier.width(320.dp),
                     )
                 }
             }
@@ -563,7 +567,7 @@ private fun QrLoginCard(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         modifier = modifier
             .auroraGlass(15.dp)
             .padding(24.dp),
@@ -624,23 +628,33 @@ private fun QrLoginCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(Spacing.xs))
         Box(
             modifier = Modifier
                 .width(150.dp)
                 .height(1.dp)
                 .background(Color.White.copy(alpha = 0.10f)),
         )
-        Spacer(modifier = Modifier.height(Spacing.xs))
 
+        // Compact 18sp spec matching the password card's stacked buttons —
+        // at the default 22sp the longer label wraps and the card outgrows
+        // the 540dp viewport (see the screen-root padding note).
         AuroraGhostButton(
             label = "Sign in with a password",
             onClick = onUsePassword,
-            modifier = Modifier.focusRequester(usePasswordFocus),
+            fontSize = 18.sp,
+            horizontalPadding = 18.dp,
+            verticalPadding = 8.dp,
+            modifier = Modifier
+                .focusRequester(usePasswordFocus)
+                .fillMaxWidth(),
         )
         AuroraGhostButton(
             label = "Use another server",
             onClick = onChangeServer,
+            fontSize = 18.sp,
+            horizontalPadding = 18.dp,
+            verticalPadding = 8.dp,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
