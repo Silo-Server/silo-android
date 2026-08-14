@@ -54,13 +54,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -94,6 +88,7 @@ import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.auroraGlass
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
 import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
@@ -416,7 +411,6 @@ private fun ManualEntryCard(
     focusRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
-    val keyboardController = LocalSoftwareKeyboardController.current
     TvHideStockImeOnDispose()
     Column(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -469,16 +463,7 @@ private fun ManualEntryCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(TvAuthFormDefaults.FieldHeight)
-                    .onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyUp &&
-                            (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)
-                        ) {
-                            keyboardController?.show()
-                            true
-                        } else {
-                            false
-                        }
-                    }
+                    .tvShowImeOnSelect()
                     .focusRequester(focusRequester),
                 colors = tvOutlinedTextFieldColors(),
             )

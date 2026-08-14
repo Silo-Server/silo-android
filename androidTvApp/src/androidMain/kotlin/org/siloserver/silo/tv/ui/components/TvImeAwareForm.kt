@@ -18,8 +18,14 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -119,3 +125,24 @@ internal fun rememberTvImeAwareFormScrollState(): ScrollState {
 }
 
 private val TvImeFieldBottomClearance = 32.dp
+
+/**
+ * Summons the stock IME on SELECT/ENTER instead of on focus. Pair with
+ * `KeyboardOptions(showKeyboardOnFocus = false)` so D-pad focus can rest on a
+ * field without the keyboard covering half the form; a click/tap still opens
+ * it natively. Auth-flow field idiom (product call 2026-08-14).
+ */
+@Composable
+internal fun Modifier.tvShowImeOnSelect(): Modifier {
+    val keyboardController = LocalSoftwareKeyboardController.current
+    return this.onPreviewKeyEvent { event ->
+        if (event.type == KeyEventType.KeyUp &&
+            (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)
+        ) {
+            keyboardController?.show()
+            true
+        } else {
+            false
+        }
+    }
+}

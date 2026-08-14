@@ -73,6 +73,7 @@ import org.siloserver.silo.tv.ui.components.TvHeroActionPill
 import org.siloserver.silo.tv.ui.components.TvPillVariant
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
 import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.theme.Spacing
@@ -337,12 +338,14 @@ private fun CredentialFormCard(
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Next,
+                    showKeyboardOnFocus = false,
                 ),
                 enabled = !state.isLoading,
                 textStyle = TvLoginTextStyles.Field,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(TvAuthFormDefaults.FieldHeight)
+                    .tvShowImeOnSelect()
                     .focusRequester(usernameFocus),
                 colors = tvOutlinedTextFieldColors(),
             )
@@ -385,6 +388,7 @@ private fun CredentialFormCard(
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Password,
                         imeAction = ImeAction.Done,
+                        showKeyboardOnFocus = false,
                     ),
                     keyboardActions = KeyboardActions(
                         onDone = {
@@ -398,6 +402,7 @@ private fun CredentialFormCard(
                     modifier = Modifier
                         .weight(1f)
                         .height(TvAuthFormDefaults.FieldHeight)
+                        .tvShowImeOnSelect()
                         .focusRequester(passwordFocus),
                     colors = tvOutlinedTextFieldColors(),
                 )

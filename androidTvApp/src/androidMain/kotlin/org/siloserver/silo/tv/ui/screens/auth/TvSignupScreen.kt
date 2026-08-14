@@ -46,6 +46,7 @@ import org.siloserver.silo.tv.ui.components.AuroraGhostButton
 import org.siloserver.silo.tv.ui.components.AuroraPrimaryButton
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
 import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.theme.Spacing
@@ -136,11 +137,13 @@ fun TvSignupScreen(
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Text,
                         imeAction = ImeAction.Next,
+                        showKeyboardOnFocus = false,
                     ),
                     enabled = !state.isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(TvAuthFormDefaults.FieldHeight)
+                        .tvShowImeOnSelect()
                         .focusRequester(usernameFocus),
                     colors = tvOutlinedTextFieldColors(),
                 )
@@ -165,6 +168,7 @@ fun TvSignupScreen(
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Email,
                         imeAction = ImeAction.Next,
+                        showKeyboardOnFocus = false,
                     ),
                     enabled = !state.isLoading,
                     modifier = Modifier
@@ -194,6 +198,7 @@ fun TvSignupScreen(
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Password,
                         imeAction = ImeAction.Next,
+                        showKeyboardOnFocus = false,
                     ),
                     enabled = !state.isLoading,
                     modifier = Modifier
@@ -222,6 +227,7 @@ fun TvSignupScreen(
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Text,
                         imeAction = ImeAction.Done,
+                        showKeyboardOnFocus = false,
                     ),
                     keyboardActions = KeyboardActions(
                         onDone = { if (!state.isLoading) viewModel.onSignupClick() },
