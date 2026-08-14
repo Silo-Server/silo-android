@@ -124,8 +124,8 @@ fun TvServerSetupScreen(
     val state by viewModel.uiState.collectAsState()
     val pairingStatus by pairingReceiver.status.collectAsState()
     val focusRequester = remember { FocusRequester() }
-    var hostFieldHasFocus by remember { mutableStateOf(false) }
     val phoneSetupFocus = remember { FocusRequester() }
+    var phoneCardHasFocus by remember { mutableStateOf(false) }
     val formScrollState = rememberTvImeAwareFormScrollState()
     val isActivePairing = pairingStatus.isActivePairing
 
@@ -139,16 +139,16 @@ fun TvServerSetupScreen(
     }
     LaunchedEffect(isActivePairing) {
         if (!isActivePairing) {
-            // Always land on the server-address field, matching tvOS
-            // (TVServerSetupView `.defaultFocus(.host)`). The user chooses "Set
-            // up with phone" by navigating to it — we don't pre-select it for
-            // them (Jim TV QA 2026-07-10). Returning users keep the pre-filled
-            // field focused too.
+            // Land on the phone-pairing card: companion setup is the
+            // recommended path, so it gets first focus (product call
+            // 2026-08-14, reversing the 2026-07-10 field-first default).
+            // Landing on the URL field also popped the IME over the form,
+            // and the IME resize scrolled the header chrome off-screen.
             requestFocusUntilObserved(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
-                requestFocus = focusRequester::requestFocus,
-                isFocused = { hostFieldHasFocus },
+                requestFocus = phoneSetupFocus::requestFocus,
+                isFocused = { phoneCardHasFocus },
             )
         }
     }
@@ -295,6 +295,7 @@ fun TvServerSetupScreen(
                         PhoneSetupCard(
                             focusRequester = phoneSetupFocus,
                             modifier = Modifier
+                                .onFocusChanged { phoneCardHasFocus = it.hasFocus }
                                 .weight(1f)
                                 .fillMaxHeight(),
                         )
@@ -309,7 +310,6 @@ fun TvServerSetupScreen(
                             onConnectClick = viewModel::onConnectClick,
                             focusRequester = focusRequester,
                             modifier = Modifier
-                                .onFocusChanged { hostFieldHasFocus = it.hasFocus }
                                 .weight(1f)
                                 .fillMaxHeight(),
                         )
