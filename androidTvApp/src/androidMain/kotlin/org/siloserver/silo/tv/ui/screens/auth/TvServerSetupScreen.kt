@@ -292,7 +292,12 @@ fun TvServerSetupScreen(
                         modifier = Modifier
                             .widthIn(max = 642.dp)
                             .fillMaxWidth()
-                            .heightIn(min = SERVER_SETUP_CHOOSER_HEIGHT),
+                            // Exact height, not a min: with a loose max the
+                            // cards' fillMaxHeight is a no-op, the phone card
+                            // collapses to its pill, and the weight(1f) box
+                            // holding the beacon + copy measures zero. tvOS
+                            // pins the chooser to 580pt the same way.
+                            .height(SERVER_SETUP_CHOOSER_HEIGHT),
                     ) {
                         PhoneSetupCard(
                             focusRequester = phoneSetupFocus,
