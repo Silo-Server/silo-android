@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -136,14 +137,21 @@ fun TvLoginScreen(
         // burn its retry budget. Keying this effect on the input mode re-runs
         // the claim the moment a key press flips the mode back, so the D-pad
         // always has somewhere to land.
-        if (inputMode == InputMode.Touch) return@LaunchedEffect
+        if (inputMode == InputMode.Touch) {
+            TvFocusLog.d { "login: claim skipped (touch mode, form=$showPasswordForm)" }
+            return@LaunchedEffect
+        }
         val target = if (showPasswordForm) usernameFocus else usePasswordFocus
-        requestFocusUntilObserved(
+        TvFocusLog.d {
+            "login: claiming ${if (showPasswordForm) "username field" else "'use password' button"} (mode=$inputMode)"
+        }
+        val result = requestFocusUntilObserved(
             maxAttempts = TvContentInitialFocusMaxAttempts,
             awaitAttempt = { withFrameNanos { } },
             requestFocus = target::requestFocus,
             isFocused = { loginSurfaceHasFocus },
         )
+        TvFocusLog.d { "login: claim result=$result" }
     }
 
     Box(

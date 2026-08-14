@@ -94,6 +94,7 @@ import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
 import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.Spacing
 
@@ -149,12 +150,18 @@ fun TvServerSetupScreen(
             // 2026-08-14, reversing the 2026-07-10 field-first default).
             // Landing on the URL field also popped the IME over the form,
             // and the IME resize scrolled the header chrome off-screen.
-            requestFocusUntilObserved(
+            TvFocusLog.d { "serverSetup: claiming phone card (mode=$inputMode)" }
+            val result = requestFocusUntilObserved(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
                 requestFocus = phoneSetupFocus::requestFocus,
                 isFocused = { phoneCardHasFocus },
             )
+            TvFocusLog.d { "serverSetup: claim result=$result" }
+        } else {
+            TvFocusLog.d {
+                "serverSetup: claim skipped (pairing=$isActivePairing, mode=$inputMode)"
+            }
         }
     }
     LaunchedEffect(pairingStatus) {

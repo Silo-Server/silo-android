@@ -26,6 +26,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -135,14 +136,32 @@ private val TvImeFieldBottomClearance = 32.dp
 @Composable
 internal fun Modifier.tvShowImeOnSelect(): Modifier {
     val keyboardController = LocalSoftwareKeyboardController.current
+    // A select must start AND end on this field to summon the IME. Acting on
+    // KeyUp alone leaks: activating a button whose click moves focus into the
+    // field (e.g. "Sign in with a password") delivers the tail KeyUp of that
+    // same press here and pops the keyboard uninvited — after which the D-pad
+    // drives the keyboard instead of the form.
+    val sawKeyDown = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     return this.onPreviewKeyEvent { event ->
-        if (event.type == KeyEventType.KeyUp &&
-            (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)
-        ) {
-            keyboardController?.show()
-            true
-        } else {
-            false
+        val selectKey = event.key == Key.DirectionCenter ||
+            event.key == Key.Enter ||
+            event.key == Key.NumPadEnter
+        when {
+            selectKey && event.type == KeyEventType.KeyDown -> {
+                sawKeyDown.set(true)
+                false
+            }
+            selectKey && event.type == KeyEventType.KeyUp -> {
+                if (sawKeyDown.compareAndSet(true, false)) {
+                    TvFocusLog.d { "field: select completed on field -> showing IME" }
+                    keyboardController?.show()
+                    true
+                } else {
+                    TvFocusLog.d { "field: stray select KeyUp suppressed (no matching KeyDown)" }
+                    false
+                }
+            }
+            else -> false
         }
     }
 }
