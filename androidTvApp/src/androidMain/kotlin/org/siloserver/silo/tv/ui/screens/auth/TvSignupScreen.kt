@@ -29,7 +29,9 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -89,7 +91,12 @@ fun TvSignupScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .then(usernameFocusModifier)
+            // Pointer users click the field themselves — a programmatic claim in
+            // touch mode pops the IME over the form (see TvLoginScreen).
+            .then(
+                if (LocalInputModeManager.current.inputMode == InputMode.Touch) Modifier
+                else usernameFocusModifier,
+            )
             .imePadding(),
     ) {
         TvAuroraBackdrop(variant = TvAuroraVariant.SignIn)

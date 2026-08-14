@@ -44,7 +44,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -119,10 +121,20 @@ fun TvLoginScreen(
     // username field; the phone-first surface focuses the "Use a password
     // instead" affordance so the remote never lands on a non-actionable QR.
     var loginSurfaceHasFocus by remember { mutableStateOf(false) }
+    val inputModeManager = LocalInputModeManager.current
     LaunchedEffect(showPasswordForm) {
         // Acquisition on both branches: the surface has just swapped, so
         // nothing on it holds focus yet. A dropped claim on the phone-first
         // branch strands the remote on a QR code that cannot be actioned.
+        //
+        // Touch/mouse exception for the password form: programmatic focus on
+        // a text field in touch mode pops the IME even with
+        // showKeyboardOnFocus=false, and a pointer user can simply click the
+        // field — so nothing is auto-focused for them (product call
+        // 2026-08-14). D-pad users still need the claim to land somewhere.
+        if (showPasswordForm && inputModeManager.inputMode == InputMode.Touch) {
+            return@LaunchedEffect
+        }
         val target = if (showPasswordForm) usernameFocus else usePasswordFocus
         requestFocusUntilObserved(
             maxAttempts = TvContentInitialFocusMaxAttempts,
