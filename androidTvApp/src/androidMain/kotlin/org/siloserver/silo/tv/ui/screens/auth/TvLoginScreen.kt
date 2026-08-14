@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -125,6 +126,7 @@ fun TvLoginScreen(
     // Snapshot-backed: recomposes (and re-keys the claim below) when the viewer
     // switches between pointer and key input.
     val inputMode = LocalInputModeManager.current.inputMode
+    val keyboardController = LocalSoftwareKeyboardController.current
     LaunchedEffect(showPasswordForm, inputMode) {
         // Acquisition on both branches: the surface has just swapped, so
         // nothing on it holds focus yet. A dropped claim on the phone-first
@@ -152,6 +154,18 @@ fun TvLoginScreen(
             isFocused = { loginSurfaceHasFocus },
         )
         TvFocusLog.d { "login: claim result=$result" }
+        if (showPasswordForm) {
+            // The legacy text field shows the IME on a programmatic claim no
+            // matter what showKeyboardOnFocus says (observed 2026-08-14, see
+            // SiloTvFocus traces). The form must arrive quiet — the viewer
+            // summons the keyboard with SELECT or a click — so hide whatever
+            // the claim popped, a couple frames later than the field's own
+            // show request.
+            withFrameNanos { }
+            withFrameNanos { }
+            keyboardController?.hide()
+            TvFocusLog.d { "login: post-claim IME hide" }
+        }
     }
 
     Box(
