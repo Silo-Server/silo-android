@@ -92,6 +92,7 @@ import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.auroraGlass
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
@@ -459,7 +460,7 @@ private fun ManualEntryCard(
                 enabled = !state.isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(60.dp)
+                    .height(TvAuthFormDefaults.FieldHeight)
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyUp &&
                             (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)
@@ -509,7 +510,7 @@ private fun ManualEntryCard(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(58.dp),
+                    .height(TvAuthFormDefaults.PrimaryButtonHeight),
             )
         }
     }

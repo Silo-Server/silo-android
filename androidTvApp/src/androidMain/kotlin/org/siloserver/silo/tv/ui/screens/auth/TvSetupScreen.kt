@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -44,10 +45,10 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.TvAuroraBackdrop
 import org.siloserver.silo.tv.ui.components.TvAuroraVariant
-import org.siloserver.silo.tv.ui.components.TvHeroActionPill
-import org.siloserver.silo.tv.ui.components.TvPillVariant
+import org.siloserver.silo.tv.ui.components.AuroraPrimaryButton
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.koin.compose.viewmodel.koinViewModel
@@ -117,61 +118,94 @@ fun TvSetupScreen(
                 color = Color.White.copy(alpha = 0.72f),
             )
 
-            OutlinedTextField(
-                value = state.username,
-                onValueChange = viewModel::onUsernameChanged,
-                label = { Text("Username", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Next,
-                ),
-                enabled = !state.isLoading,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .tvImeAwareFieldContext()
-                    .focusRequester(usernameFocus),
-                colors = tvOutlinedTextFieldColors(),
-            )
-
-            OutlinedTextField(
-                value = state.email,
-                onValueChange = viewModel::onEmailChanged,
-                label = { Text("Email", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Email,
-                    imeAction = ImeAction.Next,
-                ),
-                enabled = !state.isLoading,
+            Column(
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 modifier = Modifier
                     .fillMaxWidth()
                     .tvImeAwareFieldContext(),
-                colors = tvOutlinedTextFieldColors(),
-            )
+            ) {
+                Text(
+                    text = "USERNAME",
+                    style = TvAuthFormTextStyles.InputLabel,
+                    color = Color.White.copy(alpha = 0.52f),
+                )
+                OutlinedTextField(
+                    value = state.username,
+                    onValueChange = viewModel::onUsernameChanged,
+                    singleLine = true,
+                    textStyle = TvAuthFormTextStyles.FieldText,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Next,
+                    ),
+                    enabled = !state.isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(TvAuthFormDefaults.FieldHeight)
+                        .focusRequester(usernameFocus),
+                    colors = tvOutlinedTextFieldColors(),
+                )
+            }
 
-            OutlinedTextField(
-                value = state.password,
-                onValueChange = viewModel::onPasswordChanged,
-                label = { Text("Password", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = { if (!state.isLoading) viewModel.onCreateAccountClick() },
-                ),
-                enabled = !state.isLoading,
+            Column(
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 modifier = Modifier
                     .fillMaxWidth()
                     .tvImeAwareFieldContext(),
-                colors = tvOutlinedTextFieldColors(),
-            )
+            ) {
+                Text(
+                    text = "EMAIL",
+                    style = TvAuthFormTextStyles.InputLabel,
+                    color = Color.White.copy(alpha = 0.52f),
+                )
+                OutlinedTextField(
+                    value = state.email,
+                    onValueChange = viewModel::onEmailChanged,
+                    singleLine = true,
+                    textStyle = TvAuthFormTextStyles.FieldText,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Next,
+                    ),
+                    enabled = !state.isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(TvAuthFormDefaults.FieldHeight),
+                    colors = tvOutlinedTextFieldColors(),
+                )
+            }
+
+            Column(
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .tvImeAwareFieldContext(),
+            ) {
+                Text(
+                    text = "PASSWORD",
+                    style = TvAuthFormTextStyles.InputLabel,
+                    color = Color.White.copy(alpha = 0.52f),
+                )
+                OutlinedTextField(
+                    value = state.password,
+                    onValueChange = viewModel::onPasswordChanged,
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    textStyle = TvAuthFormTextStyles.FieldText,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { if (!state.isLoading) viewModel.onCreateAccountClick() },
+                    ),
+                    enabled = !state.isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(TvAuthFormDefaults.FieldHeight),
+                    colors = tvOutlinedTextFieldColors(),
+                )
+            }
 
             if (state.error != null) {
                 Text(
@@ -182,15 +216,14 @@ fun TvSetupScreen(
             }
 
             Box {
-                TvHeroActionPill(
+                AuroraPrimaryButton(
                     label = if (state.isLoading) "Creating account…" else "Create Account",
                     icon = Icons.AutoMirrored.Filled.ArrowForward,
-                    variant = TvPillVariant.Filled,
-                    heightOverride = 32.dp,
-                    horizontalPaddingOverride = 19.dp,
-                    labelStyle = TvAuthFormTextStyles.Button,
                     enabled = !state.isLoading,
                     onClick = viewModel::onCreateAccountClick,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(TvAuthFormDefaults.PrimaryButtonHeight),
                 )
             }
         }
@@ -231,24 +264,22 @@ internal object TvAuthFormTextStyles {
         lineHeight = 24.sp,
         letterSpacing = 0.sp,
     )
-    val FieldLabel = TextStyle(
+    /** Mono uppercase caption above each input — the auth-flow field idiom
+     *  (server setup and sign-in); Material's floating label renders oversized
+     *  in the border notch at TV type scale. */
+    val InputLabel = TextStyle(
+        fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.SemiBold,
         fontSize = 16.sp,
-        lineHeight = 16.sp,
-        letterSpacing = 0.sp,
+        lineHeight = 19.sp,
+        letterSpacing = 3.sp,
     )
     val FieldText = TextStyle(
         fontWeight = FontWeight.Normal,
-        fontSize = 16.sp,
-        lineHeight = 16.sp,
+        fontSize = 17.sp,
+        lineHeight = 22.sp,
         letterSpacing = 0.sp,
         color = Color.White,
-    )
-    val Button = TextStyle(
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 16.sp,
-        letterSpacing = 0.sp,
     )
     val Error = TextStyle(
         fontWeight = FontWeight.SemiBold,

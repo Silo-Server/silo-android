@@ -22,7 +22,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -74,6 +73,7 @@ import org.siloserver.silo.tv.ui.components.TvHeroActionPill
 import org.siloserver.silo.tv.ui.components.TvPillVariant
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.koin.compose.viewmodel.koinViewModel
@@ -342,7 +342,7 @@ private fun CredentialFormCard(
                 textStyle = TvLoginTextStyles.Field,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(TvAuthFormDefaults.FieldHeight)
                     .focusRequester(usernameFocus),
                 colors = tvOutlinedTextFieldColors(),
             )
@@ -397,7 +397,7 @@ private fun CredentialFormCard(
                     textStyle = TvLoginTextStyles.Field,
                     modifier = Modifier
                         .weight(1f)
-                        .height(52.dp)
+                        .height(TvAuthFormDefaults.FieldHeight)
                         .focusRequester(passwordFocus),
                     colors = tvOutlinedTextFieldColors(),
                 )
@@ -427,7 +427,7 @@ private fun CredentialFormCard(
                         down = backToPhoneFocus
                     }
                     .fillMaxWidth()
-                    .height(64.dp),
+                    .height(TvAuthFormDefaults.PrimaryButtonHeight),
             )
         }
 
@@ -441,14 +441,13 @@ private fun CredentialFormCard(
                     style = TvLoginTextStyles.Body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                TvHeroActionPill(
+                AuroraGhostButton(
                     label = "Create Account",
-                    icon = Icons.Default.AccountCircle,
-                    variant = TvPillVariant.Hollow,
-                    heightOverride = 36.dp,
-                    horizontalPaddingOverride = 18.dp,
-                    labelStyle = TvLoginTextStyles.Button,
                     onClick = onCreateAccount,
+                    fontSize = 18.sp,
+                    horizontalPadding = 18.dp,
+                    verticalPadding = 8.dp,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
