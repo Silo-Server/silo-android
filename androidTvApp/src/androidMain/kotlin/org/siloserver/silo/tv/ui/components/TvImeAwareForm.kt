@@ -139,6 +139,11 @@ private val TvImeFieldBottomClearance = 32.dp
 internal fun Modifier.tvShowImeOnSelect(): Modifier {
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    // This modifier raises the IME, so it owns taking it back down when the
+    // field leaves composition — otherwise the keyboard floats over the next
+    // screen and keeps eating the D-pad. TvStockKeyboardPolicyTest pins the
+    // pairing; putting it here means every field using this gets it.
+    TvHideStockImeOnDispose()
     // A select must start AND end on this field to summon the IME. Acting on
     // KeyUp alone leaks: activating a button whose click moves focus into the
     // field (e.g. "Sign in with a password") delivers the tail KeyUp of that
