@@ -365,6 +365,52 @@ class PlaybackProtocolV3ConformanceTest {
     }
 
     /**
+     * The build behind the marketing version, and how the build was
+     * distributed. Both are optional on the wire, so the round-trip check alone
+     * would stay green if the client emitted them under names the server does
+     * not read — assert the encoded keys directly instead.
+     */
+    @Test
+    fun contextNamesTheBuildAndChannelBehindTheAppVersion() {
+        listOf("start_request.json", "replan_request.json").forEach { name ->
+            val context = SiloJson.parseToJsonElement(fixture(name))
+                .jsonObject["client_playback_context"]!!.jsonObject
+
+            assertEquals("5", context["app_build"]?.jsonPrimitive?.content, "$name: app_build")
+            assertEquals("production", context["app_channel"]?.jsonPrimitive?.content, "$name: app_channel")
+        }
+
+        val encoded = json.encodeToJsonElement(
+            ClientPlaybackContext.serializer(),
+            ClientPlaybackContext(
+                formFactor = "tv",
+                appVersion = "3.0-test",
+                appBuild = "5",
+                appChannel = "production",
+            ),
+        ).jsonObject
+
+        assertEquals("5", encoded["app_build"]?.jsonPrimitive?.content)
+        assertEquals("production", encoded["app_channel"]?.jsonPrimitive?.content)
+    }
+
+    /**
+     * An unstamped local build has no build counter to report. It must vanish
+     * from the body rather than travel as an explicit null or a literal "0",
+     * which the server — treating the field as opaque — would render verbatim.
+     */
+    @Test
+    fun anAbsentBuildIsOmittedFromTheBodyRatherThanSentAsNull() {
+        val encoded = json.encodeToJsonElement(
+            ClientPlaybackContext.serializer(),
+            ClientPlaybackContext(formFactor = "tv", appVersion = "3.0-test"),
+        ).jsonObject
+
+        assertNull(encoded["app_build"], "an unstamped build must not appear on the wire")
+        assertNull(encoded["app_channel"], "an unreported channel must not appear on the wire")
+    }
+
+    /**
      * Delivery classes replaced the engine self-description. The server
      * negotiates against transports, so a context still describing a Media3
      * engine — or omitting deliveries entirely — would be unroutable.

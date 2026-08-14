@@ -14,12 +14,53 @@ if (file("google-services.json").isFile) {
     apply(plugin = "com.google.gms.google-services")
 }
 
+// Play's own track vocabulary, plus the two ways a build reaches a device
+// without Play. Validated so a typo can't reach the server as a header value.
+val siloReleaseChannels = listOf("internal", "alpha", "beta", "production", "sideload", "dev")
+
 val siloVersionName = providers
     .gradleProperty("siloVersionName")
     .orElse(providers.environmentVariable("SILO_VERSION_NAME"))
     // Release builds override this from the validated Git tag in
     // android-build.yml. Keep local/dev builds aligned with the latest release.
     .orElse("0.3.11")
+
+// The per-marketing-version build counter (TestFlight-style). It is folded into
+// the versionCode by CI, but the app also reports it verbatim to the server
+// (X-Silo-Client-Build) and shows it on the About row, so it has to survive as
+// its own value rather than being reverse-engineered from the versionCode.
+val siloBuildNumber = providers
+    .gradleProperty("siloBuildNumber")
+    .orElse(providers.environmentVariable("SILO_BUILD_NUMBER"))
+    .map { value ->
+        val build = value.toIntOrNull() ?: error("siloBuildNumber must be an integer.")
+        // The same 0..999 window release.yml and the Fastfile enforce, so a
+        // hand-run build can't stamp a counter the release scheme could never
+        // produce. 0 is the unstamped local default; CI itself requires 1..999.
+        require(build in 0..999) {
+            "siloBuildNumber must be between 0 and 999 (0 marks an unstamped local build)."
+        }
+        build.toString()
+    }
+    // Local/dev builds have no CI build number; 0 marks "not a release build".
+    .orElse("0")
+
+// How the artifact reaches a user, reported as X-Silo-Client-Channel. Release
+// pipelines state it: the Fastfile passes the Play track it is actually
+// uploading to, so a beta-track tester and a production user are told apart
+// rather than both reporting "release". Everything else is a hand-built or
+// sideloaded artifact, which is not on any track.
+val siloReleaseChannel = providers
+    .gradleProperty("siloReleaseChannel")
+    .orElse(providers.environmentVariable("SILO_RELEASE_CHANNEL"))
+    .map { value ->
+        val channel = value.trim().lowercase()
+        require(channel in siloReleaseChannels) {
+            "siloReleaseChannel must be one of ${siloReleaseChannels.joinToString("/")} (got '$value')."
+        }
+        channel
+    }
+    .orElse("sideload")
 
 val siloVersionCode = providers
     .gradleProperty("siloVersionCode")
@@ -150,6 +191,11 @@ android {
         // base*2, TV = base*2+1, so each release bumps both by 2 with no reuse.
         versionCode = siloVersionCode.get() * 2
         versionName = siloVersionName.get()
+        // Reported to the server as X-Silo-Client-Build and shown on the About
+        // row, so both name the same build the way Play and TestFlight do:
+        // "1.0.0 (5)". Matches silo-apple, where CFBundleVersion feeds the
+        // header, the playback context and diagnostics alike.
+        buildConfigField("String", "BUILD_NUMBER", "\"${siloBuildNumber.get()}\"")
         // Shadow the android-shared BuildConfig field so per-app flavors
         // (e.g., a "no-FFmpeg" sideload build for size-constrained QA) can
         // override without rebuilding the shared module. The runtime reads
@@ -181,7 +227,11 @@ android {
         }
     }
     buildTypes {
+        debug {
+            buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
+        }
         release {
+            buildConfigField("String", "RELEASE_CHANNEL", "\"${siloReleaseChannel.get()}\"")
             // Launch-prep: full R8 + resource shrinking. Keep rules for this
             // reflection/JNI-heavy stack live in the shared root proguard-rules.pro
             // (Koin, kotlinx.serialization, Media3 FFmpeg, BouncyCastle,

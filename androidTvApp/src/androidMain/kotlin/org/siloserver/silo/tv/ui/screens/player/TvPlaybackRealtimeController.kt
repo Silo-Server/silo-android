@@ -91,7 +91,7 @@ class TvPlaybackRealtimeController(
             "subtitle_ready" -> viewModel.applySubtitleReady(decodePlaybackSubtitleReady(event))
             "markers_updated" -> {
                 val markers = decodeMarkersUpdate(event)
-                viewModel.applyUpdatedMarkers(markers.intro, markers.credits)
+                viewModel.applyUpdatedMarkers(markers.intro, markers.credits, markers.recap, markers.preview)
             }
             // chapter_thumbnail_ready: no scrubber-thumbnail UI yet → nothing to update.
             else -> { /* ignore */ }

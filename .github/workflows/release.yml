@@ -125,6 +125,13 @@ jobs:
               echo "::error::Tag must look like v1.2.3, v1.2.3+2, or v1.2.3-rc.1."
               exit 1
             fi
+            # A prerelease suffix deliberately does NOT feed the build counter.
+            # The counter is folded into the versionCode, so deriving it from
+            # -rc.N would make a sideloaded v1.2.3-rc.2 (base+2) outrank the
+            # official v1.2.3 (base+1) and block that upgrade on the device —
+            # and it would still not tell -rc.2 apart from +2, which resolve to
+            # the same counter. Prerelease artifacts are distinguished by their
+            # tag; see the note in the PR for the reporting limitation.
             if [[ "${version}" == *+* ]]; then
               build="${version##*+}"
             else
@@ -349,6 +356,7 @@ jobs:
           SILO_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SILO_RELEASE_KEYSTORE_PASSWORD }}
           SILO_RELEASE_KEY_PASSWORD: ${{ secrets.SILO_RELEASE_KEY_PASSWORD }}
           SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
+          SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
         run: |
           set -euo pipefail
 
@@ -358,6 +366,8 @@ jobs:
             "-PsiloVersionName=${SILO_VERSION_NAME}" \
             "-PsiloDisplayVersion=${SILO_DISPLAY_VERSION}" \
             "-PsiloVersionCode=${SILO_VERSION_CODE}" \
+            "-PsiloBuildNumber=${SILO_BUILD_NUMBER}" \
+            "-PsiloReleaseChannel=sideload" \
             --max-workers=2
 
       - name: Collect release APKs

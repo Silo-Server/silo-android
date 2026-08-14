@@ -408,6 +408,8 @@ class PlayerViewModel(
         val subtitleApplying: Boolean = false,
         val intro: TimeRange? = null,
         val credits: TimeRange? = null,
+        val recap: TimeRange? = null,
+        val preview: TimeRange? = null,
         /**
          * Chapters from the selected FileVersion (server-extracted via FFprobe
          * at ingest). Empty list when the file has no embedded chapters. The
@@ -1299,6 +1301,8 @@ class PlayerViewModel(
                 selectedSubtitleIndex = resolvedSubtitleIndex,
                 intro = playbackState.intro,
                 credits = playbackState.credits,
+                recap = playbackState.recap,
+                preview = playbackState.preview,
                 chapters = playbackState.chapters.ifEmpty { version?.chapters.orEmpty() },
                 versions = versions,
                 selectedVersionIndex = versionIndex,
@@ -2863,6 +2867,7 @@ class PlayerViewModel(
                 title = state.title,
                 posterUrl = state.artworkUrl,
                 appVersion = BuildConfig.VERSION_NAME,
+                buildIdentity = capabilityDetector.buildIdentity,
             ),
         )
     }
@@ -2880,13 +2885,13 @@ class PlayerViewModel(
     }
 
     /**
-     * Adopt server-recomputed intro/credits ranges (a `markers_updated` event).
+     * Adopt server-recomputed marker ranges (a `markers_updated` event).
      * The intro auto-skip observer and the credits-based F2 trigger read these
      * from UiState, so updating them takes effect immediately. Passing `null`
      * clears a marker the server says no longer applies.
      */
-    fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?) {
-        _uiState.update { it.copy(intro = intro, credits = credits) }
+    fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
+        _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
     }
 
     private fun mobileSubtitleContext(state: PlayerUiState): MobileSubtitlePlaybackContext =
@@ -4276,6 +4281,8 @@ class PlayerViewModel(
                 selectedSubtitleIndex = -1,
                 intro = watchDetail?.intro,
                 credits = watchDetail?.credits,
+                recap = watchDetail?.recap,
+                preview = watchDetail?.preview,
                 chapters = versions[selectedIndex].chapters.orEmpty().ifEmpty { sidecar.chapters.orEmpty() },
                 seriesId = watchDetail?.seriesId,
                 preferredAudioLanguage = null,

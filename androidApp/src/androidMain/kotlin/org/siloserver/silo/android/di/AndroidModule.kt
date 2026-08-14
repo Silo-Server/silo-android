@@ -32,7 +32,9 @@ import org.siloserver.silo.common.player.cast.CastPlaybackPreparer
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
+import org.siloserver.silo.android.BuildConfig
 import org.siloserver.silo.common.network.AndroidDeviceMetadataProvider
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.DataStoreCleartextConsentStore
 import org.siloserver.silo.common.settings.AndroidServerSettingsCache
@@ -180,8 +182,16 @@ val androidModule = module {
 
     // App-wide services
     single<AndroidServerSettingsCache> { AndroidServerSettingsCache(androidContext()) }
+    // The one place the phone app's BuildConfig crosses into android-shared:
+    // every collaborator that reports client identity (headers, playback
+    // context, diagnostics) resolves this rather than deriving its own answer.
+    single { SiloClientBuildIdentity(BuildConfig.BUILD_NUMBER, BuildConfig.RELEASE_CHANNEL) }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
-        AndroidDeviceMetadataProvider(androidContext(), platform = "android")
+        AndroidDeviceMetadataProvider(
+            androidContext(),
+            platform = "android",
+            buildIdentity = get(),
+        )
     }
     single { SiloCastNsdBrowser(androidContext()) }
     single { CompanionPairingNsdBrowser(androidContext()) }
@@ -240,7 +250,7 @@ val androidModule = module {
         )
     }
     single { AudioCapabilityManager(androidContext()) }
-    single { PlaybackCapabilityDetector(androidContext(), get(), get()) }
+    single { PlaybackCapabilityDetector(androidContext(), get(), get(), get()) }
     single {
         SiloPlayerFactory(
             context = androidContext(),

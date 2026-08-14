@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,16 +64,21 @@ internal fun SeasonEpisodePager(
         pageCount = { seasons.size },
     )
     val scope = rememberCoroutineScope()
+    val currentSelectedSeasonNumber = rememberUpdatedState(selectedSeasonNumber)
+    val currentOnSeasonSelected = rememberUpdatedState(onSeasonSelected)
 
     // A completed finger swipe becomes the shared season selection. Waiting
     // for settledPage avoids loading a season when a partial drag snaps back.
-    LaunchedEffect(pagerState, seasons, selectedSeasonNumber) {
+    // Keep this collector alive when a chip optimistically changes the shared
+    // selection: restarting it would immediately emit the still-old page and
+    // undo the chip tap before the pager animation can begin.
+    LaunchedEffect(pagerState, seasons) {
         snapshotFlow { pagerState.settledPage }
             .distinctUntilChanged()
             .collect { page ->
                 seasons.getOrNull(page)
-                    ?.takeIf { it.seasonNumber != selectedSeasonNumber }
-                    ?.let { onSeasonSelected(it.seasonNumber) }
+                    ?.takeIf { it.seasonNumber != currentSelectedSeasonNumber.value }
+                    ?.let { currentOnSeasonSelected.value(it.seasonNumber) }
             }
     }
 
