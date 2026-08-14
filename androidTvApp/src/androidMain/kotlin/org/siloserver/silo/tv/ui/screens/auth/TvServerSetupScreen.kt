@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
@@ -302,12 +303,23 @@ fun TvServerSetupScreen(
                         modifier = Modifier
                             .widthIn(max = 642.dp)
                             .fillMaxWidth()
-                            // Exact height, not a min: with a loose max the
-                            // cards' fillMaxHeight is a no-op, the phone card
-                            // collapses to its pill, and the weight(1f) box
-                            // holding the beacon + copy measures zero. tvOS
-                            // pins the chooser to 580pt the same way.
-                            .height(SERVER_SETUP_CHOOSER_HEIGHT),
+                            // Intrinsic-min, floored — not a bare heightIn and
+                            // not an exact height. Both of those fail, in
+                            // opposite directions:
+                            //  - a loose max makes the cards' fillMaxHeight a
+                            //    no-op, so the phone card collapses to its pill
+                            //    and the weight(1f) beacon box measures zero;
+                            //  - an exact height clips the taller card, which
+                            //    at 300dp squeezed "Connect to server" down to
+                            //    a blank pill (label measured 6px in a 96px
+                            //    button).
+                            // Resolving the intrinsic first hands the Row a
+                            // tight height, so fillMaxHeight still resolves,
+                            // while the floor keeps the chooser at a real card
+                            // height when content is short. tvOS pins 580pt;
+                            // here the content decides above that floor.
+                            .height(IntrinsicSize.Min)
+                            .heightIn(min = SERVER_SETUP_CHOOSER_MIN_HEIGHT),
                     ) {
                         PhoneSetupCard(
                             focusRequester = phoneSetupFocus,
@@ -415,7 +427,13 @@ private fun PhoneSetupBody(modifier: Modifier = Modifier) {
 }
 
 private val PHONE_SETUP_BEACON_SIZE = 96.dp
-private val SERVER_SETUP_CHOOSER_HEIGHT = 300.dp
+
+/**
+ * Floor for the phone/manual chooser. The manual card's intrinsic height
+ * normally exceeds this; the floor only matters when it doesn't, keeping the
+ * phone card from collapsing to its pill.
+ */
+private val SERVER_SETUP_CHOOSER_MIN_HEIGHT = 300.dp
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable

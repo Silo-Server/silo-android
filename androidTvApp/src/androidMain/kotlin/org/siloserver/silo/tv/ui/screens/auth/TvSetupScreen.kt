@@ -182,7 +182,8 @@ fun TvSetupScreen(
                     enabled = !state.isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(TvAuthFormDefaults.FieldHeight),
+                        .height(TvAuthFormDefaults.FieldHeight)
+                        .tvShowImeOnSelect(),
                     colors = tvOutlinedTextFieldColors(),
                 )
             }
@@ -215,7 +216,8 @@ fun TvSetupScreen(
                     enabled = !state.isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(TvAuthFormDefaults.FieldHeight),
+                        .height(TvAuthFormDefaults.FieldHeight)
+                        .tvShowImeOnSelect(),
                     colors = tvOutlinedTextFieldColors(),
                 )
             }

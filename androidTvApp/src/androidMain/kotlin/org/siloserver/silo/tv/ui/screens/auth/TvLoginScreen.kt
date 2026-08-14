@@ -48,7 +48,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalInputModeManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -104,6 +103,7 @@ fun TvLoginScreen(
     val passwordFocus = remember { FocusRequester() }
     val usePasswordFocus = remember { FocusRequester() }
     val signInFocus = remember { FocusRequester() }
+    val createAccountFocus = remember { FocusRequester() }
     val backToPhoneFocus = remember { FocusRequester() }
     val changeServerFocus = remember { FocusRequester() }
     val formScrollState = rememberTvImeAwareFormScrollState()
@@ -126,7 +126,6 @@ fun TvLoginScreen(
     // Snapshot-backed: recomposes (and re-keys the claim below) when the viewer
     // switches between pointer and key input.
     val inputMode = LocalInputModeManager.current.inputMode
-    val keyboardController = LocalSoftwareKeyboardController.current
     LaunchedEffect(showPasswordForm, inputMode) {
         // Acquisition on both branches: the surface has just swapped, so
         // nothing on it holds focus yet. A dropped claim on the phone-first
@@ -154,18 +153,11 @@ fun TvLoginScreen(
             isFocused = { loginSurfaceHasFocus },
         )
         TvFocusLog.d { "login: claim result=$result" }
-        if (showPasswordForm) {
-            // The legacy text field shows the IME on a programmatic claim no
-            // matter what showKeyboardOnFocus says (observed 2026-08-14, see
-            // SiloTvFocus traces). The form must arrive quiet — the viewer
-            // summons the keyboard with SELECT or a click — so hide whatever
-            // the claim popped, a couple frames later than the field's own
-            // show request.
-            withFrameNanos { }
-            withFrameNanos { }
-            keyboardController?.hide()
-            TvFocusLog.d { "login: post-claim IME hide" }
-        }
+        // The form arrives quiet — the viewer summons the keyboard with SELECT
+        // or a click. The legacy text field pops the IME on a focus arrival no
+        // matter what showKeyboardOnFocus says (unsupported on this overload,
+        // see tvShowImeOnSelect), so suppression lives in that modifier, which
+        // every field in this flow carries. No screen-level hide needed here.
     }
 
     Box(
@@ -217,6 +209,7 @@ fun TvLoginScreen(
                     usernameFocus = usernameFocus,
                     passwordFocus = passwordFocus,
                     signInFocus = signInFocus,
+                    createAccountFocus = createAccountFocus,
                     backToPhoneFocus = backToPhoneFocus,
                     changeServerFocus = changeServerFocus,
                     onUsernameChanged = viewModel::onUsernameChanged,
@@ -324,6 +317,7 @@ private fun CredentialFormCard(
     usernameFocus: FocusRequester,
     passwordFocus: FocusRequester,
     signInFocus: FocusRequester,
+    createAccountFocus: FocusRequester,
     backToPhoneFocus: FocusRequester,
     changeServerFocus: FocusRequester,
     onUsernameChanged: (String) -> Unit,
@@ -465,7 +459,12 @@ private fun CredentialFormCard(
                 enabled = !state.isLoading,
                 modifier = Modifier
                     .focusProperties {
-                        down = backToPhoneFocus
+                        // Explicit chain, so it must name every stop: skipping
+                        // straight to "Back to phone sign-in" left Create
+                        // Account unreachable by remote on signup-enabled
+                        // servers (the intervening label Text is not focusable,
+                        // so there is no default search to fall back on).
+                        down = if (signupEnabled) createAccountFocus else backToPhoneFocus
                     }
                     .fillMaxWidth()
                     .height(TvAuthFormDefaults.PrimaryButtonHeight),
@@ -488,7 +487,13 @@ private fun CredentialFormCard(
                     fontSize = 18.sp,
                     horizontalPadding = 18.dp,
                     verticalPadding = 8.dp,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .focusRequester(createAccountFocus)
+                        .focusProperties {
+                            up = signInFocus
+                            down = backToPhoneFocus
+                        }
+                        .fillMaxWidth(),
                 )
             }
         }
@@ -507,7 +512,7 @@ private fun CredentialFormCard(
                 modifier = Modifier
                     .focusRequester(backToPhoneFocus)
                     .focusProperties {
-                        up = signInFocus
+                        up = if (signupEnabled) createAccountFocus else signInFocus
                         down = changeServerFocus
                     }
                     .fillMaxWidth(),
