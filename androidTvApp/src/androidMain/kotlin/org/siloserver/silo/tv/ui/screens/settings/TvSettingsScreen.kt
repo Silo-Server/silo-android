@@ -81,6 +81,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.network.clientVersionLabel
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityPresets
@@ -508,7 +509,7 @@ private fun SettingsRail(
             onFocused = { railActionHasFocus = true },
         )
         Text(
-            text = "Silo ${BuildConfig.DISPLAY_VERSION}",
+            text = "Silo ${clientVersionLabel(BuildConfig.DISPLAY_VERSION, BuildConfig.BUILD_NUMBER)}",
             style = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 14.sp,
@@ -1411,7 +1412,12 @@ private fun TvServerSettingsPane(
         }
         item {
             SettingsGroup(title = "About") {
-                SettingsInfoRow(label = "Version", value = BuildConfig.DISPLAY_VERSION)
+                // Same "1.0.0 (5)" form as the phone About row, so a TV support
+                // report names the build the server's admin Activity page shows.
+                SettingsInfoRow(
+                    label = "Version",
+                    value = clientVersionLabel(BuildConfig.DISPLAY_VERSION, BuildConfig.BUILD_NUMBER),
+                )
             }
         }
     }

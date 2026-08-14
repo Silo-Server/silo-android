@@ -22,8 +22,14 @@ import kotlinx.coroutines.launch
 data class PairingDeviceIdentity(
     val name: String,
     val deviceId: String,
-    /** "Android TV" — passed to device-login start as the platform. */
-    val platform: String = "Android TV",
+    /**
+     * Passed to device-login start as `device_platform`. Same spelling as the
+     * X-Silo-Device-Platform header and the two other TV login entry points
+     * (TvLoginViewModel, RemotePlaybackIdentityManager), so a TV signed in over
+     * LAN companion pairing is classified as a TV rather than falling into the
+     * web frontend's mobile bucket.
+     */
+    val platform: String = "android-tv",
 )
 
 /**

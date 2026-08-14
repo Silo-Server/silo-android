@@ -10,6 +10,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.player.DolbyVisionPolicy
 import org.siloserver.silo.common.player.video.media3OriginalPlaybackContainers
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -54,6 +55,12 @@ class PlaybackCapabilityDetector(
     private val context: Context,
     private val audioCapabilityManager: AudioCapabilityManager,
     private val libassBridge: LibassBridge,
+    /**
+     * Public so the Cast path can report the same build and channel this
+     * detector puts on a local session — `CastPrepareRequest` describes the
+     * phone driving the cast, not the receiver.
+     */
+    val buildIdentity: SiloClientBuildIdentity,
 ) {
     val outputRouteGeneration: StateFlow<Long> = audioCapabilityManager.outputRouteGeneration
     private val planningSnapshots = PlaybackPlanningSnapshotRegistry(
@@ -296,6 +303,11 @@ class PlaybackCapabilityDetector(
         return ClientPlaybackContext(
             formFactor = formFactor,
             appVersion = appVersion,
+            // Taken from the injected identity rather than a per-caller
+            // argument, so the shared audiobook player reports the same build
+            // and channel as the two video players instead of omitting them.
+            appBuild = buildIdentity.reportedBuildNumber,
+            appChannel = buildIdentity.reportedChannel,
             device = PlaybackDeviceContext(
                 platform = "android",
                 osVersion = Build.VERSION.RELEASE,

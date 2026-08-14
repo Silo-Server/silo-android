@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.player.PlaybackNetworkEvidenceProvider
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.StagedVideoReplan
@@ -85,7 +86,10 @@ class CastPlaybackPreparer(
             fileId = request.fileId,
             profileId = request.profileId,
             capabilities = chromecastCodecCapabilities(),
-            clientPlaybackContext = chromecastPlaybackContext(request.appVersion),
+            clientPlaybackContext = chromecastPlaybackContext(
+                appVersion = request.appVersion,
+                buildIdentity = request.buildIdentity,
+            ),
             audioTrackIndex = request.audioTrackIndex,
             subtitleTrackIndex = request.subtitleTrackIndex,
             qualityPreference = "auto",
@@ -353,6 +357,7 @@ data class CastPrepareRequest(
     val title: String,
     val posterUrl: String?,
     val appVersion: String,
+    val buildIdentity: SiloClientBuildIdentity,
 )
 
 /** Self-contained media descriptor handed to the Cast receiver. */
@@ -737,10 +742,18 @@ fun chromecastCodecCapabilities(): ClientCodecCapabilities = ClientCodecCapabili
  * phone's probed one. Progressive delivery is deliberately absent — see the
  * inline note.
  */
-fun chromecastPlaybackContext(appVersion: String): ClientPlaybackContext =
+fun chromecastPlaybackContext(
+    appVersion: String,
+    buildIdentity: SiloClientBuildIdentity,
+): ClientPlaybackContext =
     ClientPlaybackContext(
         formFactor = "mobile",
         appVersion = appVersion,
+        // Required rather than defaulted: this context describes the phone
+        // driving the cast, so a caller that forgot the identity would report
+        // a session with no build at all.
+        appBuild = buildIdentity.reportedBuildNumber,
+        appChannel = buildIdentity.reportedChannel,
         device = PlaybackDeviceContext(),
         output = PlaybackOutputContext(
             hdrDetails = null,

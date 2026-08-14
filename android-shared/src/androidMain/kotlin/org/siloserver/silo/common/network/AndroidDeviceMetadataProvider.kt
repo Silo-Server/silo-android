@@ -7,9 +7,20 @@ import org.siloserver.silo.network.SiloDeviceMetadata
 import org.siloserver.silo.network.DeviceMetadataProvider
 import java.util.UUID
 
+/**
+ * @param buildIdentity the app module's build number and release channel. It
+ *   is passed in because `android-shared` cannot see either app's
+ *   `BuildConfig`, and because the installed `versionCode` is the
+ *   form-factor-doubled release code rather than CI's build counter. An
+ *   unstamped build reports its build as absent rather than as build zero: the
+ *   server treats the build as an opaque string, so a placeholder here would
+ *   surface verbatim as "(0)" in admin Activity, and the channel already says
+ *   `dev`.
+ */
 class AndroidDeviceMetadataProvider(
     private val context: Context,
     private val platform: String,
+    private val buildIdentity: SiloClientBuildIdentity,
 ) : DeviceMetadataProvider {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val cachedClientName: String by lazy { clientNameFor(platform) }
@@ -30,6 +41,8 @@ class AndroidDeviceMetadataProvider(
             platform = platform,
             clientName = cachedClientName,
             clientVersion = cachedClientVersion,
+            clientBuild = buildIdentity.reportedBuildNumber,
+            clientChannel = buildIdentity.reportedChannel,
         )
     }
 

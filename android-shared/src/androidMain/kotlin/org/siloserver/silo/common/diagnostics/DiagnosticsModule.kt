@@ -13,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.model.diagnostics.DiagnosticsDeviceSummary
 import org.siloserver.silo.model.diagnostics.DiagnosticsPlatform
 import org.siloserver.silo.network.NetworkDiagnosticsObserver
@@ -154,7 +155,7 @@ val diagnosticsModule = module {
     single<DiagnosticsDeviceProbe> { AndroidDiagnosticsDeviceProbe(androidContext(), get(), get()) }
     single { DeviceSnapshotCollector(get()) }
     single { DeviceSnapshotCache() }
-    single { androidExitReportEnvironment(androidContext(), get()) }
+    single { androidExitReportEnvironment(androidContext(), get(), get()) }
     single { FileJvmCrashMarkerSource(androidContext().noBackupFilesDir) }
     single<DiagnosticsStoredEvidenceReconciler> {
         val markers = get<FileJvmCrashMarkerSource>()
@@ -312,6 +313,7 @@ val diagnosticsModule = module {
 private fun androidExitReportEnvironment(
     context: android.content.Context,
     probe: DiagnosticsDeviceProbe,
+    buildIdentity: SiloClientBuildIdentity,
 ): ExitReportEnvironment {
     val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
     val identity = probe.identity()
@@ -321,11 +323,15 @@ private fun androidExitReportEnvironment(
     } else {
         DiagnosticsPlatform.ANDROID
     }
-    val build = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-        packageInfo.longVersionCode.toString()
-    } else {
-        packageInfo.versionCode.toString()
-    }
+    // CI's build counter, the same value the X-Silo-Client-Build header and the
+    // v3 playback context carry, so a crash report and an Activity session for
+    // one install agree on which build they came from. This used to be the
+    // versionCode, which is the form-factor-doubled release code and therefore
+    // a different number entirely. silo-apple reports CFBundleVersion on all
+    // three carriers for the same reason. The manifest requires a non-empty
+    // string (DiagnosticsValidation), so an unstamped local build keeps the
+    // literal "0" here rather than collapsing to absent.
+    val build = buildIdentity.buildNumber
     return ExitReportEnvironment(
         appVersion = packageInfo.versionName ?: "unknown",
         appBuild = build,

@@ -145,7 +145,9 @@ class TvLoginViewModel(
         deviceLoginJob = viewModelScope.launch {
             deviceLogin.begin(
                 deviceName = android.os.Build.MODEL,
-                devicePlatform = "androidtv",
+                // Same spelling as the X-Silo-Device-Platform header this app
+                // sends, so one device reports one platform string everywhere.
+                devicePlatform = "android-tv",
             )
             val terminal = deviceLogin.state.value
             if (terminal is DeviceLoginRepository.DeviceLoginState.Approved) {

@@ -220,6 +220,13 @@ platform :android do
       properties: {
         "siloVersionName" => version,
         "siloVersionCode" => base_code,
+        # The build counter as its own value: it is already folded into
+        # base_code, but the app reports it verbatim to the server.
+        "siloBuildNumber" => build,
+        # The track these bundles are actually uploaded to, so a beta-track
+        # tester and a production user are distinguishable in admin Activity
+        # instead of both reporting a generic "release".
+        "siloReleaseChannel" => track,
       },
       system_properties: {
         "org.gradle.jvmargs" => "-Xmx4g -Dfile.encoding=UTF-8",

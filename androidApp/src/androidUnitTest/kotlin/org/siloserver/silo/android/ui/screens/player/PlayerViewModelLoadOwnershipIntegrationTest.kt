@@ -62,6 +62,7 @@ import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.FinalPlaybackPositionWriter
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
@@ -301,6 +302,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             context,
             AudioCapabilityManager(context),
             LibassBridge(false),
+            SiloClientBuildIdentity(buildNumber = "5", channel = "release"),
         )
         return PlayerFixture(
             viewModel = PlayerViewModel(
@@ -395,6 +397,7 @@ class MobileVideoPlaybackStarterCancellationTest {
                     context,
                     AudioCapabilityManager(context),
                     LibassBridge(false),
+                    SiloClientBuildIdentity(buildNumber = "5", channel = "release"),
                 ),
                 playerSettingsStore = FakePlayerSettingsStore(),
                 sessionLifecycle = PlaybackSessionLifecycle(
@@ -657,6 +660,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 context,
                 AudioCapabilityManager(context),
                 LibassBridge(false),
+                SiloClientBuildIdentity(buildNumber = "5", channel = "release"),
             ),
             playerSettingsStore = FakePlayerSettingsStore(),
             sessionLifecycle = PlaybackSessionLifecycle(

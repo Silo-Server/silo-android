@@ -126,7 +126,7 @@ private class FakeDeviceLogin : DeviceLoginPort {
             expiresIn = 600,
             interval = 5,
             deviceName = "Test TV",
-            devicePlatform = "Android TV",
+            devicePlatform = "android-tv",
         )
         val APPROVED_RESPONSE = DeviceLoginPollResponse(
             status = "approved",
@@ -193,8 +193,11 @@ class PairingReceiverTest {
         // Let the receiver begin against the candidate URL and observe Awaiting.
         repeat(10) { yield() }
 
+        // The header spelling, not "Android TV"/"android_tv"/"androidtv": the
+        // server's platform classifier buckets anything else as mobile, so all
+        // three TV login entry points must report the one string.
         assertEquals(
-            FakeDeviceLogin.BeginCall("https://srv.test", "Test TV", "Android TV"),
+            FakeDeviceLogin.BeginCall("https://srv.test", "Test TV", "android-tv"),
             login.beganWith,
         )
         assertEquals(emptyList(), auth.committedSessions)

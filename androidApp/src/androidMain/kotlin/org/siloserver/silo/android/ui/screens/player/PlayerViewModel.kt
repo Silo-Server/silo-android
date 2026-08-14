@@ -2867,6 +2867,7 @@ class PlayerViewModel(
                 title = state.title,
                 posterUrl = state.artworkUrl,
                 appVersion = BuildConfig.VERSION_NAME,
+                buildIdentity = capabilityDetector.buildIdentity,
             ),
         )
     }
