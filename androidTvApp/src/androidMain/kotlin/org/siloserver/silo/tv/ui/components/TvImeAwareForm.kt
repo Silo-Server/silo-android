@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
@@ -25,6 +26,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import androidx.compose.ui.unit.Dp
@@ -136,6 +138,7 @@ private val TvImeFieldBottomClearance = 32.dp
 @Composable
 internal fun Modifier.tvShowImeOnSelect(): Modifier {
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     // A select must start AND end on this field to summon the IME. Acting on
     // KeyUp alone leaks: activating a button whose click moves focus into the
     // field (e.g. "Sign in with a password") delivers the tail KeyUp of that
@@ -160,6 +163,21 @@ internal fun Modifier.tvShowImeOnSelect(): Modifier {
                     TvFocusLog.d { "field: stray select KeyUp suppressed (no matching KeyDown)" }
                     false
                 }
+            }
+            // The legacy text field consumes vertical D-pad for cursor moves a
+            // single-line box cannot make, trapping focus in the field forever.
+            // Route vertical D-pad to focus search instead. Only reachable with
+            // the IME closed — an open IME owns the keys before the app sees
+            // them. Left/right stay with the field for in-text cursor movement.
+            event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> {
+                val moved = focusManager.moveFocus(FocusDirection.Down)
+                TvFocusLog.d { "field: dpad DOWN -> moveFocus moved=$moved" }
+                moved
+            }
+            event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
+                val moved = focusManager.moveFocus(FocusDirection.Up)
+                TvFocusLog.d { "field: dpad UP -> moveFocus moved=$moved" }
+                moved
             }
             else -> false
         }
