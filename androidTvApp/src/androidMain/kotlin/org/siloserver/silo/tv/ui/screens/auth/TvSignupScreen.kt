@@ -83,20 +83,21 @@ fun TvSignupScreen(
     }
     // A text field on a first-run screen: if this claim is dropped the
     // remote has nothing to act on and no touch fallback exists.
+    // Snapshot-backed input mode drives the claim: null contentKey while the
+    // viewer is in touch mode (a programmatic claim on a text field pops the
+    // IME; pointer users click the field themselves), and the key change on
+    // flipping back to key input re-runs the claim so the D-pad always has
+    // somewhere to land.
+    val inputMode = LocalInputModeManager.current.inputMode
     val usernameFocusModifier = rememberTvContentInitialFocus(
         target = usernameFocus,
-        contentKey = Unit,
+        contentKey = if (inputMode == InputMode.Touch) null else inputMode,
     )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // Pointer users click the field themselves — a programmatic claim in
-            // touch mode pops the IME over the form (see TvLoginScreen).
-            .then(
-                if (LocalInputModeManager.current.inputMode == InputMode.Touch) Modifier
-                else usernameFocusModifier,
-            )
+            .then(usernameFocusModifier)
             .imePadding(),
     ) {
         TvAuroraBackdrop(variant = TvAuroraVariant.SignIn)

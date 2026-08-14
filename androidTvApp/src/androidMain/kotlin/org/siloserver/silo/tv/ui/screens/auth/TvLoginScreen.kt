@@ -121,20 +121,22 @@ fun TvLoginScreen(
     // username field; the phone-first surface focuses the "Use a password
     // instead" affordance so the remote never lands on a non-actionable QR.
     var loginSurfaceHasFocus by remember { mutableStateOf(false) }
-    val inputModeManager = LocalInputModeManager.current
-    LaunchedEffect(showPasswordForm) {
+    // Snapshot-backed: recomposes (and re-keys the claim below) when the viewer
+    // switches between pointer and key input.
+    val inputMode = LocalInputModeManager.current.inputMode
+    LaunchedEffect(showPasswordForm, inputMode) {
         // Acquisition on both branches: the surface has just swapped, so
         // nothing on it holds focus yet. A dropped claim on the phone-first
         // branch strands the remote on a QR code that cannot be actioned.
         //
-        // Touch/mouse exception for the password form: programmatic focus on
-        // a text field in touch mode pops the IME even with
-        // showKeyboardOnFocus=false, and a pointer user can simply click the
-        // field — so nothing is auto-focused for them (product call
-        // 2026-08-14). D-pad users still need the claim to land somewhere.
-        if (showPasswordForm && inputModeManager.inputMode == InputMode.Touch) {
-            return@LaunchedEffect
-        }
+        // Touch/mouse exception: nothing is auto-focused for pointer users
+        // (product call 2026-08-14) — a programmatic claim on a text field in
+        // touch mode pops the IME despite showKeyboardOnFocus=false, and
+        // buttons refuse focus in touch mode anyway, so the claim would only
+        // burn its retry budget. Keying this effect on the input mode re-runs
+        // the claim the moment a key press flips the mode back, so the D-pad
+        // always has somewhere to land.
+        if (inputMode == InputMode.Touch) return@LaunchedEffect
         val target = if (showPasswordForm) usernameFocus else usePasswordFocus
         requestFocusUntilObserved(
             maxAttempts = TvContentInitialFocusMaxAttempts,

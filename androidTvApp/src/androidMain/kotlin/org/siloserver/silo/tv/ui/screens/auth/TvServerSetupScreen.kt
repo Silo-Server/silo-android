@@ -52,9 +52,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -134,8 +136,14 @@ fun TvServerSetupScreen(
         pairingAdvertiser.start()
         onDispose { pairingAdvertiser.stop() }
     }
-    LaunchedEffect(isActivePairing) {
-        if (!isActivePairing) {
+    // Snapshot-backed: re-keys the claim when the viewer switches between
+    // pointer and key input.
+    val inputMode = LocalInputModeManager.current.inputMode
+    LaunchedEffect(isActivePairing, inputMode) {
+        // Pointer users click what they want — and in touch mode the claim
+        // could not land anyway. Re-run on mode flip so the D-pad always has
+        // somewhere to start.
+        if (!isActivePairing && inputMode != InputMode.Touch) {
             // Land on the phone-pairing card: companion setup is the
             // recommended path, so it gets first focus (product call
             // 2026-08-14, reversing the 2026-07-10 field-first default).
