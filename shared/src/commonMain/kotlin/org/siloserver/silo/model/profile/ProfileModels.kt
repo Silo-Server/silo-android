@@ -8,6 +8,19 @@ data class Profile(
     val id: String,
     val name: String,
     val avatar: String? = null,
+    /**
+     * Fetchable URL for [avatar], supplied by the server.
+     *
+     * For an `upload:` ref this is a **presigned** object-store URL that the
+     * client could never construct itself (it carries an AWS SigV4 signature)
+     * and that expires — the server currently signs for 900 seconds. It is
+     * therefore authoritative but perishable: fetch it, cache the *bytes* under
+     * a key derived from the stable [avatar] ref, and never persist the signed
+     * URL as if it were durable. See `ProfileAvatarSupport` on the Android side.
+     */
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    /** How [avatar] was produced — e.g. `upload`, `preset`, `emoji`, `initials`. */
+    @SerialName("avatar_source") val avatarSource: String? = null,
     @SerialName("is_primary") val isPrimary: Boolean = false,
     @SerialName("has_pin") val hasPin: Boolean = false,
     @SerialName("is_child") val isChild: Boolean = false,

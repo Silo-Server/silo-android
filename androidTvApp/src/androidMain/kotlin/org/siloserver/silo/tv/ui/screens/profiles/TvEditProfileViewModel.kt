@@ -23,6 +23,8 @@ data class TvEditProfileUiState(
     val profileId: String = "",
     val name: String = "",
     val selectedAvatar: String? = null,
+    /** Server-supplied URL for the loaded [selectedAvatar]; see TvProfileFormState. */
+    val selectedAvatarUrl: String? = null,
     val avatarStyleId: String = TvProfileAvatarPresets.DefaultStyleId,
     val selectedAvatarSeed: String? = null,
     val avatarBatch: Int = 0,
@@ -77,6 +79,7 @@ class TvEditProfileViewModel(
                                 isLoading = false,
                                 name = profile.name,
                                 selectedAvatar = profile.avatar,
+                                selectedAvatarUrl = profile.avatarUrl,
                                 avatarStyleId = preset?.styleId ?: TvProfileAvatarPresets.DefaultStyleId,
                                 selectedAvatarSeed = preset?.seed,
                                 isChild = profile.isChild,
@@ -113,7 +116,7 @@ class TvEditProfileViewModel(
     }
 
     fun onAvatarSelected(emoji: String) {
-        _uiState.update { it.copy(selectedAvatar = emoji) }
+        _uiState.update { it.copy(selectedAvatar = emoji, selectedAvatarUrl = null) }
     }
 
     fun onAvatarStyleSelected(styleId: String) {
@@ -121,6 +124,7 @@ class TvEditProfileViewModel(
             it.copy(
                 avatarStyleId = styleId,
                 selectedAvatar = null,
+                selectedAvatarUrl = null,
                 selectedAvatarSeed = null,
                 avatarBatch = 0,
             )
@@ -132,6 +136,7 @@ class TvEditProfileViewModel(
             it.copy(
                 avatarStyleId = preset.styleId,
                 selectedAvatar = preset.ref,
+                selectedAvatarUrl = null,
                 selectedAvatarSeed = preset.seed,
             )
         }
@@ -142,6 +147,7 @@ class TvEditProfileViewModel(
             it.copy(
                 avatarBatch = it.avatarBatch + 1,
                 selectedAvatar = null,
+                selectedAvatarUrl = null,
                 selectedAvatarSeed = null,
             )
         }

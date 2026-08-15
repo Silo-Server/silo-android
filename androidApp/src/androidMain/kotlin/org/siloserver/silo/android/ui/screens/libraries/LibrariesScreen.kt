@@ -102,6 +102,7 @@ import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
 import org.siloserver.silo.catalog.filter.CatalogFacet
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.android.ui.screens.home.FeaturedCarousel
@@ -1447,7 +1448,7 @@ private fun ChromeProfileMenu(
         ChromeIconButton(onClick = { menuExpanded = true }) {
             if (activeProfile != null) {
                 ProfileAvatar(
-                    avatar = activeProfile.avatar,
+                    avatar = activeProfile.avatarRef(),
                     name = activeProfile.name,
                     size = 36.dp,
                 )

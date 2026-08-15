@@ -3,7 +3,8 @@ package org.siloserver.silo.common.startup
 import android.content.Context
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
-import org.siloserver.silo.common.ui.components.resolveAvatarUrl
+import org.siloserver.silo.common.ui.components.avatarRef
+import org.siloserver.silo.common.ui.components.resolveProfileAvatar
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ApiResult
@@ -239,14 +240,22 @@ private suspend fun warmAvatarArtwork(
     serverUrl: String?,
 ) {
     val requests = profiles
-        .mapNotNull { profile ->
-            profile.avatar?.let { resolveAvatarUrl(serverUrl.orEmpty(), it) }
-        }
+        .mapNotNull { profile -> resolveProfileAvatar(serverUrl.orEmpty(), profile.avatarRef()) }
         .distinct()
-        .map { url ->
+        .map { resolved ->
             ImageRequest.Builder(context)
-                .data(url)
+                .data(resolved.url)
                 .size(profileAvatarWarmSizePx, profileAvatarWarmSizePx)
+                // Warm the SAME cache entry the grid will later read. Without
+                // the shared key an uploaded avatar would be filed under the
+                // presigned URL warmup happened to get, and the screen's own
+                // (re-signed) URL would miss it and download all over again.
+                .apply {
+                    resolved.cacheKey?.let {
+                        memoryCacheKey(it)
+                        diskCacheKey(it)
+                    }
+                }
                 .build()
         }
     warmImages(context, requests)

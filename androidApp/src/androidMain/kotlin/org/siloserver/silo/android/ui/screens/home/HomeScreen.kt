@@ -62,6 +62,7 @@ import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.pairing.CompanionPairingStatus
 import org.siloserver.silo.common.pairing.CompanionPairingTarget
 import org.siloserver.silo.common.ui.components.LocalImagePresentationDeferral
+import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.splitFeatured
@@ -482,7 +483,7 @@ private fun HomeProfileMenu(
             if (activeProfile != null) {
                 // iOS ProfileAvatarView size: 36.
                 ProfileAvatar(
-                    avatar = activeProfile.avatar,
+                    avatar = activeProfile.avatarRef(),
                     name = activeProfile.name,
                     size = 36.dp,
                 )

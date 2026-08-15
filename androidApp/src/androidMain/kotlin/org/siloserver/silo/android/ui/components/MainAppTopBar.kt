@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
+import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.profile.Profile
 
 // Height of the floating top bar's body, excluding the status-bar inset
@@ -115,7 +116,7 @@ fun MainAppTopBar(
                     ) {
                         if (activeProfile != null) {
                             ProfileAvatar(
-                                avatar = activeProfile.avatar,
+                                avatar = activeProfile.avatarRef(),
                                 name = activeProfile.name,
                                 size = 34.dp,
                             )

@@ -74,6 +74,12 @@ private fun decodeThumbhashPainter(hash: String): BitmapPainter? =
  *   with a coordinated transition can supply their shared timing token.
  * @param onSuccess Optional signal that the full image has decoded. Useful for
  *   keeping a semantic fallback visible until transparent artwork is ready.
+ * @param cacheKey Overrides the memory/disk cache key, which otherwise defaults
+ *   to [url]. Needed when the URL is not stable for the same bytes — a
+ *   presigned profile-avatar URL re-signs its query on every fetch, so keying
+ *   by the URL would miss the cache every time. Must still be unique per image.
+ * @param onError Optional signal that the fetch or decode failed, so the caller
+ *   can retire the URL and fall back rather than leave an empty box.
  */
 @Composable
 fun ThumbhashImage(
@@ -86,6 +92,8 @@ fun ThumbhashImage(
     decodeSizePx: Int? = null,
     crossfadeMillis: Int = 300,
     onSuccess: (() -> Unit)? = null,
+    cacheKey: String? = null,
+    onError: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val deferPresentationWhile = LocalImagePresentationDeferral.current
@@ -121,13 +129,19 @@ fun ThumbhashImage(
         return
     }
 
-    val model = remember(url, decodeSizePx, crossfadeMillis) {
+    val model = remember(url, decodeSizePx, crossfadeMillis, cacheKey) {
         ImageRequest.Builder(context)
             .data(url)
             .apply {
                 if (crossfadeMillis > 0) crossfade(crossfadeMillis) else crossfade(false)
             }
             .apply { decodeSizePx?.let { size(it) } }
+            .apply {
+                cacheKey?.let {
+                    memoryCacheKey(it)
+                    diskCacheKey(it)
+                }
+            }
             .build()
     }
 
@@ -138,6 +152,7 @@ fun ThumbhashImage(
             contentScale = contentScale,
             placeholder = placeholder,
             onSuccess = { onSuccess?.invoke() },
+            onError = { onError?.invoke() },
             modifier = when {
                 transparent || placeholder != null -> modifier
                 else -> modifier.background(DefaultPlaceholderColor)
@@ -197,6 +212,7 @@ fun ThumbhashImage(
                     presentFullImage()
                 }
             },
+            onError = { onError?.invoke() },
             modifier = Modifier
                 .fillMaxSize()
                 .drawWithContent {

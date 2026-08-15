@@ -59,10 +59,10 @@ import org.siloserver.silo.android.ui.components.aurora.AuroraBackdrop
 import org.siloserver.silo.android.ui.components.aurora.AuroraScrim
 import org.siloserver.silo.android.ui.components.aurora.AuroraVariant
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.common.ui.components.isImageAvatar
+import org.siloserver.silo.common.ui.components.avatarRef
+import org.siloserver.silo.common.ui.components.isEmojiAvatar
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
-import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
-import org.siloserver.silo.common.ui.components.resolveAvatarUrl
+import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.model.profile.Profile
 import androidx.compose.runtime.remember
 import org.koin.compose.viewmodel.koinViewModel
@@ -135,7 +135,7 @@ fun ProfileSelectionScreen(
     state.pinDialogProfile?.let { profile ->
         PINEntryDialog(
             profileName = profile.name,
-            profileAvatar = profile.avatar,
+            profileAvatar = profile.avatarRef(),
             isLoading = state.pinIsVerifying,
             error = state.pinError,
             onPinComplete = viewModel::onPinEntered,
@@ -337,12 +337,8 @@ private fun ProfileCard(
 @Composable
 private fun ProfileTileBody(profile: Profile, tint: Color) {
     val shape = RoundedCornerShape(TileCornerRadius)
-    val avatar = profile.avatar?.trim().orEmpty()
-    val serverUrl = rememberProfileServerUrl()
-    val resolvedAvatarUrl = remember(avatar, serverUrl) {
-        avatar.takeIf { it.isNotEmpty() && isImageAvatar(it) }
-            ?.let { resolveAvatarUrl(serverUrl, it) }
-    }
+    val avatar = profile.avatarRef()
+    val avatarImage = rememberProfileAvatarImage(avatar)
 
     Box(
         modifier = Modifier
@@ -362,9 +358,9 @@ private fun ProfileTileBody(profile: Profile, tint: Color) {
             ),
         contentAlignment = Alignment.Center,
     ) {
-        if (resolvedAvatarUrl != null) {
+        if (avatarImage != null) {
             ThumbhashImage(
-                url = resolvedAvatarUrl,
+                url = avatarImage.url,
                 thumbhash = null,
                 contentDescription = "${profile.name} avatar",
                 modifier = Modifier
@@ -372,15 +368,17 @@ private fun ProfileTileBody(profile: Profile, tint: Color) {
                     .clip(shape),
                 contentScale = ContentScale.Crop,
                 transparent = true,
+                cacheKey = avatarImage.cacheKey,
+                onError = avatarImage.onLoadFailed,
             )
-        } else if (avatar.isNotEmpty() && !isImageAvatar(avatar)) {
+        } else if (isEmojiAvatar(avatar)) {
             Text(
-                text = avatar,
+                text = avatar.avatar.orEmpty().trim(),
                 fontSize = TileEmojiSize.sp,
             )
         } else {
             Text(
-                text = profileAvatarDisplayText(avatar = profile.avatar, name = profile.name),
+                text = profileAvatarDisplayText(avatar = avatar, name = profile.name),
                 fontSize = TileInitialSize.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White.copy(alpha = 0.92f),

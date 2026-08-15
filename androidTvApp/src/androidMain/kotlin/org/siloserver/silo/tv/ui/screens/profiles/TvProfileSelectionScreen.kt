@@ -64,10 +64,10 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.common.ui.components.isImageAvatar
+import org.siloserver.silo.common.ui.components.avatarRef
+import org.siloserver.silo.common.ui.components.isEmojiAvatar
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
-import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
-import org.siloserver.silo.common.ui.components.resolveAvatarUrl
+import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.model.profile.Profile
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.withFrameNanos
@@ -295,7 +295,7 @@ fun TvProfileSelectionScreen(
     if (pinProfile != null) {
         TvPinEntryDialog(
             profileName = pinProfile.name,
-            profileAvatar = pinProfile.avatar,
+            profileAvatar = pinProfile.avatarRef(),
             errorMessage = state.pinError,
             isVerifying = state.isVerifyingPin,
             onPinEntered = viewModel::onPinEntered,
@@ -405,15 +405,11 @@ private fun TvProfileCard(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val serverUrl = rememberProfileServerUrl()
-    val avatarText = remember(profile.avatar, profile.name) {
-        profileAvatarDisplayText(profile.avatar, profile.name)
+    val avatar = profile.avatarRef()
+    val avatarText = remember(avatar, profile.name) {
+        profileAvatarDisplayText(avatar, profile.name)
     }
-    val avatarUrl = remember(profile.avatar, serverUrl) {
-        profile.avatar
-            ?.takeIf(::isImageAvatar)
-            ?.let { resolveAvatarUrl(serverUrl, it) }
-    }
+    val avatarImage = rememberProfileAvatarImage(avatar)
 
     val shape = RoundedCornerShape(ProfileTileCornerRadius)
     val cardFocus = siloCardDefaults(shape = shape)
@@ -455,14 +451,16 @@ private fun TvProfileCard(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                if (avatarUrl != null) {
+                if (avatarImage != null) {
                     ThumbhashImage(
-                        url = avatarUrl,
+                        url = avatarImage.url,
                         thumbhash = null,
                         contentDescription = profile.name,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
                         transparent = true,
+                        cacheKey = avatarImage.cacheKey,
+                        onError = avatarImage.onLoadFailed,
                     )
                     Box(
                         modifier = Modifier
@@ -477,7 +475,7 @@ private fun TvProfileCard(
                 } else {
                     Text(
                         text = avatarText,
-                        fontSize = if (!profile.avatar.isNullOrBlank() && !isImageAvatar(profile.avatar)) {
+                        fontSize = if (isEmojiAvatar(avatar)) {
                             70.sp
                         } else {
                             60.sp

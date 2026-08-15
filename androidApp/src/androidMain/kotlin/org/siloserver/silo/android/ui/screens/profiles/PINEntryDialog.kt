@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import org.siloserver.silo.android.ui.screens.auth.AuthColors
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 
 private const val PIN_LENGTH = 4
 
@@ -51,7 +52,7 @@ private const val PIN_LENGTH = 4
 @Composable
 fun PINEntryDialog(
     profileName: String,
-    profileAvatar: String?,
+    profileAvatar: ProfileAvatarRef,
     isLoading: Boolean,
     error: String?,
     onPinComplete: (String) -> Unit,

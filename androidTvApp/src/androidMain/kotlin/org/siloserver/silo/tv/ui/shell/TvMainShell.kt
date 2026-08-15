@@ -106,14 +106,15 @@ import androidx.tv.material3.Text
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import org.siloserver.silo.common.diagnostics.DiagnosticsFocusLogger
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.common.ui.components.isImageAvatar
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.network.ServerReachabilityStatus
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
+import org.siloserver.silo.common.ui.components.avatarRef
+import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
-import org.siloserver.silo.common.ui.components.resolveAvatarUrl
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.admin.shouldShowClientAdminSurface
 import org.siloserver.silo.model.auth.isActingAdmin
@@ -557,13 +558,12 @@ fun TvMainShell(
         } else {
             ""
         }
-        val avatarUrl = activeProfile?.avatar
-            ?.takeIf(::isImageAvatar)
-            ?.let { resolveAvatarUrl(activeServerEntry?.url.orEmpty(), it) }
         value = TvAccountState(
             displayName = activeProfile?.name ?: user?.username ?: "Profile",
-            avatar = activeProfile?.avatar,
-            avatarUrl = avatarUrl,
+            // Ref + presigned URL travel together; the shell re-fetches this on
+            // every profile switch / server change, which is also what hands the
+            // avatar a freshly signed URL.
+            avatar = activeProfile?.avatarRef() ?: ProfileAvatarRef.None,
             subtitle = subtitle,
             serverName = activeServerEntry?.displayName.orEmpty(),
             // Gate via the shared client-admin policy (same as the Settings
@@ -1929,6 +1929,7 @@ private fun ProfileDropdownHeader(accountState: TvAccountState) {
     val avatarText = remember(accountState.avatar, accountState.displayName) {
         profileAvatarDisplayText(accountState.avatar, accountState.displayName)
     }
+    val avatarImage = rememberProfileAvatarImage(accountState.avatar)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1946,14 +1947,16 @@ private fun ProfileDropdownHeader(accountState: TvAccountState) {
                 .background(Color.White.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center,
         ) {
-            if (accountState.avatarUrl != null) {
+            if (avatarImage != null) {
                 ThumbhashImage(
-                    url = accountState.avatarUrl,
+                    url = avatarImage.url,
                     thumbhash = null,
                     contentDescription = accountState.displayName,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                     transparent = true,
+                    cacheKey = avatarImage.cacheKey,
+                    onError = avatarImage.onLoadFailed,
                 )
             } else {
                 Text(

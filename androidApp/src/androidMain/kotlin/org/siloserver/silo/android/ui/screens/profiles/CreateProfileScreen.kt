@@ -50,6 +50,7 @@ import org.siloserver.silo.android.ui.screens.auth.AuthErrorBanner
 import org.siloserver.silo.android.ui.screens.auth.SiloButton
 import org.siloserver.silo.android.ui.screens.auth.SiloTextField
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 
 /**
  * Form for creating a new profile.
@@ -117,7 +118,7 @@ fun CreateProfileScreen(
 
             // Preview
             ProfileAvatar(
-                avatar = state.selectedAvatar,
+                avatar = ProfileAvatarRef(state.selectedAvatar),
                 name = state.name.ifBlank { "?" },
                 size = 80.dp,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
