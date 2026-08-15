@@ -49,7 +49,7 @@ import org.siloserver.silo.tv.ui.screens.servers.TvServerListScreen
 import org.siloserver.silo.tv.ui.screens.servers.TvServerSwitchDestination
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsPromptScreen
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsReportScreen
-import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSettingsScreen
+import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSurfacePresence
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewModel
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherLobbyScreen
 import org.siloserver.silo.tv.ui.screens.watchtogether.tvWatchTogetherDestination
@@ -71,8 +71,19 @@ import org.koin.core.qualifier.named
 
 private const val RETURN_TO_MANAGE_SERVERS_KEY = "return_to_manage_servers"
 
-internal fun tvShouldShowDiagnosticsPrompt(currentRoute: String?): Boolean =
-    currentRoute != TvRoute.Diagnostics.route && currentRoute != TvRoute.DiagnosticsReport.ROUTE
+/**
+ * The crash prompt must never cover a diagnostics surface — the viewer is
+ * already looking at the thing it is asking about, and it would sit on top of
+ * its own Review target.
+ *
+ * The report detail is still a route, so it is matched by name. The settings
+ * surface is no longer a route (it is a pane inside `Main`), so it reports its
+ * own presence instead: see [TvDiagnosticsSurfacePresence].
+ */
+internal fun tvShouldShowDiagnosticsPrompt(
+    currentRoute: String?,
+    diagnosticsSurfaceVisible: Boolean = false,
+): Boolean = currentRoute != TvRoute.DiagnosticsReport.ROUTE && !diagnosticsSurfaceVisible
 
 /**
  * Upper bound on re-navigations for one queued deep link. Arrival-gated
@@ -741,8 +752,10 @@ fun TvAppNavigation(
                     mainEntry.savedStateHandle[RETURN_TO_MANAGE_SERVERS_KEY] = true
                     navController.navigate(TvRoute.ServerList.route) { launchSingleTop = true }
                 },
-                onOpenDiagnostics = {
-                    navController.navigate(TvRoute.Diagnostics.route) { launchSingleTop = true }
+                onOpenDiagnosticsReport = { reportId ->
+                    navController.navigate(TvRoute.DiagnosticsReport(reportId).route) {
+                        launchSingleTop = true
+                    }
                 },
                 onOpenItemDetail = { contentId ->
                     navController.navigateToTvItemDetail(contentId)
@@ -840,17 +853,6 @@ fun TvAppNavigation(
                 },
                 onOpenPersonDetail = { personId ->
                     navController.navigate(TvRoute.PersonDetail(personId).route) {
-                        launchSingleTop = true
-                    }
-                },
-            )
-        }
-
-        composable(TvRoute.Diagnostics.route) {
-            TvDiagnosticsSettingsScreen(
-                onBack = { navController.popBackStack() },
-                onReportSelected = { reportId ->
-                    navController.navigate(TvRoute.DiagnosticsReport(reportId).route) {
                         launchSingleTop = true
                     }
                 },
@@ -1246,12 +1248,22 @@ fun TvAppNavigation(
         )
     }
     diagnosticsState.prompt
-        ?.takeIf { tvShouldShowDiagnosticsPrompt(currentEntry?.destination?.route) }
+        ?.takeIf {
+            tvShouldShowDiagnosticsPrompt(
+                currentRoute = currentEntry?.destination?.route,
+                diagnosticsSurfaceVisible = TvDiagnosticsSurfacePresence.isVisible,
+            )
+        }
         ?.let { prompt ->
         TvDiagnosticsPromptScreen(
             prompt = prompt,
+            // "Review" means review *this* report, so it lands on the report
+            // itself rather than on a list the viewer would then have to
+            // navigate. (The diagnostics list is now Settings › Diagnostics.)
             onReview = {
-                navController.navigate(TvRoute.Diagnostics.route) { launchSingleTop = true }
+                navController.navigate(TvRoute.DiagnosticsReport(prompt.reportId).route) {
+                    launchSingleTop = true
+                }
             },
             onSend = { diagnosticsViewModel.uploadPrompt(prompt) },
             onAlwaysSend = { diagnosticsViewModel.alwaysSendPrompt(prompt) },

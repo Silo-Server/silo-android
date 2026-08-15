@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.settings.diagnostics
 
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode
+import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsPrompt
 import org.siloserver.silo.common.diagnostics.DiagnosticsReportSummary
 import org.siloserver.silo.common.diagnostics.DiagnosticsUiState
@@ -15,146 +16,74 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TvDiagnosticsStateTest {
+    // -----------------------------------------------------------------------
+    // Destination
+    //
+    // These two choices existed in the UI but no D-pad press could reach them:
+    // a hand-rolled focus ladder above them consumed Up at its own first row,
+    // so focus could never leave the consent block upwards. The ladder is gone
+    // — both choices now live behind the shared settings picker sheet, which is
+    // reached by a normal focusable row.
+    // -----------------------------------------------------------------------
+
     @Test
-    fun unsuccessfulFocusRequestIsRetryable() {
+    fun bothDestinationsAreOfferedInHostedFirstOrder() {
         assertEquals(
-            TvDiagnosticsCrashFocusRequestResult.RETRY,
-            tvDiagnosticsCrashFocusRequestResult(Result.success(false)),
+            listOf(DiagnosticsDestinationKind.HOSTED, DiagnosticsDestinationKind.SELF_HOSTED),
+            TvDiagnosticsDestinations,
+        )
+        assertEquals("Silo Diagnostics", tvDiagnosticsDestinationTitle(DiagnosticsDestinationKind.HOSTED))
+        assertEquals("This Silo server", tvDiagnosticsDestinationTitle(DiagnosticsDestinationKind.SELF_HOSTED))
+    }
+
+    @Test
+    fun selfHostedDestinationReadsAsTheConnectedServer() {
+        assertEquals(
+            "Living Room Silo",
+            tvDiagnosticsDestinationName(DiagnosticsDestinationKind.SELF_HOSTED, "Living Room Silo"),
+        )
+        // An unnamed server must not render an empty value row.
+        assertEquals(
+            "This Silo server",
+            tvDiagnosticsDestinationName(DiagnosticsDestinationKind.SELF_HOSTED, ""),
+        )
+        assertEquals(
+            "Silo Diagnostics",
+            tvDiagnosticsDestinationName(DiagnosticsDestinationKind.HOSTED, "Living Room Silo"),
+        )
+    }
+
+    // -----------------------------------------------------------------------
+    // Consent
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun hostedCollectorDoesNotOfferAlways() {
+        assertEquals(
+            listOf(DiagnosticsConsentMode.ASK, DiagnosticsConsentMode.NEVER),
+            tvDiagnosticsConsentOptions(allowsAutomaticUpload = false),
+        )
+        assertEquals(
+            DiagnosticsConsentMode.entries,
+            tvDiagnosticsConsentOptions(allowsAutomaticUpload = true),
         )
     }
 
     @Test
-    fun detachedFocusRequesterFailureIsRetryable() {
+    fun storedAlwaysReadsAsAskWhereAutomaticUploadIsNotAllowed() {
+        // The row must not name a mode the picker cannot even show.
         assertEquals(
-            TvDiagnosticsCrashFocusRequestResult.RETRY,
-            tvDiagnosticsCrashFocusRequestResult(
-                Result.failure(IllegalStateException("Focus requester is detached")),
-            ),
-        )
-    }
-
-    @Test
-    fun selectedConsentIsTheInitialCrashReportFocus() {
-        assertEquals(
-            TvDiagnosticsCrashFocus.ALWAYS,
-            initialTvDiagnosticsCrashFocus(DiagnosticsConsentMode.ALWAYS),
-        )
-    }
-
-    @Test
-    fun hostedCollectorSkipsAlwaysInTheFocusGraph() {
-        assertEquals(
-            TvDiagnosticsCrashFocus.NEVER,
-            nextTvDiagnosticsCrashFocus(
-                current = TvDiagnosticsCrashFocus.ASK,
-                direction = TvDiagnosticsFocusDirection.Down,
-                debugLoggingEnabled = true,
-                allowAlways = false,
-            ),
+            DiagnosticsConsentMode.ASK,
+            tvDiagnosticsEffectiveConsent(DiagnosticsConsentMode.ALWAYS, allowsAutomaticUpload = false),
         )
         assertEquals(
-            TvDiagnosticsCrashFocus.ASK,
-            initialTvDiagnosticsCrashFocus(DiagnosticsConsentMode.ALWAYS, allowAlways = false),
+            DiagnosticsConsentMode.ALWAYS,
+            tvDiagnosticsEffectiveConsent(DiagnosticsConsentMode.ALWAYS, allowsAutomaticUpload = true),
         )
-    }
-
-    @Test
-    fun downTraversesConsentChoicesThenDebugLogging() {
         assertEquals(
-            TvDiagnosticsCrashFocus.DEBUG_LOGGING,
-            nextTvDiagnosticsCrashFocus(
-                current = TvDiagnosticsCrashFocus.NEVER,
-                direction = TvDiagnosticsFocusDirection.Down,
-                debugLoggingEnabled = true,
-            ),
+            DiagnosticsConsentMode.NEVER,
+            tvDiagnosticsEffectiveConsent(DiagnosticsConsentMode.NEVER, allowsAutomaticUpload = false),
         )
-    }
-
-    @Test
-    fun disabledDebugLoggingIsSkipped() {
-        assertEquals(
-            null,
-            nextTvDiagnosticsCrashFocus(
-                current = TvDiagnosticsCrashFocus.NEVER,
-                direction = TvDiagnosticsFocusDirection.Down,
-                debugLoggingEnabled = false,
-            ),
-        )
-    }
-
-    @Test
-    fun firstChoiceHoldsAtUpperBoundary() {
-        assertEquals(
-            TvDiagnosticsCrashFocus.ASK,
-            nextTvDiagnosticsCrashFocus(
-                current = TvDiagnosticsCrashFocus.ASK,
-                direction = TvDiagnosticsFocusDirection.Up,
-                debugLoggingEnabled = true,
-            ),
-        )
-    }
-
-    @Test
-    fun downFromLastEnabledChoiceFallsThroughToCaptureSection() {
-        assertEquals(
-            null,
-            nextTvDiagnosticsCrashFocus(
-                current = TvDiagnosticsCrashFocus.DEBUG_LOGGING,
-                direction = TvDiagnosticsFocusDirection.Down,
-                debugLoggingEnabled = true,
-            ),
-        )
-    }
-
-    @Test
-    fun aControlOutsideTheCurrentOrderHasNoNeighbour() {
-        // Debug logging is not in the order under consent NEVER. Treating the
-        // lookup miss as index 0 would send Down UPWARDS, to "Always send".
-        TvDiagnosticsFocusDirection.entries.forEach { direction ->
-            assertEquals(
-                null,
-                nextTvDiagnosticsCrashFocus(
-                    current = TvDiagnosticsCrashFocus.DEBUG_LOGGING,
-                    direction = direction,
-                    debugLoggingEnabled = false,
-                ),
-            )
-        }
-    }
-
-    @Test
-    fun repeatedDownIsConsumedWithoutMovingToAnotherLayer() {
-        assertEquals(
-            TvDiagnosticsCrashFocusKeyResult(target = null, consume = true),
-            tvDiagnosticsCrashFocusKeyResult(
-                current = TvDiagnosticsCrashFocus.DEBUG_LOGGING,
-                direction = TvDiagnosticsFocusDirection.Down,
-                debugLoggingEnabled = true,
-                isRepeat = true,
-            ),
-        )
-    }
-
-    @Test
-    fun freshDownFromLastEnabledChoiceStillFallsThrough() {
-        assertEquals(
-            TvDiagnosticsCrashFocusKeyResult(target = null, consume = false),
-            tvDiagnosticsCrashFocusKeyResult(
-                current = TvDiagnosticsCrashFocus.DEBUG_LOGGING,
-                direction = TvDiagnosticsFocusDirection.Down,
-                debugLoggingEnabled = true,
-                isRepeat = false,
-            ),
-        )
-    }
-
-    @Test
-    fun promptDefaultsToDontSend() {
-        val model = tvDiagnosticsPromptModel(
-            DiagnosticsPrompt("report-1", DiagnosticsReportType.CRASH, "2026-07-22T00:00:00Z"),
-        )
-
-        assertEquals(TvDiagnosticsPromptFocus.DONT_SEND, model.initialFocus)
     }
 
     @Test
@@ -168,10 +97,96 @@ class TvDiagnosticsStateTest {
     }
 
     @Test
-    fun reportRouteHidesPromptSoReviewIsVisible() {
+    fun reselectingAlwaysDoesNotReconfirm() {
+        assertFalse(
+            tvDiagnosticsConsentAction(
+                current = DiagnosticsConsentMode.ALWAYS,
+                requested = DiagnosticsConsentMode.ALWAYS,
+            ).requiresConfirmation,
+        )
+    }
+
+    // -----------------------------------------------------------------------
+    // Section content
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun pendingHeaderCarriesTheCountIncludingZero() {
+        assertEquals("Pending Reports (0)", tvDiagnosticsPendingHeader(0))
+        assertEquals("Pending Reports (3)", tvDiagnosticsPendingHeader(3))
+    }
+
+    @Test
+    fun wireReportTypesRenderAsTitles() {
+        assertEquals("Crash", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.CRASH))
+        assertEquals("Crash", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.NATIVE_CRASH))
+        assertEquals("Not Responding", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.ANR))
+        assertEquals("Not Responding", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.HANG))
+        assertEquals("Unclean Shutdown", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.ABNORMAL_EXIT))
+        assertEquals("Manual Report", tvDiagnosticsReportTypeTitle(DiagnosticsReportType.MANUAL))
+    }
+
+    @Test
+    fun statusRowUsesTheShortFeatureStateTitles() {
+        assertEquals("Available", tvDiagnosticsStatusTitle(DiagnosticsAvailabilityUi.AVAILABLE))
+        assertEquals("Disabled by server", tvDiagnosticsStatusTitle(DiagnosticsAvailabilityUi.DISABLED))
+        assertEquals("Offline", tvDiagnosticsStatusTitle(DiagnosticsAvailabilityUi.OFFLINE))
+    }
+
+    @Test
+    fun expiryCountsWholeDaysAndNamesAnElapsedReport() {
+        val day = 24L * 60L * 60L * 1000L
+        assertEquals("Expires in 30 days", tvDiagnosticsExpiryLabel(30 * day, 0))
+        assertEquals("Expires in 1 day", tvDiagnosticsExpiryLabel(day, 0))
+        // A part-day still has time left, so it must not read as expired.
+        assertEquals("Expires in 1 day", tvDiagnosticsExpiryLabel(day / 2, 0))
+        assertEquals("Expired", tvDiagnosticsExpiryLabel(0, day))
+    }
+
+    @Test
+    fun promptDefaultsToDontSend() {
+        val model = tvDiagnosticsPromptModel(
+            DiagnosticsPrompt("report-1", DiagnosticsReportType.CRASH, "2026-07-22T00:00:00Z"),
+        )
+
+        assertEquals(TvDiagnosticsPromptFocus.DONT_SEND, model.initialFocus)
+    }
+
+    // -----------------------------------------------------------------------
+    // Prompt suppression
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun promptStaysHiddenOnEveryDiagnosticsSurface() {
+        // The report detail is still a route.
         assertFalse(tvShouldShowDiagnosticsPrompt(TvRoute.DiagnosticsReport.ROUTE))
-        assertFalse(tvShouldShowDiagnosticsPrompt(TvRoute.Diagnostics.route))
+        // The settings surface is a pane inside Main, so it reports presence
+        // instead — without this the prompt would reopen over its own list.
+        assertFalse(
+            tvShouldShowDiagnosticsPrompt(
+                currentRoute = TvRoute.Main.route,
+                diagnosticsSurfaceVisible = true,
+            ),
+        )
         assertTrue(tvShouldShowDiagnosticsPrompt(TvRoute.Main.route))
+    }
+
+    @Test
+    fun surfacePresenceSurvivesOverlappingEnterAndLeave() {
+        // A category swap can compose the next pane before the old one is
+        // disposed; a plain boolean would latch false and let the prompt in.
+        TvDiagnosticsSurfacePresence.enter()
+        TvDiagnosticsSurfacePresence.enter()
+        TvDiagnosticsSurfacePresence.leave()
+        assertTrue(TvDiagnosticsSurfacePresence.isVisible)
+        TvDiagnosticsSurfacePresence.leave()
+        assertFalse(TvDiagnosticsSurfacePresence.isVisible)
+        // Never goes negative, so a stray dispose cannot wedge it visible.
+        TvDiagnosticsSurfacePresence.leave()
+        TvDiagnosticsSurfacePresence.enter()
+        assertTrue(TvDiagnosticsSurfacePresence.isVisible)
+        TvDiagnosticsSurfacePresence.leave()
+        assertFalse(TvDiagnosticsSurfacePresence.isVisible)
     }
 
     @Test

@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
@@ -47,6 +48,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -94,6 +96,7 @@ import org.siloserver.silo.model.settings.pointSize
 import org.siloserver.silo.tv.BuildConfig
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.ui.screens.player.TvSubtitleAppearanceOptions
+import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSettingsPane
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewModel
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
@@ -116,7 +119,7 @@ fun TvSettingsScreen(
     onSignedOut: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
     onNavigateHome: () -> Unit = {},
-    onNavigateToDiagnostics: () -> Unit = {},
+    onOpenDiagnosticsReport: (reportId: String) -> Unit = {},
     onInitialContentFocus: () -> Unit = {},
     initialManageServersFocus: Boolean = false,
     onManageServersReturnFocusConsumed: () -> Unit = {},
@@ -134,7 +137,9 @@ fun TvSettingsScreen(
     }
     val detailFocusRequester = remember { FocusRequester() }
 
-    var selectedCategory by remember {
+    // Saveable so a drill-out to the pending-report route and back returns to
+    // the category the viewer was reading, not to General.
+    var selectedCategory by rememberSaveable {
         mutableStateOf(
             if (initialManageServersFocus) TvSettingsCategory.Server else TvSettingsCategory.General,
         )
@@ -162,6 +167,16 @@ fun TvSettingsScreen(
         ) == TvObservedFocusResult.Focused
         if (initialManageServersFocus && focusRestored) onManageServersReturnFocusConsumed()
         if (focusRestored) onInitialContentFocus()
+    }
+
+    // tvOS parity: eligibility can flip while Settings is open (profile switch,
+    // server capability refresh). Falling back keeps the pane and the rail in
+    // agreement instead of stranding focus in a category that just vanished.
+    LaunchedEffect(diagnosticsState.profileEligible) {
+        selectedCategory = tvSettingsCategoryForEligibility(
+            selectedCategory,
+            diagnosticsState.profileEligible,
+        )
     }
 
     LaunchedEffect(detailFocusRequest) {
@@ -201,6 +216,7 @@ fun TvSettingsScreen(
     SettingsSplitLayout(
         state = state,
         diagnosticsState = diagnosticsState,
+        diagnosticsViewModel = diagnosticsViewModel,
         selectedCategory = selectedCategory,
         categoryFocusRequesters = categoryFocusRequesters,
         detailFocusRequester = detailFocusRequester,
@@ -213,7 +229,7 @@ fun TvSettingsScreen(
         },
         onSwitchProfile = viewModel::onSwitchProfile,
         onManageServers = onManageServers,
-        onNavigateToDiagnostics = onNavigateToDiagnostics,
+        onOpenDiagnosticsReport = onOpenDiagnosticsReport,
         onRequestSignOut = { showSignOutConfirm = true },
         onNavigateToAdmin = onNavigateToAdmin,
         onQualityPresetSelected = viewModel::onQualityPresetSelected,
@@ -262,7 +278,7 @@ fun TvSettingsScreen(
     }
 }
 
-private enum class TvSettingsCategory(
+internal enum class TvSettingsCategory(
     val title: String,
     val eyebrow: String,
     val blurb: String,
@@ -286,6 +302,15 @@ private enum class TvSettingsCategory(
         blurb = "Language, behavior, and subtitle appearance.",
         icon = Icons.Filled.ClosedCaption,
     ),
+    // tvOS `TVSettingsCategory` puts Diagnostics fourth, ahead of Server, under
+    // its own SUPPORT eyebrow. `stethoscope` has no Material twin; MonitorHeart
+    // is the nearest "check the patient" glyph.
+    Diagnostics(
+        title = "Diagnostics",
+        eyebrow = "SUPPORT",
+        blurb = "Review and send diagnostics to this Silo server.",
+        icon = Icons.Filled.MonitorHeart,
+    ),
     Server(
         title = "Server",
         eyebrow = "CONNECTION",
@@ -293,6 +318,30 @@ private enum class TvSettingsCategory(
         icon = Icons.Filled.Dns,
     ),
 }
+
+/**
+ * tvOS `visibleCategories`: Diagnostics is hidden outright for a profile that
+ * may not manage diagnostics (a kids profile, or a server that hides it).
+ */
+internal fun tvSettingsVisibleCategories(diagnosticsEligible: Boolean): List<TvSettingsCategory> =
+    TvSettingsCategory.entries.filter {
+        it != TvSettingsCategory.Diagnostics || diagnosticsEligible
+    }
+
+/**
+ * tvOS `.onChange(of: shouldShowSettings)`: if the category being shown stops
+ * being visible, fall back to General rather than leaving the pane rendering a
+ * category the rail no longer offers.
+ */
+internal fun tvSettingsCategoryForEligibility(
+    current: TvSettingsCategory,
+    diagnosticsEligible: Boolean,
+): TvSettingsCategory =
+    if (current in tvSettingsVisibleCategories(diagnosticsEligible)) {
+        current
+    } else {
+        TvSettingsCategory.General
+    }
 
 private val LocalSettingsDetailFocusReporter = staticCompositionLocalOf<(Boolean) -> Unit> { {} }
 
@@ -305,6 +354,7 @@ private val LocalSettingsDetailFocusReporter = staticCompositionLocalOf<(Boolean
 private fun SettingsSplitLayout(
     state: TvSettingsViewModel.UiState,
     diagnosticsState: org.siloserver.silo.common.diagnostics.DiagnosticsUiState,
+    diagnosticsViewModel: TvDiagnosticsViewModel,
     selectedCategory: TvSettingsCategory,
     categoryFocusRequesters: Map<TvSettingsCategory, FocusRequester>,
     detailFocusRequester: FocusRequester,
@@ -317,7 +367,7 @@ private fun SettingsSplitLayout(
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
     onSwitchProfile: () -> Unit,
     onManageServers: () -> Unit,
-    onNavigateToDiagnostics: () -> Unit,
+    onOpenDiagnosticsReport: (reportId: String) -> Unit,
     onRequestSignOut: () -> Unit,
     onNavigateToAdmin: () -> Unit,
     /** Receives a [QualityPresets] preset id. */
@@ -369,6 +419,7 @@ private fun SettingsSplitLayout(
     ) {
         SettingsRail(
             state = state,
+            visibleCategories = tvSettingsVisibleCategories(diagnosticsState.profileEligible),
             selectedCategory = selectedCategory,
             categoryFocusRequesters = categoryFocusRequesters,
             detailFocusRequester = detailFocusRequester,
@@ -386,12 +437,13 @@ private fun SettingsSplitLayout(
         SettingsDetailPane(
             state = state,
             diagnosticsState = diagnosticsState,
+            diagnosticsViewModel = diagnosticsViewModel,
             selectedCategory = selectedCategory,
             detailFocusRequester = detailFocusRequester,
             onDetailFocusChanged = onDetailFocusChanged,
             onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
             onManageServers = onManageServers,
-            onNavigateToDiagnostics = onNavigateToDiagnostics,
+            onOpenDiagnosticsReport = onOpenDiagnosticsReport,
             onQualityPresetSelected = onQualityPresetSelected,
             onAudioLanguageChanged = onAudioLanguageChanged,
             onAutoPlayNextChanged = onAutoPlayNextChanged,
@@ -444,6 +496,7 @@ private fun SettingsSplitLayout(
 @Composable
 private fun SettingsRail(
     state: TvSettingsViewModel.UiState,
+    visibleCategories: List<TvSettingsCategory>,
     selectedCategory: TvSettingsCategory,
     categoryFocusRequesters: Map<TvSettingsCategory, FocusRequester>,
     detailFocusRequester: FocusRequester,
@@ -475,7 +528,7 @@ private fun SettingsRail(
             onClick = onSwitchProfile,
         )
         Spacer(modifier = Modifier.height(9.dp))
-        TvSettingsCategory.entries.forEach { category ->
+        visibleCategories.forEach { category ->
             SettingsRailCategoryRow(
                 category = category,
                 selected = category == selectedCategory && !railActionHasFocus,
@@ -655,12 +708,13 @@ private fun SettingsRailActionRow(
 private fun SettingsDetailPane(
     state: TvSettingsViewModel.UiState,
     diagnosticsState: org.siloserver.silo.common.diagnostics.DiagnosticsUiState,
+    diagnosticsViewModel: TvDiagnosticsViewModel,
     selectedCategory: TvSettingsCategory,
     detailFocusRequester: FocusRequester,
     onDetailFocusChanged: (Boolean) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
     onManageServers: () -> Unit,
-    onNavigateToDiagnostics: () -> Unit,
+    onOpenDiagnosticsReport: (reportId: String) -> Unit,
     /** Receives a [QualityPresets] preset id. */
     onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
@@ -757,12 +811,25 @@ private fun SettingsDetailPane(
                 onSubtitleDeviceOverrideEnabledChanged = onSubtitleDeviceOverrideEnabledChanged,
             onSubtitleMatchesDeviceChanged = onSubtitleMatchesDeviceChanged,
             )
+            TvSettingsCategory.Diagnostics -> TvDiagnosticsSettingsPane(
+                state = diagnosticsState,
+                serverName = state.serverName,
+                firstFocusRequester = detailFocusRequester,
+                onSetDestination = diagnosticsViewModel::setDestination,
+                onSetConsent = diagnosticsViewModel::setConsent,
+                onSetDebugLogging = diagnosticsViewModel::setDebugLogging,
+                onCaptureNow = { diagnosticsViewModel.captureNow(onOpenDiagnosticsReport) },
+                onStartTimedCapture = diagnosticsViewModel::startTimedCapture,
+                onStopTimedCapture = {
+                    diagnosticsViewModel.stopTimedCapture(onOpenDiagnosticsReport)
+                },
+                onCancelTimedCapture = diagnosticsViewModel::cancelTimedCapture,
+                onReportSelected = onOpenDiagnosticsReport,
+            )
             TvSettingsCategory.Server -> TvServerSettingsPane(
                 state = state,
-                diagnosticsState = diagnosticsState,
                 firstFocusRequester = detailFocusRequester,
                 onManageServers = onManageServers,
-                onNavigateToDiagnostics = onNavigateToDiagnostics,
             )
         }
       }
@@ -1371,10 +1438,8 @@ private fun TvSettingsSubtitlePreview(appearance: SubtitleAppearance) {
 @Composable
 private fun TvServerSettingsPane(
     state: TvSettingsViewModel.UiState,
-    diagnosticsState: org.siloserver.silo.common.diagnostics.DiagnosticsUiState,
     firstFocusRequester: FocusRequester,
     onManageServers: () -> Unit,
-    onNavigateToDiagnostics: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1397,19 +1462,9 @@ private fun TvServerSettingsPane(
                 )
             }
         }
-        if (diagnosticsState.profileEligible) {
-            item {
-                SettingsGroup(title = "Diagnostics") {
-                    SettingsActionRow(
-                        label = "Diagnostics & Crash Reports",
-                        onClick = onNavigateToDiagnostics,
-                    )
-                    SettingsFooterText(
-                        text = "Review local reports, choose consent, and run a timed diagnostic capture.",
-                    )
-                }
-            }
-        }
+        // Diagnostics used to hang off this pane as a "Diagnostics & Crash
+        // Reports" drill-in to a route outside the shell. It is its own
+        // category now (tvOS parity), so nothing here points at it.
         item {
             SettingsGroup(title = "About") {
                 // Same "1.0.0 (5)" form as the phone About row, so a TV support
@@ -1612,7 +1667,7 @@ private fun TvSettingsPickerOptionRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvSettingsConfirmDialog(
+internal fun TvSettingsConfirmDialog(
     title: String,
     message: String,
     confirmLabel: String,
@@ -1725,7 +1780,7 @@ private fun DialogButton(
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsGroup(
+internal fun SettingsGroup(
     title: String,
     content: @Composable () -> Unit,
 ) {
@@ -1780,7 +1835,9 @@ private val RowShape = RoundedCornerShape(10.dp)
 private val RowMaxWidth = 520.dp
 // 42dp keeps the 16sp row text comfortably centered — audit 2026-07-20.
 private val RowHeight = 42.dp
-private val SettingsBackground = Color(0xFF17181A)
+
+/** The one settings-surface ground color. Shared so no screen re-hardcodes it. */
+internal val SettingsBackground = Color(0xFF17181A)
 
 // tvOS destructive row colors: bright red at rest on black, deeper red on the
 // focused white platter (TVSettingsRailRowStyle).
@@ -1868,12 +1925,13 @@ private fun SettingsAccountRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsValueRow(
+internal fun SettingsValueRow(
     label: String,
     value: String,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1889,7 +1947,8 @@ private fun SettingsValueRow(
         // widthIn must precede fillMaxWidth: as the outer constraint it caps
         // the row at RowMaxWidth, and fillMaxWidth then stretches to that cap
         // (the reverse order lets fillMaxWidth's fixed constraints win).
-        modifier = (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+        modifier = modifier
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .widthIn(max = RowMaxWidth)
             .fillMaxWidth()
             .height(RowHeight)
@@ -1929,12 +1988,13 @@ private fun SettingsValueRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsActionRow(
+internal fun SettingsActionRow(
     label: String,
     onClick: () -> Unit,
     destructive: Boolean = false,
     focusRequester: FocusRequester? = null,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1950,7 +2010,8 @@ private fun SettingsActionRow(
         // widthIn must precede fillMaxWidth: as the outer constraint it caps
         // the row at RowMaxWidth, and fillMaxWidth then stretches to that cap
         // (the reverse order lets fillMaxWidth's fixed constraints win).
-        modifier = (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+        modifier = modifier
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .widthIn(max = RowMaxWidth)
             .fillMaxWidth()
             .height(RowHeight)
@@ -1987,12 +2048,13 @@ private fun SettingsActionRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsToggleRow(
+internal fun SettingsToggleRow(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     focusRequester: FocusRequester? = null,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -2008,7 +2070,8 @@ private fun SettingsToggleRow(
         // widthIn must precede fillMaxWidth: as the outer constraint it caps
         // the row at RowMaxWidth, and fillMaxWidth then stretches to that cap
         // (the reverse order lets fillMaxWidth's fixed constraints win).
-        modifier = (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+        modifier = modifier
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .widthIn(max = RowMaxWidth)
             .fillMaxWidth()
             .height(RowHeight)
@@ -2041,7 +2104,7 @@ private fun SettingsToggleRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingsInfoRow(label: String, value: String, singleLine: Boolean = true) {
+internal fun SettingsInfoRow(label: String, value: String, singleLine: Boolean = true) {
     Row(
         modifier = Modifier
             .widthIn(max = RowMaxWidth)
@@ -2094,7 +2157,7 @@ private fun TvSettingsUpgradeRequiredNotice() {
 }
 
 @Composable
-private fun SettingsFooterText(text: String) {
+internal fun SettingsFooterText(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),

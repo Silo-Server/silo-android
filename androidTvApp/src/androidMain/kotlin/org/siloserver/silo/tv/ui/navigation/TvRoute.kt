@@ -50,7 +50,9 @@ sealed class TvRoute(val route: String) {
 
     // --- Main (drawer + nested nav: home, libraries, search, settings) ---
     data object Main : TvRoute("main")
-    data object Diagnostics : TvRoute("diagnostics")
+
+    // No "diagnostics" list route: the diagnostics settings surface is a
+    // category inside Settings (tvOS parity). Only the report detail is pushed.
     data class DiagnosticsReport(val reportId: String) :
         TvRoute("diagnostics/report/${reportId.routeEncode()}") {
         companion object {
