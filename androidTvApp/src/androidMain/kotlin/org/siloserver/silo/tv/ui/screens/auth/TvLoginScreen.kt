@@ -174,13 +174,21 @@ fun TvLoginScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxSize()
+                // The scroll is an IME/odd-surface safety valve only. At the
+                // reference TV surface (1920x1080 @ 320dpi = 960x540dp) BOTH
+                // branches must measure shorter than the viewport, because a
+                // scrolled column takes the brand mark and the SERVER/ACCOUNT/
+                // PROFILE step chrome off the top with no D-pad way back — the
+                // header is not focusable, so nothing can scroll it into view.
+                // The credential branch is budgeted for this in
+                // [CredentialFormCard]; keep it that way.
                 .verticalScroll(formScrollState)
                 // Vertical padding sits at the overscan floor (Spacing
-                // .safeAreaVertical) so the phone-first branch fits a 540dp
-                // viewport without scrolling; anything taller silently scrolls
-                // the header chrome off-screen with no D-pad way back.
+                // .safeAreaVertical) on both branches — dipping under it to buy
+                // room for a too-tall form just trades a scroll for a bezel
+                // clip on real hardware.
                 .padding(
-                    top = if (showPasswordForm) 20.dp else Spacing.safeAreaVertical,
+                    top = Spacing.safeAreaVertical,
                     bottom = Spacing.safeAreaVertical,
                     start = 54.dp,
                     end = 54.dp,
@@ -219,7 +227,11 @@ fun TvLoginScreen(
                     onCreateAccount = onCreateAccount,
                     onBackToPhone = { showPasswordForm = false },
                     onChangeServer = onChangeServer,
-                    modifier = Modifier.width(400.dp),
+                    // Wider than the old 400dp: the 960dp-wide surface has
+                    // horizontal room to spare, and spending it lets the three
+                    // secondary actions share one row instead of stacking
+                    // three deep down the 540dp axis.
+                    modifier = Modifier.width(520.dp),
                 )
             } else {
                 Row(
@@ -330,24 +342,26 @@ private fun CredentialFormCard(
     modifier: Modifier = Modifier,
 ) {
     var passwordVisible by remember { mutableStateOf(false) }
+    // Height budget, not taste: this card plus the screen chrome above it has
+    // to measure under 540dp (the 1920x1080 @ 320dpi TV surface) with the 24dp
+    // overscan inset intact, or the root Column starts scrolling and the header
+    // chrome leaves the screen unreachably. Current budget with the safe area,
+    // brand row, eyebrow and this card is ~462dp. Before you add a row here or
+    // relax a gap, spend that ~78dp of headroom knowingly.
     Column(
-        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         modifier = modifier
             .auroraPanel(20.dp)
-            .padding(horizontal = 24.dp, vertical = 18.dp),
+            .padding(horizontal = 24.dp, vertical = 14.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            Text(
-                text = "Sign in",
-                style = TvLoginTextStyles.Title,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Text(
-                text = "Use the account from your Silo server.",
-                style = TvLoginTextStyles.Body,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        // Title only — the "ACCOUNT" eyebrow above the card already carries the
+        // step context, so the explanatory subtitle was a line of height the
+        // 540dp budget could not afford.
+        Text(
+            text = "Sign in",
+            style = TvLoginTextStyles.Title,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
 
         // Username — a mono uppercase caption labels each field, matching the
         // server-setup card; the Material floating label is dropped so nothing
@@ -471,68 +485,83 @@ private fun CredentialFormCard(
             )
         }
 
-        // Surfaced only when the server reports public signup is enabled. The
-        // ServerSetup probe forwards that flag through the Login route so this
-        // affordance never appears on signup-disabled servers.
-        if (signupEnabled) {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                Text(
-                    text = "Don't have an account yet?",
-                    style = TvLoginTextStyles.Body,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        // Secondary actions on ONE row, not stacked. Three full-width ghost
+        // buttons cost ~120dp of the 540dp viewport; side by side they cost
+        // ~33dp, which is most of what buys this card its headroom. Create
+        // Account appears only when the server reports public signup is enabled
+        // (the ServerSetup probe forwards that flag through the Login route).
+        //
+        // Labels are sized to survive an equal-weight third of the 472dp card
+        // interior without wrapping — a wrapped label grows the row's height
+        // and puts the budget back over. "Phone sign-in" is the short form of
+        // "Back to phone sign-in" for that reason.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (signupEnabled) {
                 AuroraGhostButton(
                     label = "Create Account",
                     onClick = onCreateAccount,
-                    fontSize = 18.sp,
-                    horizontalPadding = 18.dp,
+                    fontSize = TvLoginSecondaryActionFontSize,
+                    horizontalPadding = TvLoginSecondaryActionPadding,
                     verticalPadding = 8.dp,
                     modifier = Modifier
                         .focusRequester(createAccountFocus)
                         .focusProperties {
+                            // Explicit chain, matching the primary button's:
+                            // the label Texts around these controls are not
+                            // focusable, so there is no default search to fall
+                            // back on if a link is left implicit.
                             up = signInFocus
-                            down = backToPhoneFocus
+                            right = backToPhoneFocus
                         }
-                        .fillMaxWidth(),
+                        .weight(1f),
                 )
             }
-        }
-
-        // Return to the phone-first surface (the QR pairing remains live), or
-        // bail out to server setup to point this TV at a different server —
-        // both affordances mirror tvOS TVLoginView. Stacked full-width like the
-        // QR pane so the long "Back to phone sign-in" label never wraps.
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            // Return to the phone-first surface (the QR pairing remains live).
             AuroraGhostButton(
-                label = "Back to phone sign-in",
+                label = "Phone sign-in",
                 onClick = onBackToPhone,
-                fontSize = 18.sp,
-                horizontalPadding = 18.dp,
+                fontSize = TvLoginSecondaryActionFontSize,
+                horizontalPadding = TvLoginSecondaryActionPadding,
                 verticalPadding = 8.dp,
                 modifier = Modifier
                     .focusRequester(backToPhoneFocus)
                     .focusProperties {
-                        up = if (signupEnabled) createAccountFocus else signInFocus
-                        down = changeServerFocus
+                        up = signInFocus
+                        if (signupEnabled) left = createAccountFocus
+                        right = changeServerFocus
                     }
-                    .fillMaxWidth(),
+                    .weight(1f),
             )
+            // Bail out to server setup to point this TV at a different server —
+            // mirrors tvOS TVLoginView.
             AuroraGhostButton(
                 label = "Change server",
                 onClick = onChangeServer,
-                fontSize = 18.sp,
-                horizontalPadding = 18.dp,
+                fontSize = TvLoginSecondaryActionFontSize,
+                horizontalPadding = TvLoginSecondaryActionPadding,
                 verticalPadding = 8.dp,
                 modifier = Modifier
                     .focusRequester(changeServerFocus)
                     .focusProperties {
-                        up = backToPhoneFocus
+                        up = signInFocus
+                        left = backToPhoneFocus
                     }
-                    .fillMaxWidth(),
+                    .weight(1f),
             )
         }
     }
 }
+
+/**
+ * Type and inset for the sign-in card's side-by-side secondary actions. Branch
+ * -local on purpose: [TvAuthFormDefaults] is shared with server setup, sign-up
+ * and first-run setup, and those screens have no reason to shrink.
+ */
+private val TvLoginSecondaryActionFontSize = 16.sp
+private val TvLoginSecondaryActionPadding = 10.dp
 
 private object TvLoginTextStyles {
     val Hero = TextStyle(
