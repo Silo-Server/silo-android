@@ -29,3 +29,32 @@ const val ADMIN_ROLE = "admin"
  */
 fun isActingAdmin(user: User?, profile: Profile?): Boolean =
     user?.role == ADMIN_ROLE && profile?.isPrimary == true
+
+/**
+ * Client mirror of the server's profile-management gate as seen from the
+ * profile picker ("Who's watching?").
+ *
+ * The server authorizes `POST /profiles`, `PUT /profiles/{id}` and
+ * `DELETE /profiles/{id}` when the caller's ACTIVE profile is the household
+ * primary, OR the account role is admin — both arms are mirrored here.
+ * Which arm can hold at the picker depends on how the app got there:
+ *
+ *  - Phone keeps the acting profile across "Switch Profile", so a non-admin
+ *    household owner acting as the primary profile is fully authorized at
+ *    the picker ([activeProfile] is the primary).
+ *  - TV clears the active profile before showing the picker (and at first
+ *    login nothing is selected on either platform), so [activeProfile] is
+ *    null there and only the admin arm can hold. A management call from any
+ *    other account with no acting profile can only end in a 403 ("Profile
+ *    management requires the primary profile or admin access").
+ *
+ * Creation has one exemption this predicate deliberately does not cover:
+ * bootstrap of the very FIRST profile (the server allows `POST /profiles`
+ * when the account has none). Call sites keep the add affordance visible for
+ * an empty profile list for that reason.
+ *
+ * Fails CLOSED when neither input resolves, like [isActingAdmin] — call
+ * sites must re-evaluate once they do (the pickers reload on every resume).
+ */
+fun canManageProfilesFromPicker(user: User?, activeProfile: Profile?): Boolean =
+    user?.role == ADMIN_ROLE || activeProfile?.isPrimary == true

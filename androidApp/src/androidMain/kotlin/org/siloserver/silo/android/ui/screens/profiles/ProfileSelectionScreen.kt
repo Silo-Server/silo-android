@@ -194,21 +194,31 @@ fun ProfileSelectionScreen(
                 ProfileFlow(
                     profiles = state.profiles,
                     isManageMode = state.isManageMode,
+                    // Server-gated: creating needs an admin account or the
+                    // acting profile to be the household primary (phone keeps
+                    // it across Switch Profile) — except the very first
+                    // profile, which the server lets any account bootstrap.
+                    showAddProfile = state.canAddProfile,
                     onProfileTap = { viewModel.onProfileTapped(it) },
                     onProfileEdit = { onNavigateToEditProfile(it.id) },
                     onProfileDelete = { viewModel.requestDeleteProfile(it) },
                     onAddProfile = onNavigateToCreateProfile,
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                // Edit/delete would 403 unless the account is admin or the
+                // acting profile is the primary, so only offer the mode to
+                // callers the server will authorize.
+                if (state.canManageProfiles) {
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                TextButton(onClick = viewModel::toggleManageMode) {
-                    Text(
-                        text = if (state.isManageMode) "Done" else "Manage Profiles",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = AuthColors.OnBackground,
-                    )
+                    TextButton(onClick = viewModel::toggleManageMode) {
+                        Text(
+                            text = if (state.isManageMode) "Done" else "Manage Profiles",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = AuthColors.OnBackground,
+                        )
+                    }
                 }
             }
         }
@@ -226,6 +236,7 @@ fun ProfileSelectionScreen(
 private fun ProfileFlow(
     profiles: List<Profile>,
     isManageMode: Boolean,
+    showAddProfile: Boolean,
     onProfileTap: (Profile) -> Unit,
     onProfileEdit: (Profile) -> Unit,
     onProfileDelete: (Profile) -> Unit,
@@ -246,7 +257,9 @@ private fun ProfileFlow(
                 onDelete = { onProfileDelete(profile) },
             )
         }
-        AddProfileCard(onClick = onAddProfile)
+        if (showAddProfile) {
+            AddProfileCard(onClick = onAddProfile)
+        }
     }
 }
 
