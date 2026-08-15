@@ -1784,7 +1784,7 @@ internal fun SettingsGroup(
     title: String,
     content: @Composable () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(SettingsGroupRowSpacing)) {
         Text(
             text = title.uppercase(),
             style = SettingsMonoHeaderStyle(),
@@ -1833,6 +1833,16 @@ private fun SettingsRowTextStyle() =
 
 private val RowShape = RoundedCornerShape(10.dp)
 private val RowMaxWidth = 520.dp
+
+/**
+ * Gap between the rows (and the trailing footer) inside one [SettingsGroup].
+ *
+ * Exposed rather than inlined because a pane that asks a focused row to pull
+ * its group's footer into view has to add this gap to the footer's measured
+ * height — see `TvDiagnosticsSettingsPane`. Two copies of the number would
+ * silently drift.
+ */
+internal val SettingsGroupRowSpacing = 6.dp
 // 42dp keeps the 16sp row text comfortably centered — audit 2026-07-20.
 private val RowHeight = 42.dp
 
@@ -2157,12 +2167,14 @@ private fun TvSettingsUpgradeRequiredNotice() {
 }
 
 @Composable
-internal fun SettingsFooterText(text: String) {
+internal fun SettingsFooterText(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-        modifier = Modifier
+        // The modifier goes outermost so a caller measuring this footer sees the
+        // laid-out block, not the text before its width cap and padding apply.
+        modifier = modifier
             .widthIn(max = RowMaxWidth)
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 2.dp),

@@ -13,6 +13,7 @@ import org.siloserver.silo.tv.ui.navigation.tvShouldShowDiagnosticsPrompt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TvDiagnosticsStateTest {
@@ -150,6 +151,60 @@ class TvDiagnosticsStateTest {
         )
 
         assertEquals(TvDiagnosticsPromptFocus.DONT_SEND, model.initialFocus)
+    }
+
+    // -----------------------------------------------------------------------
+    // Focus context
+    //
+    // Read-only rows are outside the focus graph, so the content at the ends of
+    // the pane is only ever seen because a focused row asked for it. Both
+    // halves of that — which row asks, and how much it may ask for — are pinned
+    // here: getting either wrong strands content with no D-pad press able to
+    // recover it, which is the defect this replaced.
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun theTopmostSectionWithAControlOwnsEntryFocus() {
+        // PENDING REPORTS sits above CAPTURE and only has focusable rows while
+        // reports are waiting, so entry focus moves between the two sections.
+        assertTrue(tvDiagnosticsPendingOwnsFirstFocus(1))
+        assertFalse(tvDiagnosticsPendingOwnsFirstFocus(0))
+    }
+
+    @Test
+    fun aContextRequestNeverOverhangsBothViewportEdges() {
+        // Compose reads a rect taller than the container as "already visible"
+        // and scrolls by nothing, so an unclamped ask is an ask for no scroll
+        // at all. Requesting a whole viewport on one side means "as much as
+        // fits", never more.
+        val reveal = tvListContextReveal(
+            nodeHeightPx = 84,
+            viewportPx = 768,
+            abovePx = 768,
+            belowPx = 0,
+        )
+
+        assertEquals(TvListContextReveal(topPx = -684f, bottomPx = 84f), reveal)
+        assertEquals(768f, reveal!!.bottomPx - reveal.topPx)
+    }
+
+    @Test
+    fun aFooterSizedRequestIsPassedThroughUntouched() {
+        assertEquals(
+            TvListContextReveal(topPx = 0f, bottomPx = 284f),
+            tvListContextReveal(nodeHeightPx = 84, viewportPx = 768, abovePx = 0, belowPx = 200),
+        )
+    }
+
+    @Test
+    fun anUnmeasuredOrEmptyRequestAsksForNothing() {
+        // Before first layout there is no rect worth sending, and a row with no
+        // context to reveal must not fight Compose's own bring-into-view.
+        assertNull(tvListContextReveal(nodeHeightPx = 0, viewportPx = 768, abovePx = 768, belowPx = 0))
+        assertNull(tvListContextReveal(nodeHeightPx = 84, viewportPx = 0, abovePx = 768, belowPx = 0))
+        assertNull(tvListContextReveal(nodeHeightPx = 84, viewportPx = 768, abovePx = 0, belowPx = 0))
+        // A row taller than the viewport has no room to spare for anything else.
+        assertNull(tvListContextReveal(nodeHeightPx = 800, viewportPx = 768, abovePx = 768, belowPx = 0))
     }
 
     // -----------------------------------------------------------------------

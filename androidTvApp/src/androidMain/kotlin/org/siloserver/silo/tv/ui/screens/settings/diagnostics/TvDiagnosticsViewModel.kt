@@ -144,11 +144,19 @@ internal fun tvDiagnosticsExpiryLabel(expiresAtEpochMs: Long, nowEpochMs: Long):
 }
 
 /**
- * The sent log is read-only, so it sits outside the focus graph and can only be
- * reached by scrolling past it. Keeping it shorter than a pane's worth of rows
- * is what makes that possible (tvOS caps at 10; see the ordering note in
- * TvDiagnosticsSettingsPane).
+ * The sent log is read-only, so it sits outside the focus graph, and it is the
+ * last thing in the pane — the only way it can be seen at all is the pane's
+ * last focus stop asking for it (`tvRevealsListContext`). That request cannot
+ * exceed one viewport, which turns the cap into arithmetic rather than taste.
+ *
+ * At the 960x540dp reference surface the pane's list viewport is ~384dp, the
+ * focused row is 42dp, and TIMED CAPTURE's footer plus the section gap take
+ * ~36dp, leaving ~306dp. A section header (~26dp), the trailing footer (~35dp)
+ * and the 6dp row gaps mean each entry costs 48dp: five entries land exactly on
+ * the limit with nothing to spare, four leave ~48dp of slack for a wider font
+ * scale or a footer that wraps one line further. tvOS caps at 10, but its pane
+ * is not sharing a 540dp canvas with a rail and a category header.
  */
-internal const val TvDiagnosticsSentHistoryLimit = 5
+internal const val TvDiagnosticsSentHistoryLimit = 4
 
 private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1000L
