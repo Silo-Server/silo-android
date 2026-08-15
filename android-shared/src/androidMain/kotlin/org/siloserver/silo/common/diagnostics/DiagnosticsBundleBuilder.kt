@@ -920,6 +920,24 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         val REDACTION_FAILURE_SENTINEL = "{\"redaction_failure\":true}\n".encodeToByteArray()
         val HOSTED_URL_SCHEMES = setOf("http", "https", "ws", "wss")
         val TEXT_ENTRIES = CANONICAL_ARCHIVE_ORDER.toSet() - MANIFEST_FILE - "crash/tombstone.pb"
+        // A privacy allowlist for the hosted destination, not a second copy of the
+        // emission registry in SiloLog. Every key here must also appear in the
+        // canonical attribute registry (vendored at
+        // shared/src/commonTest/resources/diagnostics/v1/attr-registry.json) with the
+        // same type — the hosted collector rejects the whole bundle on an
+        // unregistered key. The reverse does not hold. The canonical playback keys
+        // that describe one user's specific viewing session — session_id,
+        // play_method, reason, position_ms — plus network attempt are deliberately
+        // withheld from the third-party collector even though it registers them;
+        // they are server-issued identifiers, operator free text, a viewing
+        // position, and a retry counter the collector's privacy scanner treats as a
+        // correlation handle. Self-hosted uploads still carry them. This mirrors the
+        // Apple client's hostedAttributeRegistry decision key for key, so both
+        // clients withhold the same set for the same stated reason. Note that
+        // lifecycle "reason" is a client-side classification, not the playback
+        // operator free text, and stays allowed. See
+        // hostedBundleWithholdsPrivatePlaybackAndAttemptAttributesFromCollector for
+        // the pinned set.
         val HOSTED_V1_LOG_ATTRIBUTES = mapOf(
             "playback" to setOf(
                 "sink",
@@ -933,8 +951,22 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
                 "audio_underruns",
             ),
             "focus" to setOf("target", "action"),
-            "network" to setOf("method", "path", "status", "duration_ms"),
-            "lifecycle" to setOf("state"),
+            "network" to setOf(
+                "method",
+                "path",
+                "status",
+                "duration_ms",
+                "outcome",
+                "error_code",
+            ),
+            "lifecycle" to setOf(
+                "state",
+                "phase",
+                "duration_ms",
+                "outcome",
+                "reason",
+                "launch_type",
+            ),
             "crash" to setOf("fingerprint", "source"),
         )
         val APP_VERSION_VALUE = Regex("^[0-9]+(?:\\.[0-9]+){1,3}(?:[-+][A-Za-z0-9._-]+)?$")

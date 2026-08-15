@@ -222,6 +222,88 @@ class DiagnosticsBundleBuilderTest {
     }
 
     @Test
+    fun hostedBundleWithholdsPrivatePlaybackAndAttemptAttributesFromCollector() {
+        // Pins the hosted allowlist in both directions so it cannot silently drift
+        // from the Apple client's hostedAttributeRegistry. The playback keys that
+        // describe one user's viewing session (session_id, play_method, reason,
+        // position_ms) and the network retry counter (attempt) are withheld; the
+        // rest of the newly registered keys are safe and must survive. lifecycle
+        // "reason" is a client-side classification, not the playback operator free
+        // text, so it stays.
+        val playbackLine = """{"ts":"2026-08-14T00:00:00Z","run":"run-1","lvl":"I","cat":"playback","tag":"Player","msg":"stats","attrs":{"sink":"hdmi","fmt":"hevc","width":3840,"height":2160,"hdr_mode":"hdr10","bitrate_kbps":18000,"dropped_frames":3,"audio_underruns":1,"session_id":"private-server-playback-session","play_method":"transcode","reason":"operator-free-text-stop-reason","position_ms":42500}}"""
+        val networkLine = """{"ts":"2026-08-14T00:00:01Z","run":"run-1","lvl":"I","cat":"network","tag":"Http","msg":"request","attrs":{"method":"GET","path":"/health","status":503,"duration_ms":120,"outcome":"retried","error_code":"timeout","attempt":4}}"""
+        val lifecycleLine = """{"ts":"2026-08-14T00:00:02Z","run":"run-1","lvl":"I","cat":"lifecycle","tag":"Lifecycle","msg":"startup","attrs":{"state":"foreground","phase":"first_frame","duration_ms":400,"outcome":"succeeded","reason":"cold_start_classification","launch_type":"cold"}}"""
+        val artifacts = mapOf(
+            "device.json" to "{}".encodeToByteArray(),
+            "logs.jsonl" to "$playbackLine\n$networkLine\n$lifecycleLine\n".encodeToByteArray(),
+        )
+
+        val hostedLogs = untar(gunzip(builder.build(
+            report(artifacts, DiagnosticsDestinationKind.HOSTED),
+            redactionTokens = emptyList(),
+        ).bytes)).associateBy(TarEntry::name)
+            .getValue("logs.jsonl").bytes.decodeToString()
+        val hostedLines = hostedLogs.lineSequence().filter(String::isNotBlank)
+            .map { Json.parseToJsonElement(it).jsonObject }.toList()
+
+        assertEquals(
+            setOf(
+                "sink",
+                "fmt",
+                "width",
+                "height",
+                "hdr_mode",
+                "bitrate_kbps",
+                "dropped_frames",
+                "audio_underruns",
+            ),
+            hostedLines[0].getValue("attrs").jsonObject.keys,
+        )
+        assertEquals(
+            setOf("method", "path", "status", "duration_ms", "outcome", "error_code"),
+            hostedLines[1].getValue("attrs").jsonObject.keys,
+        )
+        assertEquals(
+            setOf("state", "phase", "duration_ms", "outcome", "reason", "launch_type"),
+            hostedLines[2].getValue("attrs").jsonObject.keys,
+        )
+        assertEquals(
+            "cold_start_classification",
+            hostedLines[2].getValue("attrs").jsonObject.getValue("reason").jsonPrimitive.content,
+        )
+        for (withheld in listOf(
+            "session_id",
+            "play_method",
+            "position_ms",
+            "attempt",
+            "private-server-playback-session",
+            "operator-free-text-stop-reason",
+        )) {
+            assertFalse(hostedLogs.contains(withheld), "hosted logs must not carry $withheld: $hostedLogs")
+        }
+
+        val selfHostedLogs = untar(gunzip(builder.build(
+            report(artifacts, DiagnosticsDestinationKind.SELF_HOSTED),
+            redactionTokens = emptyList(),
+        ).bytes)).associateBy(TarEntry::name)
+            .getValue("logs.jsonl").bytes.decodeToString()
+        for (retained in listOf(
+            "session_id",
+            "play_method",
+            "position_ms",
+            "attempt",
+            "private-server-playback-session",
+            "operator-free-text-stop-reason",
+            "cold_start_classification",
+        )) {
+            assertTrue(
+                selfHostedLogs.contains(retained),
+                "self-hosted logs must still carry $retained: $selfHostedLogs",
+            )
+        }
+    }
+
+    @Test
     fun hostedBundleNormalizesDecoderNamesOnLogsBreadcrumbsAndDeviceOnly() {
         val decoderFamilies = listOf(
             "c2.android.avc.decoder" to "android-c2-platform-decoder",
