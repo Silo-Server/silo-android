@@ -137,11 +137,15 @@ class PipActionCapabilityTest {
         ).readText()
 
         assertTrue(
-            source.contains(
-                "override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =\n" +
-                    "        mediaSession",
-            ),
+            source.contains("        return mediaSession\n    }"),
             "capability checks must not gate trusted MediaSession controllers",
+        )
+        assertTrue(
+            source.contains(
+                "if (isMediaButtonFallbackCaller(controllerInfo.connectionHints) && " +
+                    "hasNothingToServeNow()) {",
+            ),
+            "only the synthetic media-button caller may ever be refused a session",
         )
         assertTrue(
             source.contains("return super.onStartCommand(intent, flags, startId)"),
