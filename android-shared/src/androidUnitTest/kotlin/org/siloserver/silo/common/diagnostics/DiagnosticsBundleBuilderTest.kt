@@ -538,6 +538,146 @@ class DiagnosticsBundleBuilderTest {
     }
 
     @Test
+    fun hostedBundleRedactsUnsafeCrashStackLinesWithoutDiscardingSafeFrames() {
+        val rawStack = (
+            "java.lang.IllegalStateException: named failure\n" +
+                "    at a.b.c(SourceFile:42)\n" +
+                "    at org.siloserver.silo.Player.<init>(Player.kt:3)\n" +
+                "    at org.siloserver.silo.Player.play(Player.kt:9)\n" +
+                "diagnostic source content://private.authority/item/42\n"
+            )
+        val artifacts = mapOf(
+            "device.json" to "{}".encodeToByteArray(),
+            "crash/summary.json" to """{"kind":"jvm_crash"}""".encodeToByteArray(),
+            "crash/stack.txt" to rawStack.encodeToByteArray(),
+        )
+        fun crashReport(destinationKind: DiagnosticsDestinationKind) = report(artifacts, destinationKind).let { value ->
+            value.copy(
+                manifest = value.manifest.copy(
+                    report = value.manifest.report.copy(type = DiagnosticsReportType.CRASH),
+                    crash = DiagnosticsCrashInfo(
+                        summary = "java.lang.IllegalStateException",
+                        stackExcerpt = rawStack,
+                        thread = "main",
+                        foreground = true,
+                        source = DiagnosticsCrashSource.UEH,
+                        provenance = DiagnosticsCrashProvenance.PRE_FAILURE,
+                        occurredAt = "2026-08-11T00:00:00Z",
+                    ),
+                ),
+            )
+        }
+
+        val hosted = builder.build(
+            crashReport(DiagnosticsDestinationKind.HOSTED),
+            redactionTokens = emptyList(),
+        )
+        val hostedStack = hosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString()
+        val hostedExcerpt = Json.parseToJsonElement(hosted.manifestBytes.decodeToString()).jsonObject
+            .getValue("crash").jsonObject
+            .getValue("stack_excerpt").jsonPrimitive.content
+
+        listOf(hostedStack, hostedExcerpt).forEach { text ->
+            assertTrue(text.contains("java.lang.IllegalStateException: named failure"), text)
+            assertTrue(text.contains("at android-obfuscated-frame(SourceFile:42)"), text)
+            assertTrue(text.contains("at org.siloserver.silo.Player.<init>(Player.kt:3)"), text)
+            assertTrue(text.contains("at org.siloserver.silo.Player.play(Player.kt:9)"), text)
+            assertTrue(text.contains("[redacted_private_id]"), text)
+            assertFalse(text.contains("content://"), text)
+            assertFalse(text.contains("private.authority"), text)
+        }
+
+        val selfHosted = builder.build(
+            crashReport(DiagnosticsDestinationKind.SELF_HOSTED),
+            redactionTokens = emptyList(),
+        )
+        assertEquals(rawStack, selfHosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString())
+    }
+
+    @Test
+    fun hostedBundleStillFailsClosedWhenEveryCrashStackLineIsUnsafe() {
+        val artifacts = mapOf(
+            "device.json" to "{}".encodeToByteArray(),
+            "crash/stack.txt" to (
+                "content://private.authority/item/42\n" +
+                    "custom://another.private/source\n"
+                ).encodeToByteArray(),
+        )
+
+        val hosted = builder.build(
+            report(artifacts, DiagnosticsDestinationKind.HOSTED),
+            redactionTokens = emptyList(),
+        )
+
+        assertEquals(
+            "[redacted_private_id]",
+            hosted.sanitizedEntries.getValue("crash/stack.txt").decodeToString(),
+        )
+    }
+
+    @Test
+    fun hostedBundleDoesNotLeakPrivateContextSplitAcrossCrashStackLines() {
+        val privateHost = "private-deployment-host"
+        val artifacts = mapOf(
+            "device.json" to "{}".encodeToByteArray(),
+            "crash/stack.txt" to (
+                "server content://private.authority/item/42\n" +
+                    "$privateHost\n" +
+                    "    at org.siloserver.silo.Player.play(Player.kt:9)\n"
+                ).encodeToByteArray(),
+        )
+
+        val hosted = builder.build(
+            report(artifacts, DiagnosticsDestinationKind.HOSTED),
+            redactionTokens = emptyList(),
+        ).sanitizedEntries.getValue("crash/stack.txt").decodeToString()
+
+        assertTrue(hosted.contains("[redacted_private_id]"), hosted)
+        assertTrue(hosted.contains("at org.siloserver.silo.Player.play(Player.kt:9)"), hosted)
+        assertFalse(hosted.contains("content://"), hosted)
+        assertFalse(hosted.contains(privateHost), hosted)
+    }
+
+    @Test
+    fun hostedBundleBoundsCrashExcerptAfterUnsafeLineReplacementExpandsIt() {
+        val rawStack = buildString {
+            repeat(850) {
+                append("x://\n")
+                append("    at org.siloserver.silo.Player.play(Player.kt:9)\n")
+            }
+        }.take(8 * 1_024)
+        val artifacts = mapOf(
+            "device.json" to "{}".encodeToByteArray(),
+            "crash/stack.txt" to rawStack.encodeToByteArray(),
+        )
+        val report = report(artifacts, DiagnosticsDestinationKind.HOSTED).let { value ->
+            value.copy(
+                manifest = value.manifest.copy(
+                    report = value.manifest.report.copy(type = DiagnosticsReportType.CRASH),
+                    crash = DiagnosticsCrashInfo(
+                        summary = "java.lang.IllegalStateException",
+                        stackExcerpt = rawStack,
+                        thread = "main",
+                        foreground = true,
+                        source = DiagnosticsCrashSource.UEH,
+                        provenance = DiagnosticsCrashProvenance.PRE_FAILURE,
+                        occurredAt = "2026-08-11T00:00:00Z",
+                    ),
+                ),
+            )
+        }
+
+        val hosted = builder.build(report, redactionTokens = emptyList())
+        val hostedExcerpt = Json.parseToJsonElement(hosted.manifestBytes.decodeToString()).jsonObject
+            .getValue("crash").jsonObject
+            .getValue("stack_excerpt").jsonPrimitive.content
+
+        assertTrue(hostedExcerpt.encodeToByteArray().size <= 8 * 1_024, hostedExcerpt.length.toString())
+        assertTrue(hostedExcerpt.contains("at org.siloserver.silo.Player.play(Player.kt:9)"), hostedExcerpt)
+        assertFalse(hostedExcerpt.contains("x://"), hostedExcerpt)
+    }
+
+    @Test
     fun hostedBundleRedactsBareAndPrefixedPrivateIdsButPreservesCanonicalCaptureAndRunFields() {
         val captureId = "run_0123456789abcdef0123456789abcdef"
         val structuredRunId = "run_99999999999999999999999999999999"
