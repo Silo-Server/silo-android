@@ -29,6 +29,7 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.tv.MainTvActivity
+import org.siloserver.silo.tv.ui.components.TvSelectToShowImeHost
 import org.siloserver.silo.tv.ui.shell.TvMainShell
 import org.siloserver.silo.tv.ui.screens.audiobook.TvAudiobookPlayerScreen
 import org.siloserver.silo.tv.ui.screens.auth.TvLoginScreen
@@ -546,44 +547,55 @@ fun TvAppNavigation(
         popEnterTransition = { fadeIn(tween(TvPageFadeDurationMs)) },
         popExitTransition = { fadeOut(tween(TvPageFadeDurationMs)) },
     ) {
+        // The four auth screens are the select-to-show-IME flow: their fields
+        // must not raise the stock keyboard on focus, only on SELECT. The host
+        // wraps them here rather than around the whole NavHost because every
+        // other text surface (search, the text-entry dialogs) does want the
+        // keyboard the moment it is focused.
         composable(TvRoute.ServerSetup.route) {
-            TvServerSetupScreen(
-                onContinueToLogin = { signupEnabled ->
-                    navController.navigate(TvRoute.Login(signupEnabled).route) {
-                        popUpTo(TvRoute.ServerSetup.route) { inclusive = true }
-                    }
-                },
-                onNeedsSetup = { navController.navigate(TvRoute.Setup.route) },
-                // Companion pairing pushed a server AND completed device-login,
-                // so the TV is already authenticated — skip the login screen and
-                // go straight to profile selection (same as a successful sign-in).
-                onPairedSignIn = {
-                    navController.navigate(TvRoute.ProfileSelection.route) {
-                        popUpTo(TvRoute.ServerSetup.route) { inclusive = true }
-                    }
-                },
-            )
+            TvSelectToShowImeHost {
+                TvServerSetupScreen(
+                    onContinueToLogin = { signupEnabled ->
+                        navController.navigate(TvRoute.Login(signupEnabled).route) {
+                            popUpTo(TvRoute.ServerSetup.route) { inclusive = true }
+                        }
+                    },
+                    onNeedsSetup = { navController.navigate(TvRoute.Setup.route) },
+                    // Companion pairing pushed a server AND completed device-login,
+                    // so the TV is already authenticated — skip the login screen and
+                    // go straight to profile selection (same as a successful sign-in).
+                    onPairedSignIn = {
+                        navController.navigate(TvRoute.ProfileSelection.route) {
+                            popUpTo(TvRoute.ServerSetup.route) { inclusive = true }
+                        }
+                    },
+                )
+            }
         }
 
         composable(TvRoute.Setup.route) {
-            TvSetupScreen(
-                onSetupComplete = {
-                    navController.navigate(TvRoute.ProfileSelection.route) {
-                        popUpTo(0) { inclusive = true }
-                    }
-                },
-            )
+            TvSelectToShowImeHost {
+                TvSetupScreen(
+                    onSetupComplete = {
+                        navController.navigate(TvRoute.ProfileSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
+                )
+            }
         }
 
         composable(TvRoute.Signup.route) {
-            TvSignupScreen(
-                onSignupComplete = {
-                    navController.navigate(TvRoute.ProfileSelection.route) {
-                        popUpTo(0) { inclusive = true }
-                    }
-                },
-                onBackToLogin = { navController.popBackStack() },
-            )
+            TvSelectToShowImeHost {
+                TvSignupScreen(
+                    onSignupComplete = {
+                        navController.navigate(TvRoute.ProfileSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
+                    onBackToLogin = { navController.popBackStack() },
+                )
+            }
         }
 
         composable(TvRoute.ServerList.route) {
@@ -634,28 +646,30 @@ fun TvAppNavigation(
             ),
         ) { backStack ->
             val signupEnabled = backStack.arguments?.getBoolean(TvRoute.Login.ARG_SIGNUP_ENABLED) ?: false
-            TvLoginScreen(
-                signupEnabled = signupEnabled,
-                onCreateAccount = { navController.navigate(TvRoute.Signup.route) },
-                // Point this TV at a different server — drop Login so Back from
-                // setup can't return to a credential form with no server bound.
-                onChangeServer = {
-                    navController.navigate(TvRoute.ServerSetup.route) {
-                        popUpTo(TvRoute.Login.ROUTE) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                },
-                onLoginSuccess = {
-                    navController.navigate(TvRoute.ProfileSelection.route) {
-                        popUpTo(TvRoute.Login.ROUTE) { inclusive = true }
-                    }
-                    // Seed Watch Next now and schedule periodic refresh; the user has
-                    // just authenticated so /api/v1/home/sections will return their
-                    // actual continue-watching / next-up.
-                    watchNextSeeder.seedNow()
-                    watchNextSeeder.enqueuePeriodic()
-                },
-            )
+            TvSelectToShowImeHost {
+                TvLoginScreen(
+                    signupEnabled = signupEnabled,
+                    onCreateAccount = { navController.navigate(TvRoute.Signup.route) },
+                    // Point this TV at a different server — drop Login so Back from
+                    // setup can't return to a credential form with no server bound.
+                    onChangeServer = {
+                        navController.navigate(TvRoute.ServerSetup.route) {
+                            popUpTo(TvRoute.Login.ROUTE) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    onLoginSuccess = {
+                        navController.navigate(TvRoute.ProfileSelection.route) {
+                            popUpTo(TvRoute.Login.ROUTE) { inclusive = true }
+                        }
+                        // Seed Watch Next now and schedule periodic refresh; the user has
+                        // just authenticated so /api/v1/home/sections will return their
+                        // actual continue-watching / next-up.
+                        watchNextSeeder.seedNow()
+                        watchNextSeeder.enqueuePeriodic()
+                    },
+                )
+            }
         }
 
         composable(TvRoute.ProfileSelection.route) {

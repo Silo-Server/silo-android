@@ -8,13 +8,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusEvent
@@ -26,10 +31,13 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.PlatformTextInputInterceptor
+import kotlinx.coroutines.awaitCancellation
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
@@ -132,6 +140,97 @@ internal fun rememberTvImeAwareFormScrollState(): ScrollState {
 private val TvImeFieldBottomClearance = 32.dp
 
 /**
+ * Permission to raise the stock IME, shared by every field under one
+ * [TvSelectToShowImeHost].
+ *
+ * Held by a token rather than a bare flag so a field can only close the gate it
+ * opened: focus moving between two fields interleaves their events, and an
+ * unconditional close from the field being left would revoke a permission the
+ * arriving field had already been granted.
+ */
+@Stable
+internal class TvSelectToShowImeGate {
+    private var holder by mutableStateOf<Any?>(null)
+
+    /** True while some field has earned the keyboard with a completed SELECT. */
+    val isOpen: Boolean
+        get() = holder != null
+
+    fun open(token: Any) {
+        holder = token
+    }
+
+    fun close(token: Any) {
+        if (holder === token) holder = null
+    }
+}
+
+/**
+ * Absent by default so [Modifier.tvShowImeOnSelect] degrades to its reactive
+ * behavior when used outside a [TvSelectToShowImeHost] rather than crashing.
+ */
+internal val LocalTvSelectToShowImeGate = staticCompositionLocalOf<TvSelectToShowImeGate?> { null }
+
+/**
+ * Refuses the platform text-input session for the fields inside it until a
+ * SELECT asks for one, so the stock IME is never raised in the first place.
+ *
+ * [Modifier.tvShowImeOnSelect] can only hide the keyboard *after* the field has
+ * asked for it — the `value: String` `BasicTextField` under every Material
+ * `OutlinedTextField` requests the IME on focus unconditionally. Hiding after
+ * the fact is a race, and losing it is visible: device logcat on a Shield
+ * caught the keyboard on screen for 120–270ms before the hide landed, which is
+ * the flash this fixes (`SiloTvFocus`, 2026-08-15). Suppression therefore
+ * has to happen upstream of the request, which is what this does: block
+ * `startInputMethod` and the IMM is never told to start input at all, so there
+ * is nothing to flash.
+ *
+ * **The interceptor instance is the restart signal.** Once
+ * `interceptStartInputMethod` suspends in `awaitCancellation()`, flipping state
+ * the suspended body already read changes nothing — Compose re-reads the
+ * interceptor, not the body, and restarts the upstream session only when a
+ * *different* interceptor object is provided
+ * (`ChainedPlatformTextInputInterceptor` collects `snapshotFlow { interceptor }`
+ * with `collectLatest`). Hence `remember(allowIme)`, and hence the lambda
+ * capturing `allowIme` rather than reading the gate itself: both are needed for
+ * the gate flip to produce a new object, and without a new object SELECT would
+ * silently stop summoning the keyboard at all.
+ *
+ * Wrap the auth screens (see `TvAppNavigation`), not the whole app: fields that
+ * legitimately want the keyboard on focus — search, the text-entry dialogs —
+ * must stay outside.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+internal fun TvSelectToShowImeHost(content: @Composable () -> Unit) {
+    val gate = remember { TvSelectToShowImeGate() }
+    // Pointer users are exempt: a tap on a field is an explicit request to
+    // type, so the session is never withheld from them. Same product call the
+    // reactive half of the policy makes in tvShowImeOnSelect.
+    val touchMode = LocalInputModeManager.current.inputMode == InputMode.Touch
+    val allowIme = gate.isOpen || touchMode
+
+    val interceptor = remember(allowIme) {
+        PlatformTextInputInterceptor { request, nextHandler ->
+            if (allowIme) {
+                TvFocusLog.d { "ime: platform session allowed (select or touch)" }
+                nextHandler.startInputMethod(request)
+            } else {
+                TvFocusLog.d { "ime: platform session blocked (focus without select)" }
+                // Never delegating is what blocks the request. The session stays
+                // suspended here until the gate flips and this instance is
+                // replaced, at which point the branch above runs instead.
+                awaitCancellation()
+            }
+        }
+    }
+
+    CompositionLocalProvider(LocalTvSelectToShowImeGate provides gate) {
+        InterceptPlatformTextInput(interceptor = interceptor, content = content)
+    }
+}
+
+/**
  * Summons the stock IME on SELECT/ENTER instead of on focus, and routes
  * vertical D-pad out of the field so focus is never trapped in it.
  *
@@ -150,6 +249,12 @@ private val TvImeFieldBottomClearance = 32.dp
  * Set the option anyway at the call sites: it is free, and it starts working
  * on its own the day the fields move to the `TextFieldState` overload.
  *
+ * The actual suppression is [TvSelectToShowImeHost]'s, which refuses the
+ * platform input session outright; this modifier only tells it which field has
+ * earned the keyboard. The reactive `hide()` below stays as a safety net for
+ * fields composed outside a host, where the gate is null — after the host
+ * landed it should never again see `visible=true` in the log.
+ *
  * Pointer users are exempt from the suppression — a click on a field is an
  * explicit request to type. Auth-flow field idiom (product call 2026-08-14).
  */
@@ -166,10 +271,22 @@ internal fun Modifier.tvShowImeOnSelect(): Modifier {
     // pairing; putting it here means every field using this gets it.
     TvHideStockImeOnDispose()
 
+    // Null when this field is composed outside a TvSelectToShowImeHost; the
+    // reactive suppression below then carries the policy on its own.
+    val imeGate = LocalTvSelectToShowImeGate.current
+    // Identifies this field to the shared gate for the lifetime of the node.
+    val gateToken = remember { Any() }
+
     var hasFocus by remember { mutableStateOf(false) }
     // True once SELECT summoned the keyboard on purpose, so the arrival
     // suppression below leaves it alone until focus moves on.
     var imeRequested by remember { mutableStateOf(false) }
+
+    // Leaving composition with the gate still open would hand the next screen's
+    // fields a keyboard they never asked for.
+    DisposableEffect(imeGate, gateToken) {
+        onDispose { imeGate?.close(gateToken) }
+    }
 
     // Take back down whatever the field raised on a focus arrival this
     // modifier did not ask for. Keyed on the IME insets as well as on focus so
@@ -192,7 +309,10 @@ internal fun Modifier.tvShowImeOnSelect(): Modifier {
     return this
         .onFocusEvent { focusState ->
             val focused = focusState.isFocused
-            if (!focused) imeRequested = false
+            if (!focused) {
+                imeRequested = false
+                imeGate?.close(gateToken)
+            }
             hasFocus = focused
         }
         .onPreviewKeyEvent { event ->
@@ -208,6 +328,14 @@ internal fun Modifier.tvShowImeOnSelect(): Modifier {
                     if (sawKeyDown.compareAndSet(true, false)) {
                         TvFocusLog.d { "field: select completed on field -> showing IME" }
                         imeRequested = true
+                        // Opening the gate is what actually raises the keyboard
+                        // under a host: it swaps the interceptor, which restarts
+                        // the field's pending session and lets it through — the
+                        // delegated startInput shows the IME by itself. The
+                        // show() below still matters for the re-press case (the
+                        // gate is already open, so nothing recomposes) and for
+                        // fields composed outside a host.
+                        imeGate?.open(gateToken)
                         keyboardController?.show()
                     } else {
                         TvFocusLog.d { "field: stray select KeyUp suppressed (no matching KeyDown)" }
