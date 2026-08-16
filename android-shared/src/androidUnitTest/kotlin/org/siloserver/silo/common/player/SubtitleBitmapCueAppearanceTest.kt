@@ -273,4 +273,86 @@ class SubtitleBitmapCueAppearanceTest {
         val group = CueGroup(listOf(Cue.Builder().setText("Hello").build()), 0L)
         assertSame(group, remapBitmapCues(group, appearance(), 0f))
     }
+
+    /**
+     * The text counterpart: `bottomPaddingFraction` — how the Position preset is
+     * applied to text — is read only when the cue carries no line of its own, so
+     * the parser's default placement has to be cleared or the preset is a no-op.
+     */
+    @Test
+    fun theParserDefaultPlacementIsClearedSoThePositionPresetApplies() {
+        val cue = Cue.Builder()
+            .setText("Hello")
+            .setLine(-1f, Cue.LINE_TYPE_NUMBER)
+            .build()
+
+        val remapped = remapDefaultTextCuePlacement(cue)
+
+        assertEquals(Cue.DIMEN_UNSET, remapped.line)
+        assertEquals(Cue.TYPE_UNSET, remapped.lineType)
+        assertEquals("Hello", remapped.text.toString())
+    }
+
+    @Test
+    fun anAuthoredFractionPlacementIsLeftAlone() {
+        val cue = Cue.Builder()
+            .setText("Hello")
+            .setLine(0.1f, Cue.LINE_TYPE_FRACTION)
+            .build()
+
+        assertSame(cue, remapDefaultTextCuePlacement(cue))
+    }
+
+    @Test
+    fun anAuthoredLineNumberIsLeftAlone() {
+        val cue = Cue.Builder()
+            .setText("Hello")
+            .setLine(2f, Cue.LINE_TYPE_NUMBER)
+            .build()
+
+        assertSame(cue, remapDefaultTextCuePlacement(cue))
+    }
+
+    @Test
+    fun aDefaultLineWithItsOwnAnchorIsLeftAlone() {
+        val cue = Cue.Builder()
+            .setText("Hello")
+            .setLine(-1f, Cue.LINE_TYPE_NUMBER)
+            .setLineAnchor(Cue.ANCHOR_TYPE_END)
+            .build()
+
+        assertSame(cue, remapDefaultTextCuePlacement(cue))
+    }
+
+    @Test
+    fun bitmapCuesKeepTheirPlacement() {
+        val cue = pgsCue(line = -1f, lineType = Cue.LINE_TYPE_NUMBER)
+
+        assertSame(cue, remapDefaultTextCuePlacement(cue))
+    }
+
+    @Test
+    fun theTextPlacementGroupWrapperPreservesTimeAndUntouchedCues() {
+        val authored = Cue.Builder().setText("A").setLine(0.2f, Cue.LINE_TYPE_FRACTION).build()
+        val group = CueGroup(
+            listOf(Cue.Builder().setText("B").setLine(-1f, Cue.LINE_TYPE_NUMBER).build(), authored),
+            /* presentationTimeUs= */ 99L,
+        )
+
+        val remapped = remapDefaultTextCuePlacements(group)
+
+        assertEquals(99L, remapped.presentationTimeUs)
+        assertEquals(Cue.DIMEN_UNSET, remapped.cues[0].line)
+        assertSame(authored, remapped.cues[1])
+    }
+
+    @Test
+    fun aTextPlacementGroupWithNothingToChangeIsReturnedByIdentity() {
+        val group = CueGroup(
+            listOf(Cue.Builder().setText("A").setLine(0.2f, Cue.LINE_TYPE_FRACTION).build()),
+            0L,
+        )
+
+        assertSame(group, remapDefaultTextCuePlacements(group))
+    }
 }

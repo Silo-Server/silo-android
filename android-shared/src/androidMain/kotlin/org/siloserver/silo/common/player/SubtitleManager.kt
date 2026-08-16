@@ -595,6 +595,42 @@ internal fun neutralizeFullWidthCueSize(cue: Cue): Cue {
 }
 
 /**
+ * Clears the parser's DEFAULT vertical placement from a text cue so the user's
+ * Position preset can take effect.
+ *
+ * The preset is applied as `SubtitleView.setBottomPaddingFraction`, and Media3
+ * 1.10.1's `SubtitlePainter.setupTextLayout` only consults that fraction when
+ * `cue.line == DIMEN_UNSET` — any explicit line wins outright. Every cue from a
+ * streamed SRT/VTT sidecar carries WebVTT's default "auto" placement, which the
+ * parser materializes as `line = -1` with `LINE_TYPE_NUMBER` ("one line up from
+ * the bottom"), so Bottom / Lower Third / Top were all drawn in the same place.
+ *
+ * Only that exact default is cleared. An authored placement — a fraction line,
+ * any other line number — is the author positioning the caption around the
+ * picture and is left alone, as are bitmap cues (see [remapBitmapCue]) and ASS,
+ * which libass renders and never reaches this path.
+ */
+internal fun remapDefaultTextCuePlacement(cue: Cue): Cue {
+    if (cue.bitmap != null || cue.text == null) return cue
+    if (cue.lineType != Cue.LINE_TYPE_NUMBER || cue.line != -1f) return cue
+    // The parser emits the default with no meaningful line anchor; a cue that
+    // anchors its line elsewhere is expressing a real placement.
+    if (cue.lineAnchor != Cue.TYPE_UNSET && cue.lineAnchor != Cue.ANCHOR_TYPE_START) return cue
+    return cue.buildUpon().setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET).build()
+}
+
+internal fun remapDefaultTextCuePlacements(cueGroup: CueGroup): CueGroup {
+    if (cueGroup.cues.isEmpty()) return cueGroup
+    var changed = false
+    val mapped = cueGroup.cues.map { original ->
+        val next = remapDefaultTextCuePlacement(original)
+        if (next !== original) changed = true
+        next
+    }
+    return if (changed) CueGroup(mapped, cueGroup.presentationTimeUs) else cueGroup
+}
+
+/**
  * Vertical placement of the caption block, expressed the way Media3 wants it:
  * the fraction of the subtitle surface left free BELOW the caption.
  *
@@ -971,7 +1007,7 @@ private class SubtitleVideoRectSync(
         lastCueGroup = cueGroup
         val subtitleView = playerView.subtitleView ?: return
         val cues = remapBitmapCues(
-            cueGroup = neutralizeFullWidthCueSizes(cueGroup),
+            cueGroup = remapDefaultTextCuePlacements(neutralizeFullWidthCueSizes(cueGroup)),
             appearance = appearance,
             titleSafeFraction = titleSafeFraction,
         ).cues
