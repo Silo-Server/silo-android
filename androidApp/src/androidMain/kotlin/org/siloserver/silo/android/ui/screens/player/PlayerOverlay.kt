@@ -575,6 +575,8 @@ fun PlayerOverlay(
         onSetPlaybackSpeed = viewModel::onSetPlaybackSpeed,
         videoGravity = videoGravity,
         onSetVideoGravity = viewModel::onSetVideoGravity,
+        autoFillLetterboxed = viewModel.autoFillLetterboxedVideo.collectAsState().value,
+        onSetAutoFillLetterboxed = viewModel::onSetAutoFillLetterboxedVideo,
         autoSkipIntroEnabled = viewModel.autoSkipIntroEnabled.collectAsState().value,
         onSetAutoSkipIntro = viewModel::onSetAutoSkipIntro,
         autoPlayNextEnabled = viewModel.autoPlayNextEnabled.collectAsState().value,

@@ -221,6 +221,11 @@ fun PlayerScreen(
     var dvSanitizerReported by remember { mutableStateOf(false) }
     var pictureInPictureVideoWidth by remember { mutableStateOf(16) }
     var pictureInPictureVideoHeight by remember { mutableStateOf(9) }
+    // Display aspect of the decoded frame — coded size corrected for anamorphic
+    // pixels, which is what AspectRatioFrameLayout actually fits. Deliberately 0
+    // until the first video-size callback, so the letterbox probe measures
+    // against the real frame rather than the 16:9 placeholder above.
+    var codedVideoAspect by remember { mutableFloatStateOf(0f) }
     var pictureInPictureSourceRect by remember { mutableStateOf<Rect?>(null) }
     var playerRootBounds by remember { mutableStateOf<Rect?>(null) }
     var fastForwardHoldActive by remember { mutableStateOf(false) }
@@ -904,6 +909,8 @@ fun PlayerScreen(
                     if (size.width > 0 && size.height > 0) {
                         pictureInPictureVideoWidth = size.width
                         pictureInPictureVideoHeight = size.height
+                        val pixelAspect = size.pixelWidthHeightRatio.takeIf { it > 0f } ?: 1f
+                        codedVideoAspect = size.width.toFloat() / size.height * pixelAspect
                         // Pull frame rate off the selected video track; phone
                         // panels with multiple refresh rates switch to
                         // content-matching (seamless only — see ExoPlayer's
@@ -1219,12 +1226,33 @@ fun PlayerScreen(
         } else {
             val controller = mediaController
             val videoGravity by viewModel.videoGravity.collectAsState()
-            val resizeMode = when (videoGravity) {
-                "fill" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+            var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+            val autoFillLetterboxed by viewModel.autoFillLetterboxedVideo.collectAsState()
+            // Scope films ship as a 2.39:1 image encoded inside a 16:9 frame, so
+            // FIT fits the black bars too and pillarboxes what is already wider
+            // than the display. This measures the encoded matte and only reports
+            // true once ZOOM's clip provably lands inside it — see
+            // LetterboxMatte.kt. Off wherever the video is not what is on screen,
+            // and off for the gravities where the user has already decided.
+            val letterboxFillEngaged = rememberLetterboxFillEngaged(
+                playerView = playerViewRef,
+                enabled = autoFillLetterboxed &&
+                    videoGravity != "fill" &&
+                    videoGravity != "stretch" &&
+                    !isInPictureInPictureMode &&
+                    !castState.isConnected &&
+                    !useTabletopPlayerLayout,
+                videoAspect = codedVideoAspect,
+                mediaKey = uiState.mediaMountGeneration,
+            )
+            val resizeMode = when {
+                videoGravity == "fill" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                videoGravity == "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                // Measured, not assumed: the clip lands entirely in encoded
+                // black, so this fills the width without losing any picture.
+                letterboxFillEngaged -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             }
-            var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
             val subtitleAppearance by viewModel.subtitleAppearance.collectAsState()
 
             // Re-apply user subtitle styling whenever the PlayerView mounts or the

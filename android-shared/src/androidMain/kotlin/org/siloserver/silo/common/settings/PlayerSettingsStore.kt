@@ -3,6 +3,7 @@ package org.siloserver.silo.common.settings
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import org.siloserver.silo.player.DolbyVisionPolicy
 
 interface PlayerSettingsStore {
@@ -15,6 +16,19 @@ interface PlayerSettingsStore {
     val dolbyVisionEnabledFlow: Flow<Boolean>
     val matchContentFrameRateFlow: Flow<Boolean>
     val pictureInPictureEnabledFlow: Flow<Boolean>
+
+    /**
+     * Whether to expand video whose black bars are encoded into the picture
+     * (a 2.39:1 film inside a 16:9 frame) so the image fills the screen.
+     *
+     * Defaulted here rather than declared abstract so the existing fakes in the
+     * player tests keep compiling; the real store overrides it. Default off —
+     * it is decided from measured frames, and the safe answer when nothing has
+     * been measured is today's untouched fit.
+     */
+    val autoFillLetterboxedVideoFlow: Flow<Boolean>
+        get() = flowOf(false)
+
     /** Per-profile preference for restricting downloads to unmetered (Wi-Fi)
      *  networks. Default true. Consumed by [DownloadEnqueuer] at enqueue
      *  time to set the WorkManager NetworkType constraint. */
@@ -78,6 +92,7 @@ interface PlayerSettingsStore {
     suspend fun setDolbyVisionEnabled(value: Boolean)
     suspend fun setMatchContentFrameRate(value: Boolean)
     suspend fun setPictureInPictureEnabled(value: Boolean)
+    suspend fun setAutoFillLetterboxedVideo(value: Boolean) = Unit
     suspend fun setDownloadsWifiOnly(value: Boolean)
     suspend fun setKeepWatchedDownloads(value: Boolean)
     suspend fun setDefaultDownloadQuality(value: String)

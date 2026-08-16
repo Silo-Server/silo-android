@@ -561,6 +561,11 @@ class PlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1.0)
     val videoGravity: StateFlow<String> = playerSettingsStore.videoGravityFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, "fit")
+    /** Modulates "fit" only: expand past a letterbox that is encoded into the
+     *  picture. Never changes what [videoGravity] itself stores or means. */
+    val autoFillLetterboxedVideo: StateFlow<Boolean> =
+        playerSettingsStore.autoFillLetterboxedVideoFlow
+            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     // iOS parity (PlayerOrientationCoordinator): the phone player defaults to
     // landscape-locked; "rotateFreely" is the persisted opt-out written by the
     // HUD lock toggle. Any other stored value (including the legacy "auto"
@@ -3883,6 +3888,10 @@ class PlayerViewModel(
 
     fun onSetVideoGravity(value: String) {
         viewModelScope.launch { playerSettingsStore.setVideoGravity(value) }
+    }
+
+    fun onSetAutoFillLetterboxedVideo(value: Boolean) {
+        viewModelScope.launch { playerSettingsStore.setAutoFillLetterboxedVideo(value) }
     }
 
     /** HUD lock toggle — persisted like iOS's `setPlayerOrientationMode`. */

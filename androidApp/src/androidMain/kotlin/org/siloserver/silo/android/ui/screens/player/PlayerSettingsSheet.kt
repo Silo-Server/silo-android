@@ -86,6 +86,8 @@ fun PlayerSettingsSheet(
     onSetPlaybackSpeed: (Double) -> Unit,
     videoGravity: String,
     onSetVideoGravity: (String) -> Unit,
+    autoFillLetterboxed: Boolean = false,
+    onSetAutoFillLetterboxed: (Boolean) -> Unit = {},
     autoSkipIntroEnabled: Boolean,
     onSetAutoSkipIntro: (Boolean) -> Unit,
     autoPlayNextEnabled: Boolean,
@@ -135,6 +137,8 @@ fun PlayerSettingsSheet(
             onSetPlaybackSpeed = onSetPlaybackSpeed,
             videoGravity = videoGravity,
             onSetVideoGravity = onSetVideoGravity,
+            autoFillLetterboxed = autoFillLetterboxed,
+            onSetAutoFillLetterboxed = onSetAutoFillLetterboxed,
             autoSkipIntroEnabled = autoSkipIntroEnabled,
             onSetAutoSkipIntro = onSetAutoSkipIntro,
             autoPlayNextEnabled = autoPlayNextEnabled,
@@ -295,6 +299,8 @@ private fun SettingsCategoryContent(
     onSetPlaybackSpeed: (Double) -> Unit,
     videoGravity: String,
     onSetVideoGravity: (String) -> Unit,
+    autoFillLetterboxed: Boolean,
+    onSetAutoFillLetterboxed: (Boolean) -> Unit,
     autoSkipIntroEnabled: Boolean,
     onSetAutoSkipIntro: (Boolean) -> Unit,
     autoPlayNextEnabled: Boolean,
@@ -338,6 +344,14 @@ private fun SettingsCategoryContent(
                     AspectSetting(
                         selected = videoGravity,
                         onSelect = onSetVideoGravity,
+                    )
+                    // Applies to Fit only. Fill and Stretch are explicit
+                    // decisions about cropping and are left alone.
+                    ToggleRow(
+                        label = "Expand letterboxed video",
+                        subtitle = "Fills past bars encoded into the picture, never into the image",
+                        checked = autoFillLetterboxed,
+                        onCheckedChange = onSetAutoFillLetterboxed,
                     )
                 }
 
