@@ -252,6 +252,54 @@ internal fun tvAudioTrackPersistenceUpdate(
         ?.let(TrackSelectionFingerprintUpdate::Set)
         ?: TrackSelectionFingerprintUpdate.Preserve
 
+/**
+ * Whether a commit may write the durable per-item subtitle preference.
+ *
+ * The transaction adapter cannot tell an automatic pick from a viewer's choice
+ * once it is committed — both arrive at the persistence port as the same
+ * [SubtitleIdentity] — so the caller carries [automaticIdentity]: the identity
+ * the APP selected on the viewer's behalf, if it is still the committed one. An
+ * automatic pick must never be written back as though the viewer had made it,
+ * or every later launch would "restore" a choice nobody made.
+ */
+internal fun tvSubtitlePersistenceUpdate(
+    committedIdentity: SubtitleIdentity,
+    automaticIdentity: SubtitleIdentity?,
+): TrackSelectionFingerprintUpdate =
+    if (automaticIdentity != null && committedIdentity == automaticIdentity) {
+        TrackSelectionFingerprintUpdate.Preserve
+    } else {
+        TrackSelectionFingerprintUpdate.Set(
+            encodeSubtitleIdentityPreference(committedIdentity),
+        )
+    }
+
+/**
+ * Safety net for a text track selected by something that is not the subtitle
+ * transaction adapter — device caption settings, a selector quirk, a renderer
+ * default. Returns the identity to adopt, or null when there is nothing to
+ * reconcile.
+ *
+ * This is NOT the mechanism by which subtitles get selected; reaching a
+ * non-null result means an authority we believed removed is still acting, which
+ * is why the caller logs it loudly. It deliberately stands down while anything
+ * is in flight: mid-transaction the track list is being republished and the
+ * pending identity is about to become the committed one, so "disagreement"
+ * there is just latency, not a second authority.
+ */
+internal fun tvExternalSubtitleAdoption(
+    subtitleTracks: List<PlayerTrackEntry>,
+    subtitleRows: List<PlayerSubtitleInfo>,
+    committedIdentity: SubtitleIdentity,
+    pendingIdentity: SubtitleIdentity?,
+    selectionInFlight: Boolean,
+): SubtitleIdentity? {
+    if (selectionInFlight || pendingIdentity != null) return null
+    val selected = subtitleTracks.firstOrNull { it.isSelected } ?: return null
+    return tvMountedSubtitleIdentity(selected, subtitleTracks, subtitleRows)
+        .takeIf { it != committedIdentity }
+}
+
 @Suppress("UNUSED_PARAMETER")
 internal fun authoritativeTvSubtitleRows(
     snapshotRows: List<PlayerSubtitleInfo>,

@@ -481,8 +481,10 @@ internal fun TvPlayerHud(
                             episodeNumber = episodeNumber,
                             stats = stats,
                             playbackPlan = playbackPlan,
-                            subtitleTracks = subtitleTracks,
-                            subtitleUrls = subtitleUrls,
+                            subtitleLabel = subtitlePresentation.rows
+                                .firstOrNull { row -> row.checked }
+                                ?.label
+                                ?: "Off",
                             chapters = chapters,
                         )
                     }
@@ -723,8 +725,7 @@ private fun HudInfoPane(
     episodeNumber: Int?,
     stats: PlayerStatsSnapshot,
     playbackPlan: PlaybackExecutionPlan?,
-    subtitleTracks: List<PlayerTrackEntry>,
-    subtitleUrls: List<PlayerSubtitleInfo> = emptyList(),
+    subtitleLabel: String,
     chapters: List<VersionChapter>,
     modifier: Modifier = Modifier,
 ) {
@@ -748,15 +749,10 @@ private fun HudInfoPane(
         // the raw strings for anyone who needs them.
         videoCodecShortName(stats.videoCodec)?.let { add("Video" to it) }
         audioFormatShortName(stats.audioCodec)?.let { add("Audio" to it) }
-        val sub = subtitleTracks.firstOrNull { it.isSelected }
-        // Built label ("Danish SRT (External)") via the mounted row — the raw
-        // Media3 displayLabel echoes sidecar filenames.
-        val subLabel = sub?.let { sel ->
-            resolveMountedSubtitleRow(sel, subtitleTracks, subtitleUrls)
-                ?.let { row -> subtitleChoiceLabel(row, subtitleUrls.indexOf(row)) }
-                ?: sel.displayLabel.ifBlank { "On" }
-        } ?: "Off"
-        add("Subtitles" to subLabel)
+        // The adapter's COMMITTED identity, exactly as the Subtitles tab reads
+        // it. This used to ask Media3 which text track was selected, which is a
+        // different authority — so the two tabs could and did disagree.
+        add("Subtitles" to subtitleLabel)
         currentChapterTitle(chapters, positionSec)?.let { add("Chapter" to it) }
     }
     val badges = buildList {

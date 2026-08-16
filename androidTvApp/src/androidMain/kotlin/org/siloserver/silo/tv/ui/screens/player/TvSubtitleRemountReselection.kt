@@ -9,14 +9,14 @@ import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 
 /**
- * Who asked for a subtitle mount, ordered by authority.
+ * Why a subtitle mount was asked for, ordered by authority.
  *
- * TV runs two mount pipelines at once: the subtitle transaction, and the legacy
- * restore/auto machinery that reacts to track changes. Both drive a single
- * remount latch and a single request channel, so without an explicit ordering
- * the last writer wins — and because a transaction's own replan republishes the
- * track list, the legacy pipeline reliably fires *after* the transaction and
- * overwrites the selection the user just made.
+ * Every mount now originates in the subtitle transaction adapter — the legacy
+ * ordinal pipeline that raced it is gone — but the adapter still serves three
+ * kinds of intent, and a weaker one arriving late must not evict a stronger one
+ * that is still being applied. That collision is what used to turn an applied
+ * subtitle back off: a rollback armed the pre-transaction identity (typically
+ * Off) over the selection the viewer had just made.
  *
  * Higher ordinal wins.
  */
@@ -35,6 +35,21 @@ internal data class TvSubtitleRemountOwner(
     val identity: SubtitleIdentity,
     val generation: Long,
     val priority: TvSubtitleMountPriority = TvSubtitleMountPriority.UserTransaction,
+)
+
+/**
+ * A mount the screen must apply to the player backend, carrying its owner.
+ *
+ * The owner travels WITH the request rather than sitting in a ViewModel field
+ * the acknowledgement reads back: that field was the reason an app-originated
+ * selection could be applied to the player and then dropped on the floor,
+ * because whoever emitted the request had armed no owner and the
+ * acknowledgement silently returned. An ownerless mount is now unrepresentable.
+ */
+internal data class TvSubtitleMountRequest(
+    val owner: TvSubtitleRemountOwner,
+    /** Media3 flat text-track ordinal, or -1 to disable text entirely. */
+    val trackIndex: Int,
 )
 
 internal class TvSubtitleSnapshotSettlementTracker {

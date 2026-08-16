@@ -1748,27 +1748,27 @@ fun TvPlayerScreen(
         backend.refresh(mediaSpec)
     }
 
-    // Auto-select a freshly downloaded/translated subtitle track once the
-    // rebuilt item's tracks land (the VM matches by label in onTracksChanged
-    // and emits the ordinal text-group index). Mirrors the seekRequests idiom.
+    // The single path from the subtitle transaction adapter to the player.
+    // Every request carries the owner that armed it, so the acknowledgement can
+    // never be dropped for want of one. Mirrors the seekRequests idiom.
     LaunchedEffect(videoBackend) {
         val backend = videoBackend ?: return@LaunchedEffect
-        viewModel.subtitleSelectRequests.collect { idx ->
-            if (idx == -1) {
+        viewModel.subtitleMountRequests.collect { request ->
+            if (request.trackIndex == -1) {
                 if (backend.selectSubtitle(null)) {
-                    viewModel.onSubtitleSelectionApplied(idx)
+                    viewModel.onSubtitleSelectionApplied(request)
                 } else {
-                    viewModel.onSubtitleSelectionFailed(idx)
+                    viewModel.onSubtitleSelectionFailed(request)
                 }
                 return@collect
             }
             val selectedTrack = viewModel.uiState.value.subtitleTracks
-                .firstOrNull { it.index == idx }
+                .firstOrNull { it.index == request.trackIndex }
                 ?.toVideoTrackEntry()
             if (selectedTrack != null && backend.selectSubtitle(selectedTrack)) {
-                viewModel.onSubtitleSelectionApplied(idx)
+                viewModel.onSubtitleSelectionApplied(request)
             } else {
-                viewModel.onSubtitleSelectionFailed(idx)
+                viewModel.onSubtitleSelectionFailed(request)
             }
         }
     }

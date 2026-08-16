@@ -408,13 +408,15 @@ class SiloPlayerFactory(
 
         val base = player.trackSelectionParameters
         val next = if (isTv) {
+            // preferredTextLanguage is deliberately NOT forwarded on TV: the
+            // subtitle transaction adapter is the only authority that may
+            // enable a text track there (see TrackSelectionPresets.buildTvParameters).
             TrackSelectionPresets.buildTvParameters(
                 context = context,
                 base = base,
                 audioCaps = audioCaps,
                 displayHdr = displayHdr,
                 preferredAudioLanguage = preferredAudioLanguage,
-                preferredTextLanguage = preferredTextLanguage,
                 allowHdr = hdrEnabled,
             )
         } else {

@@ -281,6 +281,173 @@ class TvPlayerSubtitleIntegrationPolicyTest {
         )
     }
 
+    // ---- Single-owner subtitle selection -----------------------------------
+    //
+    // Regression: TV had two independent subtitle authorities. The legacy
+    // ordinal auto path selected a text track straight at the player while the
+    // transaction adapter's committed identity never moved, so on an "English –
+    // Always" profile the PGS track rendered on screen and the HUD said "Off".
+    // Everything below pins the pieces of the single-owner flow.
+
+    @Test
+    fun `english always resolves an embedded PGS track to the same identity the HUD checks`() {
+        val row = embeddedPgsRow()
+        val track = embeddedPgsTrack()
+
+        val selection = resolveAutoSubtitleSelection(
+            audioTracks = listOf(
+                PlayerTrackEntry(
+                    index = 0,
+                    label = "English",
+                    language = "en",
+                    isSelected = true,
+                ),
+            ),
+            subtitleTracks = listOf(track),
+            preferredLanguage = "en",
+            subtitleMode = "always",
+            showForced = true,
+        )
+
+        // Bitmap tracks stay deprioritised-but-allowed: it is the only English
+        // candidate, so Always must still pick it.
+        val selected = assertIs<SubtitleAutoSelection.Select>(selection)
+        assertEquals(track.index, selected.index)
+
+        val identity = tvMountedSubtitleIdentity(track, listOf(track), listOf(row))
+        assertEquals(tvSubtitleIdentity(row), identity)
+        assertIs<SubtitleIdentity.Embedded>(identity)
+
+        // The identity the auto path commits is the identity the HUD ticks.
+        val presentation = buildTvSubtitleHudPresentation(
+            options = buildTvSubtitleHudOptions(
+                subtitleUrls = listOf(row),
+                subtitleTracks = listOf(track),
+            ),
+            committedIdentity = identity,
+            pendingIdentity = null,
+            hudOpen = true,
+            focusedStableId = null,
+        )
+        val checked = presentation.rows.single { it.checked }
+        assertEquals(identity, checked.identity)
+        assertEquals(1, presentation.rows.count { it.checked })
+    }
+
+    @Test
+    fun `an automatic pick does not write the durable subtitle preference`() {
+        val identity = tvSubtitleIdentity(embeddedPgsRow())
+
+        assertEquals(
+            TrackSelectionFingerprintUpdate.Preserve,
+            tvSubtitlePersistenceUpdate(
+                committedIdentity = identity,
+                automaticIdentity = identity,
+            ),
+        )
+    }
+
+    @Test
+    fun `a viewer pick writes the durable subtitle preference`() {
+        val automatic = tvSubtitleIdentity(embeddedPgsRow())
+        val chosen = SubtitleIdentity.Off
+
+        assertEquals(
+            TrackSelectionFingerprintUpdate.Set(encodeSubtitleIdentityPreference(chosen)),
+            // The viewer choosing clears the automatic marker in the ViewModel;
+            // a stale marker for a different identity must not suppress the write.
+            tvSubtitlePersistenceUpdate(committedIdentity = chosen, automaticIdentity = automatic),
+        )
+    }
+
+    @Test
+    fun `reconciliation adopts a text track selected outside the adapter`() {
+        val row = embeddedPgsRow()
+        val track = embeddedPgsTrack().copy(isSelected = true)
+
+        assertEquals(
+            tvSubtitleIdentity(row),
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(track),
+                subtitleRows = listOf(row),
+                committedIdentity = SubtitleIdentity.Off,
+                pendingIdentity = null,
+                selectionInFlight = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `reconciliation stands down when the adapter already agrees or is mid-flight`() {
+        val row = embeddedPgsRow()
+        val track = embeddedPgsTrack().copy(isSelected = true)
+        val identity = tvSubtitleIdentity(row)
+
+        assertEquals(
+            null,
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(track),
+                subtitleRows = listOf(row),
+                committedIdentity = identity,
+                pendingIdentity = null,
+                selectionInFlight = false,
+            ),
+        )
+        assertEquals(
+            null,
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(track),
+                subtitleRows = listOf(row),
+                committedIdentity = SubtitleIdentity.Off,
+                pendingIdentity = null,
+                selectionInFlight = true,
+            ),
+        )
+        assertEquals(
+            null,
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(track),
+                subtitleRows = listOf(row),
+                committedIdentity = SubtitleIdentity.Off,
+                pendingIdentity = identity,
+                selectionInFlight = false,
+            ),
+        )
+        // Nothing selected is nothing to reconcile — not an implicit "Off".
+        assertEquals(
+            null,
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(embeddedPgsTrack()),
+                subtitleRows = listOf(row),
+                committedIdentity = identity,
+                pendingIdentity = null,
+                selectionInFlight = false,
+            ),
+        )
+    }
+
+    private fun embeddedPgsRow() = PlayerSubtitleInfo(
+        index = 8,
+        language = "eng",
+        codec = "hdmv_pgs_subtitle",
+        label = "English (SDH)",
+        source = "embedded",
+        forced = false,
+        url = "",
+        mediaTrackId = "1:pgs:8",
+    )
+
+    private fun embeddedPgsTrack() = PlayerTrackEntry(
+        index = 3,
+        label = "English (SDH)",
+        language = "en",
+        isSelected = false,
+        displayLabel = "English (SDH)",
+        codecOrMime = "application/pgs",
+        isHearingImpaired = true,
+        trackId = "1:pgs:8",
+    )
+
     private fun downloadedRow(
         index: Int,
         downloadId: Int?,

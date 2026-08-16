@@ -46,6 +46,17 @@ object TrackSelectionPresets {
      * passthrough-capable routes because its `supportsFormat` score beats
      * FFmpeg's. TV route planning no longer advertises extension-only decode,
      * so FFmpeg remains here for forced-original and runtime recovery only.
+     *
+     * Deliberately NO preferred TEXT language. On TV the subtitle transaction
+     * adapter is the single owner of subtitle selection: it resolves a typed
+     * `SubtitleIdentity` and mounts it through `SubtitleManager`. A
+     * preferred-text hint here made `DefaultTrackSelector` a second, silent
+     * authority that enabled a text track on its own — playback obeyed the
+     * selector while the HUD reported the adapter's committed identity, so the
+     * two disagreed (subtitles on screen, "Off" in the HUD). The app decides;
+     * ExoPlayer executes. Text-track enablement is left untouched here so
+     * re-applying presets on a capability change cannot disturb a mounted
+     * subtitle either.
      */
     fun buildTvParameters(
         context: Context,
@@ -53,7 +64,6 @@ object TrackSelectionPresets {
         audioCaps: AudioPassthroughCapabilities,
         displayHdr: HdrCapabilities,
         preferredAudioLanguage: String?,
-        preferredTextLanguage: String?,
         allowHdr: Boolean = true,
         ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
     ): DefaultTrackSelector.Parameters {
@@ -80,9 +90,6 @@ object TrackSelectionPresets {
 
         preferredAudioLanguage?.takeIf { it.isNotBlank() }
             ?.let { builder.setPreferredAudioLanguage(it) }
-
-        preferredTextLanguage?.takeIf { it.isNotBlank() }
-            ?.let { builder.setPreferredTextLanguage(it) }
 
         return builder.build()
     }
