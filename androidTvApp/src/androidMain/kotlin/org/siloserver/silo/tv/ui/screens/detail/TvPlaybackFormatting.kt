@@ -84,15 +84,23 @@ object TvPlaybackFormatting {
         return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
     }
 
-    /** "4K · HDR" / "1080P" / "Auto" (null or no usable tokens → "Auto"). */
+    /**
+     * "4K · HEVC · DV · TrueHD" / "1080P · H.264 · AAC" / "Auto" (null or no
+     * usable tokens → "Auto"). Same token set as tvOS's
+     * `DetailPlaybackFormatting.versionShortLabel` (resolution · video codec ·
+     * dynamic range · audio codec) so the Version pill tells the user which
+     * audio the file carries, not just its resolution.
+     */
     fun versionShortLabel(version: FileVersion?): String {
         if (version == null) return "Auto"
         val tokens = buildList {
             displayResolution(version.resolution)?.let { add(it) }
+            resolvedVideoCodec(version)?.let { add(it) }
             when {
                 isDolbyVision(version) -> add("DV")
                 isHdr(version) -> add("HDR")
             }
+            resolvedAudioCodec(version)?.let { add(it) }
         }
         return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
     }
@@ -100,17 +108,17 @@ object TvPlaybackFormatting {
     /**
      * Picker labels for a whole version list, disambiguated against each other.
      *
-     * [versionShortLabel] is built from resolution + HDR/DV alone, so a title
-     * holding two 4K Dolby Vision files renders two identical "4K · DV" rows
-     * and the user cannot tell them apart. Selection still works (the option id
-     * is the unique fileId) — the list is just unreadable.
+     * [versionShortLabel] is built from resolution / codecs / HDR-DV alone, so a
+     * title holding two 4K HEVC Dolby Vision TrueHD files (a remux and an
+     * encode, say) renders two identical rows and the user cannot tell them
+     * apart. Selection still works (the option id is the unique fileId) — the
+     * list is just unreadable.
      *
      * Only colliding labels get a suffix, so the common single-version-per-tier
      * case is untouched. Attributes are accumulated until the group's labels
-     * are actually distinct: no single attribute need be unique on its own, so
-     * e.g. {20GB HEVC, 20GB AV1, 40GB HEVC, 40GB AV1} separates on codec+size.
-     * Codec leads because it is a real playback/compatibility difference; size
-     * usually does the work when a remux and an encode share a codec.
+     * are actually distinct: no single attribute need be unique on its own.
+     * Size usually does the work when a remux and an encode share a codec;
+     * container is the last resort.
      */
     fun versionPickerLabels(versions: List<FileVersion>): List<String> {
         val base = versions.map { versionShortLabel(it) }
@@ -129,10 +137,9 @@ object TvPlaybackFormatting {
                         .joinToString(" · ")
                 }
                 val distinct = attempt.values.toSet().size
-                // Only keep a tuple that actually separates something. Now that
-                // the codec can be resolved from the video track, two identical
-                // versions would otherwise both gain the same suffix — a
-                // fabricated difference that distinguishes nothing.
+                // Only keep a tuple that actually separates something; two
+                // identical versions would otherwise both gain the same suffix
+                // — a fabricated difference that distinguishes nothing.
                 if (distinct > 1) indexes.forEach { suffixes[it] = attempt.getValue(it) }
                 if (distinct == indexes.size) break
             }
@@ -143,13 +150,11 @@ object TvPlaybackFormatting {
         }
     }
 
-    /** Attributes tried, in order, when version labels collide. */
+    /**
+     * Attributes tried, in order, when version labels collide. Codecs are
+     * already part of [versionShortLabel], so they never need to be appended.
+     */
     private val VERSION_DISCRIMINATORS: List<(FileVersion) -> String?> = listOf(
-        // Through resolvedVideoCodec, so a version whose codec lives only on its
-        // video track can still discriminate. Consulting codecVideo alone left
-        // two colliding versions sharing a label when the metadata to tell them
-        // apart was right there.
-        { v -> resolvedVideoCodec(v)?.uppercase(Locale.ROOT) },
         { v -> formatFileSize(v.fileSize) },
         { v -> v.container?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT) },
     )

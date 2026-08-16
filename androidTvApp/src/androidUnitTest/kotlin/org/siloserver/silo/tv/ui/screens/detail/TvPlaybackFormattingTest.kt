@@ -129,6 +129,19 @@ class TvPlaybackFormattingTest {
         assertEquals(listOf("1080P", "4K · HDR"), TvPlaybackFormatting.versionPickerLabels(versions))
     }
 
+    @Test fun versionPickerLabels_carryCodecsLikeTvOs() {
+        // Two files that differ only by codec are told apart by the base label
+        // itself (resolution · video codec · DR · audio codec, as on tvOS).
+        val versions = listOf(
+            fileVersion(fileId = 1, resolution = "2160p", codecVideo = "hevc", codecAudio = "truehd", hdr = true),
+            fileVersion(fileId = 2, resolution = "2160p", codecVideo = "av1", codecAudio = "eac3", hdr = true),
+        )
+        assertEquals(
+            listOf("4K · HEVC · HDR · TrueHD", "4K · AV1 · HDR · EAC3"),
+            TvPlaybackFormatting.versionPickerLabels(versions),
+        )
+    }
+
     @Test fun versionPickerLabels_disambiguateCollidingLabelsBySize() {
         // The device case: one title, two 4K DV files, two identical rows.
         val dv = listOf(VideoTrack(codec = "hevc", dolbyVision = "Profile 7"))
@@ -142,27 +155,27 @@ class TvPlaybackFormattingTest {
 
         assertEquals("1080P", labels[0])
         assertEquals(labels.distinct().size, labels.size, "colliding rows must be distinguishable")
-        assertTrue(labels[1].startsWith("4K · DV · "), "got ${labels[1]}")
-        assertTrue(labels[2].startsWith("4K · DV · "), "got ${labels[2]}")
+        assertTrue(labels[1].startsWith("4K · HEVC · DV · "), "got ${labels[1]}")
+        assertTrue(labels[2].startsWith("4K · HEVC · DV · "), "got ${labels[2]}")
     }
 
-    @Test fun versionPickerLabels_fallBackToCodecWhenSizesMatch() {
+    @Test fun versionPickerLabels_fallBackToContainerWhenSizesMatch() {
         val dv = listOf(VideoTrack(codec = "hevc", dolbyVision = "Profile 7"))
         val versions = listOf(
-            fileVersion(fileId = 1, resolution = "2160p", hdr = true, video = dv, codecVideo = "hevc", fileSize = 42),
-            fileVersion(fileId = 2, resolution = "2160p", hdr = true, video = dv, codecVideo = "av1", fileSize = 42),
+            fileVersion(fileId = 1, resolution = "2160p", hdr = true, video = dv, container = "mkv", fileSize = 42),
+            fileVersion(fileId = 2, resolution = "2160p", hdr = true, video = dv, container = "mp4", fileSize = 42),
         )
 
         val labels = TvPlaybackFormatting.versionPickerLabels(versions)
 
         assertEquals(labels.distinct().size, labels.size)
-        assertTrue(labels.any { it.endsWith("AV1") }, "got $labels")
+        assertTrue(labels.any { it.endsWith("MP4") }, "got $labels")
     }
 
     /**
-     * No single attribute is unique here — every codec and every size is
-     * shared — but codec+size identifies each file, so the labels must widen
-     * rather than give up after one attribute.
+     * Every codec and every size is shared here — the codec pairs collide on
+     * the base label and the sizes collide within each pair — so the size
+     * suffix must be applied per colliding group rather than given up on.
      */
     @Test fun versionPickerLabels_widenUntilTheGroupIsActuallySeparated() {
         val dv = listOf(VideoTrack(codec = "hevc", dolbyVision = "Profile 7"))
@@ -178,7 +191,7 @@ class TvPlaybackFormattingTest {
         val labels = TvPlaybackFormatting.versionPickerLabels(versions)
 
         assertEquals(4, labels.distinct().size, "every version must be distinguishable; got $labels")
-        assertTrue(labels.all { it.startsWith("4K · DV · ") }, "got $labels")
+        assertTrue(labels.all { it.startsWith("4K · HEVC · DV · ") || it.startsWith("4K · AV1 · DV · ") }, "got $labels")
     }
 
     @Test fun versionPickerLabels_indistinguishableVersionsStayEqual() {
@@ -189,7 +202,7 @@ class TvPlaybackFormattingTest {
             fileVersion(fileId = 1, resolution = "2160p", hdr = true, video = dv),
             fileVersion(fileId = 2, resolution = "2160p", hdr = true, video = dv),
         )
-        assertEquals(listOf("4K · DV", "4K · DV"), TvPlaybackFormatting.versionPickerLabels(versions))
+        assertEquals(listOf("4K · HEVC · DV", "4K · HEVC · DV"), TvPlaybackFormatting.versionPickerLabels(versions))
     }
 
     // --- versionShortLabel ---
@@ -205,7 +218,27 @@ class TvPlaybackFormattingTest {
             hdr = true,
             video = listOf(VideoTrack(codec = "hevc", dolbyVision = "Profile 7")),
         )
-        assertEquals("4K · DV", TvPlaybackFormatting.versionShortLabel(v))
+        assertEquals("4K · HEVC · DV", TvPlaybackFormatting.versionShortLabel(v))
+    }
+
+    @Test fun versionShortLabel_includesAudioCodecLikeTvOs() {
+        val v = fileVersion(
+            resolution = "2160p",
+            codecVideo = "hevc",
+            hdr = true,
+            video = listOf(VideoTrack(codec = "hevc", dolbyVision = "Profile 8")),
+            audio = listOf(
+                audioTrack(codec = "aac", channels = 2),
+                audioTrack(codec = "truehd", layout = "7.1", default = true),
+            ),
+        )
+        // Audio codec is the Auto-resolved (default) track's, not the first.
+        assertEquals("4K · HEVC · DV · TrueHD", TvPlaybackFormatting.versionShortLabel(v))
+    }
+
+    @Test fun versionShortLabel_fallsBackToVersionAudioCodec() {
+        val v = fileVersion(resolution = "1080p", codecVideo = "h264", codecAudio = "eac3")
+        assertEquals("1080P · H.264 · EAC3", TvPlaybackFormatting.versionShortLabel(v))
     }
 
     @Test fun versionShortLabel_1080() {
