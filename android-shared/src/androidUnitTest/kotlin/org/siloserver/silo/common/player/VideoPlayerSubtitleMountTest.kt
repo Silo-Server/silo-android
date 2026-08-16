@@ -92,17 +92,112 @@ class VideoPlayerSubtitleMountTest {
         )
     }
 
+    // Protocol v3 types a row describing a track MUXED into the file as
+    // `delivery = sidecar` too. On the untouched original that track is already
+    // in the stream, so a caller that can select it in place must not have the
+    // server-extracted duplicate attached (it stalls the mount and paints the
+    // cue backlog past the resume point).
+    @Test
+    fun v3MuxedEmbeddedRowMountsNothingOnDirectPlayWhenMuxedTracksPreferred() {
+        val rows = listOf(serverRow(index = 3), embeddedPgsRow(index = 8))
+
+        val mounted = subtitlesForVideoMediaMount(
+            subtitles = rows,
+            playbackPlan = plan(selectedSubtitleIndex = 8, delivery = PlaybackDelivery.ORIGINAL_HTTP),
+            subtitleIdentity = SubtitleIdentity.ServerSidecar(serverIndex = 8),
+            preferMuxedTracks = true,
+        )
+
+        assertEquals(emptyList(), mounted)
+    }
+
+    @Test
+    fun v3MuxedEmbeddedRowStillMountsTheSidecarWhenCallerCannotSelectInPlace() {
+        val rows = listOf(serverRow(index = 3), embeddedPgsRow(index = 8))
+
+        val mounted = subtitlesForVideoMediaMount(
+            subtitles = rows,
+            playbackPlan = plan(selectedSubtitleIndex = 8, delivery = PlaybackDelivery.ORIGINAL_HTTP),
+            subtitleIdentity = SubtitleIdentity.ServerSidecar(serverIndex = 8),
+        )
+
+        assertEquals(listOf(8), mounted.map(PlayerSubtitleInfo::index))
+    }
+
+    @Test
+    fun v3MuxedEmbeddedRowStillMountsTheSidecarOnRemuxAndTranscodeDeliveries() {
+        val rows = listOf(serverRow(index = 3), embeddedPgsRow(index = 8))
+        for (delivery in listOf(
+            PlaybackDelivery.SERVER_REMUX_HLS,
+            PlaybackDelivery.SERVER_REMUX_PROGRESSIVE,
+            PlaybackDelivery.SERVER_TRANSCODE_HLS,
+        )) {
+            val mounted = subtitlesForVideoMediaMount(
+                subtitles = rows,
+                playbackPlan = plan(selectedSubtitleIndex = 8, delivery = delivery),
+                subtitleIdentity = SubtitleIdentity.ServerSidecar(serverIndex = 8),
+                preferMuxedTracks = true,
+            )
+            assertEquals(listOf(8), mounted.map(PlayerSubtitleInfo::index), "delivery=$delivery")
+        }
+    }
+
+    @Test
+    fun v3ExternalRowStillMountsOnDirectPlayWhenMuxedTracksPreferred() {
+        val rows = listOf(serverRow(index = 3), embeddedPgsRow(index = 8))
+
+        val mounted = subtitlesForVideoMediaMount(
+            subtitles = rows,
+            playbackPlan = plan(selectedSubtitleIndex = 3, delivery = PlaybackDelivery.ORIGINAL_HTTP),
+            subtitleIdentity = SubtitleIdentity.ServerSidecar(serverIndex = 3),
+            preferMuxedTracks = true,
+        )
+
+        assertEquals(listOf(3), mounted.map(PlayerSubtitleInfo::index))
+    }
+
+    @Test
+    fun v3MuxedBitmapRowTheClientCannotDecodeStillMountsTheSidecar() {
+        val rows = listOf(embeddedPgsRow(index = 8).copy(codec = "dvb_subtitle"))
+
+        val mounted = subtitlesForVideoMediaMount(
+            subtitles = rows,
+            playbackPlan = plan(selectedSubtitleIndex = 8, delivery = PlaybackDelivery.ORIGINAL_HTTP),
+            subtitleIdentity = SubtitleIdentity.ServerSidecar(serverIndex = 8),
+            preferMuxedTracks = true,
+        )
+
+        assertEquals(listOf(8), mounted.map(PlayerSubtitleInfo::index))
+    }
+
     private fun serverRow(index: Int): PlayerSubtitleInfo = PlayerSubtitleInfo(
         index = index,
         source = "external",
+        catalogSource = "external",
         serverTrackId = "file:482:subtitle:$index",
         serverDelivery = "sidecar",
         url = "/stream/session/subtitles/$index.vtt",
     )
 
-    private fun plan(selectedSubtitleIndex: Int?): PlaybackExecutionPlan = PlaybackExecutionPlan(
+    /** A v3 row for a PGS track muxed into the file: typed sidecar all the same. */
+    private fun embeddedPgsRow(index: Int): PlayerSubtitleInfo = PlayerSubtitleInfo(
+        index = index,
+        language = "en",
+        codec = "hdmv_pgs_subtitle",
+        label = "English",
+        source = "embedded",
+        catalogSource = "embedded",
+        serverTrackId = "file:482:subtitle:$index",
+        serverDelivery = "sidecar",
+        url = "/stream/session/subtitles/$index.sup",
+    )
+
+    private fun plan(
+        selectedSubtitleIndex: Int?,
+        delivery: PlaybackDelivery = PlaybackDelivery.SERVER_REMUX_HLS,
+    ): PlaybackExecutionPlan = PlaybackExecutionPlan(
         planId = "plan",
-        delivery = PlaybackDelivery.SERVER_REMUX_HLS,
+        delivery = delivery,
         routeFamily = PlaybackRouteFamily.SERVER_ADAPTIVE,
         selectedTracks = SelectedPlaybackTracks(subtitleIndex = selectedSubtitleIndex),
     )

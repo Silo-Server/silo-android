@@ -1662,6 +1662,7 @@ fun TvPlayerScreen(
                 playbackPlan = plan,
                 subtitleIdentity = state.pendingSubtitleIdentity
                     ?: state.committedSubtitleIdentity,
+                preferMuxedTracks = true,
             ),
             title = state.title.ifBlank { null },
             artworkUrl = state.artworkUrl,
@@ -1728,6 +1729,7 @@ fun TvPlayerScreen(
                 playbackPlan = plan,
                 subtitleIdentity = state.pendingSubtitleIdentity
                     ?: state.committedSubtitleIdentity,
+                preferMuxedTracks = true,
             ),
             title = state.title.ifBlank { null },
             artworkUrl = state.artworkUrl,
