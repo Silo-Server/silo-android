@@ -3908,6 +3908,15 @@ class TvPlayerViewModel(
         // applied it, and re-deciding here is exactly the bug: this path can
         // only see what Media3 has mounted.
         if (launchSubtitleSelectionApplied) return
+        // A launch pick that has not resolved YET is still the decision: it
+        // retries across the next few track callbacks (a late sidecar, a
+        // second Media3 snapshot). Deciding here in the meantime mounted the
+        // auto pick over the viewer's — seen on a Shield where the detail-page
+        // "English SRT" resolved a callback late and Auto had already put the
+        // Forced track on. resolvePendingInitialSubtitle clears the index when
+        // it resolves or gives up, and both happen before this runs on the
+        // same callback, so nothing is stranded.
+        if (pendingInitialSubtitleIndex != null) return
         // manualSubtitleSelectionApplied is set when a persisted choice OR a
         // RESOLVED explicit detail-page pick was applied — that (not the bare
         // launch intent) is what suppresses auto. An explicit pick that failed to

@@ -105,7 +105,7 @@ fun resolveMountedSubtitle(
     // and when the row itself carries no SDH signal a track flagged SDH is
     // not it either. Seen on a Shield: the plain English SubRip of a disc with
     // Forced + plain + SDH resolved to nothing and the pick failed to apply.
-    val untitled = typedMatches.filter { normalizedLabel(it.label) == null }
+    val untitled = typedMatches.filter { it.isUntitled() }
     val narrowed = if (media.hearingImpaired == true) {
         untitled
     } else {
@@ -272,6 +272,19 @@ private val PLACEHOLDER_SUBTITLE_LABELS = setOf(
     "ass", "ssa", "webvtt", "vtt", "pgs", "hdmv_pgs_subtitle", "pgssub",
     "dvdsub", "dvd_subtitle", "vobsub", "dvbsub", "dvb_subtitle",
 )
+
+/**
+ * A mounted track with no title of its own. Media3 leaves such a track's
+ * label empty, but the clients synthesise one from the language for display
+ * ("EN"), so a label that is only the language — code or canonical — is no
+ * title either.
+ */
+private fun MountedSubtitleTrack.isUntitled(): Boolean {
+    val label = normalizedLabel(this.label) ?: return true
+    val language = this.language.normalizedValue()?.lowercase() ?: return false
+    return label == language ||
+        canonicalSubtitleLanguage(label) == canonicalSubtitleLanguage(language)
+}
 
 private fun normalizedLabel(label: String?): String? =
     label.normalizedValue()?.lowercase()?.takeUnless { it in PLACEHOLDER_SUBTITLE_LABELS }

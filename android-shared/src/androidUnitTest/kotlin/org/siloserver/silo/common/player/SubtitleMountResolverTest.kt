@@ -639,7 +639,8 @@ class SubtitleMountResolverTest {
     fun untitledPlaceholderLabelledRowResolvesToTheUntitledSiblingNotSdhOrForced() {
         val tracks = listOf(
             track(index = 0, trackId = "2", label = "Forced", language = "en", codec = "application/x-subrip", forced = true, hearingImpaired = false),
-            track(index = 1, trackId = "3", label = null, language = "en", codec = "application/x-subrip", forced = false, hearingImpaired = false),
+            // The TV synthesises "EN" for a track Media3 exposes without a label.
+            track(index = 1, trackId = "3", label = "EN", language = "en", codec = "application/x-subrip", forced = false, hearingImpaired = false),
             track(index = 2, trackId = "4", label = "SDH", language = "en", codec = "application/x-subrip", forced = false, hearingImpaired = true),
         )
         val row = PlayerSubtitleInfo(
