@@ -777,7 +777,9 @@ private class SubtitleVideoRectSync(
 
     private fun forwardNeutralizedCues(playerView: PlayerView, cueGroup: CueGroup) {
         val subtitleView = playerView.subtitleView ?: return
-        subtitleView.setCues(neutralizeFullWidthCueSizes(cueGroup).cues)
+        val cues = neutralizeFullWidthCueSizes(cueGroup).cues
+        logSubtitleCueGeometry(cues)
+        subtitleView.setCues(cues)
     }
 
     override fun onLayoutChange(
@@ -823,6 +825,12 @@ private class SubtitleVideoRectSync(
                 topMargin = 0,
                 gravity = gravity,
             )
+            logSubtitleCanvasGeometry(
+                playerView = playerView,
+                subtitleView = subtitleView,
+                appliedLabel = "MATCH_PARENT",
+                resizeMode = resizeMode,
+            )
             return
         }
 
@@ -857,6 +865,12 @@ private class SubtitleVideoRectSync(
             subtitleView.layoutParams = params
             subtitleView.requestLayout()
         }
+        logSubtitleCanvasGeometry(
+            playerView = playerView,
+            subtitleView = subtitleView,
+            appliedLabel = "${rect.width}x${rect.height}@${rect.left},${rect.top}",
+            resizeMode = resizeMode,
+        )
     }
 
     private fun applyLayoutParams(
@@ -1042,3 +1056,68 @@ private fun Tracks.describeTextTracks(): String {
 
 private const val TAG = "SiloSubtitles"
 private const val MEDIA3_CUES_MIME_TYPE = "application/x-media3-cues"
+
+/**
+ * Diagnostic tag for subtitle placement. Silent unless explicitly enabled:
+ *
+ *     adb shell setprop log.tag.SiloSubtitleGeom DEBUG
+ *
+ * Placement here spans three coordinate spaces — window, PlayerView, and the
+ * content frame the SubtitleView is actually a child of — and then the cue's
+ * own anchoring on top. A caption that lands in the wrong place looks identical
+ * whichever of those is at fault, and static reading has twice now produced a
+ * confident answer that the device disagreed with. These print the real numbers
+ * so the space at fault can be read off rather than deduced.
+ */
+private const val SUBTITLE_GEOM_TAG = "SiloSubtitleGeom"
+
+/**
+ * Where the caption canvas ended up, in every space at once. Compare
+ * `subtitleView` (on screen, after layout) against `player` and `frame`: if the
+ * canvas is centred on screen and the text still is not, the cue is positioning
+ * itself and [logSubtitleCueGeometry] has the answer instead.
+ */
+@UnstableApi
+private fun logSubtitleCanvasGeometry(
+    playerView: PlayerView,
+    subtitleView: View,
+    appliedLabel: String,
+    resizeMode: Int,
+) {
+    if (!Log.isLoggable(SUBTITLE_GEOM_TAG, Log.DEBUG)) return
+    val frame = playerView.findViewById<AspectRatioFrameLayout>(
+        androidx.media3.ui.R.id.exo_content_frame,
+    )
+    val playerLoc = IntArray(2).also(playerView::getLocationOnScreen)
+    val subtitleLoc = IntArray(2).also(subtitleView::getLocationOnScreen)
+    Log.d(
+        SUBTITLE_GEOM_TAG,
+        "resize=" + resizeMode +
+            " player=" + playerView.width + "x" + playerView.height +
+            "@" + playerLoc[0] + "," + playerLoc[1] +
+            " frame=" + frame?.width + "x" + frame?.height +
+            "@" + frame?.left + "," + frame?.top +
+            " applied=" + appliedLabel +
+            " subtitleView=" + subtitleView.width + "x" + subtitleView.height +
+            "@" + subtitleLoc[0] + "," + subtitleLoc[1] +
+            " subtitleParent=" + (subtitleView.parent as? View)?.javaClass?.simpleName,
+    )
+}
+
+/** The cue's own anchoring, which positions text independently of the canvas. */
+private fun logSubtitleCueGeometry(cues: List<Cue>) {
+    if (!Log.isLoggable(SUBTITLE_GEOM_TAG, Log.DEBUG)) return
+    val cue = cues.firstOrNull() ?: return
+    Log.d(
+        SUBTITLE_GEOM_TAG,
+        "cue bitmap=" + (cue.bitmap != null) +
+            " position=" + cue.position +
+            " positionAnchor=" + cue.positionAnchor +
+            " size=" + cue.size +
+            " line=" + cue.line +
+            " lineType=" + cue.lineType +
+            " lineAnchor=" + cue.lineAnchor +
+            " textAlignment=" + cue.textAlignment +
+            " text=" + cue.text?.toString()?.take(28),
+    )
+}
