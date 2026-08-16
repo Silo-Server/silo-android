@@ -190,6 +190,24 @@ internal fun adjustedCleanPlaybackSeekRate(
     return TvSeekRateLadder.bumped(currentRate, adjustment, durationSec)
 }
 
+/**
+ * The HUD tab a Down press from clean playback should land on.
+ *
+ * Mirrors tvOS `preferredPlaybackHUDTab`: that press is nearly always reaching
+ * for an audio or subtitle track, so route straight there rather than making
+ * the viewer traverse from Info every time. Falls back to Video, which — like
+ * Info and Subtitles — is always present in [visibleHudTabs], so this can
+ * never name a tab the HUD would reject.
+ */
+internal fun preferredPlaybackHudTab(
+    hasAudioTracks: Boolean,
+    hasSubtitleTracks: Boolean,
+): HudTab = when {
+    hasAudioTracks -> HudTab.Audio
+    hasSubtitleTracks -> HudTab.Subtitles
+    else -> HudTab.Video
+}
+
 internal fun shouldEnterCleanPlaybackSeekHold(
     allowsHold: Boolean,
     pressDurationMs: Long,
@@ -1012,6 +1030,10 @@ fun TvPlayerScreen(
                 // With the transport overlay or Up Next on screen, Left/Right
                 // belong to Compose focus navigation, not seeking.
                 dpadHorizontalSeek = !playerState.showControls && !playerState.showNextUp,
+                // Same condition, different job: Down opens the HUD only from
+                // clean playback. The HUD-open and modal cases never reach the
+                // dispatch below — the guard beneath this call returns first.
+                dpadDownOpensHud = !playerState.showControls && !playerState.showNextUp,
             )
             // Apple parity (TVPlayerControls.rearmAutoHideOnFocusMove): any key
             // activity while the overlay is up re-arms the 5s auto-hide so the
@@ -1121,8 +1143,16 @@ fun TvPlayerScreen(
                     performRelativeSeek(-SKIP_BACK_MS, latestRoomSnapshot, revealControls = true)
                 TvPlayerRemoteKeyAction.SkipForward ->
                     performRelativeSeek(SKIP_FORWARD_MS, latestRoomSnapshot, revealControls = true)
-                TvPlayerRemoteKeyAction.OpenHud -> {
-                    requestedHudTab = HudTab.Info
+                TvPlayerRemoteKeyAction.OpenSettingsHud -> {
+                    requestedHudTab = HudTab.Video
+                    viewModel.openHUD()
+                    true
+                }
+                TvPlayerRemoteKeyAction.OpenPlaybackHud -> {
+                    requestedHudTab = preferredPlaybackHudTab(
+                        hasAudioTracks = playerState.audioTracks.isNotEmpty(),
+                        hasSubtitleTracks = playerState.subtitleTracks.isNotEmpty(),
+                    )
                     viewModel.openHUD()
                     true
                 }
@@ -2030,8 +2060,10 @@ fun TvPlayerScreen(
                             }
                             viewModel.setControlsVisible(true)
                         },
+                        // The Tune button IS the cog: same settings entry point
+                        // as the remote's Menu/Settings key, so same landing tab.
                         onOpenHUD = {
-                            requestedHudTab = HudTab.Info
+                            requestedHudTab = HudTab.Video
                             viewModel.openHUD()
                         },
                         onOpenQuickSubtitles = {
@@ -2427,7 +2459,13 @@ private fun TvPlayerIdleOverlay(
                         onSkipForward()
                         true
                     }
-                    TvPlayerRemoteKeyAction.OpenHud -> {
+                    // OpenPlaybackHud can't originate here — this surface leaves
+                    // dpadDownOpensHud off, because with the overlay up Down is
+                    // how focus reaches the transport row. Handled so the branch
+                    // stays exhaustive if that ever changes.
+                    TvPlayerRemoteKeyAction.OpenSettingsHud,
+                    TvPlayerRemoteKeyAction.OpenPlaybackHud,
+                    -> {
                         onOpenHUD()
                         true
                     }
