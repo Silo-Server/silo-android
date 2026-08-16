@@ -455,12 +455,16 @@ fun TvSkylineSectionFeed(
     // Home rows overlap — a title can sit in Continue Watching and Recently
     // Added at once, and following an id across rows would jump focus to a
     // copy the viewer never touched.
+    // The section map depends on the rows alone; the return target is re-armed
+    // on every focus move, so building the map inside the resolution remember
+    // copied every content id in the feed per keypress.
+    val returnSections = remember(rows) { rows.toTvReturnSections() }
     val returnResolution: TvReturnResolution =
-        remember(rows, returnTarget, detailReturnPending) {
+        remember(returnSections, returnTarget, detailReturnPending) {
             if (detailReturnPending) {
                 resolveTvReturnTarget(
                     target = returnTarget,
-                    sections = rows.toTvReturnSections(),
+                    sections = returnSections,
                     sectionsComplete = sectionsComplete,
                 )
             } else {

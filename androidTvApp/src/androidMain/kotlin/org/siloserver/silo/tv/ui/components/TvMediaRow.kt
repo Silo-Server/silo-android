@@ -30,6 +30,7 @@ import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
+import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.Spacing
 
 /** Visual style of cards inside a [TvMediaRow]. */
@@ -187,7 +188,7 @@ fun TvMediaRow(
                 modifier = Modifier.padding(start = startPadding, end = endPadding),
             )
         }
-        TvRailScrollBehavior(leading = startPadding) {
+        TvRailScrollBehavior {
         LazyRow(
             state = rowState,
             // focusRestorer remembers the last-focused card inside this row.
@@ -283,7 +284,8 @@ fun TvMediaRow(
                     } else {
                         Modifier
                     },
-                ).then(
+                ).tvRailPinOnFocus(rowState, index, startPadding)
+                .then(
                     if (onItemFocused != null || onItemFocusedAtIndex != null) {
                         Modifier.onFocusChanged { st ->
                             if (st.isFocused) {
@@ -298,7 +300,12 @@ fun TvMediaRow(
                         Modifier
                     },
                 )
-                val itemActions = cardActions(item)
+                // Memoised per item: the producer builds a fresh action bundle
+                // (four fresh lambdas) on every call, and TvMediaCardActions is
+                // a data class comparing those lambdas by identity — so without
+                // this no visible card could ever skip recomposition once its
+                // row recomposed (which the feed does on every focus move).
+                val itemActions = remember(item) { cardActions(item) }
                 when (cardLayout) {
                     TvRowCardLayout.ReferenceShelf -> TvReferenceShelfCard(
                         title = rowItem.shelfTitle,

@@ -94,7 +94,10 @@ fun TvMediaCardContextMenu(
     isFavorite: Boolean,
     isInWatchlist: Boolean,
 ) {
-    if (actions.isEmpty) return
+    // Nothing to compose while closed — this is called for every card in
+    // every rail, so the requester/position-provider allocations below must
+    // not run for the (almost always) collapsed case.
+    if (actions.isEmpty || !expanded) return
 
     // A TV Card reports its long-click while DPAD_CENTER is still held. The
     // popup immediately focuses its first row, so the matching key-up would
@@ -112,8 +115,6 @@ fun TvMediaCardContextMenu(
         actions.onToggleWatchlist != null -> TvMenuAction.Watchlist
         else -> TvMenuAction.RemoveFromContinueWatching
     }
-
-    if (!expanded) return
 
     Box(
         modifier = Modifier

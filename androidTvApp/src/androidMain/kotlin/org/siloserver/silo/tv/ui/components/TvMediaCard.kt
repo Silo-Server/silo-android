@@ -96,7 +96,7 @@ fun TvMediaCard(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
-    val cardShape = RoundedCornerShape(8.dp)
+    val cardShape = TvMediaCardShape
     val cardFocus = siloCardDefaults(shape = cardShape)
 
     var menuExpanded by remember { mutableStateOf(false) }
@@ -238,3 +238,6 @@ val TvCardWidth: Dp = RowDimens.PosterWidth
 
 /** Optical TV scale: compact like tvOS badges, still readable at sofa distance. */
 const val TvCardOverlayScale: Float = 0.7f
+
+/** Hoisted so every card shares one instance instead of allocating a shape per composition. */
+private val TvMediaCardShape = RoundedCornerShape(8.dp)

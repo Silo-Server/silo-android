@@ -20,7 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.BlendMode
@@ -74,7 +74,10 @@ fun TvRootHeroBackdrop(
     }
 
     val targetAccent = ambientAccent ?: emptyWashColor ?: MaterialTheme.colorScheme.background
-    val animatedTint by animateColorAsState(
+    // Kept as State and read only inside the Canvas draw lambda below: reading
+    // the animating colour here would recompose this whole backdrop (and its
+    // Crossfade subtree) on every frame of the 500ms tint tween.
+    val animatedTint = animateColorAsState(
         targetValue = targetAccent,
         animationSpec = tween(
             durationMillis = if (snapInitialTint) 0 else TvMarqueeCrossfadeMs,
@@ -82,7 +85,6 @@ fun TvRootHeroBackdrop(
         ),
         label = "tvRootHeroBackdropTint",
     )
-    val displayedTint = if (animateTransition) animatedTint else targetAccent
 
     val isVisible = content != null
     val hasTintOnlyWash = !isVisible && ambientAccent != null
@@ -114,6 +116,7 @@ fun TvRootHeroBackdrop(
         // Diagonal sampled-tint wash: richest in the top-right behind the art,
         // carried dimmed to the bottom-left (tvOS stops 1.0 / 0.5 / 0.18).
         Canvas(modifier = Modifier.fillMaxSize()) {
+            val displayedTint = if (animateTransition) animatedTint.value else targetAccent
             drawRect(
                 brush = Brush.linearGradient(
                     colorStops = smoothedWashStops(
@@ -200,31 +203,33 @@ private fun CornerAnchoredArt(
                 modifier = Modifier
                     .size(artWidth, artHeight)
                     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                    .drawWithContent {
-                        drawContent()
+                    // drawWithCache: the two mask brushes are built once per
+                    // size, not on every frame of a crossfade.
+                    .drawWithCache {
                         // Horizontal ramp: opaque at trailing (right) edge,
                         // clear toward the leading (left) edge.
-                        drawRect(
-                            brush = Brush.horizontalGradient(
-                                colorStops = arrayOf(
-                                    0.0f to Color.Transparent,
-                                    0.68f to Color.Black,
-                                    1.0f to Color.Black,
-                                ),
+                        val horizontalMask = Brush.horizontalGradient(
+                            colorStops = arrayOf(
+                                0.0f to Color.Transparent,
+                                0.68f to Color.Black,
+                                1.0f to Color.Black,
                             ),
-                            blendMode = BlendMode.DstIn,
+                            endX = size.width,
                         )
                         // Vertical ramp: opaque at the top, clear toward bottom.
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colorStops = arrayOf(
-                                    0.0f to Color.Black,
-                                    0.58f to Color.Black,
-                                    1.0f to Color.Transparent,
-                                ),
+                        val verticalMask = Brush.verticalGradient(
+                            colorStops = arrayOf(
+                                0.0f to Color.Black,
+                                0.58f to Color.Black,
+                                1.0f to Color.Transparent,
                             ),
-                            blendMode = BlendMode.DstIn,
+                            endY = size.height,
                         )
+                        onDrawWithContent {
+                            drawContent()
+                            drawRect(brush = horizontalMask, blendMode = BlendMode.DstIn)
+                            drawRect(brush = verticalMask, blendMode = BlendMode.DstIn)
+                        }
                     },
             ) {
                 ThumbhashImage(

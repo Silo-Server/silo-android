@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,6 +63,7 @@ import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
 import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
+import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
@@ -119,7 +121,7 @@ internal fun TvDetailEpisodeRail(
         listState.animateScrollBy(itemCenter - viewportCenter)
     }
 
-    TvRailScrollBehavior(leading = Spacing.safeArea) {
+    TvRailScrollBehavior {
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
@@ -151,11 +153,11 @@ internal fun TvDetailEpisodeRail(
         ),
         horizontalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        items(
+        itemsIndexed(
             episodes,
-            key = { it.contentId },
-            contentType = { "episode-card" },
-        ) { episode ->
+            key = { _, episode -> episode.contentId },
+            contentType = { _, _ -> "episode-card" },
+        ) { index, episode ->
             val isCurrent = episode.contentId == currentContentId
             TvDetailEpisodeCard(
                 episode = episode,
@@ -164,11 +166,15 @@ internal fun TvDetailEpisodeRail(
                 onClick = { onEpisodeSelected(episode) },
                 onSetWatched = { watched -> onSetWatched(episode.contentId, watched) },
                 onSetFavorite = { favorite -> onSetFavorite(episode.contentId, favorite) },
-                modifier = if (isCurrent) {
-                    Modifier.focusRequester(defaultFocusRequester)
-                } else {
-                    Modifier
-                },
+                modifier = Modifier
+                    .tvRailPinOnFocus(listState, index, Spacing.safeArea)
+                    .then(
+                        if (isCurrent) {
+                            Modifier.focusRequester(defaultFocusRequester)
+                        } else {
+                            Modifier
+                        },
+                    ),
             )
         }
     }

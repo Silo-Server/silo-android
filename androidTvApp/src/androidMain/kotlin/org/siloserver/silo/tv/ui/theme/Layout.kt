@@ -12,6 +12,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import androidx.compose.ui.unit.Dp
 
 /** Content now lives beside a persistent rail, so page padding is local only. */
@@ -60,48 +68,92 @@ val TvSmoothBringIntoViewSpec: BringIntoViewSpec = object : BringIntoViewSpec {
 /**
  * Horizontal rail scroll behaviour, shared by every card carousel.
  *
- * Instead of nudging the row only once the focused card reaches the trailing
- * gutter (a different distance on every press, and nothing at all for the
- * first few cards), the focused card's leading edge is pinned at the row's
- * start padding — the tvOS / Netflix rail model. Every Right or Left is then
- * one uniform card-sized slide, the focused card always sits in the same
- * place on screen, and the eye never has to hunt for it. The row's ends still
- * clamp naturally, so the first cards and the last screenful move focus
- * across the screen without scrolling.
+ * The focused card is PINNED: its leading edge slides to the row's start
+ * padding — the tvOS / Netflix rail model — so every Right or Left is one
+ * uniform card-sized glide and the focused card always sits in the same place
+ * on screen. Row ends still clamp naturally.
  *
- * Fast-out/slow-in at 480ms (tuned on the Shield): quick enough to start
- * that rapid presses feel connected, long enough to settle that a card-step
- * reads as a glide rather than a flick; a chain of presses retargets the
- * running animation from its current position, so it never stutters.
+ * Two pieces, deliberately split:
+ *
+ * - [Modifier.tvRailPinOnFocus] performs the pin as a ONE-SHOT clamped
+ *   `animateScrollBy` when a card gains focus (mirroring the detail page's
+ *   section anchors).
+ * - [TvRailScrollBehavior] gives the LazyRow's automatic bring-into-view a
+ *   *satisfiable* rule (minimal reveal) plus the same animation spec, so the
+ *   two never fight and the auto request settles as soon as the card is
+ *   visible.
+ *
+ * The pin must NOT be expressed as the BringIntoViewSpec's scroll distance:
+ * Compose keeps re-launching the bring-into-view animation on every layout
+ * pass while the spec still reports a non-zero distance, and a pinned position
+ * is unreachable whenever the row is clamped at either end — so during any
+ * concurrent animation (a vertical row scroll re-lays the rail out each frame)
+ * it spun a new scroll job per frame. Measured on the Shield as p90 121ms and
+ * near-frozen vertical navigation.
+ *
+ * Fast-out/slow-in at 480ms (tuned on the Shield): quick to start so rapid
+ * presses feel connected, long enough to settle that a card-step reads as a
+ * glide; a chain of presses retargets the running animation from its current
+ * position, so it never stutters.
+ */
+val TvRailScrollSpec: AnimationSpec<Float> = tween(
+    durationMillis = 480,
+    easing = FastOutSlowInEasing,
+)
+
+@OptIn(ExperimentalFoundationApi::class)
+private val TvRailBringIntoViewSpec: BringIntoViewSpec = object : BringIntoViewSpec {
+    override val scrollAnimationSpec: AnimationSpec<Float> = TvRailScrollSpec
+
+    // Minimal reveal only: satisfiable at both row ends, so the automatic
+    // request never loops. The pin itself is done by tvRailPinOnFocus.
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+        when {
+            offset < 0f -> offset
+            offset + size > containerSize -> minOf(offset, offset + size - containerSize)
+            else -> 0f
+        }
+}
+
+/**
+ * Wrap a `LazyRow` so its automatic horizontal bring-into-view uses the rail
+ * spec. Vertical requests keep bubbling to the enclosing column's spec.
  */
 @OptIn(ExperimentalFoundationApi::class)
-fun tvRailBringIntoViewSpec(leadingPx: Float): BringIntoViewSpec = object : BringIntoViewSpec {
-    override val scrollAnimationSpec: AnimationSpec<Float> = tween(
-        durationMillis = 480,
-        easing = FastOutSlowInEasing,
-    )
+@Composable
+fun TvRailScrollBehavior(content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalBringIntoViewSpec provides TvRailBringIntoViewSpec, content = content)
+}
 
-    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
-        // Content wider than the viewport can't be pinned; fall back to
-        // minimal reveal so an oversized card is never scrolled off.
-        if (size >= containerSize) return TvSmoothBringIntoViewSpec.calculateScrollDistance(offset, size, containerSize)
-        val distance = offset - leadingPx
-        // Ignore sub-pixel drift so an in-place focus change doesn't jitter.
-        return if (kotlin.math.abs(distance) < 1f) 0f else distance
+/**
+ * Slide the item at [index] so its leading edge sits [leadingPx] from the
+ * viewport start, clamped by the list's own bounds. Waits a frame first so the
+ * focus system's automatic bring-into-view is enqueued and then replaced.
+ */
+suspend fun LazyListState.tvRailPinItem(index: Int, leadingPx: Float) {
+    withFrameNanos { }
+    val item = layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
+    if (item != null) {
+        val distance = item.offset - leadingPx
+        if (abs(distance) >= 1f) animateScrollBy(distance, TvRailScrollSpec)
+    } else {
+        // Not composed (deep restore): the stock jump lands it at the content
+        // start, i.e. exactly at the start padding.
+        animateScrollToItem(index)
     }
 }
 
 /**
- * Wrap a `LazyRow` so its own horizontal bring-into-view uses
- * [tvRailBringIntoViewSpec] pinned at [leading] (the row's start content
- * padding). Vertical requests keep bubbling to the enclosing column's spec.
+ * Pin the item at [index] (see [tvRailPinItem]) whenever it gains focus.
+ * [leading] is the row's start content padding.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TvRailScrollBehavior(leading: Dp, content: @Composable () -> Unit) {
+fun Modifier.tvRailPinOnFocus(state: LazyListState, index: Int, leading: Dp): Modifier {
     val leadingPx = with(LocalDensity.current) { leading.toPx() }
-    val spec = remember(leadingPx) { tvRailBringIntoViewSpec(leadingPx) }
-    CompositionLocalProvider(LocalBringIntoViewSpec provides spec, content = content)
+    val scope = rememberCoroutineScope()
+    return onFocusChanged { focusState ->
+        if (focusState.isFocused) scope.launch { state.tvRailPinItem(index, leadingPx) }
+    }
 }
 
 @Composable
