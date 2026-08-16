@@ -592,7 +592,13 @@ fun TvMainShell(
     val selectedRoot by remember(currentRoute) {
         derivedStateOf { mapRouteToRoot(currentRoute) }
     }
-    val selectedMenuFocusTarget = selectedRoot?.let(TvTopMenuPanel::Root)
+    // Where an Up out of content lands on the bar. The selected root when there
+    // is one; For You's dropdown children (Watchlist / Favorites) map to the
+    // For You tab they were opened from — they are not tab roots (no highlight,
+    // Back still pops), but Up from them must land on their tab, not on
+    // whatever the geometric search picks (the Search icon, from the left edge).
+    val selectedMenuFocusTarget = (selectedRoot ?: menuFocusRootForRoute(currentRoute))
+        ?.let(TvTopMenuPanel::Root)
 
     // Which libraries actually HAVE collections — gates the cascade's
     // Collections pill so an empty library doesn't offer a dead-end section
@@ -1040,7 +1046,17 @@ fun TvMainShell(
                                 // fails (we're already on the top row), hand
                                 // focus to the menu bar.
                                 val moved = focusManager.moveFocus(FocusDirection.Up)
-                                if (shouldRequestMenuAfterContentUp(moved, isRepeat)) {
+                                // `exit = Cancel` above only guards the level of
+                                // the search that owns the focused row; from a
+                                // control that sits directly in the screen (the
+                                // For You filter pills) the 2D search still
+                                // escapes into the bar and lands on whatever is
+                                // geometrically nearest — the Search icon from
+                                // the left edge. A move that left content is
+                                // therefore treated exactly like a failed move:
+                                // route to the selected tab.
+                                val escapedContent = moved && !contentHasFocus
+                                if (shouldRequestMenuAfterContentUp(moved && !escapedContent, isRepeat)) {
                                     focusState.requestMenuFocusIfAvailable(
                                         selectedMenuFocusTarget,
                                         allowNullTarget = currentRoute == TvMainRoute.Search.route,
@@ -1139,7 +1155,7 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Audio.route) {
                     TvLibrariesScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1147,7 +1163,7 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Libraries.route) {
                     TvLibrariesScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1165,7 +1181,7 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Movies.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Movies] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Movies] ?: 0,
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1179,7 +1195,7 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Series.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Series] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Series] ?: 0,
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1193,7 +1209,7 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Music.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Music] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Music] ?: 0,
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1207,7 +1223,7 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Audiobooks.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Audiobooks] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Audiobooks] ?: 0,
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1277,19 +1293,19 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Watchlist.route) {
                     TvWatchlistScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
                 shellComposable(TvMainRoute.Favorites.route) {
                     TvFavoritesScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
                 shellComposable(TvMainRoute.History.route) {
                     TvHistoryScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
@@ -1325,7 +1341,7 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Browse.route) {
                     TvBrowseScreen(
-                        onOpenItemDetail = onOpenItemDetail,
+                        onOpenItemDetail = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
@@ -1714,6 +1730,13 @@ private fun mapRouteToRoot(route: String): TvRootDestination? = when (route) {
     TvMainRoute.ForYou.route -> TvRootDestination.ForYou
     // Search maps to null so no top tab is highlighted (trailing icon).
     // Requests/MyRequests/Settings/Audio/Libraries are likewise non-tab.
+    else -> null
+}
+
+/** Bar tab that owns a non-root route for content→bar Up (see selectedMenuFocusTarget). */
+private fun menuFocusRootForRoute(route: String): TvRootDestination? = when (route) {
+    TvMainRoute.Watchlist.route,
+    TvMainRoute.Favorites.route -> TvRootDestination.ForYou
     else -> null
 }
 

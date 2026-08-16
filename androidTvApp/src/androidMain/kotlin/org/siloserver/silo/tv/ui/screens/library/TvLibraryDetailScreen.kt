@@ -436,7 +436,7 @@ private fun LibraryTab(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun LibraryGrid(
     state: TvLibraryDetailViewModel.UiState,
@@ -499,7 +499,19 @@ private fun LibraryGrid(
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(LibraryBrowseGridColumns),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                // Entry lands on the return-target card while its requester is
+                // attached (the grid state restores the scroll, so the card the
+                // viewer opened is composed on the way back). Without this the
+                // shell's return-resume claim entered at the first focusable —
+                // the Sort button — and the restoration then visibly walked
+                // focus down to the card.
+                .focusProperties {
+                    enter = {
+                        if (attachedRestoreItemId != null) restoredItemFocusRequester else FocusRequester.Default
+                    }
+                },
             horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
             verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
             contentPadding = PaddingValues(
