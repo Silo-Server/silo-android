@@ -66,6 +66,37 @@ val TvSmoothBringIntoViewSpec: BringIntoViewSpec = object : BringIntoViewSpec {
 }
 
 /**
+ * [TvSmoothBringIntoViewSpec] for a vertical grid that scrolls under the top
+ * bar: the leading gutter is at least [topInset] (the grid's top content
+ * padding), so a row revealed by scrolling back UP parks below the bar instead
+ * of at 12% of the viewport — which on a 1080p canvas is ~65dp, under the
+ * 94dp bar, leaving the first row's posters cut off at the top. Scrolling
+ * down is unchanged (trailing gutter as before).
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun rememberTvGridBringIntoViewSpec(topInset: Dp): BringIntoViewSpec {
+    val topInsetPx = with(LocalDensity.current) { topInset.toPx() }
+    return remember(topInsetPx) {
+        object : BringIntoViewSpec {
+            override val scrollAnimationSpec: AnimationSpec<Float> = TvSmoothBringIntoViewSpec.scrollAnimationSpec
+
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+                val leadingGutter = maxOf(containerSize * 0.12f, topInsetPx)
+                val trailingGutter = containerSize * 0.22f
+                val visibleStart = leadingGutter
+                val visibleEnd = containerSize - trailingGutter
+                return when {
+                    offset < visibleStart -> offset - visibleStart
+                    offset + size > visibleEnd -> offset + size - visibleEnd
+                    else -> 0f
+                }
+            }
+        }
+    }
+}
+
+/**
  * Horizontal rail scroll behaviour, shared by every card carousel.
  *
  * The focused card is PINNED: its leading edge slides to the row's start

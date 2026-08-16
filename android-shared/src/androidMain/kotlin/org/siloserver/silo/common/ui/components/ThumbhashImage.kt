@@ -17,6 +17,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
@@ -88,6 +89,8 @@ fun ThumbhashImage(
     contentDescription: String?,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    /** Where a non-filling ([ContentScale.Fit]) image sits inside its bounds. */
+    alignment: Alignment = Alignment.Center,
     transparent: Boolean = false,
     decodeSizePx: Int? = null,
     crossfadeMillis: Int = 300,
@@ -150,6 +153,7 @@ fun ThumbhashImage(
             model = model,
             contentDescription = contentDescription,
             contentScale = contentScale,
+            alignment = alignment,
             placeholder = placeholder,
             onSuccess = { onSuccess?.invoke() },
             onError = { onError?.invoke() },
@@ -203,6 +207,7 @@ fun ThumbhashImage(
             model = model,
             contentDescription = contentDescription,
             contentScale = contentScale,
+            alignment = alignment,
             onSuccess = { state ->
                 fullImageReady = true
                 if (

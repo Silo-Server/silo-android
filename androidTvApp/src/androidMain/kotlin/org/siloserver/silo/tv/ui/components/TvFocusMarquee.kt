@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -155,11 +156,16 @@ private fun TvMarqueeBlock(
                     thumbhash = null,
                     contentDescription = content.title,
                     contentScale = ContentScale.Fit,
+                    // Flush with the editorial text below it; the default
+                    // centre alignment floated wide logos toward the middle
+                    // of the block, away from the meta/synopsis left edge.
+                    alignment = Alignment.CenterStart,
                     transparent = true,
                     crossfadeMillis = 0,
                     onSuccess = { logoLoaded = true },
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxHeight()
+                        .widthIn(max = MarqueeLogoMaxWidth)
                         .alpha(logoAlpha),
                 )
             }

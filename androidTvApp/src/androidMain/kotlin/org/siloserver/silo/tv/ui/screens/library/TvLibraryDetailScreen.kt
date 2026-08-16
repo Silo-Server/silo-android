@@ -73,7 +73,7 @@ import org.siloserver.silo.tv.ui.components.TvSkylineSectionFeed
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.SubtleSurface
-import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
+import org.siloserver.silo.tv.ui.theme.rememberTvGridBringIntoViewSpec
 import org.siloserver.silo.tv.ui.theme.monoGroupHeader
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -490,7 +490,10 @@ private fun LibraryGrid(
     }
 
 
-    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+    val browseTopInset = if (showBrowseControls) LibraryBrowseContentTopInset else TvTopMenuLayout.contentTopInset
+    CompositionLocalProvider(
+        LocalBringIntoViewSpec provides rememberTvGridBringIntoViewSpec(browseTopInset),
+    ) {
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(LibraryBrowseGridColumns),
@@ -501,7 +504,7 @@ private fun LibraryGrid(
                 start = Spacing.safeArea,
                 // The control-row embed uses the taller tvOS library inset
                 // (`ContinuumTheme.Skyline.libraryContentTopInset`, 216pt → 108dp).
-                top = if (showBrowseControls) LibraryBrowseContentTopInset else TvTopMenuLayout.contentTopInset,
+                top = browseTopInset,
                 end = Spacing.md,
                 bottom = Spacing.xxxl,
             ),
@@ -684,7 +687,9 @@ private fun AudiobookGroupsTab(
         initialFocusRequested = true
     }
 
-    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+    CompositionLocalProvider(
+        LocalBringIntoViewSpec provides rememberTvGridBringIntoViewSpec(TvTopMenuLayout.contentTopInset),
+    ) {
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(LibraryGridColumns),
@@ -920,7 +925,9 @@ private fun CollectionsTab(
         initialFocusRequested = true
     }
 
-    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+    CompositionLocalProvider(
+        LocalBringIntoViewSpec provides rememberTvGridBringIntoViewSpec(TvTopMenuLayout.contentTopInset),
+    ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(LibraryGridColumns),
             modifier = Modifier
