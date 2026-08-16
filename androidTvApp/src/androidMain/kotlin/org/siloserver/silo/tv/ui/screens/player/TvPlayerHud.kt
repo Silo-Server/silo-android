@@ -210,6 +210,8 @@ internal fun TvPlayerHud(
     onHdrEnabledChanged: (Boolean) -> Unit,
     dolbyVisionEnabled: Boolean,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
+    /** True while a DV toggle's in-place session restart is still pending. */
+    dolbyVisionSwitchInFlight: Boolean = false,
     chapters: List<VersionChapter>,
     onSelectChapter: (Int) -> Unit,
     onDismiss: () -> Unit,
@@ -495,6 +497,7 @@ internal fun TvPlayerHud(
                         onHdrEnabledChanged = onHdrEnabledChanged,
                         dolbyVisionEnabled = dolbyVisionEnabled,
                         onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
+                        dolbyVisionSwitchInFlight = dolbyVisionSwitchInFlight,
                         fillMode = videoFillMode,
                         onFillModeChanged = onVideoFillModeChanged,
                         playbackSpeed = playbackSpeed,
@@ -1021,6 +1024,7 @@ private fun HudVideoPane(
     onHdrEnabledChanged: (Boolean) -> Unit,
     dolbyVisionEnabled: Boolean,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
+    dolbyVisionSwitchInFlight: Boolean,
     fillMode: VideoFillMode,
     onFillModeChanged: (VideoFillMode) -> Unit,
     playbackSpeed: Double,
@@ -1199,10 +1203,26 @@ private fun HudVideoPane(
                     // the next playback start. Apple parity (silo-apple e9bd775).
                     HudFocusedSettingRow(
                         label = "Dolby Vision",
-                        value = onOffLabel(dolbyVisionEnabled),
+                        // A toggle on a DV file restarts the session so the
+                        // server can re-plan the layer; say so on the row (the
+                        // subtitle track row's idiom) and swallow presses until
+                        // the replacement is playing, so a second press can't
+                        // queue a second restart behind the first. Swallow, not
+                        // disable: a disabled row is not focusable, and taking
+                        // focus off the row the viewer just pressed left the
+                        // next press landing on nothing.
+                        value = if (dolbyVisionSwitchInFlight) {
+                            "${onOffLabel(dolbyVisionEnabled)} · Applying…"
+                        } else {
+                            onOffLabel(dolbyVisionEnabled)
+                        },
                         enabled = enabled,
                         showsChevron = false,
-                        onActivate = { onDolbyVisionEnabledChanged(!dolbyVisionEnabled) },
+                        onActivate = {
+                            if (!dolbyVisionSwitchInFlight) {
+                                onDolbyVisionEnabledChanged(!dolbyVisionEnabled)
+                            }
+                        },
                     )
                 }
             }

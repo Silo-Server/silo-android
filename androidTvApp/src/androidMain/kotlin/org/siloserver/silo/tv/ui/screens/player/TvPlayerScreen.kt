@@ -341,6 +341,7 @@ fun TvPlayerScreen(
     val subtitleDelayMs by viewModel.subtitleDelayMs.collectAsState()
     val hdrEnabled by viewModel.hdrEnabled.collectAsState()
     val dolbyVisionEnabled by viewModel.dolbyVisionEnabled.collectAsState()
+    val dolbyVisionSwitchInFlight by viewModel.dolbyVisionSwitchInFlight.collectAsState()
     val subtitleSearch by viewModel.subtitleSearch.collectAsState()
     val aiTranslate by viewModel.aiTranslate.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -2184,6 +2185,7 @@ fun TvPlayerScreen(
                             onHdrEnabledChanged = viewModel::onSetHdrEnabled,
                             dolbyVisionEnabled = dolbyVisionEnabled,
                             onDolbyVisionEnabledChanged = viewModel::onSetDolbyVisionEnabled,
+                            dolbyVisionSwitchInFlight = dolbyVisionSwitchInFlight,
                             chapters = state.chapters,
                             onSelectChapter = { idx ->
                                 viewModel.onSeekToChapter(idx)?.let { sec ->

@@ -115,6 +115,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
@@ -124,6 +125,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOf
@@ -754,6 +756,8 @@ class TvPlayerViewModel(
         // demoting to a server transcode (resets once playback progresses).
         private const val MAX_TRANSIENT_NETWORK_RETRIES = 1
         private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
+        /** How long a Dolby Vision toggle may claim "Applying…" before the cue gives up. */
+        private const val OUTPUT_SWITCH_FEEDBACK_TIMEOUT_MS = 20_000L
         // Record a durable position roughly every 10s of content time.
         private const val POSITION_RECORD_INTERVAL_SEC = 10.0
         // Non-empty onTracksChanged callbacks an unresolved explicit subtitle
@@ -4589,11 +4593,61 @@ class TvPlayerViewModel(
         viewModelScope.launch { playerSettingsStore.setHdrEnabled(value) }
     }
 
-    /** Applies to track selection immediately; server-side routing (base
-     *  layer vs DV delivery) follows at the next playback start. */
+    /**
+     * Applies to local track selection immediately, but the part that matters
+     * for a single-track DV file — base layer vs DV delivery — is decided in
+     * the server's plan from the capability snapshot sent at load. So once the
+     * setting is written, restart the session in place at the current position
+     * if the current file is Dolby Vision: the viewer sees the layer they just
+     * chose instead of having to back out and resume to get it. A non-DV file
+     * has nothing to re-plan and is left alone.
+     */
     fun onSetDolbyVisionEnabled(value: Boolean) {
-        viewModelScope.launch { playerSettingsStore.setDolbyVisionEnabled(value) }
+        viewModelScope.launch {
+            playerSettingsStore.setDolbyVisionEnabled(value)
+            val state = _uiState.value
+            if (state.streamUrl == null) return@launch
+            val fileId = state.selectedFileId ?: state.mediaFileId
+            val currentIsDolbyVision = state.fileVersions
+                .firstOrNull { it.fileId == fileId }
+                ?.let(org.siloserver.silo.tv.ui.screens.detail.TvPlaybackFormatting::isDolbyVision)
+                ?: (state.playbackPlan?.claims?.video?.dolbyVision == true)
+            if (!currentIsDolbyVision) return@launch
+            Log.i(TAG, "dolby_vision_toggle value=$value restart_in_place file_id=$fileId")
+            // "In flight" until the replacement session is adopted AND has
+            // frames moving — adoption is quick (~1s) but the viewer's wait is
+            // the rebuffer after it, so the cue must outlast that. If the
+            // replacement never arrives (the old session is kept on failure),
+            // stop claiming progress after a bounded wait.
+            val previousSessionId = state.sessionId
+            _dolbyVisionSwitchInFlight.value = true
+            dolbyVisionSwitchWatch?.cancel()
+            dolbyVisionSwitchWatch = launch {
+                try {
+                    withTimeoutOrNull(OUTPUT_SWITCH_FEEDBACK_TIMEOUT_MS) {
+                        _uiState.first {
+                            it.sessionId != previousSessionId &&
+                                !it.isLoading && !it.isBuffering && it.isPlaying
+                        }
+                    }
+                } finally {
+                    _dolbyVisionSwitchInFlight.value = false
+                }
+            }
+            restartSessionInPlace(fileId)
+        }
     }
+
+    private val _dolbyVisionSwitchInFlight = MutableStateFlow(false)
+    private var dolbyVisionSwitchWatch: Job? = null
+
+    /**
+     * True from a Dolby Vision toggle that restarted the session until the
+     * replacement is adopted and playing. Drives the row's "Applying…" cue
+     * and makes a second press a no-op mid-switch — without disabling the row,
+     * which would drop focus off it.
+     */
+    val dolbyVisionSwitchInFlight: StateFlow<Boolean> = _dolbyVisionSwitchInFlight.asStateFlow()
 
     fun onSetSubtitleAppearance(value: SubtitleAppearance) {
         viewModelScope.launch { playerSettingsStore.setSubtitleAppearance(value) }
@@ -4923,15 +4977,26 @@ class TvPlayerViewModel(
         // choice without switching anything.
         if (fileId == (state.selectedFileId ?: state.mediaFileId)) return
         if (state.fileVersions.none { it.fileId == fileId }) return
-        // The intent is left alone: it is scoped to the file it was made
-        // against, so reconciliation rejects it once the replacement publishes,
-        // and A keeps its choice if the replacement never arrives.
+        restartSessionInPlace(fileId)
+    }
+
+    /**
+     * Restart the session on [fileId] at the current position, keeping the
+     * current session mounted and playable until the replacement is ready
+     * (lifecycle adoption replaces A only after B is ready, including when B
+     * fails). Shared by the in-player version switch and by settings whose
+     * effect is decided in the server's plan rather than locally.
+     *
+     * The audio intent is left alone: it is scoped to the file it was made
+     * against, so reconciliation rejects it once the replacement publishes,
+     * and A keeps its choice if the replacement never arrives.
+     */
+    private fun restartSessionInPlace(fileId: Int?) {
+        val state = _uiState.value
         episodeSelectionHandoffSlot.invalidate()
         resetSeekRecoveryForContentChange()
         transportMountGate.beginLoad()
         val resumeAt = state.position.takeIf { it > 0.0 }
-        // Lifecycle adoption replaces A only after B is ready. Until then A
-        // remains mounted and playable, including when B fails.
         versionSwitchJob?.cancel()
         versionSwitchJob = viewModelScope.launch {
             coroutineContext.ensureActive()
