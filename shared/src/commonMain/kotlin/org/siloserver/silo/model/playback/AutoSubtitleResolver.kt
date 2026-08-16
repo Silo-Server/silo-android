@@ -78,9 +78,18 @@ fun AutoSubtitleResolution.selectedCandidate(): AutoSubtitleCandidate? =
  * subs are enabled; otherwise the best track in the preferred language, falling
  * back to any forced track when forced subs are enabled.
  *
- * Within a pool, forced (when preferred) → full-dialogue text → non-forced text
- * → any text → first. Bitmap tracks stay DEPRIORITISED, never excluded: a
- * bitmap track that is the only candidate still wins.
+ * Within a pool: full-dialogue text → non-forced text → any text → first.
+ * Bitmap tracks stay DEPRIORITISED, never excluded: a bitmap track that is the
+ * only candidate still wins.
+ *
+ * "Show forced subtitles" is a SEPARATE setting and never outranks the
+ * viewer's full-subtitle preference: when subtitles are wanted (mode `always`,
+ * or `auto` with foreign audio) the full-dialogue track wins and a forced
+ * track is only the last resort when the language has nothing else. Forced
+ * leads only in the branch where subtitles would otherwise be OFF (audio
+ * already in the preferred language). Product owner call, 2026-08-16: an
+ * "English – Always" profile with forced enabled was starting on the Forced
+ * track of a disc that also carried a plain English track.
  */
 fun resolveAutoSubtitle(
     candidates: List<AutoSubtitleCandidate>,
@@ -97,7 +106,7 @@ fun resolveAutoSubtitle(
     val targetLanguage = autoSubtitleLanguageKey(preferred)
     if (targetLanguage == null) {
         if (mode != "always") return AutoSubtitleResolution.NoChange
-        return bestAutoSubtitleCandidate(candidates, null, context.showForced)
+        return bestAutoSubtitleCandidate(candidates, null)
             ?.let(AutoSubtitleResolution::Select)
             ?: AutoSubtitleResolution.NoChange
     }
@@ -115,7 +124,7 @@ fun resolveAutoSubtitle(
         return AutoSubtitleResolution.Disable
     }
 
-    val target = bestAutoSubtitleCandidate(candidates, targetLanguage, context.showForced)
+    val target = bestAutoSubtitleCandidate(candidates, targetLanguage)
         ?: if (context.showForced) candidates.firstOrNull { it.forced } else null
     return target?.let(AutoSubtitleResolution::Select) ?: AutoSubtitleResolution.NoChange
 }
@@ -123,7 +132,6 @@ fun resolveAutoSubtitle(
 private fun bestAutoSubtitleCandidate(
     candidates: List<AutoSubtitleCandidate>,
     targetLanguage: String?,
-    preferForced: Boolean,
 ): AutoSubtitleCandidate? {
     val pool = if (targetLanguage == null) {
         candidates
@@ -132,10 +140,6 @@ private fun bestAutoSubtitleCandidate(
     }
     if (pool.isEmpty()) return null
 
-    if (preferForced) {
-        pool.firstOrNull { it.forced && !it.isHearingImpaired() && !it.isBitmap() }
-            ?.let { return it }
-    }
     pool.firstOrNull { !it.forced && !it.isHearingImpaired() && !it.isBitmap() }?.let { return it }
     pool.firstOrNull { !it.forced && !it.isBitmap() }?.let { return it }
     pool.firstOrNull { !it.isBitmap() }?.let { return it }

@@ -38,6 +38,44 @@ class AutoSubtitleResolverTest {
     }
 
     @Test
+    fun alwaysWithForcedEnabledStillPrefersTheFullDialogueTrack() {
+        // Shield (Supergirl): three English SubRip streams — Forced, plain
+        // (untitled), SDH — profile English/Always with "show forced" ON.
+        // Forced is a separate setting for the subtitles-otherwise-off case;
+        // it must not outrank the viewer's full-subtitle preference.
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", title = "Forced", forced = true),
+            SubtitleTrack(index = 1, codec = "srt", language = "eng"),
+            SubtitleTrack(index = 2, codec = "srt", language = "eng", title = "SDH"),
+        )
+
+        for (mode in listOf("always", "auto")) {
+            val selected = resolveAutoSubtitle(
+                candidates = catalogAutoSubtitleCandidates(tracks),
+                context = AutoSubtitleContext(
+                    preferredLanguage = "en",
+                    mode = mode,
+                    showForced = true,
+                    audioLanguage = "ja",
+                ),
+            ).selectedCandidate()
+            assertEquals(1, selected?.selectionIndex, "mode=$mode")
+        }
+    }
+
+    @Test
+    fun forcedIsStillTheLastResortWhenTheLanguageHasNothingElse() {
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", title = "Forced", forced = true),
+        )
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "always", showForced = true),
+        ).selectedCandidate()
+        assertEquals(0, selected?.selectionIndex)
+    }
+
+    @Test
     fun aBitmapTrackStillWinsWhenItIsTheOnlyCandidate() {
         // Bitmap stays deprioritised, never excluded.
         val rows = listOf(
