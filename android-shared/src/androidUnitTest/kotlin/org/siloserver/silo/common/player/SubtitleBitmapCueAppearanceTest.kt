@@ -90,6 +90,65 @@ class SubtitleBitmapCueAppearanceTest {
         assertEquals(1f - padding - 0.1f, remapped.line, absoluteTolerance = 1e-4f)
     }
 
+    /**
+     * The screen-anchored Bottom preset: on a 2.39:1 title the canvas reaches
+     * from the title-safe line down into the letterbox bar (902px of a 1080
+     * player), so the fraction that puts the caption 6% above the SCREEN bottom
+     * is 64.8/902, not the picture-relative one. The bitmap path has to take the
+     * same fraction the text path is given or the two kinds of cue split apart.
+     */
+    @Test
+    fun bottomBitmapCuesTakeTheCanvasFractionTheTextPathIsGiven() {
+        val canvasPadding = 64.8f / 902f
+        val remapped = remapBitmapCue(
+            cue = pgsCue(bitmapHeight = 0.1f),
+            appearance = appearance(SubtitlePositionPreset.Bottom),
+            titleSafeFraction = 0.05f,
+            bottomPaddingFraction = canvasPadding,
+        )
+
+        assertEquals(1f - canvasPadding - 0.1f, remapped.line, absoluteTolerance = 1e-4f)
+        // 40 (canvas top in the frame) + 138 (frame top) + 902 * (bottom edge)
+        // = 1015.2 on a 1080 screen: 6% up, exactly where the text lands.
+        val bottomEdgeOnScreen = 138f + 40f + 902f * (remapped.line + remapped.bitmapHeight)
+        assertEquals(1015.2f, bottomEdgeOnScreen, absoluteTolerance = 0.5f)
+    }
+
+    @Test
+    fun lowerThirdBitmapCuesStayPictureAnchoredOnTheSameLetterboxedFrame() {
+        // Lower Third's canvas is the picture (1728x723 at 96,40 in a frame
+        // whose own top is 138), so the fraction it is handed is the
+        // picture-relative one and nothing about the bar reaches it.
+        val fraction = subtitleBottomPaddingFractionForCanvas(
+            position = SubtitlePositionPreset.LowerThird,
+            titleSafeFraction = 0.05f,
+            canvasHeight = 723,
+            canvasBottomInPlayerSpace = 138 + 40 + 723,
+            playerHeight = 1080,
+        )
+        val remapped = remapBitmapCue(
+            cue = pgsCue(bitmapHeight = 0.1f),
+            appearance = appearance(SubtitlePositionPreset.LowerThird),
+            titleSafeFraction = 0.05f,
+            bottomPaddingFraction = fraction,
+        )
+
+        assertEquals((0.18f - 0.05f) / 0.90f, fraction, absoluteTolerance = 1e-4f)
+        assertEquals(1f - fraction - 0.1f, remapped.line, absoluteTolerance = 1e-4f)
+    }
+
+    @Test
+    fun topBitmapCuesIgnoreTheBottomCanvasFractionEntirely() {
+        val remapped = remapBitmapCue(
+            cue = pgsCue(bitmapHeight = 0.1f),
+            appearance = appearance(SubtitlePositionPreset.Top),
+            titleSafeFraction = 0.05f,
+            bottomPaddingFraction = 64.8f / 902f,
+        )
+
+        assertEquals(SUBTITLE_TOP_LINE_FRACTION, remapped.line, absoluteTolerance = 1e-4f)
+    }
+
     @Test
     fun sizePresetsScaleWidthAndHeightAroundTheCuesHorizontalCentre() {
         val cue = pgsCue(position = 0.2f, size = 0.6f, bitmapHeight = 0.1f)

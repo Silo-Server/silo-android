@@ -23,6 +23,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import org.siloserver.silo.libass.LibassBridge
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
@@ -290,6 +291,11 @@ class SubtitleManager(
             subtitleView,
             androidSubtitleTextSize(presentation, safe.fontSize),
         )
+        // The picture-relative fraction, which is the answer whenever the canvas
+        // is the picture and the starting point before there is any geometry to
+        // measure. The sync overwrites it from the placed canvas — the
+        // screen-anchored Bottom preset depends on how far that canvas extends
+        // past the picture, which only the sync knows.
         subtitleView.setBottomPaddingFraction(bottomPaddingFor(safe.position))
         syncSubtitleVideoBounds(playerView)
     }
@@ -306,6 +312,7 @@ class SubtitleManager(
             SubtitleVideoRectSync(
                 playerView = playerView,
                 presentation = presentation,
+                libassBridge = libassBridge,
                 onPostLayoutReconciled = { postLayoutReconciliationObserver?.invoke() },
             ).also {
                 it.letterbox = letterbox
@@ -614,6 +621,23 @@ internal const val SUBTITLE_TOP_LINE_FRACTION = 0.01f
 internal const val MIN_SUBTITLE_BOTTOM_PADDING = 0.01f
 
 /**
+ * Where the Bottom preset puts the caption, as a fraction of the PLAYER VIEW's
+ * height above the player view's bottom edge — the screen, not the picture.
+ *
+ * Bottom is the only screen-anchored preset, matching the Apple client: tvOS
+ * enables libass `use_margins` for it so regular events render across the full
+ * overlay frame at `primaryMarginV` 60 on a 1080 frame, and its own comment
+ * says the preset "can sit in the letterbox bar below the picture when the
+ * overlay extends past the video rect". Lower Third and Top stay anchored to
+ * the picture, where the author's framing is what matters.
+ *
+ * 6% of 1080 is 65px, the tvOS ~60px reference, and on 16:9 content — where the
+ * picture fills the screen — it is exactly where the old picture-anchored 6%
+ * already landed. The two only diverge when the content letterboxes.
+ */
+internal const val SUBTITLE_BOTTOM_SCREEN_FRACTION = 0.06f
+
+/**
  * Re-places a text cue that carries the parser's DEFAULT vertical placement, so
  * the user's Position preset decides where it lands.
  *
@@ -674,7 +698,10 @@ internal fun remapDefaultTextCuePlacements(
  * The bases are the broadcast/Apple references measured from the frame edge:
  * Bottom sits just inside the picture (SMPTE ST 2046-1 title-safe is 90% of the
  * frame, and the tvOS client places captions ~60px above the bottom on 1080),
- * Lower Third about a fifth up. Top does not belong here at all — it is
+ * Lower Third about a fifth up. Bottom's frame-relative answer holds while the
+ * canvas IS the picture; once the canvas extends into the letterbox bar,
+ * [subtitleBottomPaddingFractionForCanvas] restates it against the screen.
+ * Top does not belong here at all — it is
  * top-anchored per [SUBTITLE_TOP_LINE_FRACTION] — and its value is inert: the
  * only text cues that read this fraction are the ones the Top branch of
  * [remapDefaultTextCuePlacement] has given an explicit line instead.
@@ -687,7 +714,7 @@ internal fun subtitleBottomPaddingFraction(
     // the same on every presentation. Bottom ~6% (tvOS client: ~60px on
     // 1080; SMPTE ST 2046-1 title-safe is 5%), Lower Third ~18%.
     val base = when (position) {
-        SubtitlePositionPreset.Bottom -> 0.06f
+        SubtitlePositionPreset.Bottom -> SUBTITLE_BOTTOM_SCREEN_FRACTION
         SubtitlePositionPreset.LowerThird -> 0.18f
         SubtitlePositionPreset.Top -> 0.74f
     }
@@ -699,6 +726,74 @@ internal fun subtitleBottomPaddingFraction(
     val remainingScale = 1f - 2f * titleSafeFraction
     if (remainingScale <= 0f) return base
     return ((base - titleSafeFraction) / remainingScale).coerceAtLeast(MIN_SUBTITLE_BOTTOM_PADDING)
+}
+
+/**
+ * The caption canvas for [position], given the picture-anchored canvas the
+ * letterbox and title-safe insets produce.
+ *
+ * Everything here is in the SubtitleView's parent space (the content frame),
+ * which is the one space the rect sync works in — the canvas stays a single
+ * rect written as margins on the same parent, and only its bottom edge moves.
+ *
+ * Bottom extends that bottom edge down to the PLAYER VIEW's bottom, so the
+ * caption drops into the letterbox bar when the picture does not reach the
+ * screen edge. This covers both ways a bar can appear: an
+ * `AspectRatioFrameLayout` frame shorter than the view (2.39:1 in a 16:9
+ * PlayerView) and encoded bars inside a 16:9 frame, because
+ * [insetByLetterbox]'s bottom inset is simply discarded by the extension.
+ * The rect is never taken PAST the player view, so the canvas still lives
+ * inside the PlayerView's own bounds and only the content frame has to stop
+ * clipping it.
+ *
+ * Lower Third and Top are returned untouched: they are anchored to the picture
+ * by definition, and Top does not read this edge at all.
+ */
+internal fun subtitleCanvasRectFor(
+    position: SubtitlePositionPreset,
+    pictureRect: SubtitleVideoRect,
+    playerBottomInParentSpace: Int,
+): SubtitleVideoRect {
+    if (position != SubtitlePositionPreset.Bottom) return pictureRect
+    if (pictureRect.height <= 0) return pictureRect
+    val extendedHeight = playerBottomInParentSpace - pictureRect.top
+    if (extendedHeight <= pictureRect.height) return pictureRect
+    return pictureRect.copy(height = extendedHeight)
+}
+
+/**
+ * The bottom padding fraction for a canvas that may extend past the picture.
+ *
+ * Media3 reads the fraction against the SubtitleView's own height, so the
+ * screen-anchored Bottom preset has to be converted into the canvas' space:
+ * put the caption's bottom edge [SUBTITLE_BOTTOM_SCREEN_FRACTION] of the player
+ * height above the player's bottom, whatever the canvas happens to span. Stated
+ * against the canvas bottom's real position rather than assuming the extension
+ * succeeded, so a canvas that reaches past the player view (zoom overhang) or
+ * falls short of it (degenerate geometry) still lands the text in the same
+ * place on screen.
+ *
+ * Lower Third and Top keep the picture-relative
+ * [subtitleBottomPaddingFraction], which is what "anchored to the picture"
+ * means once the canvas is the picture.
+ */
+internal fun subtitleBottomPaddingFractionForCanvas(
+    position: SubtitlePositionPreset,
+    titleSafeFraction: Float,
+    canvasHeight: Int,
+    canvasBottomInPlayerSpace: Int,
+    playerHeight: Int,
+): Float {
+    if (
+        position != SubtitlePositionPreset.Bottom ||
+        canvasHeight <= 0 ||
+        playerHeight <= 0
+    ) {
+        return subtitleBottomPaddingFraction(position, titleSafeFraction)
+    }
+    val targetBottom = playerHeight * (1f - SUBTITLE_BOTTOM_SCREEN_FRACTION)
+    return ((canvasBottomInPlayerSpace - targetBottom) / canvasHeight)
+        .coerceIn(MIN_SUBTITLE_BOTTOM_PADDING, 1f)
 }
 
 /**
@@ -738,6 +833,13 @@ internal fun bitmapCueScaleFor(preset: SubtitleFontSizePreset): Float = when (pr
  * re-anchors every text cue: the user picked a position and disc subtitles are
  * authored at the bottom regardless.
  *
+ * [bottomPaddingFraction] is the SAME fraction the text path writes to
+ * `SubtitleView.setBottomPaddingFraction`, so both kinds of cue land on the
+ * same line — including the screen-anchored Bottom preset, whose fraction only
+ * the sync can work out because it depends on how far the canvas extends past
+ * the picture. It defaults to the picture-relative value for callers with no
+ * canvas in hand.
+ *
  * A cue whose `size`/`bitmapHeight`/`position` are missing or out of range is
  * returned untouched — without a height fraction the painter falls back to the
  * bitmap's own aspect against the parent width, which is not knowable here.
@@ -747,6 +849,8 @@ internal fun remapBitmapCue(
     cue: Cue,
     appearance: SubtitleAppearance,
     titleSafeFraction: Float,
+    bottomPaddingFraction: Float =
+        subtitleBottomPaddingFraction(appearance.position, titleSafeFraction),
 ): Cue {
     if (cue.bitmap == null) return cue
     val width = cue.size.takeIf(::isUsableCueFraction) ?: return cue
@@ -777,7 +881,7 @@ internal fun remapBitmapCue(
     val unclampedTop = if (appearance.position == SubtitlePositionPreset.Top) {
         SUBTITLE_TOP_LINE_FRACTION
     } else {
-        1f - subtitleBottomPaddingFraction(appearance.position, titleSafeFraction) - scaledHeight
+        1f - bottomPaddingFraction - scaledHeight
     }
     val scaledTop = unclampedTop.coerceIn(0f, (1f - scaledHeight).coerceAtLeast(0f))
 
@@ -819,11 +923,13 @@ internal fun remapBitmapCues(
     cueGroup: CueGroup,
     appearance: SubtitleAppearance,
     titleSafeFraction: Float,
+    bottomPaddingFraction: Float =
+        subtitleBottomPaddingFraction(appearance.position, titleSafeFraction),
 ): CueGroup {
     if (cueGroup.cues.isEmpty()) return cueGroup
     var changed = false
     val mapped = cueGroup.cues.map { original ->
-        val next = remapBitmapCue(original, appearance, titleSafeFraction)
+        val next = remapBitmapCue(original, appearance, titleSafeFraction, bottomPaddingFraction)
         if (next !== original) changed = true
         next
     }
@@ -853,6 +959,7 @@ private const val MAX_SUBTITLE_RELAYOUT_ATTEMPTS = 3
 private class SubtitleVideoRectSync(
     playerView: PlayerView,
     private val presentation: AndroidSubtitlePresentation,
+    private val libassBridge: LibassBridge?,
     private val onPostLayoutReconciled: () -> Unit,
 ) :
     View.OnLayoutChangeListener,
@@ -892,6 +999,8 @@ private class SubtitleVideoRectSync(
     private var relayoutAttempts = 0
     private var pendingLayoutRequest = false
     private var pendingCanvasPlacement = false
+    /** Mirrors the content frame's `clipChildren`, which starts out enabled. */
+    private var contentFrameClipped = true
 
     var letterbox: LetterboxInsets = LetterboxInsets.NONE
         set(value) {
@@ -909,11 +1018,28 @@ private class SubtitleVideoRectSync(
         }
 
     /**
-     * Drives [remapBitmapCue]. Changing it re-forwards the last cue group so a
-     * Position/Size change lands on the caption currently on screen instead of
-     * waiting for the next one.
+     * Drives [remapBitmapCue] and, through [SubtitlePositionPreset], the canvas
+     * itself: Bottom is screen-anchored and spans past the picture, the other
+     * two presets stop at it. Changing it re-places the canvas and re-forwards
+     * the last cue group, so a Position change lands on the caption currently
+     * on screen without waiting for the next cue or for a parent layout pass.
      */
     var appearance: SubtitleAppearance = SubtitleAppearance.DEFAULT
+        set(value) {
+            if (field == value) return
+            val previous = field
+            field = value
+            if (previous.position != value.position) update()
+            reforwardLastCues()
+        }
+
+    /**
+     * The bottom padding fraction [applyRect] resolved for the current canvas,
+     * shared by the text path (`SubtitleView.setBottomPaddingFraction`) and the
+     * bitmap path. Null until the canvas has been placed once; cues arriving
+     * before then fall back to the picture-relative fraction.
+     */
+    private var canvasBottomPaddingFraction: Float? = null
         set(value) {
             if (field == value) return
             field = value
@@ -1065,6 +1191,8 @@ private class SubtitleVideoRectSync(
             ),
             appearance = appearance,
             titleSafeFraction = titleSafeFraction,
+            bottomPaddingFraction = canvasBottomPaddingFraction
+                ?: subtitleBottomPaddingFraction(appearance.position, titleSafeFraction),
         ).cues
         logSubtitleCueGeometry(cues)
         subtitleView.setCues(cues)
@@ -1103,6 +1231,14 @@ private class SubtitleVideoRectSync(
         val subtitleView = playerView.subtitleView ?: return
         val resizeMode = playerView.resizeMode
         val gravity = Gravity.TOP or Gravity.START
+        val position = appearance.position
+        // The SubtitleView's parent is the content frame, so the player view's
+        // bottom edge — the anchor the Bottom preset needs — is that many
+        // pixels down in the space every rect here is written in.
+        val contentFrame = contentFrameRef.get()
+        val parentTop = contentFrame?.top ?: 0
+        val parentHeight = contentFrame?.height ?: playerView.height
+        val playerBottomInParentSpace = playerView.height - parentTop
         if (
             presentation == AndroidSubtitlePresentation.Phone &&
             (
@@ -1110,7 +1246,15 @@ private class SubtitleVideoRectSync(
                     resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL
             ) &&
             !letterbox.isDetected &&
-            titleSafeFraction <= 0f
+            titleSafeFraction <= 0f &&
+            // MATCH_PARENT is the content frame, so it can only stand in for the
+            // screen-anchored canvas while the frame already reaches the
+            // player's bottom. A letterboxed phone frame falls through to the
+            // explicit rect, which is what puts Bottom in the bar.
+            !(
+                position == SubtitlePositionPreset.Bottom &&
+                    playerBottomInParentSpace > parentHeight
+                )
         ) {
             applyLayoutParams(
                 subtitleView = subtitleView,
@@ -1120,11 +1264,22 @@ private class SubtitleVideoRectSync(
                 topMargin = 0,
                 gravity = gravity,
             )
+            setContentFrameClipping(clipped = true)
+            libassBridge?.constrainOverlayHeight(0)
+            applyBottomPadding(
+                subtitleView = subtitleView,
+                position = position,
+                canvasHeight = parentHeight,
+                canvasBottomInPlayerSpace = parentTop + parentHeight,
+                playerHeight = playerView.height,
+            )
             logSubtitleCanvasGeometry(
                 playerView = playerView,
                 subtitleView = subtitleView,
                 appliedLabel = "MATCH_PARENT",
                 resizeMode = resizeMode,
+                bottomPaddingFraction = canvasBottomPaddingFraction,
+                playerBottomInParentSpace = playerBottomInParentSpace,
             )
             return
         }
@@ -1138,10 +1293,27 @@ private class SubtitleVideoRectSync(
             videoPixelWidthHeightRatio = videoSize.pixelWidthHeightRatio,
             resizeMode = resizeMode,
         )
-        val rect = selectSubtitleCanvasRect(
+        val pictureRect = selectSubtitleCanvasRect(
             contentFrameRect = playerView.contentFrameSubtitleRect(),
             displayedVideoRect = displayedVideoRect,
         ).insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
+        val rect = subtitleCanvasRectFor(
+            position = position,
+            pictureRect = pictureRect,
+            playerBottomInParentSpace = playerBottomInParentSpace,
+        )
+        // Only a canvas that actually reaches past the frame needs the frame to
+        // stop clipping, and only while it does: extending back over the
+        // title-safe bottom inset stays inside the frame and changes nothing.
+        // The canvas never leaves the PlayerView, so the frame is the one
+        // ancestor in the way.
+        setContentFrameClipping(clipped = rect.top + rect.height <= parentHeight)
+        // libass scales the script to the frame it is given, so the ASS overlay
+        // must NOT follow the canvas into the bar — authored typesetting keeps
+        // the picture on every preset.
+        libassBridge?.constrainOverlayHeight(
+            if (rect.height > pictureRect.height) pictureRect.height else 0,
+        )
         applyLayoutParams(
             subtitleView = subtitleView,
             width = rect.width,
@@ -1150,12 +1322,59 @@ private class SubtitleVideoRectSync(
             topMargin = rect.top,
             gravity = gravity,
         )
+        applyBottomPadding(
+            subtitleView = subtitleView,
+            position = position,
+            canvasHeight = rect.height,
+            canvasBottomInPlayerSpace = parentTop + rect.top + rect.height,
+            playerHeight = playerView.height,
+        )
         logSubtitleCanvasGeometry(
             playerView = playerView,
             subtitleView = subtitleView,
             appliedLabel = "${rect.width}x${rect.height}@${rect.left},${rect.top}",
             resizeMode = resizeMode,
+            bottomPaddingFraction = canvasBottomPaddingFraction,
+            playerBottomInParentSpace = playerBottomInParentSpace,
         )
+    }
+
+    /**
+     * Writes the resolved bottom padding to both cue paths at once. Media3
+     * reads the text one straight off the view; the bitmap one is baked into
+     * the cues, so a change has to re-forward whatever is on screen.
+     */
+    private fun applyBottomPadding(
+        subtitleView: SubtitleView,
+        position: SubtitlePositionPreset,
+        canvasHeight: Int,
+        canvasBottomInPlayerSpace: Int,
+        playerHeight: Int,
+    ) {
+        val fraction = subtitleBottomPaddingFractionForCanvas(
+            position = position,
+            titleSafeFraction = titleSafeFraction,
+            canvasHeight = canvasHeight,
+            canvasBottomInPlayerSpace = canvasBottomInPlayerSpace,
+            playerHeight = playerHeight,
+        )
+        subtitleView.setBottomPaddingFraction(fraction)
+        canvasBottomPaddingFraction = fraction
+    }
+
+    /**
+     * The content frame clips its children, which is exactly right for the
+     * video surface and exactly wrong for a caption canvas that is meant to
+     * reach into the letterbox bar below the picture. Toggled rather than
+     * disabled once, so a preset or aspect change puts the clip back, and
+     * restored on [dispose] because the PlayerView outlives this sync.
+     */
+    private fun setContentFrameClipping(clipped: Boolean) {
+        if (clipped == contentFrameClipped) return
+        val frame = contentFrameRef.get() ?: return
+        contentFrameClipped = clipped
+        frame.clipChildren = clipped
+        frame.clipToPadding = clipped
     }
 
     /**
@@ -1379,6 +1598,7 @@ private class SubtitleVideoRectSync(
     private fun dispose(view: View?) {
         if (isDisposed) return
         val playerView = (view as? PlayerView) ?: playerViewRef.get()
+        setContentFrameClipping(clipped = true)
         isDisposed = true
         reconciliationGeneration++
         clearPendingPostLayoutUpdate()
@@ -1560,6 +1780,8 @@ private fun logSubtitleCanvasGeometry(
     subtitleView: View,
     appliedLabel: String,
     resizeMode: Int,
+    bottomPaddingFraction: Float? = null,
+    playerBottomInParentSpace: Int? = null,
 ) {
     if (!Log.isLoggable(SUBTITLE_GEOM_TAG, Log.DEBUG)) return
     val frame = playerView.findViewById<AspectRatioFrameLayout>(
@@ -1574,9 +1796,13 @@ private fun logSubtitleCanvasGeometry(
             "@" + playerLoc[0] + "," + playerLoc[1] +
             " frame=" + frame?.width + "x" + frame?.height +
             "@" + frame?.left + "," + frame?.top +
+            " frameClip=" + frame?.clipChildren +
             " applied=" + appliedLabel +
+            " playerBottomInParent=" + playerBottomInParentSpace +
+            " bottomPad=" + bottomPaddingFraction +
             " subtitleView=" + subtitleView.width + "x" + subtitleView.height +
             "@" + subtitleLoc[0] + "," + subtitleLoc[1] +
+            " subtitleBottomOnScreen=" + (subtitleLoc[1] + subtitleView.height) +
             " subtitleParent=" + (subtitleView.parent as? View)?.javaClass?.simpleName,
     )
 }

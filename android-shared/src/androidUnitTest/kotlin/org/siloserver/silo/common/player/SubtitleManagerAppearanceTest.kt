@@ -84,6 +84,106 @@ class SubtitleManagerAppearanceTest {
         )
     }
 
+    /**
+     * The Shield measurement this change answers: a 2.39:1 title in a 1920x1080
+     * PlayerView leaves a 1920x803 content frame at y=138 and a 1728x723 canvas
+     * at 96,40 inside it. Bottom must reach the screen, not stop at the picture.
+     */
+    @Test
+    fun bottomCanvasDropsIntoTheLetterboxBar() {
+        val picture = SubtitleVideoRect(left = 96, top = 40, width = 1728, height = 723)
+
+        val canvas = subtitleCanvasRectFor(
+            position = SubtitlePositionPreset.Bottom,
+            pictureRect = picture,
+            playerBottomInParentSpace = 1080 - 138,
+        )
+
+        assertEquals(SubtitleVideoRect(left = 96, top = 40, width = 1728, height = 902), canvas)
+        // Frame origin 138 + canvas top 40 + height 902 = 1080, the screen edge.
+        assertEquals(1080, 138 + canvas.top + canvas.height)
+    }
+
+    @Test
+    fun lowerThirdAndTopCanvasesStayOnThePicture() {
+        val picture = SubtitleVideoRect(left = 96, top = 40, width = 1728, height = 723)
+
+        assertEquals(
+            picture,
+            subtitleCanvasRectFor(
+                position = SubtitlePositionPreset.LowerThird,
+                pictureRect = picture,
+                playerBottomInParentSpace = 1080 - 138,
+            ),
+        )
+        assertEquals(
+            picture,
+            subtitleCanvasRectFor(
+                position = SubtitlePositionPreset.Top,
+                pictureRect = picture,
+                playerBottomInParentSpace = 1080 - 138,
+            ),
+        )
+    }
+
+    @Test
+    fun bottomCanvasNeverShrinksOrReachesPastThePlayerView() {
+        // Zoom: the picture already covers the screen, so there is no bar to
+        // drop into and nothing to extend.
+        val fullScreen = SubtitleVideoRect(left = 0, top = 0, width = 1920, height = 1080)
+
+        assertEquals(
+            fullScreen,
+            subtitleCanvasRectFor(
+                position = SubtitlePositionPreset.Bottom,
+                pictureRect = fullScreen,
+                playerBottomInParentSpace = 1080,
+            ),
+        )
+    }
+
+    /**
+     * The whole point, stated as the number the owner reads off a screenshot:
+     * Bottom sits 6% of the SCREEN above the screen's bottom whatever the
+     * picture is doing. 16:9 is unchanged from the picture-anchored behaviour
+     * because there the picture IS the screen.
+     */
+    @Test
+    fun bottomLandsSixPercentAboveTheScreenOnEveryAspect() {
+        val expected = 0.06f * 1080f
+
+        assertEquals(
+            expected,
+            bottomCaptionGapAboveScreenBottom(frameTop = 0, frameHeight = 1080),
+            absoluteTolerance = 1f,
+        )
+        assertEquals(
+            expected,
+            bottomCaptionGapAboveScreenBottom(frameTop = 138, frameHeight = 803),
+            absoluteTolerance = 1f,
+        )
+        // Encoded bars inside a 16:9 frame: the detected letterbox insets the
+        // picture, and Bottom drops back into that bar the same way.
+        assertEquals(
+            expected,
+            bottomCaptionGapAboveScreenBottom(
+                frameTop = 0,
+                frameHeight = 1080,
+                letterbox = LetterboxInsets(0.1278f, 0.1287f),
+            ),
+            absoluteTolerance = 1f,
+        )
+    }
+
+    @Test
+    fun lowerThirdKeepsItsPictureRelativeDistanceOnALetterboxedFrame() {
+        // 18% of the 803-px picture above the picture's bottom edge, which is
+        // 138 + 803 = 941 on screen: unchanged by the Bottom preset's work.
+        val gap = lowerThirdCaptionGapAbovePictureBottom(frameTop = 138, frameHeight = 803)
+
+        assertEquals(0.18f * 803f, gap, absoluteTolerance = 1f)
+    }
+
     @Test
     fun boxBackgroundStyleAppliesConfiguredBackgroundAlpha() {
         val style = captionStyleFor(
@@ -535,6 +635,10 @@ class SubtitleManagerAppearanceTest {
      * measured it before the params were written and never comes back, and a
      * params-only diff would go quiet forever. The sync has to notice the
      * BOUNDS and place the canvas itself.
+     *
+     * Stated on a picture-anchored preset, so the geometry under test is the
+     * frame's alone — Bottom deliberately spans past the frame and is covered
+     * by [bottomPresetSpansIntoTheBarAndAPositionChangeReplacesTheCanvas].
      */
     @Test
     fun canvasLeftLaidOutAtTheOldAspectIsPlacedAtTheLetterboxedFrame() {
@@ -550,6 +654,10 @@ class SubtitleManagerAppearanceTest {
         activity.setContentView(playerView)
         Shadows.shadowOf(Looper.getMainLooper()).idle()
         playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        manager.applyAppearance(
+            playerView,
+            SubtitleAppearance.DEFAULT.copy(position = SubtitlePositionPreset.LowerThird),
+        )
 
         manager.syncSubtitleVideoBounds(playerView)
         playerView.viewTreeObserver.dispatchOnPreDraw()
@@ -574,6 +682,163 @@ class SubtitleManagerAppearanceTest {
         assertEquals(1920, subtitleView.width)
         assertEquals(0, subtitleView.top)
         assertEquals(0, subtitleView.left)
+    }
+
+    /**
+     * Runs the production placement — content-frame rect, letterbox and
+     * title-safe insets, the preset's canvas, the preset's bottom padding — and
+     * reports how far the caption's bottom edge ends up above the PLAYER VIEW's
+     * bottom, in pixels of a 1920x1080 television screen.
+     */
+    private fun bottomCaptionGapAboveScreenBottom(
+        frameTop: Int,
+        frameHeight: Int,
+        letterbox: LetterboxInsets = LetterboxInsets.NONE,
+        titleSafeFraction: Float = 0.05f,
+        playerHeight: Int = 1080,
+        playerWidth: Int = 1920,
+    ): Float {
+        val picture = requireNotNull(
+            displayedSubtitleContentFrameRect(
+                viewWidth = playerWidth,
+                viewHeight = playerHeight,
+                frameLeft = 0,
+                frameTop = frameTop,
+                frameWidth = playerWidth,
+                frameHeight = frameHeight,
+            ),
+        ).insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
+        val canvas = subtitleCanvasRectFor(
+            position = SubtitlePositionPreset.Bottom,
+            pictureRect = picture,
+            playerBottomInParentSpace = playerHeight - frameTop,
+        )
+        val padding = subtitleBottomPaddingFractionForCanvas(
+            position = SubtitlePositionPreset.Bottom,
+            titleSafeFraction = titleSafeFraction,
+            canvasHeight = canvas.height,
+            canvasBottomInPlayerSpace = frameTop + canvas.top + canvas.height,
+            playerHeight = playerHeight,
+        )
+        val captionBottom = frameTop + canvas.top + canvas.height * (1f - padding)
+        return playerHeight - captionBottom
+    }
+
+    /** The same walk for Lower Third, measured against the PICTURE's bottom. */
+    private fun lowerThirdCaptionGapAbovePictureBottom(
+        frameTop: Int,
+        frameHeight: Int,
+        titleSafeFraction: Float = 0.05f,
+        playerHeight: Int = 1080,
+        playerWidth: Int = 1920,
+    ): Float {
+        val picture = requireNotNull(
+            displayedSubtitleContentFrameRect(
+                viewWidth = playerWidth,
+                viewHeight = playerHeight,
+                frameLeft = 0,
+                frameTop = frameTop,
+                frameWidth = playerWidth,
+                frameHeight = frameHeight,
+            ),
+        ).insetByTitleSafe(titleSafeFraction)
+        val canvas = subtitleCanvasRectFor(
+            position = SubtitlePositionPreset.LowerThird,
+            pictureRect = picture,
+            playerBottomInParentSpace = playerHeight - frameTop,
+        )
+        val padding = subtitleBottomPaddingFractionForCanvas(
+            position = SubtitlePositionPreset.LowerThird,
+            titleSafeFraction = titleSafeFraction,
+            canvasHeight = canvas.height,
+            canvasBottomInPlayerSpace = frameTop + canvas.top + canvas.height,
+            playerHeight = playerHeight,
+        )
+        val captionBottom = canvas.top + canvas.height * (1f - padding)
+        return frameHeight - captionBottom
+    }
+
+    /**
+     * End to end on a letterboxed frame: Bottom spans into the bar, the content
+     * frame stops clipping so the canvas can be drawn there, and a Position
+     * change re-places the canvas on the spot — no parent layout pass, which is
+     * the one thing a Compose-hosted PlayerView cannot be relied on to run.
+     */
+    @Test
+    fun bottomPresetSpansIntoTheBarAndAPositionChangeReplacesTheCanvas() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val playerView = PlayerView(activity)
+        val contentFrame = requireNotNull(
+            playerView.findViewById<AspectRatioFrameLayout>(
+                androidx.media3.ui.R.id.exo_content_frame,
+            ),
+        )
+        val subtitleView = requireNotNull(playerView.subtitleView)
+        val manager = SubtitleManager().apply { titleSafeFraction = 0.05f }
+        activity.setContentView(playerView)
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+        playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        // 2.39:1 inside the 1920x1016 view: an 803-tall frame at y=106.
+        contentFrame.setAspectRatio(1920f / 803f)
+        contentFrame.layout(0, 106, 1920, 909)
+
+        manager.applyAppearance(
+            playerView,
+            SubtitleAppearance.DEFAULT.copy(position = SubtitlePositionPreset.Bottom),
+        )
+
+        val bottom = subtitleView.layoutParams as FrameLayout.LayoutParams
+        assertEquals(1728, bottom.width)
+        assertEquals(96, bottom.leftMargin)
+        assertEquals(40, bottom.topMargin)
+        // The title-safe canvas is 723 tall; 870 carries it 147px past the
+        // picture, to 106 + 40 + 870 = 1016 — the player view's own bottom.
+        assertEquals(870, bottom.height)
+        assertEquals(1016, 106 + bottom.topMargin + bottom.height)
+        assertFalse(contentFrame.clipChildren)
+
+        manager.applyAppearance(
+            playerView,
+            SubtitleAppearance.DEFAULT.copy(position = SubtitlePositionPreset.LowerThird),
+        )
+
+        val lowerThird = subtitleView.layoutParams as FrameLayout.LayoutParams
+        assertEquals(723, lowerThird.height)
+        assertEquals(40, lowerThird.topMargin)
+        assertTrue(contentFrame.clipChildren)
+    }
+
+    /** 16:9: the picture already is the screen, so nothing about it moves. */
+    @Test
+    fun bottomPresetLeavesTheFullScreenPictureCanvasAlone() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val playerView = PlayerView(activity)
+        val contentFrame = requireNotNull(
+            playerView.findViewById<AspectRatioFrameLayout>(
+                androidx.media3.ui.R.id.exo_content_frame,
+            ),
+        )
+        val subtitleView = requireNotNull(playerView.subtitleView)
+        val manager = SubtitleManager().apply { titleSafeFraction = 0.05f }
+        activity.setContentView(playerView)
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+        playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        contentFrame.setAspectRatio(1920f / 1016f)
+        contentFrame.layout(0, 0, 1920, 1016)
+
+        manager.applyAppearance(
+            playerView,
+            SubtitleAppearance.DEFAULT.copy(position = SubtitlePositionPreset.Bottom),
+        )
+
+        val params = subtitleView.layoutParams as FrameLayout.LayoutParams
+        // Title-safe puts the canvas at 51,96 with 1728x914; the extension only
+        // reclaims the bottom inset, which the padding then gives straight back.
+        assertEquals(96, params.leftMargin)
+        assertEquals(51, params.topMargin)
+        assertEquals(1016 - 51, params.height)
+        // Still inside the frame, so the frame keeps clipping its children.
+        assertTrue(contentFrame.clipChildren)
     }
 
     private fun captionStyleFor(appearance: SubtitleAppearance): CaptionStyleCompat {

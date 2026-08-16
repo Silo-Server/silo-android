@@ -296,6 +296,35 @@ public final class LibassBridge {
         syncOverlayFrameSizeLater();
     }
 
+    /**
+     * Keeps the libass overlay on the PICTURE when its host canvas reaches past
+     * it.
+     *
+     * The overlay is normally MATCH_PARENT of the SubtitleView, and libass
+     * scales the script to the frame it is handed
+     * ({@link #syncOverlayFrameSize()}). Silo's screen-anchored "Bottom"
+     * subtitle preset extends that canvas down into the letterbox bar, which
+     * an overlay that simply followed it would answer by stretching the
+     * author's typesetting into the bar as well. ASS keeps its authored
+     * placement on every preset, so the overlay stays the picture's height and
+     * the canvas grows underneath it. The host lays children out from its top,
+     * which the canvas shares with the picture, so the height is the whole
+     * correction.
+     *
+     * @param heightPx the picture's height inside the host, or any
+     *                 non-positive value to restore the full host.
+     */
+    public void constrainOverlayHeight(int heightPx) {
+        AssSubtitleView overlay = overlayRef.get();
+        if (overlay == null) return;
+        ViewGroup.LayoutParams params = overlay.getLayoutParams();
+        if (params == null) return;
+        int target = heightPx > 0 ? heightPx : ViewGroup.LayoutParams.MATCH_PARENT;
+        if (params.height == target) return;
+        params.height = target;
+        overlay.setLayoutParams(params);
+    }
+
     /** Removes the view that still points at the retiring handler. */
     private void retireOverlay() {
         AssSubtitleView overlay = overlayRef.get();
