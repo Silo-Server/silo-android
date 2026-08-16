@@ -2,9 +2,9 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.SubDiag
 import org.siloserver.silo.common.player.MountedSubtitleTrack
-import org.siloserver.silo.common.player.resolveMountedSubtitle
 import org.siloserver.silo.common.player.trackIdDenotes
 import org.siloserver.silo.common.player.subtitleArtifactTrackId
+import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 
@@ -175,8 +175,16 @@ internal class SubtitleRemountReselection(
         meaningfulSnapshotKeys.clear()
     }
 
+    /**
+     * @param subtitleRows the authoritative inventory rows, needed to resolve a
+     * server-row identity whose track is muxed into the stream rather than
+     * mounted as an authored artifact (see [tvResolveMountedSubtitleTrack]).
+     * Without them such an identity resolves to no ordinal at all, and a mount
+     * the adapter committed locally would fail and roll back.
+     */
     fun consume(
         subtitleTracks: List<PlayerTrackEntry>,
+        subtitleRows: List<PlayerSubtitleInfo> = emptyList(),
         snapshotKey: String?,
         settled: Boolean,
     ): TvSubtitleRemountEvent? {
@@ -195,7 +203,7 @@ internal class SubtitleRemountReselection(
 
         val mounted = subtitleTracks.map(PlayerTrackEntry::toMountedTvSubtitleTrack)
         val exactTrackId = owner.identity.exactTvMountTrackId()
-        val matchIndex = if (exactTrackId != null) {
+        val matchIndex = exactTrackId?.let { expected ->
             // Every candidate here denotes the SAME authored artifact id, so
             // multiple hits are the one sidecar merged more than once (Media3
             // prefixes each with its MergingMediaSource child index, e.g.
@@ -205,11 +213,23 @@ internal class SubtitleRemountReselection(
             // deadline blew and the transaction rolled back to Off. Ambiguity
             // between genuinely different tracks is still caught by the
             // metadata path below and by hasAmbiguousTvLabel.
-            mounted.filter { trackIdDenotes(it.trackId, exactTrackId) }
+            mounted.filter { trackIdDenotes(it.trackId, expected) }
                 .minByOrNull { it.index }
                 ?.index
-        } else {
-            resolveMountedSubtitle(identity = owner.identity, tracks = mounted)?.track?.index
+        } ?: when {
+            // An identity carrying a REAL Media3 id stays exact-only: falling
+            // back to metadata could mount a different track that merely looks
+            // alike. A sidecar's id is authored by us, not by the stream, and a
+            // v3 row describing a track muxed into a direct-play stream is
+            // typed as a sidecar all the same — so that id matches nothing and
+            // the mount hung until the deadline. Only that case may resolve
+            // through the row (see tvResolveMountedSubtitleTrack).
+            exactTrackId != null && owner.identity !is SubtitleIdentity.ServerSidecar -> null
+            else -> tvResolveMountedSubtitleTrack(
+                identity = owner.identity,
+                subtitleRows = subtitleRows,
+                mounted = mounted,
+            )?.index
         }
         SubDiag.log("REMOUNT consume id=${owner.identity} exact=$exactTrackId mounted=${mounted.map { it.trackId }} settled=$settled match=$matchIndex")
         if (matchIndex != null) {

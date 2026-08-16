@@ -107,7 +107,7 @@ class SubtitleRemountReselectionTest {
 
         assertEquals(8, event.trackIndex)
         assertEquals(c, event.owner.identity)
-        assertNull(latch.consume(listOf(track(index = 4, trackId = "silo-subtitle:4")), "late-b", true))
+        assertNull(latch.consume(listOf(track(index = 4, trackId = "silo-subtitle:4")), snapshotKey = "late-b", settled = true))
     }
 
     @Test
@@ -189,7 +189,7 @@ class SubtitleRemountReselectionTest {
         latch.clear()
 
         assertFalse(latch.hasPendingOwner)
-        assertNull(latch.consume(listOf(track(index = 2, trackId = "b")), "late", true))
+        assertNull(latch.consume(listOf(track(index = 2, trackId = "b")), snapshotKey = "late", settled = true))
     }
 
     @Test
@@ -199,7 +199,7 @@ class SubtitleRemountReselectionTest {
 
         latch.clear()
 
-        assertNull(latch.consume(listOf(track(index = 4, trackId = "silo-subtitle:4")), "late", true))
+        assertNull(latch.consume(listOf(track(index = 4, trackId = "silo-subtitle:4")), snapshotKey = "late", settled = true))
     }
 
     @Test
@@ -221,7 +221,7 @@ class SubtitleRemountReselectionTest {
 
         assertTrue(latch.hasPendingOwner)
         val event = assertIs<TvSubtitleRemountEvent.Select>(
-            latch.consume(listOf(track(index = 8, trackId = "target")), "ready", true),
+            latch.consume(listOf(track(index = 8, trackId = "target")), snapshotKey = "ready", settled = true),
         )
         assertEquals(8, event.trackIndex)
     }

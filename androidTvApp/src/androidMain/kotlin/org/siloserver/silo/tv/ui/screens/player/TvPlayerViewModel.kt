@@ -1233,9 +1233,16 @@ class TvPlayerViewModel(
         },
         hasMountableTracks = { _uiState.value.subtitleTracks.isNotEmpty() },
         isLocallyMountable = { identity ->
-            resolveMountedSubtitle(
+            // Row-aware on purpose: a v3 inventory row describing a track muxed
+            // into a direct-play stream is still typed `delivery = sidecar`, so
+            // asking the identity resolver alone answered "not mounted" for the
+            // track Media3 already had, and every app-derived pick of it took
+            // the staged-replan path (see tvResolveMountedSubtitleTrack).
+            val state = _uiState.value
+            tvResolveMountedSubtitleTrack(
                 identity = identity,
-                tracks = _uiState.value.subtitleTracks.map { it.toMountedTvSubtitleTrack() },
+                subtitleRows = state.subtitleUrls,
+                mounted = state.subtitleTracks.map { it.toMountedTvSubtitleTrack() },
             ) != null
         },
     )
@@ -4180,6 +4187,7 @@ class TvPlayerViewModel(
         when (
             val event = subtitleRemountReselection.consume(
                 subtitleTracks = subtitle,
+                subtitleRows = _uiState.value.subtitleUrls,
                 snapshotKey = snapshotKey,
                 settled = subtitleSnapshotSettlement.observe(subtitle),
             )
