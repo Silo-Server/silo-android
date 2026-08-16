@@ -160,12 +160,7 @@ private const val SKIP_BACK_MS = 10_000L
 private const val SKIP_FEEDBACK_HIDE_MS = 1_200L
 private const val SKIP_FORWARD_MS = 30_000L
 private const val CLEAN_SEEK_HOLD_THRESHOLD_MS = 300L
-private const val CLEAN_SEEK_TICK_MS = 100L
-private const val CLEAN_SEEK_RAMP_INTERVAL_MS = 1_200L
-private const val CLEAN_SEEK_BASE_STEP_SECONDS = 2.0
 private const val CLEAN_QUICK_SKIP_CAPTURE_MS = 200L
-
-private val CLEAN_PLAYBACK_SEEK_RATES = listOf(-32, -16, -8, -4, -2, -1, 1, 2, 4, 8, 16, 32)
 
 private enum class TvIdleOverlayFocusTarget {
     Scrubber,
@@ -177,14 +172,22 @@ private data class TvIdleOverlayFocusRequest(
     val nonce: Int = 0,
 )
 
-internal fun adjustedCleanPlaybackSeekRate(currentRate: Int, adjustment: Int): Int {
+/**
+ * Manual rate step for a hidden-controls hold-seek.
+ *
+ * Delegates to [TvSeekRateLadder] so this control and the focused scrubber's
+ * hold-seek walk one ladder. They previously kept separate ones, and the
+ * hidden path's was both dishonest about its multiples (see
+ * [advanceCleanPlaybackSeekPreview]) and flipped direction when stepped below
+ * 1× — so "slower" eventually meant "backwards".
+ */
+internal fun adjustedCleanPlaybackSeekRate(
+    currentRate: Int,
+    adjustment: Int,
+    durationSec: Double,
+): Int {
     if (adjustment == 0) return currentRate
-    val currentIndex = CLEAN_PLAYBACK_SEEK_RATES.indexOf(currentRate)
-    if (currentIndex < 0) return currentRate
-    val step = if (adjustment < 0) -1 else 1
-    return CLEAN_PLAYBACK_SEEK_RATES[
-        (currentIndex + step).coerceIn(0, CLEAN_PLAYBACK_SEEK_RATES.lastIndex)
-    ]
+    return TvSeekRateLadder.bumped(currentRate, adjustment, durationSec)
 }
 
 internal fun shouldEnterCleanPlaybackSeekHold(
@@ -197,13 +200,23 @@ internal fun isCleanPlaybackSeekAdjustmentTap(
     pressDurationMs: Long,
 ): Boolean = !repeated && pressDurationMs < CLEAN_SEEK_HOLD_THRESHOLD_MS
 
+/**
+ * One hold-seek tick for the hidden-controls scan.
+ *
+ * Advances by [TvSeekRateLadder.tickSeconds], which is what makes the rate
+ * chip mean what it says: rate × tick seconds per tick is exactly rate × real
+ * time. This previously advanced a flat 2s per 100ms tick at 1×, so every
+ * multiple on screen was a twentieth of the truth — a chip reading "8×" moved
+ * at 160×, and the same gesture ran 20× faster with the chrome hidden than the
+ * focused scrubber's hold-seek, which had already been corrected.
+ */
 internal fun advanceCleanPlaybackSeekPreview(
     previewSec: Double,
     durationSec: Double,
     rate: Int,
 ): Double {
     val safePreview = previewSec.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
-    val next = (safePreview + CLEAN_SEEK_BASE_STEP_SECONDS * rate).coerceAtLeast(0.0)
+    val next = (safePreview + TvSeekRateLadder.tickSeconds(rate)).coerceAtLeast(0.0)
     return if (durationSec.isFinite() && durationSec > 0.0) {
         next.coerceAtMost(durationSec)
     } else {
@@ -706,7 +719,8 @@ fun TvPlayerScreen(
         quickSkipCaptureJob = null
         quickSkipCaptureActive = false
         cleanSeekPreviewSec = viewModel.uiState.value.position.coerceAtLeast(0.0)
-        cleanSeekRate = if (direction < 0) -1 else 1
+        val sign = if (direction < 0) -1 else 1
+        cleanSeekRate = TvSeekRateLadder.BASE_RATE * sign
 
         cleanSeekTickJob?.cancel()
         cleanSeekTickJob = cleanPlaybackSeekScope.launch {
@@ -716,17 +730,29 @@ fun TvPlayerScreen(
                     durationSec = viewModel.uiState.value.duration,
                     rate = cleanSeekRate,
                 )
-                delay(CLEAN_SEEK_TICK_MS)
+                delay(TvSeekRateLadder.TICK_MILLIS)
             }
         }
 
+        // Ramp on the shared ladder rather than a fixed 2→4→8. Now that a tick
+        // covers rate × real time, a fixed ceiling cannot serve both ends: 8×
+        // would take over twenty minutes to cross a film. The ladder derives
+        // its top from the runtime so "hold until it arrives" costs about the
+        // same whatever you're watching.
         cleanSeekRampJob?.cancel()
         cleanSeekRampJob = cleanPlaybackSeekScope.launch {
-            for (magnitude in listOf(2, 4, 8)) {
-                delay(CLEAN_SEEK_RAMP_INTERVAL_MS)
-                val currentRate = cleanSeekRate
-                if (currentRate == 0) return@launch
-                cleanSeekRate = if (currentRate < 0) -magnitude else magnitude
+            val durationSec = viewModel.uiState.value.duration
+            var previous = TvSeekRateLadder.BASE_RATE * sign
+            repeat(TvSeekRateLadder.rampSteps(durationSec)) { step ->
+                delay(TvSeekRateLadder.RAMP_STEP_MILLIS)
+                // Only continue while the viewer is still holding at the rate
+                // the previous step left, so a release and a fresh press the
+                // other way isn't overwritten by this hold's timer.
+                if (cleanSeekRate != previous) return@launch
+                val next = TvSeekRateLadder.sustainedRate(step, sign, durationSec)
+                if (next == previous) return@launch
+                cleanSeekRate = next
+                previous = next
             }
         }
     }
@@ -788,7 +814,11 @@ fun TvPlayerScreen(
     fun adjustCleanPlaybackSeek(adjustment: Int) {
         cleanSeekRampJob?.cancel()
         cleanSeekRampJob = null
-        cleanSeekRate = adjustedCleanPlaybackSeekRate(cleanSeekRate, adjustment)
+        cleanSeekRate = adjustedCleanPlaybackSeekRate(
+            currentRate = cleanSeekRate,
+            adjustment = adjustment,
+            durationSec = viewModel.uiState.value.duration,
+        )
     }
 
     fun commitCleanPlaybackSeek(snapshot: RoomSnapshot?) {
