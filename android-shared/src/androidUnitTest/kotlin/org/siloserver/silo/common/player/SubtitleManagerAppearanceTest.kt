@@ -194,18 +194,77 @@ class SubtitleManagerAppearanceTest {
     }
 
     @Test
-    fun zoomIgnoresStaleFittedContentFrameAndUsesFullViewport() {
+    fun zoomAnchorsToTheContentFrameEvenMidResize() {
+        // The frame is momentarily still the fitted one, because the resize
+        // mode changed and layout has not run again yet. Anchoring to it keeps
+        // the captions on the video that is actually rendered at this instant;
+        // the view-space viewport would be applied at frame-relative margins
+        // and shift them by the frame's offset.
         val staleFit = SubtitleVideoRect(left = 0, top = 236, width = 2404, height = 1352)
         val fullViewport = SubtitleVideoRect(left = 0, top = 0, width = 2404, height = 1080)
 
         assertEquals(
-            fullViewport,
+            staleFit,
             selectSubtitleCanvasRect(
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
                 contentFrameRect = staleFit,
                 displayedVideoRect = fullViewport,
             ),
         )
+    }
+
+    @Test
+    fun captionsStayCentredOnAnOffsetContentFrame() {
+        // The regression: a 1920x1080 title expanded on a 3120x1440 display
+        // leaves the PlayerView 2814 wide, and mid-resize the frame is the
+        // 2560-wide fitted rect inset 127px inside it. Anchoring to the frame
+        // centres the captions on the video; the 2814-wide view-space viewport
+        // used to be applied at frame margin 0 and pushed them 127px right.
+        val offsetFrame = requireNotNull(
+            displayedSubtitleContentFrameRect(
+                viewWidth = 2814,
+                viewHeight = 1440,
+                frameLeft = 127,
+                frameTop = 0,
+                frameWidth = 2560,
+                frameHeight = 1440,
+            ),
+        )
+        val viewportSpaceRect = SubtitleVideoRect(left = 0, top = 0, width = 2814, height = 1440)
+        val canvas = selectSubtitleCanvasRect(
+            contentFrameRect = offsetFrame,
+            displayedVideoRect = viewportSpaceRect,
+        )
+
+        assertEquals(SubtitleVideoRect(left = 0, top = 0, width = 2560, height = 1440), canvas)
+        // Frame origin 127 + canvas centre 1280 = 1407, the centre of the 2814
+        // view. The old answer centred at 1407 + 127 = 1534.
+        assertEquals(1407, 127 + canvas.left + canvas.width / 2)
+    }
+
+    @Test
+    fun captionsNeverExtendBelowTheVisibleBottom() {
+        // Expansion overhangs the view by design: a 2814x1583 content frame in
+        // a 2814x1440 view hangs ~71px off each edge. The canvas must be the
+        // intersection, or a bottom-anchored caption is drawn off-screen.
+        val visible = requireNotNull(
+            displayedSubtitleContentFrameRect(
+                viewWidth = 2814,
+                viewHeight = 1440,
+                frameLeft = 0,
+                frameTop = -71,
+                frameWidth = 2814,
+                frameHeight = 1583,
+            ),
+        )
+        val canvas = selectSubtitleCanvasRect(
+            contentFrameRect = visible,
+            displayedVideoRect = SubtitleVideoRect(0, 0, 2814, 1440),
+        )
+
+        assertEquals(SubtitleVideoRect(left = 0, top = 71, width = 2814, height = 1440), canvas)
+        // Frame origin -71 + canvas top 71 = 0, and its bottom lands on 1440.
+        assertEquals(0, -71 + canvas.top)
+        assertEquals(1440, -71 + canvas.top + canvas.height)
     }
 
     @Test
@@ -225,7 +284,6 @@ class SubtitleManagerAppearanceTest {
         assertEquals(
             SubtitleVideoRect(left = 120, top = 64, width = 1920, height = 1080),
             selectSubtitleCanvasRect(
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
                 contentFrameRect = visibleCanvas,
                 displayedVideoRect = fullViewport,
             ),
@@ -233,14 +291,13 @@ class SubtitleManagerAppearanceTest {
     }
 
     @Test
-    fun stretchIgnoresStaleFittedContentFrameAndUsesFullViewport() {
+    fun stretchAnchorsToTheContentFrameEvenMidResize() {
         val staleFit = SubtitleVideoRect(left = 240, top = 0, width = 1920, height = 1080)
         val fullViewport = SubtitleVideoRect(left = 0, top = 0, width = 2400, height = 1080)
 
         assertEquals(
-            fullViewport,
+            staleFit,
             selectSubtitleCanvasRect(
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL,
                 contentFrameRect = staleFit,
                 displayedVideoRect = fullViewport,
             ),
@@ -255,7 +312,6 @@ class SubtitleManagerAppearanceTest {
         assertEquals(
             fittedFrame,
             selectSubtitleCanvasRect(
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                 contentFrameRect = fittedFrame,
                 displayedVideoRect = computedFallback,
             ),
@@ -267,24 +323,14 @@ class SubtitleManagerAppearanceTest {
         val fit = SubtitleVideoRect(left = 240, top = 0, width = 1920, height = 1080)
         val full = SubtitleVideoRect(left = 0, top = 0, width = 2400, height = 1080)
 
-        val fill = selectSubtitleCanvasRect(
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
-            fit,
-            full,
-        )
-        val stretch = selectSubtitleCanvasRect(
-            AspectRatioFrameLayout.RESIZE_MODE_FILL,
-            fit,
-            full,
-        )
-        val restoredFit = selectSubtitleCanvasRect(
-            AspectRatioFrameLayout.RESIZE_MODE_FIT,
-            fit,
-            fit,
-        )
+        val fill = selectSubtitleCanvasRect(fit, full)
+        val stretch = selectSubtitleCanvasRect(fit, full)
+        val restoredFit = selectSubtitleCanvasRect(fit, fit)
 
-        assertEquals(full, fill)
-        assertEquals(full, stretch)
+        // Every mode anchors to the same place now: the content frame is the
+        // subtitle layer's parent whatever the video is being scaled to.
+        assertEquals(fit, fill)
+        assertEquals(fit, stretch)
         assertEquals(fit, restoredFit)
     }
 

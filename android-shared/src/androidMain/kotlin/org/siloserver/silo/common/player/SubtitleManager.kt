@@ -501,19 +501,36 @@ internal fun displayedSubtitleVideoRect(
     )
 }
 
+/**
+ * Picks the rect the subtitle layer is laid out in.
+ *
+ * The one thing that governs this is a coordinate space. `SubtitleView` is a
+ * child of `exo_content_frame` — NOT of the PlayerView — so whatever comes back
+ * here is applied as margins inside the CONTENT FRAME.
+ * [displayedSubtitleContentFrameRect] already speaks that space: it intersects
+ * the frame with the view and returns the result relative to the frame's own
+ * origin, which is both the visible-region clamp and the right anchor.
+ *
+ * [displayedVideoRect] does not speak it — it is measured from the PlayerView's
+ * top-left. It survives only as the fallback for having no content frame at
+ * all, where there is nothing better to say.
+ *
+ * This used to prefer [displayedVideoRect] for ZOOM and FILL whenever the
+ * frame's visible size did not equal the view's, meaning to say "the zoomed
+ * video covers the whole view, so the captions should too". The intent was
+ * right and the arithmetic was in the wrong space: that mismatch happens
+ * exactly when the frame is OFFSET inside the view (a resize mode changed and
+ * the frame has not been laid out again yet), and applying a view-space rect at
+ * frame-relative margins then shifts the captions by the offset — 127px off
+ * centre on a 3120px display, for one layout pass, which is what "the
+ * subtitles aren't centred" was. Anchoring to the frame is correct in that
+ * moment too: the captions track whatever the video is actually rendered at
+ * right now, mid-transition included.
+ */
 internal fun selectSubtitleCanvasRect(
-    resizeMode: Int,
     contentFrameRect: SubtitleVideoRect?,
     displayedVideoRect: SubtitleVideoRect,
-): SubtitleVideoRect = when (resizeMode) {
-    AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
-    AspectRatioFrameLayout.RESIZE_MODE_FILL,
-    -> contentFrameRect?.takeIf {
-        it.width == displayedVideoRect.width &&
-            it.height == displayedVideoRect.height
-    } ?: displayedVideoRect
-    else -> contentFrameRect ?: displayedVideoRect
-}
+): SubtitleVideoRect = contentFrameRect ?: displayedVideoRect
 
 internal fun displayedSubtitleContentFrameRect(
     viewWidth: Int,
@@ -819,7 +836,6 @@ private class SubtitleVideoRectSync(
             resizeMode = resizeMode,
         )
         val rect = selectSubtitleCanvasRect(
-            resizeMode = resizeMode,
             contentFrameRect = playerView.contentFrameSubtitleRect(),
             displayedVideoRect = displayedVideoRect,
         ).insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
