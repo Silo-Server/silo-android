@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -97,6 +98,14 @@ internal fun TvDetailHero(
     // Optional description-translation affordance (Apple tvOS parity),
     // rendered as its own focus stop directly under the synopsis.
     translation: (@Composable () -> Unit)? = null,
+    /**
+     * How far (px) the page has scrolled past the hero's top. Read inside the
+     * draw phase only, so scrolling never recomposes the hero. The backdrop
+     * recedes with it — dims toward the page background and drifts at a
+     * fraction of the scroll — so moving into the body reads as the hero
+     * giving way rather than being chopped off by the next section.
+     */
+    scrollOffsetPx: () -> Float = { 0f },
 ) {
     // heroHeight = 980 of a 1080-pt tvOS canvas ≈ 0.907 × viewport height.
     // The TV theme keeps dp geometry at device density, so screenHeightDp maps
@@ -120,7 +129,15 @@ internal fun TvDetailHero(
                 thumbhash = backdropThumbhash,
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.matchParentSize(),
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer {
+                        val offset = scrollOffsetPx().coerceAtLeast(0f)
+                        val fadeDistance = size.height * BackdropFadeHeightFraction
+                        val progress = if (fadeDistance > 0f) (offset / fadeDistance).coerceIn(0f, 1f) else 0f
+                        alpha = 1f - progress * (1f - BackdropMinAlpha)
+                        translationY = minOf(offset, size.height) * BackdropParallaxFactor
+                    },
             )
         } else {
             Box(modifier = Modifier.matchParentSize().background(DarkSurface))
@@ -196,6 +213,12 @@ internal fun TvDetailHero(
         )
     }
 }
+
+/** Scrolling ~40% of the hero height fades the backdrop to [BackdropMinAlpha]. */
+private const val BackdropFadeHeightFraction = 0.4f
+private const val BackdropMinAlpha = 0.35f
+/** Backdrop drifts down at this fraction of the scroll — a light parallax. */
+private const val BackdropParallaxFactor = 0.4f
 
 @Composable
 private fun EditorialColumn(

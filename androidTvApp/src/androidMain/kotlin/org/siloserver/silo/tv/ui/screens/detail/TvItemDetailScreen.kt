@@ -3,7 +3,7 @@ package org.siloserver.silo.tv.ui.screens.detail
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -62,6 +62,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -93,6 +94,7 @@ import androidx.tv.material3.Text
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
@@ -526,8 +528,7 @@ private fun TvDetailContent(
     val heroHasFocus = remember { mutableStateOf(false) }
     val detailBringIntoViewSpec = remember(heroHasFocus) {
         object : BringIntoViewSpec {
-            override val scrollAnimationSpec: AnimationSpec<Float> =
-                TvSmoothBringIntoViewSpec.scrollAnimationSpec
+            override val scrollAnimationSpec: AnimationSpec<Float> = DetailAnchorScrollSpec
 
             override fun calculateScrollDistance(
                 offset: Float,
@@ -583,6 +584,13 @@ private fun TvDetailContent(
                         )
                     } else {
                         TvDetailHero(
+                            scrollOffsetPx = {
+                                if (listState.firstVisibleItemIndex == 0) {
+                                    listState.firstVisibleItemScrollOffset.toFloat()
+                                } else {
+                                    Float.MAX_VALUE
+                                }
+                            },
                             title = detail.title,
                             seriesTitle = if (detail.type == "episode") detail.seriesTitle else null,
                             logoUrl = detail.logoUrl,
@@ -711,35 +719,10 @@ private fun TvDetailContent(
                             // with `anchor: .center`), so focusing "Season N"
                             // sits where an episode focus sits, and coming back
                             // up from Cast & Crew restores the same position.
-                            var episodesSectionHasFocus by remember { mutableStateOf(false) }
-                            var episodesSectionCenterY by remember { mutableStateOf<Float?>(null) }
                             Box(
-                                modifier = Modifier
-                                    .onGloballyPositioned { coords ->
-                                        episodesSectionCenterY =
-                                            coords.positionInRoot().y + coords.size.height / 2f
-                                    }
-                                    .onFocusChanged { focusState ->
-                                        val nowFocused = focusState.hasFocus
-                                        if (nowFocused && !episodesSectionHasFocus) {
-                                            coroutineScope.launch {
-                                                // Let the focus system enqueue its
-                                                // automatic bring-into-view first,
-                                                // then cancel/replace that scroll
-                                                // with the centered section anchor.
-                                                withFrameNanos { }
-                                                if (!episodesSectionHasFocus) return@launch
-                                                val center = episodesSectionCenterY ?: return@launch
-                                                val viewportCenter =
-                                                    listState.layoutInfo.viewportSize.height / 2f
-                                                listState.animateScrollBy(
-                                                    value = center - viewportCenter,
-                                                    animationSpec = DetailAnchorScrollSpec,
-                                                )
-                                            }
-                                        }
-                                        episodesSectionHasFocus = nowFocused
-                                    },
+                                modifier = Modifier.detailSectionAnchor(listState, coroutineScope) { height, viewport ->
+                                    (viewport - height) / 2f
+                                },
                             ) {
                             EpisodesSection(
                                 detail = detail,
@@ -772,6 +755,7 @@ private fun TvDetailContent(
                         }
 
                         if (showsCastSection) {
+                            Box(modifier = Modifier.detailBodySectionAnchor(listState, coroutineScope)) {
                             TvCastCrewSection(
                                 cast = detail.cast,
                                 horizontalContentPadding = Spacing.safeArea,
@@ -799,12 +783,15 @@ private fun TvDetailContent(
                                     }
                                 },
                             )
+                            }
                         }
 
                         if (showsDetailsSection) {
                             DetailsSection(
                                 detail = detail,
-                                modifier = Modifier.padding(horizontal = Spacing.safeArea),
+                                modifier = Modifier
+                                    .detailBodySectionAnchor(listState, coroutineScope)
+                                    .padding(horizontal = Spacing.safeArea),
                             )
                         }
 
@@ -812,7 +799,10 @@ private fun TvDetailContent(
                             // tvOS `TVSimilarRail`: an editorial detail section
                             // header (Recommended / More Like This) over a bare
                             // poster rail — no See-all on the detail page.
-                            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                            Column(
+                                modifier = Modifier.detailBodySectionAnchor(listState, coroutineScope),
+                                verticalArrangement = Arrangement.spacedBy(20.dp),
+                            ) {
                                 TvDetailSectionHeader(
                                     title = "More Like This",
                                     modifier = Modifier.padding(horizontal = Spacing.safeArea),
@@ -1952,11 +1942,66 @@ internal fun resolveTvDetailHeroArtwork(
 }
 
 /**
- * Pacing for the hero ↔ episodes anchor scrolls — tvOS's detail focus
- * choreography runs `easeInOut(0.45)` (`TVDetailFocusScroll.swift`); 260ms
- * tuned on-device per design review.
+ * The ONE motion spec for every scroll on the detail page — section anchors,
+ * return-to-hero, and the fallback bring-into-view. tvOS's detail focus
+ * choreography runs `easeInOut(0.45)` (`TVDetailFocusScroll.swift`); here a
+ * slightly quicker fast-out/slow-in reads calmer over long distances than
+ * ease-in-out (which lurches mid-flight) and the page no longer mixes a
+ * 260ms anchor with a 620ms rail reveal.
  */
-private val DetailAnchorScrollSpec = tween<Float>(durationMillis = 260, easing = EaseInOut)
+private val DetailAnchorScrollSpec = tween<Float>(durationMillis = 400, easing = FastOutSlowInEasing)
+
+/**
+ * Where a body section's top edge lands when focus enters it, as a fraction
+ * of the viewport height. Anchoring the SECTION (not the focused card) means
+ * Cast, Details and More Like This all frame identically, so each Down is a
+ * uniform section-sized step instead of a gutter nudge of a different size.
+ */
+private const val DetailSectionAnchorFraction = 0.18f
+
+/**
+ * Anchors the section to a fixed viewport line the moment focus ENTERS it
+ * (moving within the section does nothing). [targetY] receives the section's
+ * height and the viewport height and returns the y (in viewport px) its top
+ * should sit at. The generalisation of the episodes-section centering, so
+ * every body section shares one choreography.
+ */
+private fun Modifier.detailSectionAnchor(
+    listState: LazyListState,
+    scope: CoroutineScope,
+    targetY: (sectionHeight: Float, viewportHeight: Float) -> Float,
+): Modifier = composed {
+    var hasFocus by remember { mutableStateOf(false) }
+    var topInRoot by remember { mutableStateOf<Float?>(null) }
+    var height by remember { mutableStateOf(0f) }
+    this
+        .onGloballyPositioned { coords ->
+            topInRoot = coords.positionInRoot().y
+            height = coords.size.height.toFloat()
+        }
+        .onFocusChanged { focusState ->
+            val nowFocused = focusState.hasFocus
+            if (nowFocused && !hasFocus) {
+                scope.launch {
+                    // Let the focus system enqueue its automatic bring-into-view
+                    // first, then cancel/replace that scroll with the anchor.
+                    withFrameNanos { }
+                    if (!hasFocus) return@launch
+                    val top = topInRoot ?: return@launch
+                    val viewport = listState.layoutInfo.viewportSize.height.toFloat()
+                    listState.animateScrollBy(
+                        value = top - targetY(height, viewport),
+                        animationSpec = DetailAnchorScrollSpec,
+                    )
+                }
+            }
+            hasFocus = nowFocused
+        }
+}
+
+/** Section-top anchor shared by Cast, Details and More Like This. */
+private fun Modifier.detailBodySectionAnchor(listState: LazyListState, scope: CoroutineScope): Modifier =
+    detailSectionAnchor(listState, scope) { _, viewport -> viewport * DetailSectionAnchorFraction }
 
 /**
  * Paced anchor scroll used for the return-to-hero jump.
