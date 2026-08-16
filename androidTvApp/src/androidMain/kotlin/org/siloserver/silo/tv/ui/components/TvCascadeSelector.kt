@@ -492,7 +492,7 @@ fun TvCascadeSelector(
 }
 
 @Composable
-private fun CascadePanelHeader(text: String) {
+internal fun CascadePanelHeader(text: String) {
     Text(
         text = text,
         color = SiloOnSurface.copy(alpha = 0.38f),
@@ -527,11 +527,18 @@ private fun CascadeFlyoutHeader(text: String) {
 
 @Composable
 private fun CascadePanelFooter(isSingleLibrary: Boolean) {
-    val caption = if (isSingleLibrary) {
-        "Press opens the section · Menu closes"
-    } else {
-        "Press opens the library · → jumps to a section · Menu closes"
-    }
+    CascadePanelFooter(
+        caption = if (isSingleLibrary) {
+            "Press opens the section · Menu closes"
+        } else {
+            "Press opens the library · → jumps to a section · Menu closes"
+        },
+    )
+}
+
+/** Hairline + hint caption closing a Skyline panel; shared with the anchored selector menu. */
+@Composable
+internal fun CascadePanelFooter(caption: String) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
