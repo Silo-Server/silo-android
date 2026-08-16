@@ -43,8 +43,10 @@ import org.siloserver.silo.tv.ui.focus.rememberTvFlatReturnRestoration
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -895,7 +897,7 @@ private fun GenreChipCloud(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun CollectionsTab(
     state: TvLibraryDetailViewModel.UiState,
@@ -903,22 +905,61 @@ private fun CollectionsTab(
     onRetry: () -> Unit,
     onInitialContentFocus: () -> Unit,
 ) {
-    val firstCollectionFocusRequester = remember { FocusRequester() }
+    val entryFocusRequester = remember { FocusRequester() }
     var collectionGridHasFocus by remember { mutableStateOf(false) }
     var initialFocusRequested by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
 
-    // First collection of the first non-empty group claims initial focus.
-    val firstCollectionId = state.collectionSections
-        .firstOrNull { it.collections.isNotEmpty() }
-        ?.collections?.firstOrNull()?.id
+    // The card focus should come back to. Saveable: opening a collection is an
+    // outer route that takes the shell (and this tab) out of composition, so a
+    // plain remember forgot the card and re-entry landed on the first one.
+    var lastFocusedCollectionId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(firstCollectionId) {
-        if (initialFocusRequested || firstCollectionId == null) return@LaunchedEffect
+    // Entry target: the remembered card when it still exists, else the first
+    // collection of the first non-empty group.
+    val allCollectionIds = remember(state.collectionSections) {
+        state.collectionSections.flatMap { section -> section.collections.map { it.id } }
+    }
+    val firstCollectionId = allCollectionIds.firstOrNull()
+    val entryCollectionId = lastFocusedCollectionId?.takeIf { it in allCollectionIds } ?: firstCollectionId
+
+    // Flat grid index of each collection (group headers occupy a slot each), so
+    // a remembered card deep in the grid can be scrolled into composition
+    // before its requester is asked to take focus.
+    val gridIndexById = remember(state.collectionSections) {
+        buildMap {
+            var index = 0
+            state.collectionSections.forEach { section ->
+                if (section.collections.isEmpty()) return@forEach
+                if (section.name.isNotEmpty()) index++
+                section.collections.forEach { put(it.id, index++) }
+            }
+        }
+    }
+
+    LaunchedEffect(entryCollectionId) {
+        if (initialFocusRequested || entryCollectionId == null) return@LaunchedEffect
+        // Only when nothing has focus yet: the shell's return-resume claim may
+        // already have entered the grid via focusProperties.enter below.
+        if (collectionGridHasFocus) {
+            initialFocusRequested = true
+            return@LaunchedEffect
+        }
         kotlinx.coroutines.delay(120)
+        if (collectionGridHasFocus) {
+            initialFocusRequested = true
+            return@LaunchedEffect
+        }
+        gridIndexById[entryCollectionId]?.let { index ->
+            if (gridState.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+                gridState.scrollToItem(index)
+                withFrameNanos { }
+            }
+        }
         val landed = requestFocusUntilObserved(
             maxAttempts = TvContentInitialFocusMaxAttempts,
             awaitAttempt = { withFrameNanos { } },
-            requestFocus = firstCollectionFocusRequester::requestFocus,
+            requestFocus = entryFocusRequester::requestFocus,
             isFocused = { collectionGridHasFocus },
         )
         if (landed == TvObservedFocusResult.Focused) onInitialContentFocus()
@@ -929,10 +970,15 @@ private fun CollectionsTab(
         LocalBringIntoViewSpec provides rememberTvGridBringIntoViewSpec(TvTopMenuLayout.contentTopInset),
     ) {
         LazyVerticalGrid(
+            state = gridState,
             columns = GridCells.Fixed(LibraryGridColumns),
             modifier = Modifier
                 .fillMaxSize()
-                .onFocusChanged { collectionGridHasFocus = it.hasFocus },
+                .onFocusChanged { collectionGridHasFocus = it.hasFocus }
+                // Any entry into the grid (the shell's content claim on a
+                // return, D-pad down from the bar) lands on the remembered
+                // card rather than the first one.
+                .focusProperties { enter = { entryFocusRequester } },
             horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
             verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
             contentPadding = PaddingValues(
@@ -980,14 +1026,18 @@ private fun CollectionsTab(
                         TvCollectionCard(
                             collection = collection,
                             onClick = {
+                                lastFocusedCollectionId = collection.id
                                 onCollectionClick(
                                     collection.id,
                                     collection.name,
                                     section.kind == "user_collections",
                                 )
                             },
-                            focusRequester = firstCollectionFocusRequester
-                                .takeIf { collection.id == firstCollectionId },
+                            focusRequester = entryFocusRequester
+                                .takeIf { collection.id == entryCollectionId },
+                            modifier = Modifier.onFocusChanged {
+                                if (it.isFocused) lastFocusedCollectionId = collection.id
+                            },
                         )
                     }
                 }
@@ -1018,12 +1068,13 @@ private fun TvCollectionCard(
     collection: LibraryCollection,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    modifier: Modifier = Modifier,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
             onClick = onClick,
             shape = CardDefaults.shape(shape = RoundedCornerShape(8.dp)),
-            modifier = Modifier
+            modifier = modifier
                 .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f),

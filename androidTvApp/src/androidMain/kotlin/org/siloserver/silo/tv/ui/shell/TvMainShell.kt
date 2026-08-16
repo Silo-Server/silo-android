@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.withFrameNanos
@@ -279,7 +280,23 @@ fun TvMainShell(
     // also persisted via TvLibraryScopeStore; pill selections are session-only
     // (Stage 4 wires the cascade into these). Persistently composed.
     val scopeSelections: SnapshotStateMap<TvLibraryTabType, Int> = remember { mutableStateMapOf() }
-    val pillSelections: SnapshotStateMap<TvLibraryTabType, TvLibraryPill> = remember { mutableStateMapOf() }
+    // Saveable, not merely remembered: opening a collection (or any outer
+    // route) takes the whole shell out of composition, and the nested nav
+    // restores the Movies/Series tab on Back but a plain remember has lost the
+    // pill — so Collections landed back on Recommended, reading as "Back went
+    // Home". Scope selections survive via TvLibraryScopeStore already.
+    val pillSelections: SnapshotStateMap<TvLibraryTabType, TvLibraryPill> = rememberSaveable(
+        saver = listSaver(
+            save = { map -> map.entries.map { listOf(it.key.name, it.value.name) } },
+            restore = { saved ->
+                mutableStateMapOf<TvLibraryTabType, TvLibraryPill>().apply {
+                    saved.forEach { (type, pill) ->
+                        runCatching { put(TvLibraryTabType.valueOf(type), TvLibraryPill.valueOf(pill)) }
+                    }
+                }
+            },
+        ),
+    ) { mutableStateMapOf() }
     // Monotonic per-type "section request" nonce, bumped on every commitScope so
     // re-committing the same section pill still re-applies (see TvLibraryDetailScreen).
     val sectionRequestNonces: SnapshotStateMap<TvLibraryTabType, Int> = remember { mutableStateMapOf() }
@@ -455,6 +472,19 @@ fun TvMainShell(
         // from an earlier return so the restorer does not reuse Home's.
         detailReturnRoot = null
         onOpenItemDetail(contentId)
+    }
+    // Collections open outer routes too, so they need the same hand-back:
+    // without it the return resume left focus to Compose's default search
+    // (the top bar), which then visibly hopped to the grid a beat later.
+    val openLibraryCollectionDetail: (Int, String, String) -> Unit = { libraryId, collectionId, title ->
+        restoreContentAfterDetail = true
+        detailReturnRoot = null
+        onOpenLibraryCollectionDetail(libraryId, collectionId, title)
+    }
+    val openCollectionDetail: (String, String) -> Unit = { collectionId, title ->
+        restoreContentAfterDetail = true
+        detailReturnRoot = null
+        onOpenCollectionDetail(collectionId, title)
     }
     var contentUpFallback by remember { mutableStateOf<((Boolean) -> Boolean)?>(null) }
     // Feeds that registered the up-fallback slot, were superseded by a newer
@@ -1110,16 +1140,16 @@ fun TvMainShell(
                 shellComposable(TvMainRoute.Audio.route) {
                     TvLibrariesScreen(
                         onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
                 shellComposable(TvMainRoute.Libraries.route) {
                     TvLibrariesScreen(
                         onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
@@ -1136,8 +1166,8 @@ fun TvMainShell(
                         selectedPill = pillSelections[TvLibraryTabType.Movies] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Movies] ?: 0,
                         onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -1150,8 +1180,8 @@ fun TvMainShell(
                         selectedPill = pillSelections[TvLibraryTabType.Series] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Series] ?: 0,
                         onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -1164,8 +1194,8 @@ fun TvMainShell(
                         selectedPill = pillSelections[TvLibraryTabType.Music] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Music] ?: 0,
                         onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -1178,8 +1208,8 @@ fun TvMainShell(
                         selectedPill = pillSelections[TvLibraryTabType.Audiobooks] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Audiobooks] ?: 0,
                         onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -1241,7 +1271,7 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Collections.route) {
                     TvCollectionsScreen(
-                        onCollectionClick = onOpenCollectionDetail,
+                        onCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
