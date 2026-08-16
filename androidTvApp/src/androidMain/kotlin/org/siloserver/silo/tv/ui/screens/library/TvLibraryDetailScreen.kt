@@ -76,7 +76,12 @@ import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.SubtleSurface
 import org.siloserver.silo.tv.ui.theme.rememberTvGridBringIntoViewSpec
-import org.siloserver.silo.tv.ui.theme.monoGroupHeader
+import org.siloserver.silo.tv.ui.theme.siloCardDefaults
+import org.siloserver.silo.tv.ui.components.TvSectionHeader
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.sp
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
@@ -1016,10 +1021,10 @@ private fun CollectionsTab(
                         TvCatalogEmptyState(message = "No collections in this library.")
                     }
                 }
-                // Grouped collections (tvOS `TVLibraryCollectionsView`): a mono
-                // uppercase group header, then a grid of 2:3 poster cards. A
-                // section with an empty name (flat / ungrouped bucket) renders no
-                // header.
+                // Grouped collections (tvOS `TVLibraryCollectionsView`): the
+                // shared row-style section header, then a grid of 2:3 poster
+                // cards. A section with an empty name (flat / ungrouped bucket)
+                // renders no header.
                 else -> state.collectionSections.forEachIndexed { sectionIndex, section ->
                     if (section.collections.isEmpty()) return@forEachIndexed
                     if (section.name.isNotEmpty()) {
@@ -1058,15 +1063,19 @@ private fun CollectionsTab(
     }
 }
 
-/** Mono uppercase group header for the grouped collections grid (tvOS §6.3). */
+/**
+ * Group header for the grouped collections grid — the same header the Home /
+ * Recommended rows use, so the page reads like the rest of the app. The grid's
+ * row gap ([LibraryGridRowSpacing]) sits both above and below a header slot,
+ * which reads loose between a header and its own cards; nudging the header
+ * down (draw offset only, no layout change) tucks it against its group and
+ * widens the gap to the previous group's captions instead.
+ */
 @Composable
 private fun CollectionsGroupHeader(name: String) {
-    Text(
-        text = name.uppercase(),
-        style = monoGroupHeader,
-        color = Color.White.copy(alpha = 0.38f),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+    TvSectionHeader(
+        title = name,
+        modifier = Modifier.offset(y = CollectionsGroupHeaderNudge),
     )
 }
 
@@ -1082,10 +1091,21 @@ private fun TvCollectionCard(
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
+    // Same focus treatment (scale + accent border + glow) and caption metrics
+    // as `TvMediaCard`, so collection posters sit alongside Browse posters
+    // without reading as a different card family.
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val cardFocus = siloCardDefaults(shape = TvCollectionCardShape)
+
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
             onClick = onClick,
-            shape = CardDefaults.shape(shape = RoundedCornerShape(8.dp)),
+            interactionSource = interactionSource,
+            shape = CardDefaults.shape(shape = TvCollectionCardShape),
+            scale = cardFocus.scale,
+            border = cardFocus.border,
+            glow = cardFocus.glow,
             modifier = modifier
                 .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
                 .fillMaxWidth()
@@ -1115,46 +1135,27 @@ private fun TvCollectionCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(11.dp))
 
-        // Centered caption with a caps count noun ("12 MOVIES"), matching
-        // tvOS `TVCollectionPosterCard`.
+        // Title-only caption, start-aligned like every other poster caption in
+        // the app. The item count was dropped: it doubled the caption height
+        // and made the rows read differently from Browse.
         Text(
             text = collection.name,
-            style = MaterialTheme.typography.titleSmall,
-            color = Color.White.copy(alpha = 0.92f),
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontSize = 15.5.sp,
+                lineHeight = 18.5.sp,
+            ),
+            color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
-        collectionCountText(collection)?.let { countText ->
-            Text(
-                text = countText,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.7f),
-                maxLines = 1,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
     }
 }
 
-/** `12 MOVIES`-style caps count, deriving the noun from the collection type. */
-private fun collectionCountText(collection: LibraryCollection): String? {
-    val count = collection.itemCount ?: return null
-    if (count <= 0) return null
-    val plural = count != 1
-    val noun = when (collection.collectionType?.lowercase()) {
-        "movie", "movies" -> if (plural) "movies" else "movie"
-        "series", "show", "shows", "tvshows" -> if (plural) "shows" else "show"
-        "album", "albums" -> if (plural) "albums" else "album"
-        "audiobook", "audiobooks", "book", "books" -> if (plural) "books" else "book"
-        else -> if (plural) "items" else "item"
-    }
-    return "$count $noun".uppercase()
-}
+private val TvCollectionCardShape = RoundedCornerShape(8.dp)
+private val CollectionsGroupHeaderNudge = 10.dp
 
 private fun audiobookGroupSubtitle(group: AudiobookGroup): String? {
     val parts = mutableListOf<String>()
