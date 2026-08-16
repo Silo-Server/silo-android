@@ -1542,6 +1542,14 @@ private fun HudSubtitlesPane(
 ) {
     LaunchedEffect(Unit) { onPaneShown() }
 
+    // Image (PGS/DVB) and burned-in tracks ignore most of the appearance block —
+    // say so instead of offering rows that silently do nothing.
+    val applicability = tvSubtitleAppearanceApplicability(
+        presentation.rows.firstOrNull { row -> row.checked }?.identity,
+    )
+    val geometryEnabled = enabled && applicability.geometryApplies
+    val stylingEnabled = enabled && applicability.stylingApplies
+
     val subtitleTrackFocus = remember { FocusRequester() }
     val subtitleTextColorFocus = remember { FocusRequester() }
     val subtitleBackgroundColorFocus = remember { FocusRequester() }
@@ -1629,7 +1637,7 @@ private fun HudSubtitlesPane(
                     label = "Size",
                     value = FONT_SIZES.firstOrNull { it.first == appearance.fontSize }?.second
                         ?: appearance.fontSize.name,
-                    enabled = enabled,
+                    enabled = geometryEnabled,
                     rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
@@ -1651,7 +1659,7 @@ private fun HudSubtitlesPane(
                     label = "Font",
                     value = FONT_FAMILIES.firstOrNull { it.first == appearance.fontFamily }?.second
                         ?: appearance.fontFamily,
-                    enabled = enabled,
+                    enabled = stylingEnabled,
                     rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
@@ -1673,7 +1681,7 @@ private fun HudSubtitlesPane(
                     label = "Background",
                     value = BACKGROUND_STYLES.firstOrNull { it.first == appearance.backgroundStyle }?.second
                         ?: appearance.backgroundStyle.name,
-                    enabled = enabled,
+                    enabled = stylingEnabled,
                     rightFocusRequester = subtitleBackgroundColorFocus,
                     onActivate = {
                         onPresentPicker(
@@ -1694,7 +1702,7 @@ private fun HudSubtitlesPane(
                 HudFocusedSettingRow(
                     label = "Opacity",
                     value = "${appearance.backgroundOpacity}%",
-                    enabled = enabled,
+                    enabled = stylingEnabled,
                     rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
@@ -1715,7 +1723,7 @@ private fun HudSubtitlesPane(
                 HudFocusedSettingRow(
                     label = "Outline",
                     value = onOffLabel(appearance.textOutline),
-                    enabled = enabled,
+                    enabled = stylingEnabled,
                     // The outline-color swatch (subtitleOutlineColorFocus) is only
                     // composed when textOutline is on. Right-nav must not target a
                     // detached requester when it's off, so gate the target on it.
@@ -1728,7 +1736,7 @@ private fun HudSubtitlesPane(
                     label = "Position",
                     value = POSITIONS.firstOrNull { it.first == appearance.position }?.second
                         ?: appearance.position.name,
-                    enabled = enabled,
+                    enabled = geometryEnabled,
                     rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
@@ -1745,6 +1753,15 @@ private fun HudSubtitlesPane(
                         )
                     },
                 )
+
+                applicability.note?.let { note ->
+                    Text(
+                        text = note,
+                        color = Color.White.copy(alpha = 0.62f),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
             }
         }
 
@@ -1768,13 +1785,13 @@ private fun HudSubtitlesPane(
 
             // Color swatches stay inline — tvOS draws color swatches directly,
             // and a row→dialog of colors would lose the at-a-glance palette.
-            StyleSection("Text color") {
+            StyleSection("Text color", dimmed = !applicability.stylingApplies) {
                 TEXT_COLOR_SWATCHES.forEachIndexed { index, hex ->
                     StyleColorSwatch(
                         hex = hex,
                         label = TvSubtitleAppearanceOptions.fontColorLabel(hex),
                         selected = appearance.fontColor.equals(hex, ignoreCase = true),
-                        enabled = enabled,
+                        enabled = stylingEnabled,
                         focusRequester = if (index == 0) subtitleTextColorFocus else null,
                         leftFocusRequester = subtitleTrackFocus,
                     ) {
@@ -1782,13 +1799,13 @@ private fun HudSubtitlesPane(
                     }
                 }
             }
-            StyleSection("Background color") {
+            StyleSection("Background color", dimmed = !applicability.stylingApplies) {
                 BACKGROUND_COLOR_SWATCHES.forEachIndexed { index, hex ->
                     StyleColorSwatch(
                         hex = hex,
                         label = TvSubtitleAppearanceOptions.backgroundColorLabel(hex),
                         selected = appearance.backgroundColor.equals(hex, ignoreCase = true),
-                        enabled = enabled,
+                        enabled = stylingEnabled,
                         focusRequester = if (index == 0) subtitleBackgroundColorFocus else null,
                         leftFocusRequester = subtitleTrackFocus,
                     ) {
@@ -1797,13 +1814,13 @@ private fun HudSubtitlesPane(
                 }
             }
             if (appearance.textOutline) {
-                StyleSection("Outline color") {
+                StyleSection("Outline color", dimmed = !applicability.stylingApplies) {
                     OUTLINE_COLOR_SWATCHES.forEachIndexed { index, hex ->
                         StyleColorSwatch(
                             hex = hex,
                             label = TvSubtitleAppearanceOptions.outlineColorLabel(hex),
                             selected = appearance.textOutlineColor.equals(hex, ignoreCase = true),
-                            enabled = enabled,
+                            enabled = stylingEnabled,
                             focusRequester = if (index == 0) subtitleOutlineColorFocus else null,
                             leftFocusRequester = subtitleTrackFocus,
                         ) {
@@ -1931,8 +1948,18 @@ private fun HudSubtitlePreview(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StyleSection(title: String, content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(top = 5.dp)) {
+private fun StyleSection(
+    title: String,
+    dimmed: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier
+            .padding(top = 5.dp)
+            // Same 0.35 alpha HudFocusedSettingRow uses for a disabled row.
+            .graphicsLayer { alpha = if (dimmed) 0.35f else 1f },
+    ) {
         Text(
             text = title,
             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),

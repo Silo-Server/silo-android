@@ -28,6 +28,7 @@ import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
+import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
@@ -70,6 +71,19 @@ class SubtitleManager(
             if (field == value) return
             field = value
             videoRectSyncs.values.forEach { it.titleSafeFraction = value }
+        }
+
+    /**
+     * The appearance last handed to [applyAppearance], kept so the cue
+     * forwarding can remap BITMAP cues — Media3's `SubtitlePainter` positions
+     * and sizes those from the cue's own fields alone, so `setStyle` /
+     * `setFixedTextSize` / `setBottomPaddingFraction` never reach them.
+     */
+    private var appearance: SubtitleAppearance = SubtitleAppearance.DEFAULT
+        set(value) {
+            if (field == value) return
+            field = value
+            videoRectSyncs.values.forEach { it.appearance = value }
         }
 
     /**
@@ -245,11 +259,15 @@ class SubtitleManager(
      * Media3-rendered text uses the user's appearance. ASS/SSA is rendered by
      * libass and deliberately preserves the script's authored typesetting,
      * animation, positioning, and embedded fonts, matching the Apple player.
+     *
+     * Bitmap cues (PGS/DVB) take Position and Size only, and not through this
+     * view-level API at all — see [remapBitmapCue].
      */
     fun applyAppearance(playerView: PlayerView, appearance: SubtitleAppearance) {
         val subtitleView = playerView.subtitleView ?: return
         libassBridge?.attachTo(subtitleView)
         val safe = appearance.sanitized()
+        this.appearance = safe
 
         val captionStyle = try {
             buildCaptionStyle(safe)
@@ -292,6 +310,7 @@ class SubtitleManager(
             ).also {
                 it.letterbox = letterbox
                 it.titleSafeFraction = titleSafeFraction
+                it.appearance = appearance
                 videoRectSyncs[playerView] = it
             }
         } else {
@@ -343,20 +362,8 @@ class SubtitleManager(
         }
     }
 
-    private fun bottomPaddingFor(position: SubtitlePositionPreset): Float {
-        val base = when (position) {
-            SubtitlePositionPreset.Bottom -> 0.09f
-            SubtitlePositionPreset.LowerThird -> 0.18f
-            SubtitlePositionPreset.Top -> 0.74f
-        }
-        // The title-safe inset moves the subtitle surface in by f on both
-        // edges, leaving a height of (1 - 2f). Preserve the original physical
-        // preset by solving f + p(1 - 2f) = base for the new padding p.
-        val safeFraction = titleSafeFraction
-        val remainingScale = 1f - 2f * safeFraction
-        if (remainingScale <= 0f) return base
-        return ((base - safeFraction) / remainingScale).coerceAtLeast(0.02f)
-    }
+    private fun bottomPaddingFor(position: SubtitlePositionPreset): Float =
+        subtitleBottomPaddingFraction(position, titleSafeFraction)
 
     private fun parseHexColor(hex: String, alpha: Int = 255): Int {
         val cleaned = if (hex.startsWith("#")) hex.drop(1) else hex
@@ -587,6 +594,154 @@ internal fun neutralizeFullWidthCueSize(cue: Cue): Cue {
     return cue
 }
 
+/**
+ * Vertical placement of the caption block, expressed the way Media3 wants it:
+ * the fraction of the subtitle surface left free BELOW the caption.
+ *
+ * Shared by the text path ([androidx.media3.ui.SubtitleView.setBottomPaddingFraction])
+ * and the bitmap path ([remapBitmapCue]) so both presets land in the same place.
+ */
+internal fun subtitleBottomPaddingFraction(
+    position: SubtitlePositionPreset,
+    titleSafeFraction: Float,
+): Float {
+    val base = when (position) {
+        SubtitlePositionPreset.Bottom -> 0.09f
+        SubtitlePositionPreset.LowerThird -> 0.18f
+        SubtitlePositionPreset.Top -> 0.74f
+    }
+    // The title-safe inset moves the subtitle surface in by f on both
+    // edges, leaving a height of (1 - 2f). Preserve the original physical
+    // preset by solving f + p(1 - 2f) = base for the new padding p.
+    val remainingScale = 1f - 2f * titleSafeFraction
+    if (remainingScale <= 0f) return base
+    return ((base - titleSafeFraction) / remainingScale).coerceAtLeast(0.02f)
+}
+
+/**
+ * Size ladder for bitmap cues, as a multiplier on the AUTHORED cue size.
+ *
+ * Medium is 1.0 — the disc's own typesetting — and the rest follow the shape of
+ * the television text ladder in `AndroidSubtitleTextSizePolicy` without its full
+ * reach: a PGS cue is a fixed-resolution image, so every step above 1.0 is
+ * upscaling real pixels and the text ladder's 1.8x top end would visibly smear.
+ */
+internal fun bitmapCueScaleFor(preset: SubtitleFontSizePreset): Float = when (preset) {
+    SubtitleFontSizePreset.Small -> 0.85f
+    SubtitleFontSizePreset.Medium -> 1f
+    SubtitleFontSizePreset.Large -> 1.15f
+    SubtitleFontSizePreset.XLarge -> 1.3f
+    SubtitleFontSizePreset.XXLarge -> 1.5f
+}
+
+/**
+ * Applies the user's Position and Size to a BITMAP cue by rewriting the cue's
+ * own geometry.
+ *
+ * Media3 1.10.1's `SubtitlePainter.setupBitmapLayout()` derives the destination
+ * rect purely from `position`/`positionAnchor`/`line`/`lineAnchor`/`size`/
+ * `bitmapHeight` — the caption style, the fixed text size and the bottom-padding
+ * fraction are all read only by the text branch. So for PGS/DVB the appearance
+ * has to be baked into the cue before `SubtitleView.setCues`, or it has no
+ * effect at all.
+ *
+ * `PgsParser` and `DvbParser` both emit `position` = left fraction with
+ * `ANCHOR_TYPE_START`, `line` = top fraction (`LINE_TYPE_FRACTION`) with
+ * `ANCHOR_TYPE_START`, `size` = width fraction and `bitmapHeight` = height
+ * fraction (verified against the 1.10.1 sources). This preserves whatever
+ * anchors the cue carries and re-expresses the same edges through them.
+ *
+ * Every bitmap cue is re-anchored to the preset, exactly as the text path
+ * re-anchors every text cue: the user picked a position and disc subtitles are
+ * authored at the bottom regardless.
+ *
+ * A cue whose `size`/`bitmapHeight`/`position` are missing or out of range is
+ * returned untouched — without a height fraction the painter falls back to the
+ * bitmap's own aspect against the parent width, which is not knowable here.
+ * Text cues are never touched, and neither is ASS (libass renders that itself).
+ */
+internal fun remapBitmapCue(
+    cue: Cue,
+    appearance: SubtitleAppearance,
+    titleSafeFraction: Float,
+): Cue {
+    if (cue.bitmap == null) return cue
+    val width = cue.size.takeIf(::isUsableCueFraction) ?: return cue
+    val height = cue.bitmapHeight.takeIf(::isUsableCueFraction) ?: return cue
+    val position = cue.position.takeIf { it.isFinite() && it >= 0f && it <= 1f } ?: return cue
+
+    val left = when (cue.positionAnchor) {
+        Cue.ANCHOR_TYPE_END -> position - width
+        Cue.ANCHOR_TYPE_MIDDLE -> position - width / 2f
+        // START, and TYPE_UNSET which the painter treats as START.
+        else -> position
+    }
+
+    // Never let a scaled-up cue outgrow the surface it is drawn on.
+    val requested = bitmapCueScaleFor(appearance.fontSize)
+    val scale = requested.coerceAtMost(minOf(1f / width, 1f / height))
+    val scaledWidth = (width * scale).coerceIn(0f, 1f)
+    val scaledHeight = (height * scale).coerceIn(0f, 1f)
+
+    // Scale about the cue's own horizontal centre, then clamp on screen. The
+    // authored horizontal placement is preserved; only the preset moves it
+    // vertically.
+    val centerX = left + width / 2f
+    val scaledLeft = (centerX - scaledWidth / 2f)
+        .coerceIn(0f, (1f - scaledWidth).coerceAtLeast(0f))
+    val bottomPadding = subtitleBottomPaddingFraction(appearance.position, titleSafeFraction)
+    val scaledTop = (1f - bottomPadding - scaledHeight)
+        .coerceIn(0f, (1f - scaledHeight).coerceAtLeast(0f))
+
+    val newPosition = when (cue.positionAnchor) {
+        Cue.ANCHOR_TYPE_END -> scaledLeft + scaledWidth
+        Cue.ANCHOR_TYPE_MIDDLE -> scaledLeft + scaledWidth / 2f
+        else -> scaledLeft
+    }
+    val newLine = when (cue.lineAnchor) {
+        Cue.ANCHOR_TYPE_END -> scaledTop + scaledHeight
+        Cue.ANCHOR_TYPE_MIDDLE -> scaledTop + scaledHeight / 2f
+        else -> scaledTop
+    }
+
+    if (
+        newPosition == cue.position &&
+        newLine == cue.line &&
+        cue.lineType == Cue.LINE_TYPE_FRACTION &&
+        scaledWidth == cue.size &&
+        scaledHeight == cue.bitmapHeight
+    ) {
+        // Identical geometry — hand back the same instance so SubtitlePainter
+        // keeps its cached layout.
+        return cue
+    }
+
+    return cue.buildUpon()
+        .setPosition(newPosition)
+        .setLine(newLine, Cue.LINE_TYPE_FRACTION)
+        .setSize(scaledWidth)
+        .setBitmapHeight(scaledHeight)
+        .build()
+}
+
+private fun isUsableCueFraction(value: Float): Boolean =
+    value.isFinite() && value > 0f && value <= 1f
+
+internal fun remapBitmapCues(
+    cueGroup: CueGroup,
+    appearance: SubtitleAppearance,
+    titleSafeFraction: Float,
+): CueGroup {
+    if (cueGroup.cues.isEmpty()) return cueGroup
+    var changed = false
+    val mapped = cueGroup.cues.map { original ->
+        val next = remapBitmapCue(original, appearance, titleSafeFraction)
+        if (next !== original) changed = true
+        next
+    }
+    return if (changed) CueGroup(mapped, cueGroup.presentationTimeUs) else cueGroup
+}
+
 internal fun neutralizeFullWidthCueSizes(cueGroup: CueGroup): CueGroup {
     if (cueGroup.cues.isEmpty()) return cueGroup
     var changed = false
@@ -641,7 +796,23 @@ private class SubtitleVideoRectSync(
             if (field == value) return
             field = value
             update()
+            reforwardLastCues()
         }
+
+    /**
+     * Drives [remapBitmapCue]. Changing it re-forwards the last cue group so a
+     * Position/Size change lands on the caption currently on screen instead of
+     * waiting for the next one.
+     */
+    var appearance: SubtitleAppearance = SubtitleAppearance.DEFAULT
+        set(value) {
+            if (field == value) return
+            field = value
+            reforwardLastCues()
+        }
+
+    /** The last group received from the player, BEFORE any transformation. */
+    private var lastCueGroup: CueGroup? = null
 
     var isDisposed: Boolean = false
         private set
@@ -776,10 +947,22 @@ private class SubtitleVideoRectSync(
     }
 
     private fun forwardNeutralizedCues(playerView: PlayerView, cueGroup: CueGroup) {
+        lastCueGroup = cueGroup
         val subtitleView = playerView.subtitleView ?: return
-        val cues = neutralizeFullWidthCueSizes(cueGroup).cues
+        val cues = remapBitmapCues(
+            cueGroup = neutralizeFullWidthCueSizes(cueGroup),
+            appearance = appearance,
+            titleSafeFraction = titleSafeFraction,
+        ).cues
         logSubtitleCueGeometry(cues)
         subtitleView.setCues(cues)
+    }
+
+    private fun reforwardLastCues() {
+        if (isDisposed) return
+        val playerView = playerViewRef.get() ?: return
+        val cueGroup = lastCueGroup ?: return
+        forwardNeutralizedCues(playerView, cueGroup)
     }
 
     override fun onLayoutChange(
@@ -910,6 +1093,8 @@ private class SubtitleVideoRectSync(
         clearPendingVerification(playerView)
         observedPlayer?.removeListener(this)
         observedPlayer = null
+        // Cues hold decoded bitmaps; do not outlive the view they were for.
+        lastCueGroup = null
         playerView?.removeOnLayoutChangeListener(this)
         playerView?.removeOnAttachStateChangeListener(this)
         contentFrameRef.get()?.removeOnLayoutChangeListener(this)
