@@ -25,6 +25,7 @@ class IntroAutoSkipControllerTest {
     private lateinit var range: MutableStateFlow<TimeRange?>
     private lateinit var enabled: MutableStateFlow<Boolean>
     private lateinit var introKey: MutableStateFlow<String?>
+    private lateinit var playing: MutableStateFlow<Boolean>
     private lateinit var fired: MutableList<Double>
 
     @BeforeTest
@@ -33,6 +34,7 @@ class IntroAutoSkipControllerTest {
         range = MutableStateFlow<TimeRange?>(introRange)
         enabled = MutableStateFlow(true)
         introKey = MutableStateFlow<String?>(key)
+        playing = MutableStateFlow(true)
         fired = mutableListOf()
     }
 
@@ -50,6 +52,7 @@ class IntroAutoSkipControllerTest {
                 autoSkipEnabled = enabled,
                 introKey = introKey,
                 onAutoSkipFire = { to -> fired += to },
+                playbackActive = playing,
             )
         }
     }
@@ -184,5 +187,95 @@ class IntroAutoSkipControllerTest {
         advanceTimeBy(10_000)
         runCurrent()
         assertTrue(fired.isEmpty())
+    }
+
+    @Test
+    fun `cancel applies only to its own intro - a new key counts down again`() = runTest {
+        val controller = newController(countdown = 3)
+        position.value = 35.0
+        runCurrent()
+        controller.cancelCountdown()
+        runCurrent()
+        assertEquals(IntroAutoSkipState.ShowingButton, controller.state.value)
+
+        introKey.value = "session-1:file-2:30:90"
+        runCurrent()
+        assertEquals(IntroAutoSkipState.CountingDown(3), controller.state.value)
+    }
+
+    @Test
+    fun `countdown is held until playback is active and starts from full once it is`() = runTest {
+        playing.value = false
+        val controller = newController(countdown = 3)
+        position.value = 35.0
+        runCurrent()
+        assertEquals(IntroAutoSkipState.ShowingButton, controller.state.value)
+
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertTrue(fired.isEmpty(), "must not auto-skip while playback has not started")
+
+        playing.value = true
+        runCurrent()
+        assertEquals(IntroAutoSkipState.CountingDown(3), controller.state.value)
+
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertEquals(listOf(introRange.end), fired)
+    }
+
+    @Test
+    fun `playback going inactive mid-countdown stops the timer and restarts from full on resume`() = runTest {
+        val controller = newController(countdown = 3)
+        position.value = 35.0
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(IntroAutoSkipState.CountingDown(2), controller.state.value)
+
+        playing.value = false
+        runCurrent()
+        assertEquals(IntroAutoSkipState.ShowingButton, controller.state.value)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertTrue(fired.isEmpty(), "a paused countdown must not fire")
+
+        playing.value = true
+        runCurrent()
+        assertEquals(IntroAutoSkipState.CountingDown(3), controller.state.value)
+    }
+
+    @Test
+    fun `pausing just before the countdown expires stops it instead of skipping`() = runTest {
+        val controller = newController(countdown = 3)
+        position.value = 35.0
+        runCurrent()
+        advanceTimeBy(2_900)
+        runCurrent()
+        assertEquals(IntroAutoSkipState.CountingDown(1), controller.state.value)
+
+        playing.value = false
+        runCurrent()
+        assertEquals(IntroAutoSkipState.ShowingButton, controller.state.value)
+
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertTrue(fired.isEmpty(), "a pause must stop the timer, even close to expiry")
+    }
+
+    @Test
+    fun `cancelCountdown outside an active countdown leaves the state alone`() = runTest {
+        val controller = newController(countdown = 3)
+        position.value = 35.0
+        runCurrent()
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertEquals(listOf(introRange.end), fired)
+        assertEquals(IntroAutoSkipState.Hidden, controller.state.value)
+
+        // Mirrors the post-fire path, where the UI cancels as the banner tears down.
+        controller.cancelCountdown()
+        runCurrent()
+        assertEquals(IntroAutoSkipState.Hidden, controller.state.value)
     }
 }

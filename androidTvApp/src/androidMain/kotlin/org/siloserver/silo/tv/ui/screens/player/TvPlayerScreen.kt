@@ -14,6 +14,8 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -627,7 +629,8 @@ fun TvPlayerScreen(
     }
 
     fun handleSkipIntroNow(): Boolean {
-        val target = viewModel.uiState.value.intro?.end ?: return false
+        val playerState = viewModel.uiState.value
+        val target = playerState.intro?.end ?: return false
         if (roomController != null) {
             if (tvRoomTransportGate(latestRoomSnapshot, TvTransportIntent.Seek) != TransportGate.Send) {
                 return true
@@ -637,6 +640,12 @@ fun TvPlayerScreen(
         } else {
             val soloTarget = viewModel.onSkipIntroNow() ?: return false
             viewModel.seekImmediate(soloTarget)
+        }
+        // The pill unmounts with the intro state, taking its focus with it, so
+        // aim at the scrubber (where Down from the pill goes). Only with the
+        // controls up: otherwise the overlay owning the scrubber isn't composed.
+        if (playerState.showControls) {
+            requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
         }
         return true
     }
@@ -906,6 +915,14 @@ fun TvPlayerScreen(
         when {
             cleanSeekRate != 0 -> stopCleanPlaybackSeek()
             state.isScrubbing -> viewModel.cancelScrub()
+            // Below the seek/scrub entries deliberately: a Back during a scrub
+            // belongs to the scrub. Above the overlays because the countdown is
+            // the most transient thing on screen. Handled HERE and not only in
+            // the legacy key bridge — on API 36 Back never reaches
+            // dispatchKeyEvent, so a countdown Back would otherwise fall
+            // through to hiding the controls or exiting the player.
+            latestIntroSkipState is IntroAutoSkipState.CountingDown ->
+                viewModel.onCancelIntroAutoSkip()
             showQuickSubtitlePicker -> showQuickSubtitlePicker = false
             state.showSubtitleStyleDialog -> viewModel.closeSubtitleStyleDialog()
             state.showSubtitleMenu -> viewModel.closeSubtitleMenu()
@@ -1083,6 +1100,41 @@ fun TvPlayerScreen(
                 return@handler false
             }
 
+            // Back stops the timer and leaves the prompt up, like a D-pad nudge.
+            // Consumed so the press cannot also exit playback; afterwards the
+            // state is no longer CountingDown, so Back behaves normally.
+            // Mirrors the BackHandler ladder's priority: a scrub or clean seek
+            // owns Back first, so the countdown must not swallow it here on
+            // older Android and leave the scrub running.
+            if (latestIntroSkipState is IntroAutoSkipState.CountingDown &&
+                event.keyCode == KeyEvent.KEYCODE_BACK &&
+                cleanSeekRate == 0 &&
+                !state.isScrubbing
+            ) {
+                // Both phases are consumed: a leaked ACTION_UP would reach the
+                // activity's back dispatcher.
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    viewModel.onCancelIntroAutoSkip()
+                }
+                return@handler true
+            }
+
+            // A D-pad direction stops the timer but leaves the prompt up. Handled
+            // here rather than on the button, which is not reliably in the focus
+            // tree. Falls through so navigation and seek still run.
+            if (event.action == KeyEvent.ACTION_DOWN &&
+                event.repeatCount == 0 &&
+                latestIntroSkipState is IntroAutoSkipState.CountingDown &&
+                event.keyCode in setOf(
+                    KeyEvent.KEYCODE_DPAD_UP,
+                    KeyEvent.KEYCODE_DPAD_DOWN,
+                    KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT,
+                )
+            ) {
+                viewModel.onCancelIntroAutoSkip()
+            }
+
             if (!playerState.showControls && !playerState.showNextUp && horizontalDirection != 0) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     beginCleanSeekPress(direction = horizontalDirection, allowsHold = true)
@@ -1092,7 +1144,10 @@ fun TvPlayerScreen(
 
             if (event.action == KeyEvent.ACTION_DOWN &&
                 event.repeatCount == 0 &&
-                latestIntroSkipState is IntroAutoSkipState.ShowingButton &&
+                (
+                    latestIntroSkipState is IntroAutoSkipState.ShowingButton ||
+                        latestIntroSkipState is IntroAutoSkipState.CountingDown
+                    ) &&
                 // Only while the transport overlay is hidden: with controls up
                 // a focused button owns Select — hijacking it here made every
                 // OK press skip the intro for the whole intro window.
@@ -2344,6 +2399,9 @@ fun TvPlayerScreen(
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
             autoPlayNextEnabled = autoPlayNextEnabled,
             introSkipState = introSkipState,
+            // The scrubber commits its seek on focus loss, so the prompt must
+            // not take focus out from under an active scrub.
+            introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0,
             videoActive = videoActive,
             isBuffering = state.isBuffering,
             sleepTimerState = sleepTimerState,
@@ -2363,7 +2421,6 @@ fun TvPlayerScreen(
             onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
             onExitPlayback = { stopPlaybackAndExit() },
             onSkipIntroNow = { handleSkipIntroNow() },
-            onCancelIntroAutoSkip = viewModel::onCancelIntroAutoSkip,
         )
     }
 }
@@ -3437,6 +3494,8 @@ private fun TvPlayerOverlays(
     nextUpCountdownTotalSeconds: Int,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
+    /** False while a scrub owns focus — see TvIntroAutoSkipBanner.mayTakeFocus. */
+    introBannerMayTakeFocus: Boolean,
     /** True only while the video branch is composed — not loading, not errored. */
     videoActive: Boolean,
     isBuffering: Boolean,
@@ -3449,7 +3508,6 @@ private fun TvPlayerOverlays(
     onToggleAutoPlayNext: () -> Unit,
     onExitPlayback: () -> Unit,
     onSkipIntroNow: () -> Unit,
-    onCancelIntroAutoSkip: () -> Unit,
 ) {
         // Lifecycle-driven notice toast (top-start). Slides in for outage
         // recovery, fades out when the lifecycle clears the notice.
@@ -3639,16 +3697,26 @@ private fun TvPlayerOverlays(
         // Bottom inset (200dp) clears the transport cluster + scrubber column.
         if (!isInPictureInPictureMode) {
             if (!hudOpen && !showNextUp) {
+                // Sits above the transport cluster while controls are up and
+                // drops toward the corner when they hide.
+                val introSkipBottomInset by animateDpAsState(
+                    targetValue = if (showControls) 200.dp else 56.dp,
+                    animationSpec = tween(durationMillis = 220),
+                    label = "introSkipBottomInset",
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(bottom = 200.dp, end = 32.dp),
+                        .padding(bottom = introSkipBottomInset, end = 32.dp),
                     contentAlignment = Alignment.BottomEnd,
                 ) {
                     TvIntroAutoSkipBanner(
                         state = introSkipState,
                         onSkipNow = onSkipIntroNow,
-                        onCancelCountdown = onCancelIntroAutoSkip,
+                        // Not while the viewer is working the timeline: the
+                        // scrubber commits its seek on focus loss, so taking
+                        // focus here would land a seek they never confirmed.
+                        mayTakeFocus = introBannerMayTakeFocus,
                     )
                 }
             }
