@@ -14,9 +14,11 @@ plugins {
  * warm-JIT vs 26% / p90 29ms once AOT-compiled. The profile bakes that
  * compilation into the install.
  *
- * Generation is DEVICE-GATED and needs a signed-in TV (a headless managed
- * emulator would only ever record the login screen), so it runs against a
- * connected device — the Shield or the local TV AVD after pairing:
+ * Generation is DEVICE-GATED and needs a signed-in TV running API 33+ (or a
+ * rooted API 28+ one — androidx.benchmark refuses to collect otherwise; the
+ * Android 11 Shield cannot). A headless managed emulator would only ever
+ * record the login screen, so run it against a connected device — the local
+ * TV AVD (API 36) after pairing it once:
  *
  *   ./gradlew :baselineprofile-tv:generateBaselineProfile -PallowDebugReleaseSigning=true
  *
