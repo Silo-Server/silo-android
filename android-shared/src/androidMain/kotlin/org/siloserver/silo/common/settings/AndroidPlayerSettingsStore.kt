@@ -541,6 +541,14 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun refreshFromServer() {
         val repo = settingsRepository ?: return
+        // Push before pull. Local writes sit in the flusher's debounce for
+        // ~750ms; a refresh inside that window read the server's OLD value and
+        // wrote it back over the change the user had just made. The player
+        // refreshes at every load, so toggling Dolby Vision in the HUD and
+        // restarting the session in place reverted the toggle every time.
+        // Draining first makes the pull observe the write. Offline, both
+        // fail and the local value stands.
+        runCatching { serverSettingsFlusher.flushNow() }
         withScope { scope, store ->
             // Batched canonical resolution: one request answers every
             // device-relevant key, each with the scope it resolved from.
