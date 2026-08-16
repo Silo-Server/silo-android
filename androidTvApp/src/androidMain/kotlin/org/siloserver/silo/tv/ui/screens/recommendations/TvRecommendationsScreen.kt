@@ -93,6 +93,12 @@ fun TvRecommendationsScreen(
     // re-apply its selection, which reintroduces the same jump even once the
     // selection itself is saved.
     var savedListSelection by rememberSaveable { mutableStateOf(entryRequest.selection) }
+    // True only when the saved list is showing because recommendations came
+    // back empty (the auto-fallback below), not because the user picked
+    // Favorites/Watchlist from the dropdown. The explanatory caption is keyed
+    // on this rather than on "no visible sections", which is also true while
+    // the feed is still loading on first open.
+    var savedListIsFallback by rememberSaveable { mutableStateOf(false) }
     var lastAppliedEntrySequence by rememberSaveable { mutableIntStateOf(0) }
     val savedListFocusRequester = remember { FocusRequester() }
     var forYouContentHasFocus by remember { mutableStateOf(false) }
@@ -123,6 +129,7 @@ fun TvRecommendationsScreen(
         savedListSelection = applied.selection
         lastAppliedEntrySequence = applied.lastAppliedSequence
         if (!applied.appliedRequest) return@LaunchedEffect
+        savedListIsFallback = false
         if (applied.selection == null) {
             feedEntryFocusRequest++
         } else {
@@ -135,6 +142,9 @@ fun TvRecommendationsScreen(
     LaunchedEffect(state.isLoading, state.error, visibleSections) {
         if (!state.isLoading && state.error == null && visibleSections.isEmpty() && savedListSelection == null) {
             savedListSelection = SavedListSelection.Watchlist
+            savedListIsFallback = true
+        } else if (visibleSections.isNotEmpty()) {
+            savedListIsFallback = false
         }
     }
 
@@ -168,7 +178,7 @@ fun TvRecommendationsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val showFallbackCaption = savedListSelection != null && visibleSections.isEmpty()
+    val showFallbackCaption = savedListSelection != null && savedListIsFallback
     val savedListTopInset = TvTopMenuLayout.contentTopInset +
         if (showFallbackCaption) SavedListCaptionInset else 0.dp
 
