@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -1232,31 +1233,6 @@ fun PlayerScreen(
             val videoGravity by viewModel.videoGravity.collectAsState()
             var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
             val letterboxExpansion by viewModel.letterboxExpansion.collectAsState()
-            // Scope films ship as a 2.39:1 image encoded inside a 16:9 frame, so
-            // FIT fits the black bars too and pillarboxes what is already wider
-            // than the display. This measures the encoded matte and only reports
-            // true once ZOOM's clip provably lands inside it — see
-            // LetterboxMatte.kt. Off wherever the video is not what is on screen,
-            // and off for the gravities where the user has already decided.
-            val letterboxFillEngaged = rememberLetterboxFillEngaged(
-                playerView = playerViewRef,
-                enabled = letterboxExpansion != LetterboxExpansion.Off &&
-                    videoGravity != "fill" &&
-                    videoGravity != "stretch" &&
-                    !isInPictureInPictureMode &&
-                    !castState.isConnected &&
-                    !useTabletopPlayerLayout,
-                videoAspect = codedVideoAspect,
-                mediaKey = uiState.mediaMountGeneration,
-            )
-            val resizeMode = when {
-                videoGravity == "fill" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                videoGravity == "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                // Measured, not assumed: the clip lands entirely in encoded
-                // black, so this fills the width without losing any picture.
-                letterboxFillEngaged -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-            }
             // The camera only reaches the picture once expansion pushes it out
             // to the edges — at FIT's 2560px the pillarbox already swallows it.
             // Read the platform's resolved cutout rather than deriving it from
@@ -1273,6 +1249,44 @@ fun PlayerScreen(
             } else {
                 0
             }
+            // Scope films ship as a 2.39:1 image inside a 16:9 frame, and a
+            // 1.90:1 title ships the same way, so a plain fit fits the encoded
+            // black too. This measures that matte and reports the aspect of the
+            // picture hiding inside the frame — the coded aspect itself when
+            // there is nothing to discount. Off wherever the video is not what
+            // is on screen, and off for the gravities the user has already
+            // decided for themselves.
+            val letterboxContentAspect = rememberLetterboxContentAspect(
+                playerView = playerViewRef,
+                enabled = letterboxExpansion != LetterboxExpansion.Off &&
+                    videoGravity != "fill" &&
+                    videoGravity != "stretch" &&
+                    !isInPictureInPictureMode &&
+                    !castState.isConnected &&
+                    !useTabletopPlayerLayout,
+                videoAspect = codedVideoAspect,
+                mediaKey = uiState.mediaMountGeneration,
+                cacheKey = letterboxMatteCacheKey(
+                    serverUrl = uiState.serverUrl,
+                    contentId = uiState.contentId,
+                    mediaFileId = uiState.mediaFileId,
+                    codedWidth = pictureInPictureVideoWidth,
+                    codedHeight = pictureInPictureVideoHeight,
+                ),
+            )
+            // Expanding means giving the surface the shape of the PICTURE rather
+            // than of the coded frame, and letting the frame overflow it. The
+            // surface box below is that shape; ZOOM then scales the frame to
+            // cover it, which lands the clip inside the encoded matte by
+            // construction rather than by a threshold.
+            val letterboxExpanding = codedVideoAspect > 0f &&
+                letterboxContentAspect > codedVideoAspect
+            val resizeMode = when {
+                videoGravity == "fill" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                videoGravity == "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                letterboxExpanding -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+            }
             val subtitleAppearance by viewModel.subtitleAppearance.collectAsState()
 
             // Re-apply user subtitle styling whenever the PlayerView mounts or the
@@ -1287,23 +1301,28 @@ fun PlayerScreen(
             val activeTabletopPaneLayout = tabletopPaneLayout.takeIf {
                 useTabletopPlayerLayout
             }
-            val videoSurfaceModifier = if (activeTabletopPaneLayout != null) {
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(with(density) { activeTabletopPaneLayout.videoHeightPx.toDp() })
-            } else {
-                Modifier.fillMaxSize()
-            }.let { surface ->
-                // Shrinking the surface is what keeps the camera off the
-                // picture, and it also feeds the probe: the estimator measures
-                // its clip against this box, so the crop it approves is the one
-                // for the inset width, not the full display.
-                if (cutoutSideInsetPx > 0) {
-                    surface.padding(horizontal = with(density) { cutoutSideInsetPx.toDp() })
-                } else {
-                    surface
-                }
+            val cutoutInsetDp = with(density) { cutoutSideInsetPx.toDp() }
+            val videoSurfaceModifier = when {
+                activeTabletopPaneLayout != null ->
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(with(density) { activeTabletopPaneLayout.videoHeightPx.toDp() })
+                // Expanding means giving the surface the shape of the PICTURE
+                // rather than of the coded frame. `aspectRatio` IS the fit: it
+                // takes the full width when the picture is wider than what is
+                // available and the full height when it is narrower, which is
+                // exactly the rule, both cases, no branch. It must NOT be
+                // preceded by fillMaxSize, which would pin the constraints and
+                // leave it nothing to choose between.
+                letterboxExpanding ->
+                    Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = cutoutInsetDp)
+                        .aspectRatio(letterboxContentAspect)
+                // Shrinking the available area is what keeps the camera off a
+                // picture that reaches the edges on its own.
+                else -> Modifier.fillMaxSize().padding(horizontal = cutoutInsetDp)
             }
 
             if (controller != null) {

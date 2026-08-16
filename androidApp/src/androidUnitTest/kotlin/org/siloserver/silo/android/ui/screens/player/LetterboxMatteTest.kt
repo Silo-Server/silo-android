@@ -1,30 +1,36 @@
 package org.siloserver.silo.android.ui.screens.player
 
-import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * The reference case measured on a Galaxy S26 Ultra: a 2.39:1 film encoded
- * inside a 3840x2160 frame, played landscape on a 3120x1440 window.
- */
 private const val WINDOW_WIDTH = 3120
 private const val WINDOW_HEIGHT = 1440
-private const val CODED_ASPECT = 3840f / 2160f
-private const val CONTAINER_ASPECT = WINDOW_WIDTH.toFloat() / WINDOW_HEIGHT
-private const val CONTENT_ASPECT = 2.393f
 
 /** Landscape width of the S26 Ultra punch-hole, per `dumpsys window displays`. */
 private const val CUTOUT_PX = 139
 
-/** Matte per edge for 2.39:1 content in a 16:9 frame, as a fraction of height. */
-private const val SCOPE_MATTE = 0.1281f
+/** The default box: the display less a symmetric inset clear of the camera. */
+private const val CLEAR_BOX_WIDTH = WINDOW_WIDTH - 2 * CUTOUT_PX
 
-/** Matte per edge for 1.85:1 content in the same frame — far thinner. */
-private const val FLAT_MATTE = 0.0195f
+/**
+ * Reference title one: a 2.39:1 scope film in a 3840x2160 frame. Its picture is
+ * WIDER than the display, so fitting the content rect binds on width.
+ */
+private const val SCOPE_CODED_ASPECT = 3840f / 2160f
+private const val SCOPE_CONTENT_ASPECT = 2.393f
+private const val SCOPE_MATTE = 277.65f / 2160f
+
+/**
+ * Reference title two: a 1.90:1 film in a 1920x1080 frame, measured live on the
+ * device. Its picture is NARROWER than the display, so fitting the content rect
+ * binds on HEIGHT — the case the old fill-the-width rule silently declined.
+ */
+private const val FLAT_CODED_ASPECT = 1920f / 1080f
+private const val FLAT_CONTENT_ASPECT = 1920f / 1009.5f
+private const val FLAT_MATTE = 35.25f / 1080f
 
 private fun frame(
     matteFraction: Float,
@@ -45,7 +51,7 @@ private fun frame(
 private fun colour(channel: Int): Int =
     (0xFF shl 24) or (channel shl 16) or (channel shl 8) or channel
 
-private fun scopeSample() = MatteSample(SCOPE_MATTE, SCOPE_MATTE)
+private fun sample(matte: Float) = MatteSample(matte, matte)
 
 class LetterboxMatteTest {
 
@@ -53,18 +59,18 @@ class LetterboxMatteTest {
 
     @Test
     fun measuresBarsOnBothEdges() {
-        val sample = measureMatte(frame(matteFraction = 0.125f), width = 8, height = 144)
-        requireNotNull(sample)
-        assertEquals(18f / 144f, sample.topFraction, 0.001f)
-        assertEquals(18f / 144f, sample.bottomFraction, 0.001f)
+        val measured = measureMatte(frame(matteFraction = 0.125f), width = 8, height = 144)
+        assertNotNull(measured)
+        assertEquals(18f / 144f, measured.topFraction, 0.001f)
+        assertEquals(18f / 144f, measured.bottomFraction, 0.001f)
     }
 
     @Test
     fun reportsNoBarsForAFullFrameImage() {
-        val sample = measureMatte(frame(matteFraction = 0f), width = 8, height = 144)
-        requireNotNull(sample)
-        assertEquals(0f, sample.topFraction)
-        assertEquals(0f, sample.bottomFraction)
+        val measured = measureMatte(frame(matteFraction = 0f), width = 8, height = 144)
+        assertNotNull(measured)
+        assertEquals(0f, measured.topFraction)
+        assertEquals(0f, measured.bottomFraction)
     }
 
     @Test
@@ -75,29 +81,26 @@ class LetterboxMatteTest {
 
     @Test
     fun refusesAFrameThatIsMostlyBlack() {
-        // A near-black night scene must not read as an enormous matte.
         assertNull(measureMatte(frame(matteFraction = 0.45f), width = 8, height = 144))
     }
 
     @Test
     fun aBrightPixelKeepsItsRowOutOfTheMatte() {
-        // One caption pixel in the bar is enough: the row is picture, not matte.
         val pixels = frame(matteFraction = 0.125f)
         pixels[3 * 8 + 4] = colour(240)
-        val sample = measureMatte(pixels, width = 8, height = 144)
-        requireNotNull(sample)
-        assertEquals(3f / 144f, sample.topFraction, 0.001f)
-        // The far edge is untouched, and the estimator takes the thinner one.
-        assertEquals(18f / 144f, sample.bottomFraction, 0.001f)
+        val measured = measureMatte(pixels, width = 8, height = 144)
+        assertNotNull(measured)
+        assertEquals(3f / 144f, measured.topFraction, 0.001f)
+        assertEquals(18f / 144f, measured.bottomFraction, 0.001f)
     }
 
     @Test
     fun toleratesCodecRingingInTheBar() {
         val pixels = frame(matteFraction = 0.125f)
         pixels[3 * 8 + 4] = colour(MATTE_BLACK_CHANNEL_MAX)
-        val sample = measureMatte(pixels, width = 8, height = 144)
-        requireNotNull(sample)
-        assertEquals(18f / 144f, sample.topFraction, 0.001f)
+        val measured = measureMatte(pixels, width = 8, height = 144)
+        assertNotNull(measured)
+        assertEquals(18f / 144f, measured.topFraction, 0.001f)
     }
 
     @Test
@@ -106,195 +109,256 @@ class LetterboxMatteTest {
         assertNull(measureMatte(IntArray(4), width = 8, height = 144))
     }
 
-    // ---- crop geometry ------------------------------------------------------
+    // ---- the safety property ------------------------------------------------
 
     @Test
-    fun zoomClipMatchesTheMeasuredDevice() {
-        // 3840x2160 covering 3120x1440 scales by 0.8125, so 315 of 1755 rows
-        // fall outside the window: 157.5 per edge of 2160 coded rows.
-        val crop = zoomVerticalCropFraction(CODED_ASPECT, CONTAINER_ASPECT)
-        assertEquals(193.8f / 2160f, crop, 0.001f)
-        assertTrue(abs(crop - 0.0897f) < 0.001f)
+    fun fittingTheContentRectNeverClipsMoreThanTheMatte() {
+        // The proof in LetterboxMatte.kt, executed: across coded aspects, matte
+        // thicknesses and box shapes — including boxes narrower and wider than
+        // the content — the clip never exceeds the black that defined the rect.
+        val codedAspects = listOf(4f / 3f, 1.5f, FLAT_CODED_ASPECT, 2.0f, 2.39f)
+        val mattes = listOf(0.001f, 0.01f, FLAT_MATTE, 0.08f, SCOPE_MATTE, 0.24f)
+        val boxAspects = listOf(0.6f, 1f, 1.6f, 1.9736f, 2.1667f, 3.2f)
+        for (coded in codedAspects) {
+            for (matte in mattes) {
+                val safe = safeMatteFraction(matte)
+                val fitted = contentAspect(coded, safe)
+                for (box in boxAspects) {
+                    val clip = verticalClipFraction(coded, fitted, box)
+                    assertTrue(
+                        clip <= safe + 1e-5f,
+                        "clip $clip exceeded safe matte $safe (coded=$coded box=$box)",
+                    )
+                    assertTrue(
+                        clip <= matte,
+                        "clip $clip exceeded measured matte $matte (coded=$coded box=$box)",
+                    )
+                }
+            }
+        }
     }
 
     @Test
-    fun declinesWhenTheVideoIsNotNarrowerThanTheWindow() {
-        // ZOOM would clip horizontally instead, which the bar measurement says
-        // nothing about, so there is no safe vertical answer to give.
-        assertEquals(0f, zoomVerticalCropFraction(CONTAINER_ASPECT, CONTAINER_ASPECT))
-        assertEquals(0f, zoomVerticalCropFraction(2.39f, CONTAINER_ASPECT))
-        assertEquals(0f, zoomVerticalCropFraction(0f, CONTAINER_ASPECT))
+    fun holdsBackHeadroomProportionalToTheMatte() {
+        // A flat fraction of frame height would be a rounding error on a scope
+        // matte and two thirds of a 1.90:1 one, which is why this scales.
+        assertEquals(SCOPE_MATTE * (1f - MATTE_MARGIN_FRACTION), safeMatteFraction(SCOPE_MATTE), 1e-5f)
+        // Below the crossover the floor governs, covering row quantisation.
+        assertEquals(FLAT_MATTE - MATTE_MARGIN_FLOOR, safeMatteFraction(FLAT_MATTE), 1e-5f)
+        // A matte thinner than the floor is not worth acting on at all.
+        assertEquals(0f, safeMatteFraction(MATTE_MARGIN_FLOOR / 2f))
+        assertEquals(0f, safeMatteFraction(0f))
     }
 
-    // ---- cutout ------------------------------------------------------------
+    @Test
+    fun contentWithNoStoredBarsIsLeftExactlyAlone() {
+        // A 16:9 episode on this panel: nothing to discount, so the content rect
+        // IS the coded frame, the scale is a plain fit and nothing moves.
+        assertEquals(FLAT_CODED_ASPECT, contentAspect(FLAT_CODED_ASPECT, safeMatteFraction(0f)))
+        val estimator = LetterboxFillEstimator()
+        repeat(MATTE_SAMPLES_TO_SETTLE * 10) { estimator.onSample(sample(0f), FLAT_CODED_ASPECT) }
+        assertEquals(FLAT_CODED_ASPECT, estimator.contentAspectFor(FLAT_CODED_ASPECT))
+    }
+
+    // ---- reference geometry -------------------------------------------------
+
+    @Test
+    fun scopeFilmBindsOnWidthAndKeepsGenuineLetterbox() {
+        val fitted = contentAspect(SCOPE_CODED_ASPECT, safeMatteFraction(SCOPE_MATTE))
+        val image = expandedImageSize(
+            boxWidth = CLEAR_BOX_WIDTH,
+            boxHeight = WINDOW_HEIGHT,
+            contentAspect = fitted,
+            trueContentAspect = SCOPE_CONTENT_ASPECT,
+        )
+        assertNotNull(image)
+        assertEquals(2842, image.width)
+        assertEquals(1188, image.height)
+        assertEquals(CUTOUT_PX, (WINDOW_WIDTH - image.width) / 2)
+    }
+
+    @Test
+    fun scopeFilmAtFullWidthReachesBothEdges() {
+        val fitted = contentAspect(SCOPE_CODED_ASPECT, safeMatteFraction(SCOPE_MATTE))
+        val image = expandedImageSize(
+            boxWidth = WINDOW_WIDTH,
+            boxHeight = WINDOW_HEIGHT,
+            contentAspect = fitted,
+            trueContentAspect = SCOPE_CONTENT_ASPECT,
+        )
+        assertNotNull(image)
+        assertEquals(WINDOW_WIDTH, image.width)
+        assertEquals(1304, image.height)
+    }
+
+    @Test
+    fun flatFilmBindsOnHeightAndFillsTopToBottom() {
+        // The regression this rule was generalised for: 1.90:1 is NARROWER than
+        // the 2.167:1 display, so filling the width is impossible but filling
+        // the HEIGHT is free — and the old rule only ever asked about width.
+        val fitted = contentAspect(FLAT_CODED_ASPECT, safeMatteFraction(FLAT_MATTE))
+        val image = expandedImageSize(
+            boxWidth = CLEAR_BOX_WIDTH,
+            boxHeight = WINDOW_HEIGHT,
+            contentAspect = fitted,
+            trueContentAspect = FLAT_CONTENT_ASPECT,
+        )
+        assertNotNull(image)
+        assertEquals(2679, image.width)
+        assertEquals(1409, image.height)
+        // Comfortably taller than the 1346 a plain fit of the coded frame gives.
+        assertTrue(image.height > 1346)
+    }
+
+    @Test
+    fun flatFilmIsUnaffectedByTheCameraInset() {
+        // It binds on height, so the width it wants is well inside the inset
+        // box — the default costs this title nothing at all.
+        val fitted = contentAspect(FLAT_CODED_ASPECT, safeMatteFraction(FLAT_MATTE))
+        val clear = expandedImageSize(
+            CLEAR_BOX_WIDTH, WINDOW_HEIGHT, fitted, FLAT_CONTENT_ASPECT,
+        )
+        val full = expandedImageSize(
+            WINDOW_WIDTH, WINDOW_HEIGHT, fitted, FLAT_CONTENT_ASPECT,
+        )
+        assertNotNull(clear)
+        assertNotNull(full)
+        assertEquals(clear, full)
+        assertTrue(clear.width < CLEAR_BOX_WIDTH)
+    }
+
+    // ---- cutout -------------------------------------------------------------
 
     @Test
     fun insetsSymmetricallyForEitherLandscapeRotation() {
-        // The S26 Ultra's 80x139 punch-hole lands against the left edge at
-        // ROTATION_90 and the right edge at ROTATION_270. Both must inset the
-        // same amount, or flipping the phone end for end would shift the image.
-        assertEquals(CUTOUT_PX, cutoutSafeHorizontalInset(cutoutLeftPx = CUTOUT_PX, cutoutRightPx = 0))
-        assertEquals(CUTOUT_PX, cutoutSafeHorizontalInset(cutoutLeftPx = 0, cutoutRightPx = CUTOUT_PX))
+        // The punch-hole lands against the left edge at ROTATION_90 and the
+        // right at ROTATION_270. Both inset the same, or flipping the phone end
+        // for end would shift the picture sideways.
+        assertEquals(CUTOUT_PX, cutoutSafeHorizontalInset(CUTOUT_PX, 0))
+        assertEquals(CUTOUT_PX, cutoutSafeHorizontalInset(0, CUTOUT_PX))
     }
 
     @Test
     fun leavesAScreenWithoutASideCutoutAlone() {
         // Portrait reports the cutout on the top edge, which this ignores: the
         // video is nowhere near it and must not be pushed down.
-        assertEquals(0, cutoutSafeHorizontalInset(cutoutLeftPx = 0, cutoutRightPx = 0))
-    }
-
-    @Test
-    fun clearOfCameraExpandsToTheWidestSizeThatMissesThePunchHole() {
-        val inset = cutoutSafeHorizontalInset(CUTOUT_PX, 0)
-        val image = expandedImageSize(
-            boxWidth = WINDOW_WIDTH - 2 * inset,
-            boxHeight = WINDOW_HEIGHT,
-            codedAspect = CODED_ASPECT,
-            contentAspect = CONTENT_ASPECT,
-        )
-        requireNotNull(image)
-        assertEquals(2842, image.width)
-        assertEquals(1188, image.height)
-        // Centred, so the camera column sits entirely in the side bar.
-        assertEquals(CUTOUT_PX, (WINDOW_WIDTH - image.width) / 2)
-    }
-
-    @Test
-    fun fullWidthReachesBothEdgesAndLeavesOnlyGenuineLetterbox() {
-        val image = expandedImageSize(
-            boxWidth = WINDOW_WIDTH,
-            boxHeight = WINDOW_HEIGHT,
-            codedAspect = CODED_ASPECT,
-            contentAspect = CONTENT_ASPECT,
-        )
-        requireNotNull(image)
-        assertEquals(WINDOW_WIDTH, image.width)
-        assertEquals(1304, image.height)
-        // ~68px per edge: the real 2.39-versus-2.17 difference, nothing more.
-        assertTrue(abs((WINDOW_HEIGHT - image.height) / 2 - 68) <= 1)
-    }
-
-    @Test
-    fun clearOfCameraStillClearsTheClipItNeeds() {
-        // Insetting narrows the box, which lowers the clip ZOOM has to take —
-        // so an expansion that was safe at full width stays safe here.
-        val inset = cutoutSafeHorizontalInset(CUTOUT_PX, 0)
-        val narrowed = (WINDOW_WIDTH - 2 * inset).toFloat() / WINDOW_HEIGHT
-        val crop = zoomVerticalCropFraction(CODED_ASPECT, narrowed)
-        assertTrue(crop < zoomVerticalCropFraction(CODED_ASPECT, CONTAINER_ASPECT))
-        assertTrue(SCOPE_MATTE >= crop + MATTE_ENGAGE_MARGIN)
-
-        val estimator = LetterboxFillEstimator()
-        var engaged = false
-        repeat(MATTE_SAMPLES_TO_ENGAGE) {
-            engaged = estimator.onSample(scopeSample(), CODED_ASPECT, narrowed)
-        }
-        assertTrue(engaged)
-    }
-
-    @Test
-    fun expansionDeclinesForContentWithNoStoredBars() {
-        // A 16:9 episode on this panel: nothing to eat, so nothing changes —
-        // exactly what the setting's copy promises.
-        val estimator = LetterboxFillEstimator()
-        assertFalse(feed(estimator, MatteSample(0f, 0f), times = 40))
+        assertEquals(0, cutoutSafeHorizontalInset(0, 0))
     }
 
     // ---- estimator ----------------------------------------------------------
 
     private fun feed(
         estimator: LetterboxFillEstimator,
-        sample: MatteSample?,
+        matte: Float?,
         times: Int = 1,
-    ): Boolean {
-        var engaged = false
+        codedAspect: Float = SCOPE_CODED_ASPECT,
+    ): Float {
+        var aspect = codedAspect
         repeat(times) {
-            engaged = estimator.onSample(sample, CODED_ASPECT, CONTAINER_ASPECT)
+            aspect = estimator.onSample(matte?.let(::sample), codedAspect)
         }
-        return engaged
+        return aspect
     }
 
     @Test
-    fun engagesOnlyAfterConsecutiveClearingFrames() {
+    fun appliesNothingUntilEnoughFramesAgree() {
         val estimator = LetterboxFillEstimator()
-        assertFalse(feed(estimator, scopeSample(), times = MATTE_SAMPLES_TO_ENGAGE - 1))
-        assertTrue(feed(estimator, scopeSample()))
+        assertEquals(
+            SCOPE_CODED_ASPECT,
+            feed(estimator, SCOPE_MATTE, times = MATTE_SAMPLES_TO_SETTLE - 1),
+        )
+        assertTrue(feed(estimator, SCOPE_MATTE) > SCOPE_CODED_ASPECT)
+        assertTrue(estimator.isSettled)
     }
 
     @Test
-    fun oneAmbiguousFrameRestartsTheCount() {
+    fun narrowsOnTheVeryFirstFrameThatDisagreesAndStaysNarrow() {
         val estimator = LetterboxFillEstimator()
-        feed(estimator, scopeSample(), times = MATTE_SAMPLES_TO_ENGAGE - 1)
-        // A frame whose picture reaches into the bar resets the evidence.
-        assertFalse(feed(estimator, MatteSample(FLAT_MATTE, FLAT_MATTE)))
-        assertFalse(feed(estimator, scopeSample(), times = MATTE_SAMPLES_TO_ENGAGE - 1))
-        assertTrue(feed(estimator, scopeSample()))
+        val expanded = feed(estimator, SCOPE_MATTE, times = MATTE_SAMPLES_TO_SETTLE)
+        // An IMAX sequence opening up: one frame, and the crop is given back.
+        val narrowed = feed(estimator, FLAT_MATTE)
+        assertTrue(narrowed < expanded)
+        // A monotone minimum cannot oscillate, so the picture never breathes —
+        // this is what instant revert and latch-off both reduce to.
+        assertEquals(narrowed, feed(estimator, SCOPE_MATTE, times = 40))
     }
 
     @Test
-    fun neverEngagesForAThinMatte() {
-        // 1.85:1 in a 16:9 frame: ZOOM's clip would reach past the bar and into
-        // the picture, so this has to stay on FIT however long it plays.
+    fun holdsTheEstimateWhileThereIsNoEvidence() {
         val estimator = LetterboxFillEstimator()
-        assertFalse(feed(estimator, MatteSample(FLAT_MATTE, FLAT_MATTE), times = 40))
-    }
+        val expanded = feed(estimator, SCOPE_MATTE, times = MATTE_SAMPLES_TO_SETTLE)
+        assertEquals(expanded, feed(estimator, null, times = 10))
 
-    @Test
-    fun neverEngagesWhenOnlyOneEdgeIsMatted() {
-        // An off-centre image is not a letterbox; the thinner edge governs.
-        val estimator = LetterboxFillEstimator()
-        assertFalse(feed(estimator, MatteSample(SCOPE_MATTE * 2f, 0f), times = 40))
-    }
-
-    @Test
-    fun revertsOnTheVeryFirstFrameThatStopsClearing() {
-        val estimator = LetterboxFillEstimator()
-        assertTrue(feed(estimator, scopeSample(), times = MATTE_SAMPLES_TO_ENGAGE))
-        // An IMAX sequence opening up: one sample interval of crop, no more.
-        assertFalse(feed(estimator, MatteSample(FLAT_MATTE, FLAT_MATTE)))
-    }
-
-    @Test
-    fun holdsStateWhileThereIsNoEvidence() {
-        val estimator = LetterboxFillEstimator()
-        feed(estimator, scopeSample(), times = MATTE_SAMPLES_TO_ENGAGE)
-        // A fade to black is not a reason to drop the crop, or to take one.
-        assertTrue(feed(estimator, null, times = 10))
-
+        // And an unusable frame is not progress towards settling either.
         val cold = LetterboxFillEstimator()
-        assertFalse(feed(cold, null, times = 10))
+        assertEquals(SCOPE_CODED_ASPECT, feed(cold, null, times = 10))
     }
 
     @Test
-    fun givesUpAfterRepeatedFlapping() {
+    fun theThinnerEdgeGoverns() {
+        // An off-centre image is not a letterbox; cropping to the thicker edge
+        // would cut the picture on the thinner one.
         val estimator = LetterboxFillEstimator()
-        repeat(MATTE_MAX_FLAPS + 1) {
-            feed(estimator, scopeSample(), times = MATTE_SAMPLES_TO_ENGAGE)
-            feed(estimator, MatteSample(FLAT_MATTE, FLAT_MATTE))
+        repeat(MATTE_SAMPLES_TO_SETTLE) {
+            estimator.onSample(MatteSample(SCOPE_MATTE, 0f), SCOPE_CODED_ASPECT)
         }
-        assertTrue(estimator.isAbandoned)
-        // Latched off: even perfect evidence no longer moves it.
-        assertFalse(feed(estimator, scopeSample(), times = 40))
+        assertEquals(SCOPE_CODED_ASPECT, estimator.contentAspectFor(SCOPE_CODED_ASPECT))
     }
 
     @Test
-    fun dropsAnEngagedCropWhenTheWindowStopsBeingWider() {
+    fun aRememberedMatteAppliesBeforeAnyFrameArrives() {
         val estimator = LetterboxFillEstimator()
-        assertTrue(feed(estimator, scopeSample(), times = MATTE_SAMPLES_TO_ENGAGE))
-        // Rotating to portrait leaves nothing for a vertical clip to win.
-        assertFalse(estimator.onSample(scopeSample(), CODED_ASPECT, 1440f / 3120f))
+        estimator.seed(SCOPE_MATTE)
+        // The point of the cache: expanded on the first presented frame.
+        assertTrue(estimator.contentAspectFor(SCOPE_CODED_ASPECT) > SCOPE_CODED_ASPECT)
+    }
+
+    @Test
+    fun liveFramesReplaceARememberedMatteEntirely() {
+        val estimator = LetterboxFillEstimator()
+        estimator.seed(SCOPE_MATTE)
+        // A stale entry claiming a thick matte is corrected by measurement
+        // rather than governing the session — and never written back.
+        val settled = feed(estimator, FLAT_MATTE, times = MATTE_SAMPLES_TO_SETTLE)
+        assertEquals(contentAspect(SCOPE_CODED_ASPECT, safeMatteFraction(FLAT_MATTE)), settled, 1e-5f)
+        assertEquals(FLAT_MATTE, estimator.observedMatte)
+    }
+
+    @Test
+    fun onlyLiveFramesAreEverRememberedBack() {
+        val estimator = LetterboxFillEstimator()
+        estimator.seed(SCOPE_MATTE)
+        assertNull(estimator.observedMatte)
     }
 
     @Test
     fun resetClearsEverythingForTheNextItem() {
         val estimator = LetterboxFillEstimator()
-        repeat(MATTE_MAX_FLAPS + 1) {
-            feed(estimator, scopeSample(), times = MATTE_SAMPLES_TO_ENGAGE)
-            feed(estimator, MatteSample(FLAT_MATTE, FLAT_MATTE))
-        }
+        estimator.seed(SCOPE_MATTE)
+        feed(estimator, SCOPE_MATTE, times = MATTE_SAMPLES_TO_SETTLE)
         estimator.reset()
-        assertFalse(estimator.isAbandoned)
-        assertTrue(feed(estimator, scopeSample(), times = MATTE_SAMPLES_TO_ENGAGE))
+        assertNull(estimator.observedMatte)
+        assertTrue(!estimator.isSettled)
+        assertEquals(SCOPE_CODED_ASPECT, estimator.contentAspectFor(SCOPE_CODED_ASPECT))
+    }
+
+    // ---- cache key ----------------------------------------------------------
+
+    @Test
+    fun cacheKeyNamesTheExactStreamNotTheTitle() {
+        val base = letterboxMatteCacheKey("https://silo", "movie-1", 42, 3840, 2160)
+        assertNotNull(base)
+        // A different cut, or the same file arriving transcoded at another
+        // resolution, must not inherit a crop measured from this one.
+        assertTrue(base != letterboxMatteCacheKey("https://silo", "movie-1", 43, 3840, 2160))
+        assertTrue(base != letterboxMatteCacheKey("https://silo", "movie-1", 42, 1920, 1080))
+        assertTrue(base != letterboxMatteCacheKey("https://other", "movie-1", 42, 3840, 2160))
+    }
+
+    @Test
+    fun cacheKeyRefusesMediaItCannotNamePrecisely() {
+        assertNull(letterboxMatteCacheKey("https://silo", "movie-1", null, 3840, 2160))
+        assertNull(letterboxMatteCacheKey("https://silo", null, 42, 3840, 2160))
+        assertNull(letterboxMatteCacheKey("https://silo", "movie-1", 42, 0, 0))
     }
 }
