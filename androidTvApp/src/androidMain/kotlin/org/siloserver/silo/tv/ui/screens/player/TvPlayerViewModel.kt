@@ -2932,6 +2932,18 @@ class TvPlayerViewModel(
         beginAndExecuteSeek(positionSec)
     }
 
+    /**
+     * Position the in-flight quick-skip burst started from, or null when no
+     * burst is pending.
+     *
+     * Read straight after [onSkipBy] so the skip chip can report the burst
+     * TOTAL — three fast forward presses coalesce into one +90s seek, and
+     * labelling that "+30s" three times is the only reason the coalescing
+     * looks like a dropped press rather than a deliberate one.
+     */
+    val quickSkipBurstOriginSec: Double?
+        get() = quickSkipAccumulator.pending?.let { quickSkipOriginMs / 1_000.0 }
+
     /** Coalesces rapid remote/button skips into one route-aware seek. */
     fun onSkipBy(deltaSeconds: Double): Double {
         val state = _uiState.value

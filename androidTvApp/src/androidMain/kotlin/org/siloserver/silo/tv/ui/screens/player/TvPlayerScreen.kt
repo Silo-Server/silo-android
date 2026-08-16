@@ -652,15 +652,21 @@ fun TvPlayerScreen(
                 requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
             }
             viewModel.setControlsVisible(true)
-        } else {
-            // Silent seek: surface the transient skip indicator instead.
-            skipSeekFeedback = SkipSeekFeedback(
-                deltaSeconds = (deltaMs / 1000).toInt(),
-                targetSec = targetSec,
-                durationSec = duration.coerceAtLeast(0.0),
-                nonce = (skipSeekFeedback?.nonce ?: 0) + 1,
-            )
         }
+        // The chip runs on BOTH paths. Revealing the transport shows where the
+        // playhead landed but not that it moved, nor by how much — a solitary
+        // press reads as the bar twitching. Room seeks commit per press with no
+        // accumulator, so there the per-press delta IS the total.
+        val burstDeltaSec = viewModel.quickSkipBurstOriginSec
+            ?.takeIf { roomController == null }
+            ?.let { targetSec - it }
+            ?: (deltaMs / 1000.0)
+        skipSeekFeedback = SkipSeekFeedback(
+            deltaSeconds = burstDeltaSec.roundToInt(),
+            targetSec = targetSec,
+            durationSec = duration.coerceAtLeast(0.0),
+            nonce = (skipSeekFeedback?.nonce ?: 0) + 1,
+        )
         if (captureQuickSkipBurst && roomController == null) {
             armQuickSkipCapture()
         }
@@ -2147,26 +2153,46 @@ fun TvPlayerScreen(
                     }
                 }
 
-                // Transient skip feedback for hidden-controls D-pad seeks.
-                // Suppressed while the transport, HUD, or Up Next own the
-                // screen (they provide their own position feedback) and in PiP.
-                if (!isInPictureInPictureMode && cleanSeekRate == 0 && !state.showControls &&
+                // Transient skip feedback, for both the hidden-controls D-pad
+                // skip and the transport/remote skip that reveals the overlay.
+                // Suppressed while the HUD or Up Next own the screen (they
+                // provide their own position feedback) and in PiP.
+                //
+                // ONE render site across both cases on purpose: a reveal-path
+                // skip sets the chip and flips showControls in the same handler,
+                // and splitting these would tear down one AnimatedVisibility and
+                // fade in another mid-transition.
+                if (!isInPictureInPictureMode && cleanSeekRate == 0 &&
                     !state.hudOpen && !state.showNextUp
                 ) {
-                    // Align the transient line with the REAL scrubber track's
-                    // position inside the idle overlay, which stacks (bottom-up):
-                    // 40dp overlay padding + 33dp transport cluster + 16dp gap +
-                    // 8dp spacer + 16dp gap = 113dp to the scrubber COLUMN's
-                    // bottom — plus ~6dp because the 3.5dp track is centered in
-                    // the column's lower box (41dp minus label row), not flush
-                    // with its bottom. Horizontal 80dp matches the track width.
+                    // Controls hidden: align the transient line with the REAL
+                    // scrubber track's position inside the idle overlay, which
+                    // stacks (bottom-up): 40dp overlay padding + 33dp transport
+                    // cluster + 16dp gap + 8dp spacer + 16dp gap = 113dp to the
+                    // scrubber COLUMN's bottom — plus ~6dp because the 3.5dp
+                    // track is centered in the column's lower box (41dp minus
+                    // label row), not flush with its bottom.
+                    //
+                    // Controls visible: the live scrubber already reports
+                    // position, so the chip drops its own track and rises into
+                    // the 42dp gap between that column's top (113 + 41) and the
+                    // title block at 196dp. Centred, so it clears the
+                    // left-aligned title at any title width.
+                    // Horizontal 80dp matches the track width in both cases.
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(start = 80.dp, end = 80.dp, bottom = 119.dp),
+                            .padding(
+                                start = 80.dp,
+                                end = 80.dp,
+                                bottom = if (state.showControls) 154.dp else 119.dp,
+                            ),
                         contentAlignment = Alignment.BottomCenter,
                     ) {
-                        TvSkipSeekIndicator(feedback = skipSeekFeedback)
+                        TvSkipSeekIndicator(
+                            feedback = skipSeekFeedback,
+                            showTrack = !state.showControls,
+                        )
                     }
                 }
 

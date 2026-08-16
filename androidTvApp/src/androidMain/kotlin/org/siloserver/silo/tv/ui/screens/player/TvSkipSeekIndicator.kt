@@ -35,17 +35,24 @@ data class SkipSeekFeedback(
 )
 
 /**
- * Transient feedback for hidden-controls D-pad skips: a pill chip with the
+ * Transient feedback for a D-pad or transport skip: a pill chip with the
  * signed delta ("+30s" / "−10s") and the landing time, above a thin
  * read-only progress line anchored where the transport scrubber lives (same
  * bottom geometry), so the position reads in the place users already look.
- * Deliberately NOT the transport overlay: revealing controls would flip
- * Left/Right from discrete skips into scrubber nudges mid-sequence.
+ *
+ * Set [showTrack] false when the real scrubber is on screen. The chip then
+ * carries only the delta — the thing the revealed transport cannot say — and
+ * leaves position to the live bar rather than stacking a second track over it.
+ *
+ * The chip itself does NOT reveal the transport: while controls are hidden,
+ * doing so would flip Left/Right from discrete skips into scrubber nudges
+ * mid-sequence.
  */
 @Composable
 fun TvSkipSeekIndicator(
     feedback: SkipSeekFeedback?,
     modifier: Modifier = Modifier,
+    showTrack: Boolean = true,
 ) {
     AnimatedVisibility(
         visible = feedback != null,
@@ -86,7 +93,7 @@ fun TvSkipSeekIndicator(
                 }
             }
 
-            if (snapshot.durationSec > 0.0) {
+            if (showTrack && snapshot.durationSec > 0.0) {
                 val progress = (snapshot.targetSec / snapshot.durationSec).toFloat().coerceIn(0f, 1f)
                 // Mirrors TvPlayerScrubber's resting track exactly: 3.5dp
                 // capsule, White@0.24 rail, solid White fill — so the line is
