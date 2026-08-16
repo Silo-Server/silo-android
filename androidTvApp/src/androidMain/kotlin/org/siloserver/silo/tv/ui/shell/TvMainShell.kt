@@ -147,10 +147,7 @@ import org.siloserver.silo.tv.ui.screens.personal.TvWatchlistScreen
 import org.siloserver.silo.tv.ui.screens.recommendations.TvRecommendationsScreen
 import org.siloserver.silo.tv.ui.screens.recommendations.SavedListSelection
 import org.siloserver.silo.tv.ui.screens.recommendations.TvForYouEntryRequest
-import org.siloserver.silo.tv.ui.screens.recommendations.ForYouDetailReturnState
-import org.siloserver.silo.tv.ui.screens.recommendations.beginForYouDetailReturn
-import org.siloserver.silo.tv.ui.screens.recommendations.consumeForYouDetailReturn
-import org.siloserver.silo.tv.ui.screens.recommendations.resetForExplicitForYouSelection
+import org.siloserver.silo.tv.ui.screens.recommendations.TvForYouEntryRequestSaver
 import org.siloserver.silo.tv.ui.screens.requests.TvMyRequestsScreen
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestDetailScreen
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestsScreen
@@ -322,12 +319,6 @@ fun TvMainShell(
     val activeLibrary: (TvLibraryTabType) -> UserLibrary? = { type -> resolvedLibraries[type] }
 
     val currentRoute = currentEntry?.destination?.route ?: firstTvRoute()
-    var forYouRequestsSolidTopBar by remember { mutableStateOf(false) }
-    val onForYouSolidTopBarChanged = remember {
-        { requested: Boolean -> forYouRequestsSolidTopBar = requested }
-    }
-    val useSolidForYouTopBar =
-        currentRoute == TvMainRoute.ForYou.route && forYouRequestsSolidTopBar
     var calendarFocusHandoffPending by remember(currentRoute) {
         mutableStateOf(currentRoute == TvMainRoute.Calendar.route)
     }
@@ -349,6 +340,10 @@ fun TvMainShell(
     val contentFocusRequester = remember { FocusRequester() }
     val homeFirstItemFocusRequester = remember { FocusRequester() }
     val homeFirstRowContainerFocusRequester = remember { FocusRequester() }
+    // For You renders the same Skyline feed as Home, so it needs its own pair:
+    // one feed's requesters cannot be attached in two compositions at once.
+    val forYouFirstItemFocusRequester = remember { FocusRequester() }
+    val forYouFirstRowContainerFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
     var searchInputHasFocus by remember { mutableStateOf(false) }
     var searchBackToInputRequest by remember { mutableIntStateOf(0) }
@@ -371,11 +366,10 @@ fun TvMainShell(
     val restoreHomeContentAfterDetail = detailReturnRoot == TvMainRoute.Home.route
     val restoreForYouContentAfterDetail = detailReturnRoot == TvMainRoute.ForYou.route
     var suppressHomeRefreshAfterDetail by rememberSaveable { mutableStateOf(false) }
-    var homeDetailReturnFocusState by remember { mutableStateOf(HomeDetailReturnFocusState()) }
+    var homeDetailReturnFocusState by remember { mutableStateOf(TvDetailReturnFocusState()) }
+    var forYouDetailReturnFocusState by remember { mutableStateOf(TvDetailReturnFocusState()) }
     var detailReturnFocusRequest by remember { mutableIntStateOf(0) }
     var detailReturnNeedsRetry by remember { mutableStateOf(false) }
-    var forYouDetailReturnFocusRequest by rememberSaveable { mutableIntStateOf(0) }
-    var forYouDetailReturnFocusPending by rememberSaveable { mutableStateOf(false) }
     // Attached (by the Home feed) to the exact card a detail page was launched
     // from, while that return is pending. Used as the content restorer's enter
     // fallback during the return resume so the synchronous claim below lands
@@ -384,23 +378,18 @@ fun TvMainShell(
     // default enter could land a row below the launch card for a few frames.
     val homeDetailReturnCardFocusRequester = remember { FocusRequester() }
     val forYouDetailReturnCardFocusRequester = remember { FocusRequester() }
-    // Home ONLY. The Home feed arms its launch-card requester at click time
+    // Skyline feeds only. The feed arms its launch-card requester at click time
     // (`detailReturnPending` in TvSkylineSectionFeed), so the node is attached
     // for the whole round trip and is a valid restorer target during the
-    // synchronous resume claim below.
-    //
-    // For You deliberately stays on Default. It arms at RESUME, one composition
-    // later than the claim, so naming its requester here would hand the
-    // restorer a detached node — `requestFocus` throws, `runCatching` swallows
-    // it, and the claim silently degrades to the one-frame retry. Default enter
-    // lands inside content, which is all the claim owes; the screen's own
-    // bounded restore then walks focus to the exact card.
-    val detailReturnFallback =
-        if (restoreHomeContentAfterDetail || homeDetailReturnFocusState.fallbackPending) {
+    // synchronous resume claim below. Roots that render something else keep
+    // Default enter, which lands inside content — all the claim owes.
+    val detailReturnFallback = when {
+        restoreHomeContentAfterDetail || homeDetailReturnFocusState.fallbackPending ->
             homeDetailReturnCardFocusRequester
-        } else {
-            FocusRequester.Default
-        }
+        restoreForYouContentAfterDetail || forYouDetailReturnFocusState.fallbackPending ->
+            forYouDetailReturnCardFocusRequester
+        else -> FocusRequester.Default
+    }
     // Whether focus currently sits anywhere inside the content group. Gates
     // the detail-return resume claim below: the Home feed's early restore
     // ladder usually re-focuses the launch card during the pop transition, and
@@ -409,7 +398,6 @@ fun TvMainShell(
     var contentHasFocus by remember { mutableStateOf(false) }
     LifecycleResumeEffect(Unit) {
         if (restoreContentAfterDetail) {
-            val isHomeDetailReturn = restoreHomeContentAfterDetail
             // Claim the content group synchronously during ON_RESUME, before
             // Compose's default search can briefly settle on the Home tab —
             // but only when the feed hasn't already claimed it. Claim BEFORE
@@ -421,16 +409,16 @@ fun TvMainShell(
                 runCatching { !contentFocusRequester.requestFocus() }.getOrDefault(true)
             }
             detailReturnFocusRequest++
-            homeDetailReturnFocusState = beginHomeDetailReturnRetryIfHome(
+            homeDetailReturnFocusState = beginTvDetailReturnRetryIfRoot(
                 previousState = homeDetailReturnFocusState,
-                isHomeDetailReturn = isHomeDetailReturn,
+                isDetailReturnForRoot = restoreHomeContentAfterDetail,
                 needsRetry = detailReturnNeedsRetry,
             )
-            if (restoreForYouContentAfterDetail) {
-                val started = beginForYouDetailReturn(forYouDetailReturnFocusRequest)
-                forYouDetailReturnFocusRequest = started.requestId
-                forYouDetailReturnFocusPending = started.pending
-            }
+            forYouDetailReturnFocusState = beginTvDetailReturnRetryIfRoot(
+                previousState = forYouDetailReturnFocusState,
+                isDetailReturnForRoot = restoreForYouContentAfterDetail,
+                needsRetry = detailReturnNeedsRetry,
+            )
             restoreContentAfterDetail = false
             detailReturnRoot = null
         }
@@ -444,7 +432,8 @@ fun TvMainShell(
         if (detailReturnNeedsRetry) {
             runCatching { contentFocusRequester.requestFocus() }
         }
-        homeDetailReturnFocusState = completeHomeDetailReturnRetry(homeDetailReturnFocusState)
+        homeDetailReturnFocusState = completeTvDetailReturnRetry(homeDetailReturnFocusState)
+        forYouDetailReturnFocusState = completeTvDetailReturnRetry(forYouDetailReturnFocusState)
         // The detail-return ON_RESUME event has now passed and Home is stable;
         // future real resumes (playback/background) should refresh normally.
         suppressHomeRefreshAfterDetail = false
@@ -456,7 +445,6 @@ fun TvMainShell(
         onOpenItemDetail(contentId)
     }
     val openForYouItemDetail: (String) -> Unit = { contentId ->
-        forYouDetailReturnFocusPending = false
         restoreContentAfterDetail = true
         detailReturnRoot = TvMainRoute.ForYou.route
         onOpenItemDetail(contentId)
@@ -531,7 +519,14 @@ fun TvMainShell(
     // top), while ordinary content re-entry keeps the focusRestorer()'s
     // last-focused card.
     var contentFocusRequest by remember { mutableIntStateOf(0) }
-    var forYouEntryRequest by remember { mutableStateOf(TvForYouEntryRequest()) }
+    // Saveable, because the For You screen guards against replaying an entry
+    // request with a SAVED "last applied sequence". A shell recreated with a
+    // plain remember restarted the counter at 0 while the screen still held
+    // the old high-water mark, so every dropdown pick after that (Watchlist,
+    // Favorites, Recommendations) was silently ignored as already applied.
+    var forYouEntryRequest by rememberSaveable(stateSaver = TvForYouEntryRequestSaver) {
+        mutableStateOf(TvForYouEntryRequest())
+    }
 
     // --- Skyline cascade panel host (Stage 4) ----------------------------------
     // Mirrors tvOS `TVMainTabView.persistentPanels`. The cascade overlays are
@@ -716,6 +711,10 @@ fun TvMainShell(
         }
     }
     val openForYou: (SavedListSelection?) -> Unit = { selection ->
+        // A dropdown pick is an explicit selection just like the tab itself:
+        // end any detail-return protection, or its nonzero token makes the
+        // Skyline feed swallow the entry focus bump and focus falls to the bar.
+        forYouDetailReturnFocusState = resetTvDetailReturnFocus()
         forYouEntryRequest = forYouEntryRequest.next(selection)
         focusState.closePanel()
         navigateToSecondary(TvMainRoute.ForYou.route)
@@ -725,9 +724,10 @@ fun TvMainShell(
     val onSelectRoot: (TvRootDestination) -> Unit = { dest ->
         val route = dest.toRoute()
         if (dest == TvRootDestination.ForYou) {
-            val reset = resetForExplicitForYouSelection()
-            forYouDetailReturnFocusRequest = reset.requestId
-            forYouDetailReturnFocusPending = reset.pending
+            // Same reason as Home below: an explicit tab selection ends the
+            // detail-return protection instead of letting its nonzero token
+            // keep suppressing the feed's first-card focus request.
+            forYouDetailReturnFocusState = resetTvDetailReturnFocus()
             forYouEntryRequest = forYouEntryRequest.nextForTopLevelForYou()
         }
         if (dest == TvRootDestination.Home) {
@@ -736,7 +736,7 @@ fun TvMainShell(
             // explicitly selects Home from the bar. Otherwise its nonzero
             // token keeps suppressing Home's normal first-card focus request
             // for the rest of the shell session.
-            homeDetailReturnFocusState = resetHomeDetailReturnFocus()
+            homeDetailReturnFocusState = resetTvDetailReturnFocus()
         }
         if (dest == TvRootDestination.Calendar) {
             calendarFocusHandoffPending = true
@@ -1048,8 +1048,8 @@ fun TvMainShell(
                                 val moved = focusManager.moveFocus(FocusDirection.Up)
                                 // `exit = Cancel` above only guards the level of
                                 // the search that owns the focused row; from a
-                                // control that sits directly in the screen (the
-                                // For You filter pills) the 2D search still
+                                // control that sits directly in the screen (e.g.
+                                // the Calendar day shelf) the 2D search still
                                 // escapes into the bar and lands on whatever is
                                 // geometrically nearest — the Search icon from
                                 // the left edge. A move that left content is
@@ -1234,22 +1234,13 @@ fun TvMainShell(
                     TvRecommendationsScreen(
                         onSavedListItemClick = openContentItemDetail,
                         onRecommendationItemClick = openForYouItemDetail,
-                        detailReturnFocusRequest = forYouDetailReturnFocusRequest,
-                        detailReturnFocusPending = forYouDetailReturnFocusPending,
-                        detailReturnCardFocusRequester = forYouDetailReturnCardFocusRequester,
-                        onDetailReturnFocusConsumed = { completedRequestId ->
-                            val consumed = consumeForYouDetailReturn(
-                                state = ForYouDetailReturnState(
-                                    requestId = forYouDetailReturnFocusRequest,
-                                    pending = forYouDetailReturnFocusPending,
-                                ),
-                                completedRequestId = completedRequestId,
-                            )
-                            forYouDetailReturnFocusPending = consumed.pending
-                        },
-                        onSolidTopBarChanged = onForYouSolidTopBarChanged,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
+                        detailReturnFocusRequest = forYouDetailReturnFocusState.requestId,
+                        detailReturnCardFocusRequester = forYouDetailReturnCardFocusRequester,
+                        firstRowFocusRequester = forYouFirstItemFocusRequester,
+                        firstRowContainerFocusRequester = forYouFirstRowContainerFocusRequester,
+                        onContentUpFallbackChanged = onContentUpFallback,
                         entryRequest = forYouEntryRequest,
                     )
                 }
@@ -1351,30 +1342,22 @@ fun TvMainShell(
         // The scrim TvTopMenuBar documents but the shell had stopped drawing.
         // The bar deliberately has no background band of its own ("the SHELL
         // draws a fixed top scrim behind the bar", QA 2026-07-08); without it
-        // the labels sat directly on whatever scrolled underneath, which on
-        // For You is a poster row and is unreadable. Recommendation rows ask
-        // for the opaque treatment; saved lists and every other route retain
-        // the gradient so content remains visible behind the bar.
+        // the labels sit directly on whatever scrolled underneath. The gradient
+        // keeps the hero visible behind the bar on every route.
         if (currentRoute != TvMainRoute.Settings.route) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(TvTopMenuLayout.contentTopInset)
                     .align(Alignment.TopCenter)
-                    .then(
-                        if (useSolidForYouTopBar) {
-                            Modifier.background(MaterialTheme.colorScheme.background)
-                        } else {
-                            Modifier.background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
-                                        MaterialTheme.colorScheme.background.copy(alpha = 0.72f),
-                                        MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                                    ),
-                                ),
-                            )
-                        }
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.72f),
+                                MaterialTheme.colorScheme.background.copy(alpha = 0f),
+                            ),
+                        ),
                     ),
             )
         }

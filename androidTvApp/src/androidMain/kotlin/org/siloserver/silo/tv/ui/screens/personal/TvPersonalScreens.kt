@@ -25,7 +25,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import org.siloserver.silo.tv.ui.focus.rememberTvFlatReturnRestoration
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -108,6 +110,7 @@ fun TvWatchlistScreen(
 fun TvFavoritesInline(
     onItemClick: (contentId: String) -> Unit,
     modifier: Modifier = Modifier,
+    firstItemFocusRequester: FocusRequester? = null,
     viewModel: FavoritesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -119,6 +122,7 @@ fun TvFavoritesInline(
         onItemClick = onItemClick,
         onLoadMore = viewModel::loadMore,
         onRetry = viewModel::retry,
+        firstItemFocusRequester = firstItemFocusRequester,
         modifier = modifier,
     )
 }
@@ -128,6 +132,7 @@ fun TvFavoritesInline(
 fun TvWatchlistInline(
     onItemClick: (contentId: String) -> Unit,
     modifier: Modifier = Modifier,
+    firstItemFocusRequester: FocusRequester? = null,
     viewModel: WatchlistViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -139,6 +144,7 @@ fun TvWatchlistInline(
         onItemClick = onItemClick,
         onLoadMore = viewModel::loadMore,
         onRetry = viewModel::retry,
+        firstItemFocusRequester = firstItemFocusRequester,
         modifier = modifier,
     )
 }
@@ -331,6 +337,7 @@ private fun PersonalInlineGrid(
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    firstItemFocusRequester: FocusRequester? = null,
 ) {
     Box(
         modifier = modifier
@@ -343,9 +350,13 @@ private fun PersonalInlineGrid(
                 message = state.error ?: "",
                 onRetry = onRetry,
             )
+            // For You hands this grid the page's focus claim, so the empty
+            // state has to be able to hold it: with nothing focusable here the
+            // shell's handover fails and focus falls back to the menu bar.
             state.items.isEmpty() -> EmptyState(
                 message = emptyMessage,
                 icon = emptyIcon,
+                focusRequester = firstItemFocusRequester,
             )
             else -> TvCatalogGrid(
                 items = state.items,
@@ -367,6 +378,7 @@ private fun PersonalInlineGrid(
                     bottom = Spacing.xl,
                 ),
                 fixedColumnCount = 6,
+                firstItemFocusRequester = firstItemFocusRequester,
             )
         }
     }
@@ -374,9 +386,21 @@ private fun PersonalInlineGrid(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun EmptyState(message: String, icon: ImageVector) {
+private fun EmptyState(
+    message: String,
+    icon: ImageVector,
+    focusRequester: FocusRequester? = null,
+) {
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (focusRequester != null) {
+                    Modifier.focusRequester(focusRequester).focusable()
+                } else {
+                    Modifier
+                }
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {

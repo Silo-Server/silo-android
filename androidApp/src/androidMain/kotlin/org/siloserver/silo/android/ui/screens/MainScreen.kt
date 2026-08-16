@@ -393,6 +393,9 @@ fun MainScreen(
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
                             },
+                            onPlayClick = { contentId, resumePositionSeconds ->
+                                playVideo(contentId, resumePositionSeconds = resumePositionSeconds)
+                            },
                             contentTopPadding = headerContentTop,
                         )
                     }

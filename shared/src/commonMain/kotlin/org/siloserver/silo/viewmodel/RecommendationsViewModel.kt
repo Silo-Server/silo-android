@@ -135,10 +135,18 @@ private fun DiscoverRow.toResolvedSection(): ResolvedSection = ResolvedSection(
     id = stableSectionId(),
     sectionType = type,
     title = label,
+    // Discover rows carry no `featured` flag of their own, but the personalised
+    // "for-you-main" row is the one the server ranks highest for this profile,
+    // so it is the natural hero. Marking it here lets any client hero-render it
+    // through the shared [splitFeatured] path; clients that want a flat feed
+    // simply ignore the flag.
+    featured = sectionKind?.equals(ForYouMainSectionKind, ignoreCase = true) == true,
     itemLimit = items.size,
     totalCount = items.size,
     items = items,
 )
+
+private const val ForYouMainSectionKind = "for-you-main"
 
 /**
  * Section kinds the server emits at most once per discover response, and
@@ -148,7 +156,7 @@ private fun DiscoverRow.toResolvedSection(): ResolvedSection = ResolvedSection(
  * always carry a key and must never be identified by kind alone.
  */
 private val SingletonServerSectionKinds = setOf(
-    "for-you-main",
+    ForYouMainSectionKind,
     "similar-users",
     "popular",
     "recently-added",

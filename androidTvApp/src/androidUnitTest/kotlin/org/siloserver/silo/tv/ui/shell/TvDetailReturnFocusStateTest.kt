@@ -7,8 +7,8 @@ import kotlin.test.assertTrue
 
 class TvDetailReturnFocusStateTest {
     @Test
-    fun requestedHomeRetryKeepsCardFallbackPending() {
-        val state = beginHomeDetailReturnRetry(previousRequestId = 7, needsRetry = true)
+    fun requestedRetryKeepsCardFallbackPending() {
+        val state = beginTvDetailReturnRetry(previousRequestId = 7, needsRetry = true)
 
         assertEquals(8, state.requestId)
         assertTrue(state.needsRetry)
@@ -16,9 +16,9 @@ class TvDetailReturnFocusStateTest {
     }
 
     @Test
-    fun completedHomeRetryClearsRetryAndFallback() {
-        val completed = completeHomeDetailReturnRetry(
-            HomeDetailReturnFocusState(requestId = 8, needsRetry = true, fallbackPending = true),
+    fun completedRetryClearsRetryAndFallback() {
+        val completed = completeTvDetailReturnRetry(
+            TvDetailReturnFocusState(requestId = 8, needsRetry = true, fallbackPending = true),
         )
 
         assertEquals(8, completed.requestId)
@@ -27,18 +27,18 @@ class TvDetailReturnFocusStateTest {
     }
 
     @Test
-    fun explicitHomeSelectionResetsReturnState() {
+    fun explicitRootSelectionResetsReturnState() {
         assertEquals(
-            HomeDetailReturnFocusState(),
-            resetHomeDetailReturnFocus(),
+            TvDetailReturnFocusState(),
+            resetTvDetailReturnFocus(),
         )
     }
 
     @Test
-    fun nonHomeRetryDoesNotArmHomeFallback() {
-        val state = beginHomeDetailReturnRetryIfHome(
-            previousState = HomeDetailReturnFocusState(),
-            isHomeDetailReturn = false,
+    fun otherRootRetryDoesNotArmThisRootsFallback() {
+        val state = beginTvDetailReturnRetryIfRoot(
+            previousState = TvDetailReturnFocusState(),
+            isDetailReturnForRoot = false,
             needsRetry = true,
         )
 
@@ -48,10 +48,10 @@ class TvDetailReturnFocusStateTest {
     }
 
     @Test
-    fun homeRetryArmsCardFallbackUntilRetryCompletes() {
-        val state = beginHomeDetailReturnRetryIfHome(
-            previousState = HomeDetailReturnFocusState(requestId = 7),
-            isHomeDetailReturn = true,
+    fun rootRetryArmsCardFallbackUntilRetryCompletes() {
+        val state = beginTvDetailReturnRetryIfRoot(
+            previousState = TvDetailReturnFocusState(requestId = 7),
+            isDetailReturnForRoot = true,
             needsRetry = true,
         )
 
@@ -61,14 +61,14 @@ class TvDetailReturnFocusStateTest {
     }
 
     @Test
-    fun successfulHomeResumeDoesNotLeaveRetryOrFallbackPending() {
-        val state = beginHomeDetailReturnRetryIfHome(
-            previousState = HomeDetailReturnFocusState(
+    fun successfulResumeDoesNotLeaveRetryOrFallbackPending() {
+        val state = beginTvDetailReturnRetryIfRoot(
+            previousState = TvDetailReturnFocusState(
                 requestId = 7,
                 needsRetry = true,
                 fallbackPending = true,
             ),
-            isHomeDetailReturn = true,
+            isDetailReturnForRoot = true,
             needsRetry = false,
         )
 

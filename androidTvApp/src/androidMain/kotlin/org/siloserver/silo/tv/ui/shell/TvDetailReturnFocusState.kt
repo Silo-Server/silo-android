@@ -1,26 +1,32 @@
 package org.siloserver.silo.tv.ui.shell
 
-internal data class HomeDetailReturnFocusState(
+/**
+ * Per-root detail-return focus bookkeeping.
+ *
+ * Root-agnostic: Home and For You both render the Skyline feed, which arms its
+ * launch-card requester at click time, so both roots want exactly this ladder.
+ */
+internal data class TvDetailReturnFocusState(
     val requestId: Int = 0,
     val needsRetry: Boolean = false,
     val fallbackPending: Boolean = false,
 )
 
-internal fun beginHomeDetailReturnRetry(
+internal fun beginTvDetailReturnRetry(
     previousRequestId: Int,
     needsRetry: Boolean,
-): HomeDetailReturnFocusState = HomeDetailReturnFocusState(
+): TvDetailReturnFocusState = TvDetailReturnFocusState(
     requestId = previousRequestId + 1,
     needsRetry = needsRetry,
     fallbackPending = needsRetry,
 )
 
-internal fun beginHomeDetailReturnRetryIfHome(
-    previousState: HomeDetailReturnFocusState,
-    isHomeDetailReturn: Boolean,
+internal fun beginTvDetailReturnRetryIfRoot(
+    previousState: TvDetailReturnFocusState,
+    isDetailReturnForRoot: Boolean,
     needsRetry: Boolean,
-): HomeDetailReturnFocusState = if (isHomeDetailReturn) {
-    beginHomeDetailReturnRetry(
+): TvDetailReturnFocusState = if (isDetailReturnForRoot) {
+    beginTvDetailReturnRetry(
         previousRequestId = previousState.requestId,
         needsRetry = needsRetry,
     )
@@ -28,12 +34,12 @@ internal fun beginHomeDetailReturnRetryIfHome(
     previousState
 }
 
-internal fun completeHomeDetailReturnRetry(
-    state: HomeDetailReturnFocusState,
-): HomeDetailReturnFocusState = state.copy(
+internal fun completeTvDetailReturnRetry(
+    state: TvDetailReturnFocusState,
+): TvDetailReturnFocusState = state.copy(
     needsRetry = false,
     fallbackPending = false,
 )
 
-internal fun resetHomeDetailReturnFocus(): HomeDetailReturnFocusState =
-    HomeDetailReturnFocusState()
+internal fun resetTvDetailReturnFocus(): TvDetailReturnFocusState =
+    TvDetailReturnFocusState()
