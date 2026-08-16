@@ -52,6 +52,7 @@ import org.siloserver.silo.viewmodel.RequestsViewModel
 import org.siloserver.silo.tv.ui.screens.libraries.TvLibrariesViewModel
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryCollectionDetailViewModel
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryDetailViewModel
+import org.siloserver.silo.tv.ui.screens.personal.TvPersonalListControlsViewModel
 import org.siloserver.silo.viewmodel.FavoritesViewModel
 import org.siloserver.silo.viewmodel.HistoryViewModel
 import org.siloserver.silo.viewmodel.WatchlistViewModel
@@ -426,6 +427,7 @@ val androidTvModule = module {
     viewModel { params ->
         TvLibraryCollectionDetailViewModel(
             sectionRepository = get(),
+            catalogRepository = get(),
             libraryId = params.get(),
             collectionId = params.get(),
             title = params.get(),
@@ -487,9 +489,16 @@ val androidTvModule = module {
     }
 
     // Personal data grids.
-    viewModel { FavoritesViewModel(get()) }
-    viewModel { WatchlistViewModel(get()) }
+    viewModel { FavoritesViewModel(get(), get()) }
+    viewModel { WatchlistViewModel(get(), get()) }
     viewModel { HistoryViewModel(get()) }
+    // Sort/filter state for the favorites and watchlist grids, keyed by source.
+    viewModel { params ->
+        TvPersonalListControlsViewModel(
+            catalogRepository = get(),
+            source = params.get(),
+        )
+    }
 
     // Collections.
     viewModel { CollectionsViewModel(get()) }

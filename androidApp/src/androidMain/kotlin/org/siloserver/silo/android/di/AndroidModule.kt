@@ -398,8 +398,8 @@ val androidModule = module {
     }
     viewModel { params -> PersonDetailViewModel(get(), params.get()) }
     viewModel { params -> LibraryCollectionsViewModel(get(), params.get()) }
-    viewModel { FavoritesViewModel(get()) }
-    viewModel { WatchlistViewModel(get()) }
+    viewModel { FavoritesViewModel(get(), get()) }
+    viewModel { WatchlistViewModel(get(), get()) }
     viewModel { HistoryViewModel(get()) }
     viewModel { CollectionsViewModel(get()) }
     viewModel { params -> CollectionDetailViewModel(get(), get(), params.get()) }

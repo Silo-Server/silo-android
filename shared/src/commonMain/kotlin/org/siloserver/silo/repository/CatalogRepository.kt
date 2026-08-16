@@ -91,8 +91,15 @@ class CatalogRepository(
     suspend fun getFilters(
         libraryId: Int? = null,
         includeTechnical: Boolean = false,
+        source: String? = null,
+        collectionId: String? = null,
     ): ApiResult<CatalogFiltersResponse> =
-        catalogApi.getFilters(libraryId, includeTechnical)
+        catalogApi.getFilters(
+            libraryId = libraryId,
+            includeTechnical = includeTechnical,
+            source = source,
+            collectionId = collectionId,
+        )
 
     /** Groups audiobook libraries by author, narrator, or series for book-native browsing. */
     suspend fun getAudiobookGroups(

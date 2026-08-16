@@ -763,9 +763,9 @@ fun TvAppNavigation(
                 onOpenWatchTogether = { room ->
                     navController.navigateToTvWatchTogether(room, lastPlaybackNavigation)
                 },
-                onOpenLibraryCollectionDetail = { libraryId, collectionId, title ->
+                onOpenLibraryCollectionDetail = { libraryId, collectionId, title, libraryType ->
                     navController.navigate(
-                        TvRoute.LibraryCollectionDetail(libraryId, collectionId, title).route,
+                        TvRoute.LibraryCollectionDetail(libraryId, collectionId, title, libraryType).route,
                     )
                 },
                 onOpenCollectionDetail = { collectionId, title ->
@@ -1193,6 +1193,10 @@ fun TvAppNavigation(
                     type = NavType.StringType
                     defaultValue = ""
                 },
+                navArgument(TvRoute.LibraryCollectionDetail.ARG_LIBRARY_TYPE) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
             ),
         ) { backStack ->
             val libraryId = backStack.arguments
@@ -1204,10 +1208,14 @@ fun TvAppNavigation(
             val title = backStack.arguments
                 ?.getString(TvRoute.LibraryCollectionDetail.ARG_TITLE)
                 .orEmpty()
+            val libraryType = backStack.arguments
+                ?.getString(TvRoute.LibraryCollectionDetail.ARG_LIBRARY_TYPE)
+                .orEmpty()
             TvLibraryCollectionDetailScreen(
                 libraryId = libraryId,
                 collectionId = collectionId,
                 title = title,
+                libraryType = libraryType,
                 onItemClick = { contentId ->
                     navController.navigateToTvItemDetail(contentId)
                 },

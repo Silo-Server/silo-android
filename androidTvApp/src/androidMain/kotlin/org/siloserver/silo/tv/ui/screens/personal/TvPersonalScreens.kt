@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,9 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import org.siloserver.silo.tv.ui.focus.rememberTvFlatReturnRestoration
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -35,9 +35,14 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
+import org.siloserver.silo.tv.ui.screens.library.TvBrowseControlRow
+import org.siloserver.silo.tv.ui.screens.library.TvBrowseFilterPanel
+import org.siloserver.silo.tv.ui.screens.library.TvBrowseSortPanel
+import org.siloserver.silo.tv.ui.screens.library.TvLibrarySortOption
 import org.siloserver.silo.tv.ui.theme.SiloBlue
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.sectionEyebrow
@@ -57,9 +62,29 @@ import org.koin.compose.viewmodel.koinViewModel
  * the title, and the ViewModel they read from. This file has one composable
  * per screen that forwards to a shared [PersonalGrid] helper.
  *
+ * Favorites and Watchlist additionally carry the Browse Sort/Filter controls,
+ * rendered as the grid's header row (the library collection page idiom) so
+ * they scroll with the content and never sit over the grid's viewport.
+ * History has no controls — it is a chronological log, and re-sorting it is
+ * not a thing the list means.
+ *
  * Navigated to from Settings → Library shortcuts (Phase F). None of the
  * three appears directly on the navigation rail, matching tvOS.
  */
+
+/** Which overlay panel is open over a personal grid (mirrors Browse). */
+private enum class TvPersonalPanel { Sort, Filter }
+
+/** Catalog sources for the two lists that support sort/filter. */
+private const val FavoritesSource = "favorites"
+private const val WatchlistSource = "watchlist"
+
+/**
+ * The facet vocabulary these lists filter on. They are cross-library by
+ * nature, so there is no one library type to ask about; "mixed" is any
+ * non-audiobook-like value and selects the video facet set.
+ */
+private const val PersonalListFacetType = "mixed"
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -69,6 +94,7 @@ fun TvFavoritesScreen(
     viewModel: FavoritesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val controls = rememberPersonalListControls(FavoritesSource, viewModel)
     PersonalListResumeRefresh(viewModel)
     PersonalGrid(
         title = "Favorites",
@@ -76,6 +102,7 @@ fun TvFavoritesScreen(
         icon = Icons.Filled.Favorite,
         emptyMessage = "No favorites yet",
         state = state,
+        controls = controls,
         onItemClick = onItemClick,
         onLoadMore = viewModel::loadMore,
         onRetry = viewModel::retry,
@@ -91,6 +118,7 @@ fun TvWatchlistScreen(
     viewModel: WatchlistViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val controls = rememberPersonalListControls(WatchlistSource, viewModel)
     PersonalListResumeRefresh(viewModel)
     PersonalGrid(
         title = "Watchlist",
@@ -98,6 +126,7 @@ fun TvWatchlistScreen(
         icon = Icons.Outlined.BookmarkBorder,
         emptyMessage = "Your watchlist is empty",
         state = state,
+        controls = controls,
         onItemClick = onItemClick,
         onLoadMore = viewModel::loadMore,
         onRetry = viewModel::retry,
@@ -114,9 +143,11 @@ fun TvFavoritesInline(
     viewModel: FavoritesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val controls = rememberPersonalListControls(FavoritesSource, viewModel)
     PersonalListResumeRefresh(viewModel)
     PersonalInlineGrid(
         state = state,
+        controls = controls,
         emptyMessage = "No favorites yet",
         emptyIcon = Icons.Filled.Favorite,
         onItemClick = onItemClick,
@@ -136,9 +167,11 @@ fun TvWatchlistInline(
     viewModel: WatchlistViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val controls = rememberPersonalListControls(WatchlistSource, viewModel)
     PersonalListResumeRefresh(viewModel)
     PersonalInlineGrid(
         state = state,
+        controls = controls,
         emptyMessage = "Your watchlist is empty",
         emptyIcon = Icons.Outlined.BookmarkBorder,
         onItemClick = onItemClick,
@@ -164,11 +197,38 @@ fun TvHistoryScreen(
         icon = Icons.Filled.History,
         emptyMessage = "No watch history yet",
         state = state,
+        controls = null,
         onItemClick = onItemClick,
         onLoadMore = viewModel::loadMore,
         onRetry = viewModel::retry,
         onInitialContentFocus = onInitialContentFocus,
     )
+}
+
+/**
+ * Binds a list's sort/filter holder to the shared list ViewModel that fetches
+ * under it. The holder is Koin-scoped per source, so the standalone page and
+ * the For You inline variant of the same list share one selection, and leaving
+ * and returning within the session keeps it.
+ *
+ * Both are keyed on the source so the two lists never cross wires.
+ */
+@Composable
+private fun rememberPersonalListControls(
+    source: String,
+    listViewModel: PersonalListViewModel,
+): TvPersonalListControlsViewModel {
+    val controls: TvPersonalListControlsViewModel = koinViewModel(
+        key = "personal-controls-$source",
+        parameters = { parametersOf(source) },
+    )
+    val controlsState by controls.uiState.collectAsState()
+    // applyQuery no-ops on an unchanged query, so this is safe to re-run on
+    // recomposition and on re-entry to the composition.
+    LaunchedEffect(controlsState.query) {
+        listViewModel.applyQuery(controlsState.query)
+    }
+    return controls
 }
 
 /**
@@ -208,6 +268,7 @@ private fun PersonalGrid(
     emptyMessage: String,
     surfaceKey: String,
     state: PersonalListUiState,
+    controls: TvPersonalListControlsViewModel?,
     onItemClick: (contentId: String) -> Unit,
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
@@ -216,6 +277,7 @@ private fun PersonalGrid(
     val startPadding = tvPageStartPadding()
     val gridState = rememberLazyGridState()
     val restoreItemFocusRequester = remember { FocusRequester() }
+    var openPanel by remember { mutableStateOf<TvPersonalPanel?>(null) }
 
     val restoration = rememberTvFlatReturnRestoration(
         itemIds = state.items.map { it.contentId },
@@ -225,12 +287,19 @@ private fun PersonalGrid(
         // back from a detail page — and a refresh REPLACES the items with page
         // one rather than appending. Folding it into isLoadingMore was not
         // enough: a stale multi-page list still contains the target, so it
-        // resolves before that flag is ever consulted.
-        isReplacingContent = state.isRefreshing,
+        // resolves before that flag is ever consulted. isLoading covers the
+        // same shape for a sort/filter change, which reorders in place: the
+        // outgoing list still contains the target at a position the incoming
+        // one will not agree with.
+        isReplacingContent = state.isRefreshing || state.isLoading,
         errorMessage = state.error,
         surfaceKey = surfaceKey,
         onLoadMore = onLoadMore,
-        scrollToItem = { itemIndex -> gridState.scrollToItem(itemIndex) },
+        // The controls occupy a spanning grid item ahead of the cards, so an
+        // ITEM index is one row-slot short of the grid index.
+        scrollToItem = { itemIndex ->
+            gridState.scrollToItem(itemIndex + if (controls != null) 1 else 0)
+        },
         requestFocus = restoreItemFocusRequester::requestFocus,
         onRestored = onInitialContentFocus,
     )
@@ -262,7 +331,7 @@ private fun PersonalGrid(
                 style = sectionEyebrow,
                 color = SiloBlue.copy(alpha = 0.92f),
             )
-            androidx.compose.foundation.layout.Row(
+            Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
             ) {
@@ -280,57 +349,94 @@ private fun PersonalGrid(
             }
         }
 
+        // History has no controls to keep on screen, so it keeps the
+        // whole-surface loading and empty states it always had. The controlled
+        // lists never swap the grid out: the pills have to stay reachable, and
+        // a reload that hid them would strand a viewer mid-filter.
+        val historyWholeSurfaceState = controls == null && state.items.isEmpty()
         when {
-            state.isLoading && state.items.isEmpty() -> TvLoadingScreen()
+            historyWholeSurfaceState && state.isLoading -> TvLoadingScreen()
             state.error != null && state.items.isEmpty() -> TvErrorScreen(
                 message = state.error ?: "",
                 onRetry = onRetry,
             )
-            state.items.isEmpty() -> EmptyState(
-                message = emptyMessage,
-                icon = icon,
-            )
-            else -> TvCatalogGrid(
-                items = state.items,
-                // A restored deep scroll position sits at the paging threshold,
-                // so the grid would ask for the next page the moment it lands.
-                // During a refresh that page is fetched at an offset the
-                // refresh is about to invalidate — it either gets discarded or
-                // lands after page one and leaves a hole.
-                isLoading = state.isLoadingMore || state.isRefreshing,
-                hasMore = state.hasMore,
-                onItemClick = { contentId ->
-                    restoration.onItemClicked(
-                        itemId = contentId,
-                        index = state.items.indexOfFirst { it.contentId == contentId },
-                    )
-                    onItemClick(contentId)
-                },
-                onLoadMore = onLoadMore,
-                contentPadding = tvPageContentPadding(top = Spacing.lg),
-                // Match every other catalog grid (browse/person/collections):
-                // the adaptive default rendered ~5 oversized columns here
-                // (QA 2026-07-08).
-                fixedColumnCount = 6,
-                gridState = gridState,
-                restoreItemIndex = restoration.requesterItemIndex,
-                restoreItemFocusRequester = restoreItemFocusRequester,
-                onRestoreRequesterAttached = restoration::onRequesterAttached,
-                onItemFocusedAtIndex = { item, index, focused ->
-                    if (focused) {
-                        restoration.onItemFocused(item.contentId, index)
-                    } else {
-                        restoration.onItemFocusLost(item.contentId)
-                    }
-                },
-            )
+            historyWholeSurfaceState -> EmptyState(message = emptyMessage, icon = icon)
+            else -> {
+                // Null for History, which has no controls. Stable per call site —
+                // a screen either has a controls holder for its whole life or not.
+                val controlsState = controls?.uiState?.collectAsState()?.value
+                TvCatalogGrid(
+                    items = state.items,
+                    // A restored deep scroll position sits at the paging threshold,
+                    // so the grid would ask for the next page the moment it lands.
+                    // During a refresh that page is fetched at an offset the
+                    // refresh is about to invalidate — it either gets discarded or
+                    // lands after page one and leaves a hole. isLoading rather than
+                    // a loading SCREEN so the header survives a sort/filter reload.
+                    isLoading = state.isLoading || state.isLoadingMore || state.isRefreshing,
+                    hasMore = state.hasMore,
+                    onItemClick = { contentId ->
+                        restoration.onItemClicked(
+                            itemId = contentId,
+                            index = state.items.indexOfFirst { it.contentId == contentId },
+                        )
+                        onItemClick(contentId)
+                    },
+                    onLoadMore = onLoadMore,
+                    contentPadding = tvPageContentPadding(top = Spacing.lg),
+                    // Match every other catalog grid (browse/person/collections):
+                    // the adaptive default rendered ~5 oversized columns here
+                    // (QA 2026-07-08).
+                    fixedColumnCount = 6,
+                    gridState = gridState,
+                    restoreItemIndex = restoration.requesterItemIndex,
+                    restoreItemFocusRequester = restoreItemFocusRequester,
+                    onRestoreRequesterAttached = restoration::onRequesterAttached,
+                    onItemFocusedAtIndex = { item, index, focused ->
+                        if (focused) {
+                            restoration.onItemFocused(item.contentId, index)
+                        } else {
+                            restoration.onItemFocusLost(item.contentId)
+                        }
+                    },
+                    header = controlsState?.let { cs ->
+                        {
+                            PersonalControlHeader(
+                                controlsState = cs,
+                                total = state.total,
+                                isLoading = state.isLoading,
+                                onSort = { openPanel = TvPersonalPanel.Sort },
+                                onFilter = { openPanel = TvPersonalPanel.Filter },
+                                onClearFilters = { controls?.clearFilters() },
+                            )
+                        }
+                    },
+                    emptyState = {
+                        EmptyState(
+                            message = if (controlsState?.facetSelection?.hasActiveFilters == true) {
+                                "No titles match the current filters."
+                            } else {
+                                emptyMessage
+                            },
+                            icon = icon,
+                        )
+                    },
+                )
+            }
         }
     }
+
+    PersonalControlPanels(
+        controls = controls,
+        openPanel = openPanel,
+        onClose = { openPanel = null },
+    )
 }
 
 @Composable
 private fun PersonalInlineGrid(
     state: PersonalListUiState,
+    controls: TvPersonalListControlsViewModel,
     emptyMessage: String,
     emptyIcon: ImageVector,
     onItemClick: (contentId: String) -> Unit,
@@ -339,33 +445,41 @@ private fun PersonalInlineGrid(
     modifier: Modifier = Modifier,
     firstItemFocusRequester: FocusRequester? = null,
 ) {
+    val controlsState by controls.uiState.collectAsState()
+    var openPanel by remember { mutableStateOf<TvPersonalPanel?>(null) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        when {
-            state.isLoading && state.items.isEmpty() -> TvLoadingScreen()
-            state.error != null && state.items.isEmpty() -> TvErrorScreen(
+        if (state.error != null && state.items.isEmpty()) {
+            TvErrorScreen(
                 message = state.error ?: "",
                 onRetry = onRetry,
             )
-            // For You hands this grid the page's focus claim, so the empty
-            // state has to be able to hold it: with nothing focusable here the
-            // shell's handover fails and focus falls back to the menu bar.
-            state.items.isEmpty() -> EmptyState(
-                message = emptyMessage,
-                icon = emptyIcon,
-                focusRequester = firstItemFocusRequester,
-            )
-            else -> TvCatalogGrid(
+        } else {
+            // For You hands this grid the page's focus claim, and with an empty
+            // list there is no card to give it to. The Sort pill takes it
+            // instead — without a focusable claimant the shell's handover fails
+            // and focus falls back to the menu bar. Only ever one holder: the
+            // pill takes the requester exactly when no first card exists.
+            //
+            // Not while the first page is still in flight, though: the header
+            // renders from frame one, so handing the pill the requester then
+            // would let the claim succeed on it and leave the viewer parked on
+            // Sort once the cards arrive. Unclaimed, the caller simply retries
+            // until a card exists — which is what it did before the header did.
+            val listIsEmpty = state.items.isEmpty() && !state.isLoading && !state.isRefreshing
+            TvCatalogGrid(
                 items = state.items,
                 // A restored deep scroll position sits at the paging threshold,
                 // so the grid would ask for the next page the moment it lands.
                 // During a refresh that page is fetched at an offset the
                 // refresh is about to invalidate — it either gets discarded or
-                // lands after page one and leaves a hole.
-                isLoading = state.isLoadingMore || state.isRefreshing,
+                // lands after page one and leaves a hole. isLoading keeps the
+                // grid (and its controls) mounted through a sort/filter reload.
+                isLoading = state.isLoading || state.isLoadingMore || state.isRefreshing,
                 hasMore = state.hasMore,
                 onItemClick = onItemClick,
                 onLoadMore = onLoadMore,
@@ -378,9 +492,105 @@ private fun PersonalInlineGrid(
                     bottom = Spacing.xl,
                 ),
                 fixedColumnCount = 6,
-                firstItemFocusRequester = firstItemFocusRequester,
+                firstItemFocusRequester = firstItemFocusRequester.takeIf { !listIsEmpty },
+                header = {
+                    PersonalControlHeader(
+                        controlsState = controlsState,
+                        total = state.total,
+                        isLoading = state.isLoading,
+                        onSort = { openPanel = TvPersonalPanel.Sort },
+                        onFilter = { openPanel = TvPersonalPanel.Filter },
+                        onClearFilters = controls::clearFilters,
+                        sortPillFocusRequester = firstItemFocusRequester.takeIf { listIsEmpty },
+                    )
+                },
+                emptyState = {
+                    EmptyState(
+                        message = if (controlsState.facetSelection.hasActiveFilters) {
+                            "No titles match the current filters."
+                        } else {
+                            emptyMessage
+                        },
+                        icon = emptyIcon,
+                    )
+                },
             )
         }
+    }
+
+    PersonalControlPanels(
+        controls = controls,
+        openPanel = openPanel,
+        onClose = { openPanel = null },
+    )
+}
+
+/** Sort/Filter pills on the left, item count on the right — the grid's header row. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun PersonalControlHeader(
+    controlsState: TvPersonalListControlsViewModel.UiState,
+    total: Int,
+    isLoading: Boolean,
+    onSort: () -> Unit,
+    onFilter: () -> Unit,
+    onClearFilters: () -> Unit,
+    sortPillFocusRequester: FocusRequester? = null,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val sortOption = controlsState.sortOption
+        TvBrowseControlRow(
+            sortLabel = sortOption.label,
+            sortDirection = sortOption.directionLabel(controlsState.order),
+            filterCount = controlsState.facetSelection.activeFacetCount,
+            onSort = onSort,
+            onFilter = onFilter,
+            onClearFilters = onClearFilters,
+            sortPillFocusRequester = sortPillFocusRequester,
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        // Hidden until a page has landed, so the count never contradicts a
+        // list that is still being replaced.
+        if (!isLoading && total > 0) {
+            Text(
+                text = if (total == 1) "1 item" else "$total items",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PersonalControlPanels(
+    controls: TvPersonalListControlsViewModel?,
+    openPanel: TvPersonalPanel?,
+    onClose: () -> Unit,
+) {
+    if (controls == null) return
+    val controlsState by controls.uiState.collectAsState()
+    when (openPanel) {
+        TvPersonalPanel.Sort -> TvBrowseSortPanel(
+            options = TvLibrarySortOption.availableForPersonalList(),
+            currentSort = controlsState.sort,
+            order = controlsState.order,
+            onSelect = { option ->
+                controls.onSortSelected(option)
+                onClose()
+            },
+            onClose = onClose,
+        )
+        TvPersonalPanel.Filter -> TvBrowseFilterPanel(
+            libraryType = PersonalListFacetType,
+            facetOptions = controlsState.facetOptions,
+            initial = controlsState.facetSelection,
+            onApply = controls::onFacetSelectionApplied,
+            onClose = onClose,
+        )
+        null -> Unit
     }
 }
 
@@ -389,18 +599,12 @@ private fun PersonalInlineGrid(
 private fun EmptyState(
     message: String,
     icon: ImageVector,
-    focusRequester: FocusRequester? = null,
 ) {
+    // No focusable claimant here any more: the controlled lists park the For
+    // You focus claim on the Sort pill instead, which is a real control rather
+    // than an invisible focus sink over a message.
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .then(
-                if (focusRequester != null) {
-                    Modifier.focusRequester(focusRequester).focusable()
-                } else {
-                    Modifier
-                }
-            ),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {

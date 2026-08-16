@@ -190,7 +190,12 @@ fun TvMainShell(
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
     onOpenItemDetail: (contentId: String) -> Unit,
-    onOpenLibraryCollectionDetail: (libraryId: Int, collectionId: String, title: String) -> Unit,
+    onOpenLibraryCollectionDetail: (
+        libraryId: Int,
+        collectionId: String,
+        title: String,
+        libraryType: String,
+    ) -> Unit,
     onOpenCollectionDetail: (collectionId: String, title: String) -> Unit,
     onSignedOut: () -> Unit,
     onSwitchProfile: () -> Unit,
@@ -464,11 +469,12 @@ fun TvMainShell(
     // Collections open outer routes too, so they need the same hand-back:
     // without it the return resume left focus to Compose's default search
     // (the top bar), which then visibly hopped to the grid a beat later.
-    val openLibraryCollectionDetail: (Int, String, String) -> Unit = { libraryId, collectionId, title ->
-        restoreContentAfterDetail = true
-        detailReturnRoot = null
-        onOpenLibraryCollectionDetail(libraryId, collectionId, title)
-    }
+    val openLibraryCollectionDetail: (Int, String, String, String) -> Unit =
+        { libraryId, collectionId, title, libraryType ->
+            restoreContentAfterDetail = true
+            detailReturnRoot = null
+            onOpenLibraryCollectionDetail(libraryId, collectionId, title, libraryType)
+        }
     val openCollectionDetail: (String, String) -> Unit = { collectionId, title ->
         restoreContentAfterDetail = true
         detailReturnRoot = null
@@ -1627,7 +1633,12 @@ private fun TvLibraryTypeContent(
     selectedPill: TvLibraryPill,
     sectionRequestNonce: Int,
     onItemClick: (contentId: String) -> Unit,
-    onLibraryCollectionClick: (libraryId: Int, collectionId: String, title: String) -> Unit,
+    onLibraryCollectionClick: (
+        libraryId: Int,
+        collectionId: String,
+        title: String,
+        libraryType: String,
+    ) -> Unit,
     onUserCollectionClick: (collectionId: String, title: String) -> Unit,
     onInitialContentFocus: () -> Unit,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
@@ -1667,7 +1678,7 @@ private fun TvLibraryTypeContent(
                 if (isUserCollection) {
                     onUserCollectionClick(collectionId, title)
                 } else {
-                    onLibraryCollectionClick(library.id, collectionId, title)
+                    onLibraryCollectionClick(library.id, collectionId, title, library.type)
                 }
             },
             onInitialContentFocus = onInitialContentFocus,
