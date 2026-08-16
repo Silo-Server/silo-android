@@ -753,6 +753,14 @@ internal fun neutralizeFullWidthCueSizes(cueGroup: CueGroup): CueGroup {
     return if (changed) CueGroup(mapped, cueGroup.presentationTimeUs) else cueGroup
 }
 
+/**
+ * How many times the sync may re-ask for a layout it has already written to the
+ * SubtitleView's params before accepting the answer. Three covers a dropped
+ * in-pass `requestLayout()` and the traversal that follows it; beyond that the
+ * parent is declining the geometry and retrying would only spin.
+ */
+private const val MAX_SUBTITLE_RELAYOUT_ATTEMPTS = 3
+
 @UnstableApi
 private class SubtitleVideoRectSync(
     playerView: PlayerView,
@@ -762,6 +770,15 @@ private class SubtitleVideoRectSync(
     View.OnLayoutChangeListener,
     View.OnAttachStateChangeListener,
     Player.Listener {
+
+    /** The canvas geometry last written to the SubtitleView's layout params. */
+    private data class RequestedCanvas(
+        val width: Int,
+        val height: Int,
+        val leftMargin: Int,
+        val topMargin: Int,
+        val gravity: Int,
+    )
 
     private data class LayoutSnapshot(
         val resizeMode: Int,
@@ -783,6 +800,10 @@ private class SubtitleVideoRectSync(
     private var reconciliationGeneration = 0L
     private var pendingVerification: Runnable? = null
     private var appliedPasses = 0
+    private var requestedCanvas: RequestedCanvas? = null
+    private var relayoutAttempts = 0
+    private var pendingLayoutRequest = false
+    private var pendingCanvasPlacement = false
 
     var letterbox: LetterboxInsets = LetterboxInsets.NONE
         set(value) {
@@ -1030,24 +1051,14 @@ private class SubtitleVideoRectSync(
             contentFrameRect = playerView.contentFrameSubtitleRect(),
             displayedVideoRect = displayedVideoRect,
         ).insetByLetterbox(letterbox).insetByTitleSafe(titleSafeFraction)
-        val current = subtitleView.layoutParams as? FrameLayout.LayoutParams
-        val params = current ?: FrameLayout.LayoutParams(rect.width, rect.height)
-        if (
-            current == null ||
-            params.width != rect.width ||
-            params.height != rect.height ||
-            params.leftMargin != rect.left ||
-            params.topMargin != rect.top ||
-            params.gravity != gravity
-        ) {
-            params.width = rect.width
-            params.height = rect.height
-            params.leftMargin = rect.left
-            params.topMargin = rect.top
-            params.gravity = gravity
-            subtitleView.layoutParams = params
-            subtitleView.requestLayout()
-        }
+        applyLayoutParams(
+            subtitleView = subtitleView,
+            width = rect.width,
+            height = rect.height,
+            leftMargin = rect.left,
+            topMargin = rect.top,
+            gravity = gravity,
+        )
         logSubtitleCanvasGeometry(
             playerView = playerView,
             subtitleView = subtitleView,
@@ -1056,6 +1067,28 @@ private class SubtitleVideoRectSync(
         )
     }
 
+    /**
+     * Writes the caption canvas geometry, and keeps writing until the VIEW —
+     * not just its params object — has actually adopted it.
+     *
+     * The invariant this defends: `LayoutParams` are a request, `left/top/
+     * width/height` are the answer, and the two can disagree indefinitely.
+     * Writing the params and calling `requestLayout()` does not settle it. When
+     * the video size arrives and `exo_content_frame` narrows to the letterboxed
+     * aspect, the frame measures its children FIRST and dispatches
+     * `onLayoutChange` after, so the canvas is measured at the outgoing aspect
+     * and the corrected params land a beat too late. Nothing re-measures the
+     * frame afterwards — see [requestSubtitleLayout] for why the follow-up
+     * request never gets serviced — and a params-only diff sees no change on
+     * every later pass and never asks again. Measured on a Shield: a 2.39:1
+     * title after a 16:9 measurement left a 1728x972 canvas hanging 361px below
+     * an 803px frame, bottom-anchored cues drawn off screen, for the whole
+     * session.
+     *
+     * So: diff the params to decide what to WRITE, and diff the laid-out bounds
+     * to decide whether the canvas still needs PLACING — by request first, and
+     * by [placeSubtitleCanvas] when the request goes unanswered.
+     */
     private fun applyLayoutParams(
         subtitleView: View,
         width: Int,
@@ -1064,6 +1097,11 @@ private class SubtitleVideoRectSync(
         topMargin: Int,
         gravity: Int,
     ) {
+        val requested = RequestedCanvas(width, height, leftMargin, topMargin, gravity)
+        if (requested != requestedCanvas) {
+            requestedCanvas = requested
+            relayoutAttempts = 0
+        }
         val current = subtitleView.layoutParams as? FrameLayout.LayoutParams
         val params = current ?: FrameLayout.LayoutParams(width, height)
         if (
@@ -1080,8 +1118,171 @@ private class SubtitleVideoRectSync(
             params.topMargin = topMargin
             params.gravity = gravity
             subtitleView.layoutParams = params
-            subtitleView.requestLayout()
+            relayoutAttempts = 0
+            requestSubtitleLayout(subtitleView)
+            return
         }
+        // Params already say the right thing, which is not the same as the view
+        // having been laid out that way. `isLayoutRequested` is deliberately NOT
+        // consulted: the stuck state IS a set flag that no ancestor acts on, so
+        // reading it as "a layout is coming" is what makes the wedge permanent.
+        // The laid-out bounds are the only honest signal.
+        if (subtitleLayoutMatches(subtitleView, width, height, leftMargin, topMargin)) return
+        requestSubtitleLayout(subtitleView)
+        placeSubtitleCanvas(subtitleView, width, height, leftMargin, topMargin)
+    }
+
+    /**
+     * Asks the framework for a layout, bounded by [MAX_SUBTITLE_RELAYOUT_ATTEMPTS].
+     *
+     * This is the polite path and it is not sufficient on its own, which is why
+     * [placeSubtitleCanvas] follows it. Measured on a Shield: the request does
+     * reach `exo_content_frame` (its `isLayoutRequested` flips to true), and the
+     * frame is then never laid out again — the PlayerView is hosted in a Compose
+     * `AndroidView`, whose holder answers a child's `requestLayout()` by
+     * invalidating its own Compose layout node rather than scheduling a View
+     * traversal, and with the node's constraints unchanged nothing re-measures
+     * the interop subtree. The frame keeps a pending request forever and the
+     * canvas keeps the geometry of whichever aspect ratio was measured first.
+     *
+     * A request issued while the tree is in layout, or while the parent has its
+     * own pending one, is posted instead: `View.requestLayout` is dropped
+     * outright by `ViewRootImpl` in the first case and stops walking up in the
+     * second.
+     */
+    private fun requestSubtitleLayout(subtitleView: View) {
+        val parent = subtitleView.parent as? View
+        if (subtitleView.isInLayout || parent?.isLayoutRequested == true) {
+            if (pendingLayoutRequest) return
+            pendingLayoutRequest = true
+            subtitleView.post {
+                pendingLayoutRequest = false
+                if (!isDisposed && subtitleView.isAttachedToWindow) {
+                    issueLayoutRequest(subtitleView)
+                }
+            }
+            return
+        }
+        issueLayoutRequest(subtitleView)
+    }
+
+    private fun issueLayoutRequest(subtitleView: View) {
+        if (relayoutAttempts >= MAX_SUBTITLE_RELAYOUT_ATTEMPTS) return
+        relayoutAttempts++
+        subtitleView.requestLayout()
+    }
+
+    /**
+     * Measures and lays the caption canvas out directly, at the geometry this
+     * sync just computed.
+     *
+     * Doing a child's layout by hand is unusual and deliberate: the whole point
+     * of this class is that the subtitle canvas's bounds are ours to decide —
+     * they are derived from the content frame, not negotiated with it — and the
+     * hosting arrangement (see [requestSubtitleLayout]) provides no reliable way
+     * to have the parent do it. The measurement is EXACTLY the requested size,
+     * the same spec `FrameLayout` would produce from these params, so this is
+     * the layout the parent would have run, run at the only moment anyone is
+     * willing to run it. `SubtitleView.onLayout` still positions its own
+     * children from here, so the ASS overlay keeps matching.
+     *
+     * Only ever reached when the bounds already disagree, so it cannot fight a
+     * parent that is doing its job. Deferred out of an in-progress layout pass,
+     * where measuring another subtree is not safe.
+     */
+    private fun placeSubtitleCanvas(
+        subtitleView: View,
+        width: Int,
+        height: Int,
+        leftMargin: Int,
+        topMargin: Int,
+    ) {
+        if (subtitleView.isInLayout) {
+            if (pendingCanvasPlacement) return
+            pendingCanvasPlacement = true
+            subtitleView.post {
+                pendingCanvasPlacement = false
+                if (
+                    !isDisposed &&
+                    subtitleView.isAttachedToWindow &&
+                    !subtitleLayoutMatches(subtitleView, width, height, leftMargin, topMargin)
+                ) {
+                    measureAndLayoutSubtitleCanvas(
+                        subtitleView,
+                        width,
+                        height,
+                        leftMargin,
+                        topMargin,
+                    )
+                }
+            }
+            return
+        }
+        measureAndLayoutSubtitleCanvas(subtitleView, width, height, leftMargin, topMargin)
+    }
+
+    private fun measureAndLayoutSubtitleCanvas(
+        subtitleView: View,
+        width: Int,
+        height: Int,
+        leftMargin: Int,
+        topMargin: Int,
+    ) {
+        val parent = subtitleView.parent as? View
+        val resolvedWidth = if (width == FrameLayout.LayoutParams.MATCH_PARENT) {
+            parent?.width ?: return
+        } else {
+            width
+        }
+        val resolvedHeight = if (height == FrameLayout.LayoutParams.MATCH_PARENT) {
+            parent?.height ?: return
+        } else {
+            height
+        }
+        if (resolvedWidth <= 0 || resolvedHeight <= 0) return
+        subtitleView.measure(
+            View.MeasureSpec.makeMeasureSpec(resolvedWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(resolvedHeight, View.MeasureSpec.EXACTLY),
+        )
+        subtitleView.layout(
+            leftMargin,
+            topMargin,
+            leftMargin + resolvedWidth,
+            topMargin + resolvedHeight,
+        )
+    }
+
+    /**
+     * Whether the view's laid-out bounds already are the requested canvas.
+     *
+     * A child with exact params is measured EXACTLY, and the sync always lays
+     * out TOP|START, so the margins are the expected origin inside the content
+     * frame. A view that has never been laid out counts as matching: its first
+     * layout is already on the way.
+     */
+    private fun subtitleLayoutMatches(
+        subtitleView: View,
+        width: Int,
+        height: Int,
+        leftMargin: Int,
+        topMargin: Int,
+    ): Boolean {
+        if (subtitleView.width <= 0 && subtitleView.height <= 0) return true
+        val parent = subtitleView.parent as? View
+        val expectedWidth = if (width == FrameLayout.LayoutParams.MATCH_PARENT) {
+            parent?.width ?: return true
+        } else {
+            width
+        }
+        val expectedHeight = if (height == FrameLayout.LayoutParams.MATCH_PARENT) {
+            parent?.height ?: return true
+        } else {
+            height
+        }
+        return subtitleView.width == expectedWidth &&
+            subtitleView.height == expectedHeight &&
+            subtitleView.left == leftMargin &&
+            subtitleView.top == topMargin
     }
 
     private fun dispose(view: View?) {

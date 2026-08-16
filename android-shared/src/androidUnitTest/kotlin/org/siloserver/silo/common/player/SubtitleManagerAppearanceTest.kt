@@ -19,6 +19,8 @@ import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 @OptIn(UnstableApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -529,6 +531,53 @@ class SubtitleManagerAppearanceTest {
         assertEquals(1, reconciliations)
     }
 
+    /**
+     * The letterbox regression: the params carry the narrowed frame, the view
+     * is still laid out at the outgoing 16:9 geometry because the parent
+     * measured it before the params were written and never comes back, and a
+     * params-only diff would go quiet forever. The sync has to notice the
+     * BOUNDS and place the canvas itself.
+     */
+    @Test
+    fun canvasLeftLaidOutAtTheOldAspectIsPlacedAtTheLetterboxedFrame() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val playerView = PlayerView(activity)
+        val contentFrame = requireNotNull(
+            playerView.findViewById<AspectRatioFrameLayout>(
+                androidx.media3.ui.R.id.exo_content_frame,
+            ),
+        )
+        val subtitleView = requireNotNull(playerView.subtitleView)
+        val manager = SubtitleManager()
+        activity.setContentView(playerView)
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+        playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+
+        manager.syncSubtitleVideoBounds(playerView)
+        playerView.viewTreeObserver.dispatchOnPreDraw()
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+        // 2.39:1 content inside the view: the frame narrows to 803 tall. The
+        // aspect ratio is set too so a real traversal re-measures to the same
+        // geometry instead of springing back to the full parent height.
+        contentFrame.setAspectRatio(1920f / 803f)
+        contentFrame.layout(0, 106, 1920, 909)
+
+        val params = subtitleView.layoutParams as FrameLayout.LayoutParams
+        assertEquals(1920, params.width)
+        assertEquals(803, params.height)
+
+        // The bounds the canvas keeps when the frame measured it a beat early.
+        subtitleView.layout(0, 0, 1920, 1016)
+
+        manager.syncSubtitleVideoBounds(playerView)
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(803, subtitleView.height)
+        assertEquals(1920, subtitleView.width)
+        assertEquals(0, subtitleView.top)
+        assertEquals(0, subtitleView.left)
+    }
+
     private fun captionStyleFor(appearance: SubtitleAppearance): CaptionStyleCompat {
         val method = SubtitleManager::class.java.getDeclaredMethod(
             "buildCaptionStyle",
@@ -582,9 +631,22 @@ private class MountedSubtitleCanvas {
             manager.subtitleRectSyncForTest(playerView) as View.OnLayoutChangeListener
         playerView.removeOnLayoutChangeListener(syncListener)
         contentFrame.removeOnLayoutChangeListener(syncListener)
-        contentFrame.layout(240, 0, 1680, 1016)
+        mountFrame(FrameBounds(240, 0, 1680, 1016))
         manager.syncSubtitleVideoBounds(playerView)
         manager.postLayoutReconciliationObserver = { reconciliationCount++ }
+    }
+
+    /**
+     * Mounts an observed Media3 content frame. The aspect ratio is set as well
+     * as the bounds so a real Robolectric traversal re-measures to the SAME
+     * geometry — without it the frame springs back to the full parent width and
+     * the scenario under test evaporates.
+     */
+    private fun mountFrame(frame: FrameBounds) {
+        val width = frame.right - frame.left
+        val height = frame.bottom - frame.top
+        contentFrame.setAspectRatio(width.toFloat() / height.toFloat())
+        contentFrame.layout(frame.left, frame.top, frame.right, frame.bottom)
     }
 
     fun schedule(resizeMode: Int) {
@@ -594,49 +656,29 @@ private class MountedSubtitleCanvas {
 
     fun transition(resizeMode: Int, frame: FrameBounds) {
         schedule(resizeMode)
-        contentFrame.layout(frame.left, frame.top, frame.right, frame.bottom)
+        mountFrame(frame)
         playerView.viewTreeObserver.dispatchOnPreDraw()
     }
 
     fun transitionAfterEarlyPreDraw(resizeMode: Int, finalFrame: FrameBounds) {
         schedule(resizeMode)
         playerView.viewTreeObserver.dispatchOnPreDraw()
-        contentFrame.layout(
-            finalFrame.left,
-            finalFrame.top,
-            finalFrame.right,
-            finalFrame.bottom,
-        )
+        mountFrame(finalFrame)
         Shadows.shadowOf(Looper.getMainLooper()).idle()
         // Robolectric's parent traversal has no renderer-backed aspect ratio,
         // so re-mount the observed Media3 frame before the corrective pre-draw.
-        contentFrame.layout(
-            finalFrame.left,
-            finalFrame.top,
-            finalFrame.right,
-            finalFrame.bottom,
-        )
+        mountFrame(finalFrame)
         playerView.viewTreeObserver.dispatchOnPreDraw()
     }
 
     fun dispatchEarlyPreDrawThenMount(finalFrame: FrameBounds) {
-        contentFrame.layout(-120, -64, 2040, 1080)
+        mountFrame(FrameBounds(-120, -64, 2040, 1080))
         playerView.viewTreeObserver.dispatchOnPreDraw()
-        contentFrame.layout(
-            finalFrame.left,
-            finalFrame.top,
-            finalFrame.right,
-            finalFrame.bottom,
-        )
+        mountFrame(finalFrame)
         Shadows.shadowOf(Looper.getMainLooper()).idle()
         // Keep the synthetic final frame mounted after Robolectric drains the
         // posted verifier and its unrelated full-width parent traversal.
-        contentFrame.layout(
-            finalFrame.left,
-            finalFrame.top,
-            finalFrame.right,
-            finalFrame.bottom,
-        )
+        mountFrame(finalFrame)
         playerView.viewTreeObserver.dispatchOnPreDraw()
     }
 
@@ -649,7 +691,7 @@ private class MountedSubtitleCanvas {
     }
 
     fun mountFrameAndDrain(frame: FrameBounds) {
-        contentFrame.layout(frame.left, frame.top, frame.right, frame.bottom)
+        mountFrame(frame)
         Shadows.shadowOf(Looper.getMainLooper()).idle()
         if (playerView.viewTreeObserver.isAlive) {
             playerView.viewTreeObserver.dispatchOnPreDraw()
