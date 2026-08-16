@@ -3952,6 +3952,18 @@ class TvPlayerViewModel(
         priority: TvSubtitleMountPriority = TvSubtitleMountPriority.Auto,
     ) {
         if (identity == state.committedSubtitleIdentity && state.pendingSubtitleIdentity == null) {
+            // Committed is what the adapter BELIEVES is on. At load it is seeded
+            // straight from the plan (resetContent) before the player has
+            // selected any text track, so "already committed" is not evidence
+            // the track is mounted — the launch handoff of a plan-selected
+            // sidecar reached this line and returned, and nobody ever told the
+            // player. Ask the adapter to mount its committed identity through
+            // the same local-restore path the replan/recovery loads use.
+            if (identity != SubtitleIdentity.Off && !playerHasSelectedSubtitle(identity, state)) {
+                SubDiag.log("AUTO committed-but-unmounted -> restoreCommittedLocalMount $identity")
+                nextSubtitleMountPriority = priority
+                subtitleTransactions.restoreCommittedLocalMount()
+            }
             return
         }
         autoSelectedSubtitleIdentity = identity
@@ -3960,6 +3972,12 @@ class TvPlayerViewModel(
         launchSubtitleTransaction(state) {
             subtitleTransactions.selectAuto(identity)
         }
+    }
+
+    /** True when the player's currently selected text track carries [identity]. */
+    private fun playerHasSelectedSubtitle(identity: SubtitleIdentity, state: UiState): Boolean {
+        val selected = state.subtitleTracks.firstOrNull { it.isSelected } ?: return false
+        return tvMountedSubtitleIdentity(selected, state.subtitleTracks, state.subtitleUrls) == identity
     }
 
     /**
