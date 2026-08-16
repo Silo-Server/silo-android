@@ -116,8 +116,6 @@ import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
 import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.admin.shouldShowClientAdminSurface
-import org.siloserver.silo.model.auth.isActingAdmin
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.personal.UserLibrary
@@ -137,13 +135,6 @@ import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
 import org.siloserver.silo.tv.ui.navigation.TvMainRoute
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryDetailScreen
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryTab
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminHubScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminLogsScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminScansScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminSessionsScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminUserEditScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminUsersScreen
 import org.siloserver.silo.tv.ui.screens.browse.TvBrowseScreen
 import org.siloserver.silo.tv.ui.screens.calendar.TvCalendarScreen
 import org.siloserver.silo.tv.ui.screens.collections.TvCollectionsScreen
@@ -163,7 +154,6 @@ import org.siloserver.silo.tv.ui.screens.requests.TvMyRequestsScreen
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestDetailScreen
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestsScreen
 import org.siloserver.silo.tv.ui.screens.search.TvSearchScreen
-import org.siloserver.silo.tv.ui.screens.settings.TvManageSessionsScreen
 import org.siloserver.silo.tv.ui.screens.settings.TvSettingsScreen
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvJoinCodeDialog
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherMenuEntryDialog
@@ -534,8 +524,8 @@ fun TvMainShell(
         val userResult = authRepository.getCurrentUser()
         if (userResult !is ApiResult.Success) {
             // Transient /me failure (offline blip, server restart): keep the
-            // previous snapshot instead of blanking it — otherwise the Admin
-            // row and account header flicker out on every hiccup.
+            // previous snapshot instead of blanking it — otherwise the account
+            // header flickers out on every hiccup.
             return@produceState
         }
         val user = userResult.data
@@ -550,8 +540,8 @@ fun TvMainShell(
         // owner's name, which conflates the two all over again. Profile name
         // and server is all a household profile needs to see.
         //
-        // Cosmetic in the sense that no permission hangs on it — the surface
-        // gate is isActingAdmin below — but it is the part that misleads.
+        // Nothing hangs on it — it is a caption, not a permission — but it is
+        // the part that misleads.
         val subtitle = if (activeProfile?.isPrimary == true) {
             user?.role?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
                 ?: user?.username.orEmpty()
@@ -566,11 +556,6 @@ fun TvMainShell(
             avatar = activeProfile?.avatarRef() ?: ProfileAvatarRef.None,
             subtitle = subtitle,
             serverName = activeServerEntry?.displayName.orEmpty(),
-            // Gate via the shared client-admin policy (same as the Settings
-            // admin entry), not raw isActingAdmin — so the Admin row honors
-            // CLIENT_ADMIN_SURFACE_ENABLED and stays consistent with the rest
-            // of the TV client.
-            isAdmin = shouldShowClientAdminSurface(isActingAdmin(user, activeProfile)),
         )
     }
 
@@ -614,17 +599,6 @@ fun TvMainShell(
                 launchSingleTop = true
                 restoreState = true
             }
-        }
-    }
-
-    // Parameterized form routes (e.g. AdminUserEdit) must NOT restore a saved
-    // entry: all query variants share one destination id, so restoreState could
-    // resurrect a stale entry (and its idempotent-loaded ViewModel) with the
-    // wrong userId. Always start a fresh entry for these.
-    val navigateToForm: (String) -> Unit = { route ->
-        nestedNav.navigate(route) {
-            launchSingleTop = false
-            restoreState = false
         }
     }
 
@@ -1291,13 +1265,6 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Settings.route) {
                     TvSettingsScreen(
-                        onNavigateToAdmin = {
-                            // Apple parity: the stats dashboard is the whole
-                            // admin surface. The hub (users/sessions/logs/
-                            // scans) stays compiled but unlinked.
-                            navigateToSecondary(TvMainRoute.AdminDashboard.route)
-                            moveFocusToContent(TvMainRoute.AdminDashboard.route)
-                        },
                         onManageServers = onManageServers,
                         onOpenDiagnosticsReport = onOpenDiagnosticsReport,
                         initialManageServersFocus = returnToManageServers,
@@ -1309,9 +1276,6 @@ fun TvMainShell(
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
-                }
-                shellComposable(TvMainRoute.ManageSessions.route) {
-                    TvManageSessionsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
                 }
                 shellComposable(TvMainRoute.Calendar.route) {
                     TvCalendarScreen(
@@ -1334,54 +1298,6 @@ fun TvMainShell(
                         onOpenItemDetail = onOpenItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
-                }
-                shellComposable(TvMainRoute.AdminHub.route) {
-                    TvAdminHubScreen(
-                        onOpenDashboard = { navigateToSecondary(TvMainRoute.AdminDashboard.route) },
-                        onOpenUsers = { navigateToSecondary(TvMainRoute.AdminUsers.route) },
-                        onOpenSessions = { navigateToSecondary(TvMainRoute.AdminSessions.route) },
-                        onOpenScans = { navigateToSecondary(TvMainRoute.AdminScans.route) },
-                        onOpenLogs = { navigateToSecondary(TvMainRoute.AdminLogs.route) },
-                        onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
-                    )
-                }
-                shellComposable(TvMainRoute.AdminDashboard.route) {
-                    TvAdminScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
-                }
-                shellComposable(TvMainRoute.AdminUsers.route) {
-                    TvAdminUsersScreen(
-                        onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
-                        onCreateUser = { navigateToForm(TvMainRoute.AdminUserEdit().route) },
-                        onEditUser = { id -> navigateToForm(TvMainRoute.AdminUserEdit(id).route) },
-                    )
-                }
-                shellComposable(
-                    route = TvMainRoute.AdminUserEdit.ROUTE,
-                    arguments = listOf(
-                        navArgument(TvMainRoute.AdminUserEdit.ARG_USER_ID) {
-                            type = NavType.StringType
-                            nullable = true
-                            defaultValue = null
-                        },
-                    ),
-                ) { entry ->
-                    val userId = entry.arguments
-                        ?.getString(TvMainRoute.AdminUserEdit.ARG_USER_ID)
-                        ?.toIntOrNull()
-                    TvAdminUserEditScreen(
-                        userId = userId,
-                        onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
-                        onSaved = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
-                    )
-                }
-                shellComposable(TvMainRoute.AdminSessions.route) {
-                    TvAdminSessionsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
-                }
-                shellComposable(TvMainRoute.AdminScans.route) {
-                    TvAdminScansScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
-                }
-                shellComposable(TvMainRoute.AdminLogs.route) {
-                    TvAdminLogsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
                 }
             }
         }

@@ -9,7 +9,7 @@ This repository contains only the Silo Android clients. Shared Kotlin logic live
 - Ebooks/Reading are phone-only. Do not expose ebooks or Reading on Android TV.
 - Android mobile navigation is Home, Libraries, For You, Calendar, and Downloads only when the active profile has downloads. Video, Audio, and Reading are library modes reached through Libraries, not bottom-nav tabs.
 - Android TV navigation is Home, available media-type tabs from server libraries, For You (with its Watchlist/Favorites dropdown, mirroring tvOS `.recommendations`), and Calendar, plus search and profile actions. Reading/ebooks are excluded.
-- Requests is live on phone and TV, server-gated by `requests_enabled` (profile menu + search entry points, matching Apple). The Admin STATS dashboard is live for acting admins (Settings entry on both platforms, matching Apple's dashboard design); the richer admin screens (users/sessions/logs/scans) and Watch Together are not accessible — do not add them to menus without an explicit product decision.
+- Requests is live on phone and TV, server-gated by `requests_enabled` (profile menu + search entry points, matching Apple). Admin surfaces are not exposed in the Android clients — no STATS dashboard, and none of the richer admin screens (users/sessions/logs/scans) — and neither is Watch Together. Session management (seeing where you are signed in and signing other devices out) is not exposed either; device pairing stays. This is a deliberate divergence from Apple, which does surface the STATS dashboard. Do not add any of it back to menus without an explicit product decision.
 
 ## Build, Test, and Development Commands
 

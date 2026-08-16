@@ -55,6 +55,7 @@ import org.siloserver.silo.android.ui.components.SiloWordmark
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.MediaRowSkeleton
+import org.siloserver.silo.android.ui.components.ProfileMenu
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel
 import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingBottomOverlay
@@ -503,62 +504,15 @@ private fun HomeProfileMenu(
                 }
             }
         }
-        DropdownMenu(
+        ProfileMenu(
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
-        ) {
-            if (onRequestsClick != null) {
-                DropdownMenuItem(
-                    text = { Text("Requests") },
-                    onClick = {
-                        menuExpanded = false
-                        onRequestsClick()
-                    },
-                )
-            }
-            if (onWatchTogetherClick != null) {
-                DropdownMenuItem(
-                    text = { Text("Watch Together") },
-                    onClick = {
-                        menuExpanded = false
-                        onWatchTogetherClick()
-                    },
-                )
-            }
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("Settings") },
-                onClick = {
-                    menuExpanded = false
-                    onSettingsClick()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Switch Profile") },
-                onClick = {
-                    menuExpanded = false
-                    onSwitchProfileClick()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Switch Server") },
-                onClick = {
-                    menuExpanded = false
-                    onSwitchServerClick()
-                },
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        text = "Sign Out",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                },
-                onClick = {
-                    menuExpanded = false
-                    onSignOutClick()
-                },
-            )
-        }
+            onRequestsClick = onRequestsClick,
+            onWatchTogetherClick = onWatchTogetherClick,
+            onSettingsClick = onSettingsClick,
+            onSwitchProfileClick = onSwitchProfileClick,
+            onSwitchServerClick = onSwitchServerClick,
+            onSignOutClick = onSignOutClick,
+        )
     }
 }

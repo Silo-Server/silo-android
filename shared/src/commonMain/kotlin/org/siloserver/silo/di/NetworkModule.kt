@@ -35,7 +35,6 @@ val networkModule = module {
     single<SubtitlesApi> { DefaultSubtitlesApi(get()) }
     single<NotificationsApi> { DefaultNotificationsApi(get()) }
     single<PushRegistrationApi> { DefaultPushRegistrationApi(get()) }
-    single<AdminApi> { DefaultAdminApi(get()) }
     single<WatchTogetherApi> { DefaultWatchTogetherApi(get()) }
     single<DiagnosticsApi> { DefaultDiagnosticsApi(get()) }
 }

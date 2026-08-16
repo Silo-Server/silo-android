@@ -254,9 +254,6 @@ sealed class Route(val route: String) {
     // --- Personal data ---
     data object Favorites : Route("favorites")
     data object Watchlist : Route("watchlist")
-
-    /** Admin stats dashboard (Apple-parity surface; role-gated entry in Settings). */
-    data object Admin : Route("admin")
     data object History : Route("history")
     data object PersonalLists : Route("personal_lists")
     data class Collections(val libraryId: Int? = null) : Route(

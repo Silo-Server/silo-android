@@ -43,12 +43,9 @@ import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -86,6 +83,7 @@ import org.siloserver.silo.android.ui.components.HeroTintBackground
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
+import org.siloserver.silo.android.ui.components.ProfileMenu
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.FilterList
@@ -1468,63 +1466,16 @@ private fun ChromeProfileMenu(
                 }
             }
         }
-        DropdownMenu(
+        ProfileMenu(
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
-        ) {
-            if (onRequestsClick != null) {
-                DropdownMenuItem(
-                    text = { Text("Requests") },
-                    onClick = {
-                        menuExpanded = false
-                        onRequestsClick()
-                    },
-                )
-            }
-            if (onWatchTogetherClick != null) {
-                DropdownMenuItem(
-                    text = { Text("Watch Together") },
-                    onClick = {
-                        menuExpanded = false
-                        onWatchTogetherClick()
-                    },
-                )
-            }
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("Settings") },
-                onClick = {
-                    menuExpanded = false
-                    onSettingsClick()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Switch Profile") },
-                onClick = {
-                    menuExpanded = false
-                    onSwitchProfileClick()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Switch Server") },
-                onClick = {
-                    menuExpanded = false
-                    onSwitchServerClick()
-                },
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        text = "Sign Out",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                },
-                onClick = {
-                    menuExpanded = false
-                    onSignOutClick()
-                },
-            )
-        }
+            onRequestsClick = onRequestsClick,
+            onWatchTogetherClick = onWatchTogetherClick,
+            onSettingsClick = onSettingsClick,
+            onSwitchProfileClick = onSwitchProfileClick,
+            onSwitchServerClick = onSwitchServerClick,
+            onSignOutClick = onSignOutClick,
+        )
     }
 }
 

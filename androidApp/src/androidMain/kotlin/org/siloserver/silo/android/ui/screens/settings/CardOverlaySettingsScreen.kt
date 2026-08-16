@@ -58,6 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.settings.OverlayPrefsStore
@@ -104,9 +105,17 @@ fun CardOverlaySettingsScreen(
 
     Scaffold(
         topBar = {
-            SiloTopBar(title = "Card Overlays", onBackClick = onBackClick)
+            SiloTopBar(
+                title = "Card overlays",
+                onBackClick = onBackClick,
+                containerColor = SiloSettingsBackground,
+            )
         },
-        containerColor = MaterialTheme.colorScheme.background,
+        // Ground only. The twelve bespoke composables below still run on their
+        // own card system (14dp radius, translucent `surfaceVariant`) rather
+        // than the shared grouped-settings primitives — moving them over is a
+        // larger job than this visual pass.
+        containerColor = SiloSettingsBackground,
     ) { padding ->
         LazyColumn(
             modifier = Modifier

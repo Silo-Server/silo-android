@@ -115,7 +115,6 @@ class TvControlWiringCallSiteTest {
                 "TvJoinCodeDialog",
                 "JoinCodeKey",
             ),
-            Triple("ui/screens/admin/TvAdminScansScreen.kt", "TvAdminScansScreen", "ActionCard"),
         ).forEach { (path, gate, control) ->
             val text = source(path)
 
@@ -155,7 +154,6 @@ class TvControlWiringCallSiteTest {
             "ui/components/TvPinEntryDialog.kt",
             "ui/screens/watchtogether/TvJoinCodeDialog.kt",
             "ui/screens/settings/TvCardOverlaySettingsScreen.kt",
-            "ui/screens/admin/TvAdminScansScreen.kt",
         ).forEach { path ->
             assertFalse(
                 source(path).containsLoosely("onClick = { if ("),

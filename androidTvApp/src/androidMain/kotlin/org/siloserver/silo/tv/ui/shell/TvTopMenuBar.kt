@@ -674,8 +674,6 @@ data class TvAccountState(
     val subtitle: String = "",
     /** Active server display name, shown in the dropdown header. */
     val serverName: String = "",
-    /** Whether the signed-in user is an acting admin (gates the Admin row). */
-    val isAdmin: Boolean = false,
 )
 
 /**

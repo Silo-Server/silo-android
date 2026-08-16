@@ -290,30 +290,6 @@ sealed class TvMainRoute(val route: String) {
     /** Global cross-library catalog browse — opened from Settings. */
     data object Browse : TvMainRoute("main/browse")
 
-    /** Admin hub + sub-screens — opened from Settings when adminVisible. */
-    data object AdminHub : TvMainRoute("main/admin")
-    data object AdminDashboard : TvMainRoute("main/admin/dashboard")
-    data object AdminUsers : TvMainRoute("main/admin/users")
-    data object AdminSessions : TvMainRoute("main/admin/sessions")
-    data object AdminScans : TvMainRoute("main/admin/scans")
-    data object AdminLogs : TvMainRoute("main/admin/logs")
-
-    /**
-     * Admin user create/edit form. `userId` is omitted for create and carried
-     * as a query arg for edit (NavType can't express a nullable Int path arg).
-     */
-    data class AdminUserEdit(val userId: Int? = null) :
-        TvMainRoute(
-            if (userId != null) "main/admin/users/edit?userId=$userId" else "main/admin/users/edit",
-        ) {
-        companion object {
-            const val ROUTE = "main/admin/users/edit?userId={userId}"
-            const val ARG_USER_ID = "userId"
-        }
-    }
-
-    data object ManageSessions : TvMainRoute("main/settings/sessions")
-
     /** Request detail for a discover/search result (tmdb id + media type). */
     data class RequestDetail(val mediaType: String, val tmdbId: Int) :
         TvMainRoute("main/request/$mediaType/$tmdbId") {

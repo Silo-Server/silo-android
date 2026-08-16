@@ -662,9 +662,6 @@ fun AppNavigation(
                 onPairDevice = {
                     navController.navigate(Route.PairDevice().route)
                 },
-                onNavigateToAdmin = {
-                    navController.navigate(Route.Admin.route)
-                },
                 onSwitchProfile = { navController.navigate(Route.ProfileSelection.route) },
                 onNavigateToWatchlist = { navController.navigate(Route.Watchlist.route) },
                 onNavigateToFavorites = { navController.navigate(Route.Favorites.route) },
@@ -1064,16 +1061,6 @@ fun AppNavigation(
                     navController.navigate(Route.ItemDetail(contentId).route)
                 },
             )
-        }
-        composable(Route.Admin.route) {
-            // Gated at the destination as well as the entry: the route stays
-            // registered, so restored navigation reaches it directly and the
-            // stats screen calls the admin API the moment it composes.
-            org.siloserver.silo.android.ui.screens.admin.AdminRouteGate {
-                org.siloserver.silo.android.ui.screens.admin.AdminStatsScreen(
-                    onBackClick = { navController.popBackStack() },
-                )
-            }
         }
         composable(Route.Watchlist.route) {
             WatchlistScreen(

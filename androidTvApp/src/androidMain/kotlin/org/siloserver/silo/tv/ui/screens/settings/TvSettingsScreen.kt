@@ -109,12 +109,11 @@ import kotlinx.coroutines.delay
  * `iosApp/.../tvOS/Screens/Settings/TVSettingsView.swift`.
  *
  * Requests/watch-together routes stay compiled elsewhere without normal menu
- * rows. The stats-only Admin dashboard remains role-gated in this surface.
+ * rows.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun TvSettingsScreen(
-    onNavigateToAdmin: () -> Unit = {},
     onManageServers: () -> Unit = {},
     onSignedOut: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
@@ -231,7 +230,6 @@ fun TvSettingsScreen(
         onManageServers = onManageServers,
         onOpenDiagnosticsReport = onOpenDiagnosticsReport,
         onRequestSignOut = { showSignOutConfirm = true },
-        onNavigateToAdmin = onNavigateToAdmin,
         onQualityPresetSelected = viewModel::onQualityPresetSelected,
         onAudioLanguageChanged = viewModel::onAudioLanguageChanged,
         onAutoPlayNextChanged = viewModel::onAutoPlayNextChanged,
@@ -369,7 +367,6 @@ private fun SettingsSplitLayout(
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
     onRequestSignOut: () -> Unit,
-    onNavigateToAdmin: () -> Unit,
     /** Receives a [QualityPresets] preset id. */
     onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
@@ -430,7 +427,6 @@ private fun SettingsSplitLayout(
                 onRailCategoryFocusChanged(true)
             },
             onSwitchProfile = onSwitchProfile,
-            onNavigateToAdmin = onNavigateToAdmin,
             onRequestSignOut = onRequestSignOut,
             modifier = Modifier.width(200.dp),
         )
@@ -505,7 +501,6 @@ private fun SettingsRail(
     onRailCategoryFocused: () -> Unit,
     onSwitchProfile: () -> Unit,
     onRequestSignOut: () -> Unit,
-    onNavigateToAdmin: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var railActionHasFocus by remember { mutableStateOf(false) }
@@ -545,15 +540,6 @@ private fun SettingsRail(
             )
         }
         Spacer(modifier = Modifier.weight(1f))
-        // Apple-parity admin surface: the stats dashboard only, role-gated.
-        if (state.adminVisible) {
-            SettingsRailActionRow(
-                label = "Admin",
-                icon = Icons.Filled.Settings,
-                onClick = onNavigateToAdmin,
-                onFocused = { railActionHasFocus = true },
-            )
-        }
         SettingsRailActionRow(
             label = "Sign Out",
             icon = Icons.AutoMirrored.Filled.Logout,
@@ -645,7 +631,7 @@ private fun SettingsRailCategoryRow(
     }
 }
 
-/** Rail action row (Admin, Sign Out) — same transparent rest chrome as categories. */
+/** Rail action row (Sign Out) — same transparent rest chrome as categories. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SettingsRailActionRow(

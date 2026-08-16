@@ -41,7 +41,6 @@ import org.siloserver.silo.tv.ui.screens.player.TvPlayerLaunchArgs
 import org.siloserver.silo.tv.ui.screens.auth.TvLoginViewModel
 import org.siloserver.silo.tv.ui.screens.auth.TvServerSetupViewModel
 import org.siloserver.silo.tv.ui.screens.collections.TvCollectionDetailViewModel
-import org.siloserver.silo.viewmodel.AdminStatsViewModel
 import org.siloserver.silo.viewmodel.CalendarViewModel
 import org.siloserver.silo.viewmodel.CollectionsViewModel
 import org.siloserver.silo.tv.ui.screens.detail.TvItemDetailViewModel
@@ -374,14 +373,6 @@ val androidTvModule = module {
     }
     viewModel { TvServerListViewModel(get(), get(), get()) }
 
-    // Admin ViewModels
-    viewModel { AdminStatsViewModel(get()) }
-    viewModel { org.siloserver.silo.viewmodel.AdminUsersViewModel(get()) }
-    viewModel { org.siloserver.silo.viewmodel.AdminUserEditViewModel(get()) }
-    viewModel { org.siloserver.silo.tv.ui.screens.admin.TvAdminSessionsViewModel(get()) }
-    viewModel { org.siloserver.silo.tv.ui.screens.admin.TvAdminScansViewModel(get(), get()) }
-    viewModel { org.siloserver.silo.tv.ui.screens.admin.TvAdminLogsViewModel(get()) }
-    viewModel { org.siloserver.silo.tv.ui.screens.settings.TvManageSessionsViewModel(get()) }
     viewModel { params ->
         org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get())
     }

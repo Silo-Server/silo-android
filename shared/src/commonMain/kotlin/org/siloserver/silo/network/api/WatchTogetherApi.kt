@@ -29,7 +29,7 @@ import io.ktor.http.encodeURLPathPart
  * second token (the **room JWT**) distinct from the auth JWT; every
  * room-scoped call passes it as the `room_token` query param. Behind an
  * interface so the repository's tests fake the transport (matching
- * NotificationsApi/AdminApi).
+ * NotificationsApi).
  *
  * The room WS is a separate transport (see WatchTogetherRealtimeClient); this
  * is REST only. 204 (close) maps to Unit; 409 (vote dup / not-voted) and 410

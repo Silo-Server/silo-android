@@ -18,13 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -137,63 +132,16 @@ fun MainAppTopBar(
                         }
                     }
 
-                    DropdownMenu(
+                    ProfileMenu(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false },
-                    ) {
-                        if (onRequestsClick != null) {
-                            DropdownMenuItem(
-                                text = { Text("Requests") },
-                                onClick = {
-                                    menuExpanded = false
-                                    onRequestsClick()
-                                },
-                            )
-                        }
-                        if (onWatchTogetherClick != null) {
-                            DropdownMenuItem(
-                                text = { Text("Watch Together") },
-                                onClick = {
-                                    menuExpanded = false
-                                    onWatchTogetherClick()
-                                },
-                            )
-                        }
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Settings") },
-                            onClick = {
-                                menuExpanded = false
-                                onSettingsClick()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Switch Profile") },
-                            onClick = {
-                                menuExpanded = false
-                                onSwitchProfileClick()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Switch Server") },
-                            onClick = {
-                                menuExpanded = false
-                                onSwitchServerClick()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = "Sign Out",
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onSignOutClick()
-                            },
-                        )
-                    }
+                        onRequestsClick = onRequestsClick,
+                        onWatchTogetherClick = onWatchTogetherClick,
+                        onSettingsClick = onSettingsClick,
+                        onSwitchProfileClick = onSwitchProfileClick,
+                        onSwitchServerClick = onSwitchServerClick,
+                        onSignOutClick = onSignOutClick,
+                    )
                 }
             }
         }
