@@ -51,6 +51,21 @@ interface ServerSettingsFlusher {
      * first to finish. Ops that fail transiently stay queued for retry.
      */
     suspend fun flushNow()
+
+    /**
+     * The setting keys [profileId] still has unsent (or failed-and-requeued)
+     * writes for, read after a [flushNow] has drained what it could.
+     *
+     * A caller that pulls server state right after pushing needs this: a
+     * transiently failed PUT stays queued and `flushNow` returns normally, so
+     * the server answers the following read from the value the write has not
+     * landed on yet. Applying that answer verbatim would put the old value back
+     * over the edit the user just made.
+     *
+     * Defaults to empty so an implementation that never queues anything need
+     * not answer.
+     */
+    fun pendingKeys(profileId: String): Set<String> = emptySet()
 }
 
 private sealed class PendingOp {
@@ -150,6 +165,10 @@ class DefaultServerSettingsFlusher(
                 drainAndFlush()
             }
         }
+    }
+
+    override fun pendingKeys(profileId: String): Set<String> = synchronized(lock) {
+        pending.keys.filter { it.first == profileId }.map { it.second }.toSet()
     }
 
     override suspend fun flushNow() {

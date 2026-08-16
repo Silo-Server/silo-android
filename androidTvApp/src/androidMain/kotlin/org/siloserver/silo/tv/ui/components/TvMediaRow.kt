@@ -305,7 +305,15 @@ fun TvMediaRow(
                 // a data class comparing those lambdas by identity — so without
                 // this no visible card could ever skip recomposition once its
                 // row recomposed (which the feed does on every focus move).
-                val itemActions = remember(item) { cardActions(item) }
+                //
+                // Keyed on the PRODUCER as well as the item: what the bundle
+                // contains depends on what the producer closes over, not only on
+                // the item — Home decides whether to expose "remove from continue
+                // watching" from the section it is building actions for. An
+                // item-only key would keep a stale bundle (and stale callback
+                // owners) after a refresh that reclassifies the section while
+                // leaving the item equal (Codex).
+                val itemActions = remember(item, cardActions) { cardActions(item) }
                 when (cardLayout) {
                     TvRowCardLayout.ReferenceShelf -> TvReferenceShelfCard(
                         title = rowItem.shelfTitle,

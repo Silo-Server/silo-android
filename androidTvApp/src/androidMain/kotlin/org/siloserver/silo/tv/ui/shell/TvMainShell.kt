@@ -134,6 +134,7 @@ import org.siloserver.silo.tv.ui.components.TvForYouSelector
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
 import org.siloserver.silo.tv.ui.navigation.TvMainRoute
+import org.siloserver.silo.tv.ui.navigation.TvRemovedMainRoutes
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryDetailScreen
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryTab
 import org.siloserver.silo.tv.ui.screens.browse.TvBrowseScreen
@@ -1341,6 +1342,35 @@ fun TvMainShell(
                         onOpenItemDetail = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
+                }
+                // ---- Removed route aliases (defensive) ---- see
+                // [TvRemovedMainRoutes]. Registered, never rendered: each one
+                // redirects into Settings so a back stack saved by a build that
+                // still had the admin/session screens can be restored.
+                for (removedRoute in TvRemovedMainRoutes) {
+                    composable(
+                        route = removedRoute,
+                        // A pattern carrying a placeholder cannot be registered
+                        // without the matching argument declared.
+                        arguments = if ("{userId}" in removedRoute) {
+                            listOf(
+                                navArgument("userId") {
+                                    type = NavType.StringType
+                                    nullable = true
+                                    defaultValue = null
+                                },
+                            )
+                        } else {
+                            emptyList()
+                        },
+                    ) {
+                        LaunchedEffect(Unit) {
+                            nestedNav.navigate(TvMainRoute.Settings.route) {
+                                popUpTo(removedRoute) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    }
                 }
             }
         }

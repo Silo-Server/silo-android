@@ -107,53 +107,64 @@ internal fun rememberLetterboxContentAspect(
         contentAspect = estimator.contentAspectFor(videoAspect)
 
         var persistedMatte: Float? = null
+        // Never recycled, deliberately. `PixelCopy` has no cancellation path, so
+        // a request still outstanding when this effect is disposed may yet write
+        // into the destination — recycling it out from under the platform turns
+        // a harmless abandoned read-back into a native write to freed memory.
+        // 36KB waiting for the collector is the cheaper side of that trade.
         val bitmap = Bitmap.createBitmap(SAMPLE_WIDTH, SAMPLE_HEIGHT, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(SAMPLE_WIDTH * SAMPLE_HEIGHT)
-        try {
-            // RESUMED, not STARTED: a backgrounded or picture-in-picture player
-            // has no reason to be reading frames back.
-            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                var failures = 0
-                var samplesTaken = 0
-                while (isActive) {
-                    val surfaceView = playerView.videoSurfaceView as? SurfaceView
-                    if (surfaceView != null && surfaceView.holder.surface?.isValid == true) {
-                        if (copySurface(surfaceView, bitmap)) {
-                            failures = 0
-                            samplesTaken++
-                            bitmap.getPixels(
-                                pixels, 0, SAMPLE_WIDTH, 0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT,
-                            )
-                            contentAspect = estimator.onSample(
-                                sample = measureMatte(pixels, SAMPLE_WIDTH, SAMPLE_HEIGHT),
-                                codedAspect = videoAspect,
-                            )
-                            // Record the running minimum as it settles, not just
-                            // at teardown: playback usually ends with the process
-                            // being killed, which never reaches a finally block.
-                            val measured = estimator.observedMatte
-                            if (cacheKey != null && measured != null && measured != persistedMatte) {
-                                persistedMatte = measured
-                                cache.write(cacheKey, measured)
-                            }
-                        } else if (++failures >= MAX_CONSECUTIVE_COPY_FAILURES) {
-                            // A surface that will not read back is not evidence
-                            // for a crop, whatever it showed or remembered before.
-                            estimator.reset()
-                            contentAspect = videoAspect
+        // RESUMED, not STARTED: a backgrounded or picture-in-picture player
+        // has no reason to be reading frames back.
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            var failures = 0
+            var samplesTaken = 0
+            while (isActive) {
+                val surfaceView = playerView.videoSurfaceView as? SurfaceView
+                if (surfaceView != null && surfaceView.holder.surface?.isValid == true) {
+                    if (copySurface(surfaceView, bitmap)) {
+                        failures = 0
+                        samplesTaken++
+                        bitmap.getPixels(
+                            pixels, 0, SAMPLE_WIDTH, 0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT,
+                        )
+                        contentAspect = estimator.onSample(
+                            sample = measureMatte(pixels, SAMPLE_WIDTH, SAMPLE_HEIGHT),
+                            codedAspect = videoAspect,
+                        )
+                        // Record the running minimum as it settles, not just
+                        // at teardown: playback usually ends with the process
+                        // being killed, which never reaches a finally block.
+                        // Only a settled estimate is worth remembering — an
+                        // unsettled one is a single frame's guess, and the next
+                        // play would apply it from ITS first frame, bypassing
+                        // the very settling that held it back here.
+                        val measured = estimator.observedMatte?.takeIf { estimator.isSettled }
+                        if (cacheKey != null && measured != null && measured != persistedMatte) {
+                            persistedMatte = measured
+                            cache.write(cacheKey, measured)
                         }
+                    } else if (++failures >= MAX_CONSECUTIVE_COPY_FAILURES) {
+                        // A surface that will not read back is not evidence
+                        // for a crop, whatever it showed or remembered before.
+                        // A secure or otherwise unreadable surface refuses for
+                        // good, so give up rather than asking again every
+                        // interval for the rest of playback; `repeatOnLifecycle`
+                        // runs this block afresh on the next resume, which is
+                        // recovery enough for a surface merely being torn down.
+                        estimator.reset()
+                        contentAspect = videoAspect
+                        break
                     }
-                    delay(
-                        when {
-                            estimator.isSettled -> SETTLED_INTERVAL_MS
-                            samplesTaken < FAST_SAMPLE_BUDGET -> FAST_INTERVAL_MS
-                            else -> SETTLING_INTERVAL_MS
-                        },
-                    )
                 }
+                delay(
+                    when {
+                        estimator.isSettled -> SETTLED_INTERVAL_MS
+                        samplesTaken < FAST_SAMPLE_BUDGET -> FAST_INTERVAL_MS
+                        else -> SETTLING_INTERVAL_MS
+                    },
+                )
             }
-        } finally {
-            bitmap.recycle()
         }
     }
 

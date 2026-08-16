@@ -318,5 +318,35 @@ sealed class TvMainRoute(val route: String) {
     }
 }
 
+/**
+ * Route strings this app used to register and no longer does.
+ *
+ * Navigation restores a saved back stack by destination id, and an id with no
+ * registered destination makes the restore throw — so a build that simply drops
+ * a route can crash on first launch after the update, before the replacement
+ * surface is ever reachable. The phone graph already keeps no-op aliases for its
+ * removed Video/Audio/Reading destinations for exactly this reason; these are
+ * the TV equivalents, and they redirect rather than render.
+ *
+ * Nothing here brings a withdrawn surface back: the admin and session-management
+ * screens stay deleted, and each alias lands in Settings.
+ */
+internal val TvRemovedRoutes: List<String> = listOf(
+    // Diagnostics became a Settings category rather than a top-level screen.
+    "diagnostics",
+)
+
+/** Nested [TvRoute.Main] equivalents of [TvRemovedRoutes]. */
+internal val TvRemovedMainRoutes: List<String> = listOf(
+    "main/settings/sessions",
+    "main/admin",
+    "main/admin/dashboard",
+    "main/admin/users",
+    "main/admin/users/edit?userId={userId}",
+    "main/admin/sessions",
+    "main/admin/scans",
+    "main/admin/logs",
+)
+
 private fun String.routeEncode(): String =
     URLEncoder.encode(this, StandardCharsets.UTF_8.toString()).replace("+", "%20")

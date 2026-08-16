@@ -859,6 +859,20 @@ fun TvAppNavigation(
             )
         }
 
+        // ---- Removed route aliases (defensive) ---- see [TvRemovedRoutes].
+        for (removedRoute in TvRemovedRoutes) {
+            composable(removedRoute) {
+                LaunchedEffect(Unit) {
+                    navController.navigate(TvRoute.Main.route) {
+                        popUpTo(removedRoute) { inclusive = true }
+                        // A restored stack already holds Main below the alias;
+                        // without this the redirect would stack a second one.
+                        launchSingleTop = true
+                    }
+                }
+            }
+        }
+
         composable(
             route = TvRoute.DiagnosticsReport.ROUTE,
             arguments = listOf(

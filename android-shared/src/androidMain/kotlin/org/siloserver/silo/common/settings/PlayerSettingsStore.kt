@@ -189,9 +189,11 @@ interface PlayerSettingsStore {
     suspend fun resetDeviceSetting(key: String)
 
     /**
-     * Clear every server-side device override. Mirrors iOS
-     * `PlayerSettings.resetAllDeviceSettings()` — the user's "Reset
-     * Playback Overrides" action.
+     * Return this device's playback settings to their defaults — the user's
+     * "Reset playback settings" action. Clears every server-side device
+     * override (as iOS `PlayerSettings.resetAllDeviceSettings()` does) and the
+     * local-only playback keys that have no server row to clear, since those
+     * would otherwise survive an action whose whole promise is the defaults.
      */
     suspend fun resetAllDeviceSettings()
 

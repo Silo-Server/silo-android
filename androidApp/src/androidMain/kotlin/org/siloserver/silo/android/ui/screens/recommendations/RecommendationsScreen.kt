@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.home.FeaturedCarousel
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.catalog.isAudiobookItemType
+import org.siloserver.silo.model.catalog.isBookLikeItemType
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.section.splitFeatured
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
@@ -239,7 +241,22 @@ fun RecommendationsScreen(
                                 item(key = "for-you-featured") {
                                     FeaturedCarousel(
                                         items = heroItems,
-                                        onPlayClick = onPlayClick,
+                                        // The unfiltered discover feed can promote an
+                                        // audiobook or a book into the hero, and Play
+                                        // maps to the video player. Send those to their
+                                        // detail page instead, which dispatches the
+                                        // audiobook/reading flow — same rule as Home's
+                                        // Continue Watching play glyph.
+                                        onPlayClick = { contentId, resumePositionSeconds ->
+                                            val type = heroItems
+                                                .firstOrNull { it.contentId == contentId }
+                                                ?.type
+                                            if (isAudiobookItemType(type) || isBookLikeItemType(type)) {
+                                                onItemClick(contentId)
+                                            } else {
+                                                onPlayClick(contentId, resumePositionSeconds)
+                                            }
+                                        },
                                         onInfoClick = onItemClick,
                                     )
                                 }

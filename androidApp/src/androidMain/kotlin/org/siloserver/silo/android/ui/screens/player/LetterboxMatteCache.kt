@@ -3,7 +3,7 @@ package org.siloserver.silo.android.ui.screens.player
 import android.content.Context
 
 /** Bumped when the key shape or stored form changes, retiring old entries. */
-private const val SCHEMA = "v1"
+private const val SCHEMA = "v2"
 
 /** Entries kept before the oldest quarter is dropped. */
 private const val MAX_ENTRIES = 400
@@ -20,7 +20,7 @@ private const val EVICT_TO = 300
  * [LetterboxFillEstimator.observedMatte]), the direction it can be wrong in is
  * under-cropping.
  *
- * Keys name the exact bytes on screen, not the title: server, content, media
+ * Keys name the exact bytes on screen, not the title: origin, content, media
  * file and the coded frame size. A different cut, a different release, or the
  * same file arriving transcoded at another resolution all key differently, so
  * none of them can inherit a crop measured from another.
@@ -29,17 +29,25 @@ private const val EVICT_TO = 300
  * Names the exact bytes on screen. Null when the media cannot be identified
  * precisely enough to be worth remembering — no cache entry is far better than
  * one a different file could match.
+ *
+ * [origin] is what makes the rest of the tuple unambiguous: content and media
+ * file ids are scoped to the server that issued them, so two servers can hand
+ * out the same pair for different videos. For streaming that is the server URL;
+ * a download has none, so the caller passes the local URI of the stored bytes,
+ * which names the file at least as precisely. Blank means no identity is
+ * available, and then nothing is remembered at all.
  */
 internal fun letterboxMatteCacheKey(
-    serverUrl: String?,
+    origin: String?,
     contentId: String?,
     mediaFileId: Int?,
     codedWidth: Int,
     codedHeight: Int,
 ): String? {
+    if (origin.isNullOrBlank()) return null
     if (contentId.isNullOrBlank() || mediaFileId == null) return null
     if (codedWidth <= 0 || codedHeight <= 0) return null
-    return "$SCHEMA|${serverUrl.orEmpty()}|$contentId|$mediaFileId|${codedWidth}x$codedHeight"
+    return "$SCHEMA|$origin|$contentId|$mediaFileId|${codedWidth}x$codedHeight"
 }
 
 class LetterboxMatteCache(context: Context) {
@@ -57,7 +65,15 @@ class LetterboxMatteCache(context: Context) {
     }
 
     fun write(key: String, matteFraction: Float) {
-        if (matteFraction <= 0f || matteFraction >= 0.5f) return
+        if (matteFraction >= 0.5f) return
+        // Settled live frames that reach both edges are positive evidence that
+        // this file has no matte, so they retire the entry rather than being
+        // discarded: left in place, a stale positive value would seed the crop
+        // again on every later play until enough live samples arrived to undo it.
+        if (matteFraction <= 0f) {
+            prefs.edit().remove(key).apply()
+            return
+        }
         evictIfFull()
         prefs.edit()
             .putString(key, "$matteFraction|${System.currentTimeMillis()}")

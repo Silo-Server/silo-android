@@ -128,5 +128,9 @@ internal fun tvFormatDate(epochMs: Long): String =
 internal fun tvFormatShortDateTime(epochMs: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(epochMs))
 
-/** Shown as text, never opened: an Android TV has no guaranteed browser. */
+/**
+ * Never handed to a browser: an Android TV box is not guaranteed to have one.
+ * Shown as footer text, and as a QR the viewer can scan from the pane's
+ * Privacy Policy row.
+ */
 internal const val PRIVACY_POLICY_URL = "https://siloserver.org/privacy"

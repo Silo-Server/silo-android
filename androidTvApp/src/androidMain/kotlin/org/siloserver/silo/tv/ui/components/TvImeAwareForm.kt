@@ -2,8 +2,10 @@ package org.siloserver.silo.tv.ui.components
 
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -16,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
@@ -38,6 +41,7 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.PlatformTextInputInterceptor
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
@@ -117,8 +121,27 @@ internal fun Modifier.tvImeAwareFieldContext(
 }
 
 /**
+ * The scrollable form the fields under one [TvSelectToShowImeHost] belong to.
+ *
+ * A registration slot rather than a parameter: the fields sit inside private
+ * card composables that would otherwise have to thread the scroll state down,
+ * and each auth route hosts exactly one form, so the slot is unambiguous.
+ * [Modifier.tvShowImeOnSelect] reads it to put the form back at the top when
+ * the D-pad tries to leave the topmost field upward.
+ */
+@Stable
+internal class TvImeAwareFormScroll {
+    var scrollState by mutableStateOf<ScrollState?>(null)
+}
+
+/** Absent for fields composed outside a [TvSelectToShowImeHost]. */
+internal val LocalTvImeAwareFormScroll = staticCompositionLocalOf<TvImeAwareFormScroll?> { null }
+
+/**
  * Owns scrolling for a TV form and returns it to its normal top position when
  * the stock IME closes. Initial composition with a hidden IME is a no-op.
+ *
+ * Also registers the form with the host so its fields can reach it.
  */
 @Composable
 internal fun rememberTvImeAwareFormScrollState(): ScrollState {
@@ -132,6 +155,14 @@ internal fun rememberTvImeAwareFormScrollState(): ScrollState {
             scrollState.scrollTo(0)
         }
         previousImeBottomPx = imeBottomPx
+    }
+
+    val formScroll = LocalTvImeAwareFormScroll.current
+    DisposableEffect(formScroll, scrollState) {
+        formScroll?.scrollState = scrollState
+        onDispose {
+            if (formScroll?.scrollState === scrollState) formScroll.scrollState = null
+        }
     }
 
     return scrollState
@@ -161,8 +192,25 @@ internal class TvSelectToShowImeGate {
     }
 
     fun close(token: Any) {
-        if (holder === token) holder = null
+        if (holder === token || (holder as? Parked)?.token === token) holder = null
     }
+
+    /**
+     * Leaves [token]'s permission standing but unowned, so the field focus is
+     * moving *to* can [open] it for itself.
+     *
+     * The IME's own Next action moves focus while the keyboard is up; revoking
+     * on the way out would tear down the session the viewer is typing into and
+     * cost them a SELECT per field. The two orderings of a focus transfer are
+     * both covered: an arriving field that observes its focus first adopts a
+     * still-live holder, one that observes it second adopts the park.
+     */
+    fun park(token: Any) {
+        if (holder === token) holder = Parked(token)
+    }
+
+    /** Carries the parking field's token so only that field can drop it. */
+    private class Parked(val token: Any)
 }
 
 /**
@@ -204,6 +252,7 @@ internal val LocalTvSelectToShowImeGate = staticCompositionLocalOf<TvSelectToSho
 @Composable
 internal fun TvSelectToShowImeHost(content: @Composable () -> Unit) {
     val gate = remember { TvSelectToShowImeGate() }
+    val formScroll = remember { TvImeAwareFormScroll() }
     // Pointer users are exempt: a tap on a field is an explicit request to
     // type, so the session is never withheld from them. Same product call the
     // reactive half of the policy makes in tvShowImeOnSelect.
@@ -225,7 +274,10 @@ internal fun TvSelectToShowImeHost(content: @Composable () -> Unit) {
         }
     }
 
-    CompositionLocalProvider(LocalTvSelectToShowImeGate provides gate) {
+    CompositionLocalProvider(
+        LocalTvSelectToShowImeGate provides gate,
+        LocalTvImeAwareFormScroll provides formScroll,
+    ) {
         InterceptPlatformTextInput(interceptor = interceptor, content = content)
     }
 }
@@ -258,13 +310,19 @@ internal fun TvSelectToShowImeHost(content: @Composable () -> Unit) {
  * Pointer users are exempt from the suppression — a click on a field is an
  * explicit request to type. Auth-flow field idiom (product call 2026-08-14).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun Modifier.tvShowImeOnSelect(): Modifier {
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val inputMode = LocalInputModeManager.current.inputMode
-    val density = LocalDensity.current
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    // The visibility flag, not the inset height: Gboard TV is a floating panel
+    // whose IME inset source reports visible=true with a zero-height frame
+    // (Google TV emulator, 2026-08-16 — `dumpsys window` showed
+    // `type=ime frame=[0,1080][1920,1080] visible=true` with the keyboard on
+    // screen), so `ime.getBottom() > 0` reads false while the keyboard is up
+    // and the Next-keeps-the-keyboard handoff below never engages.
+    val imeVisible = WindowInsets.isImeVisible
     // This modifier raises the IME, so it owns taking it back down when the
     // field leaves composition — otherwise the keyboard floats over the next
     // screen and keeps eating the D-pad. TvStockKeyboardPolicyTest pins the
@@ -276,6 +334,8 @@ internal fun Modifier.tvShowImeOnSelect(): Modifier {
     val imeGate = LocalTvSelectToShowImeGate.current
     // Identifies this field to the shared gate for the lifetime of the node.
     val gateToken = remember { Any() }
+    val formScrollState = LocalTvImeAwareFormScroll.current?.scrollState
+    val scope = rememberCoroutineScope()
 
     var hasFocus by remember { mutableStateOf(false) }
     // True once SELECT summoned the keyboard on purpose, so the arrival
@@ -300,6 +360,17 @@ internal fun Modifier.tvShowImeOnSelect(): Modifier {
         TvFocusLog.d { "field: focus arrived without select -> IME hidden (visible=$imeVisible)" }
     }
 
+    // A park exists only to survive the focus transfer that created it. One
+    // frame on, either the arriving sibling has claimed it or nothing will —
+    // leaving it standing would let the host allow a session no field asked
+    // for. Harmless on the initial composition: closing a gate we never held
+    // is a no-op.
+    LaunchedEffect(hasFocus) {
+        if (hasFocus) return@LaunchedEffect
+        withFrameNanos { }
+        imeGate?.close(gateToken)
+    }
+
     // A select must start AND end on this field to summon the IME. Acting on
     // KeyUp alone leaks: activating a button whose click moves focus into the
     // field (e.g. "Sign in with a password") delivers the tail KeyUp of that
@@ -308,10 +379,28 @@ internal fun Modifier.tvShowImeOnSelect(): Modifier {
     val sawKeyDown = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     return this
         .onFocusEvent { focusState ->
+            // isFocused, not hasFocus: the field's own decoration hosts the
+            // password visibility button, and that button holding focus must
+            // not read as the editable field holding it.
             val focused = focusState.isFocused
-            if (!focused) {
+            if (focused) {
+                // Focus arriving while the keyboard is already up and this
+                // form's permission is still live is the IME's own Next
+                // action moving between fields — the viewer is mid-entry, so
+                // adopt the session instead of tearing it down. A programmatic
+                // claim on a fresh screen cannot reach this: each auth route
+                // has its own host, so its gate starts closed.
+                if (imeVisible && imeGate?.isOpen == true) {
+                    imeGate.open(gateToken)
+                    imeRequested = true
+                }
+            } else {
                 imeRequested = false
-                imeGate?.close(gateToken)
+                // A SELECT that started here but ends elsewhere is not a
+                // select on this field; forgetting the KeyDown keeps a later
+                // stray KeyUp from summoning the keyboard on its own.
+                sawKeyDown.set(false)
+                if (imeVisible) imeGate?.park(gateToken) else imeGate?.close(gateToken)
             }
             hasFocus = focused
         }
@@ -320,9 +409,23 @@ internal fun Modifier.tvShowImeOnSelect(): Modifier {
                 event.key == Key.Enter ||
                 event.key == Key.NumPadEnter
             when {
+                // SELECT belongs to whatever is focused. When that is the
+                // trailing visibility button rather than the editable field,
+                // this handler is still its ancestor, and swallowing the press
+                // here is what made the button untoggleable from a remote.
+                selectKey && !hasFocus -> false
                 selectKey && event.type == KeyEventType.KeyDown -> {
                     sawKeyDown.set(true)
-                    false
+                    // DPAD_CENTER means nothing to the field itself, and left
+                    // unconsumed the root key handler reads it as
+                    // FocusDirection.Enter — on the password field that walks
+                    // focus into the trailing visibility button before the
+                    // KeyUp that raises the keyboard ever arrives (Google TV
+                    // emulator 2026-08-16; foundation's own D-pad interceptor
+                    // only swallows it for physical D-pad devices). Enter stays
+                    // with the field so a hardware keyboard's Enter still
+                    // performs the IME action.
+                    event.key == Key.DirectionCenter
                 }
                 selectKey && event.type == KeyEventType.KeyUp -> {
                     if (sawKeyDown.compareAndSet(true, false)) {
@@ -363,6 +466,17 @@ internal fun Modifier.tvShowImeOnSelect(): Modifier {
                 }
                 event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
                     val moved = focusManager.moveFocus(FocusDirection.Up)
+                    if (!moved) {
+                        // Nothing focusable above, but the form can still be
+                        // scrolled: focus search only ever scrolls a control
+                        // far enough to be visible, so the brand mark and title
+                        // above the first field stay off-screen with no
+                        // focusable way back. Spend the key on the scroll
+                        // instead of on nothing.
+                        formScrollState?.let { state ->
+                            scope.launch { state.animateScrollTo(0) }
+                        }
+                    }
                     TvFocusLog.d { "field: dpad UP -> moveFocus moved=$moved" }
                     true
                 }

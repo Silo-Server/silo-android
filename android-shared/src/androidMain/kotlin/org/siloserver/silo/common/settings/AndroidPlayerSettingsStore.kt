@@ -554,7 +554,19 @@ class AndroidPlayerSettingsStore(
             // device-relevant key, each with the scope it resolved from.
             val result = repo.getEffectiveValues(RemoteDeviceSettings)
             if (result !is ApiResult.Success) return@withScope
-            applyEffectiveLocally(scope, store, result.data)
+            // Draining is not the same as landing: a write that failed
+            // transiently stays queued for retry and flushNow still returns
+            // normally, so this response was answered from the value the write
+            // has not reached yet. Applying it for those keys is the same
+            // clobber the push-first order exists to prevent — it put the
+            // server's old Dolby Vision value back and restarted the session on
+            // it. Every other key still hydrates from the canonical answer.
+            applyEffectiveLocally(
+                scope = scope,
+                store = store,
+                effective = result.data,
+                unlandedKeys = serverSettingsFlusher.pendingKeys(scope.profileId),
+            )
         }
     }
 
@@ -617,6 +629,15 @@ class AndroidPlayerSettingsStore(
             }
             store.edit {
                 it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
+                // The local-only playback keys have no server row to delete, so
+                // the refresh below can never restore their defaults. Removing
+                // the slot IS the reset: every reader falls back to the default
+                // it declares. Without this, the action would leave exactly the
+                // settings the user most associates with this device untouched.
+                it.remove(booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PictureInPictureEnabled))
+                it.remove(stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.LetterboxExpansion))
+                it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.ResumeRewindSeconds))
+                it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PassOutThreshold))
             }
             serverSettingsFlusher.flushNow()
             refreshFromServer()
@@ -631,9 +652,14 @@ class AndroidPlayerSettingsStore(
         scope: Scope,
         store: DataStore<Preferences>,
         effective: Map<String, EffectiveSettingValue>,
+        // Keys whose local edit is still queued for the server: the response
+        // cannot describe them yet, so the local value stays authoritative
+        // until the queued write lands.
+        unlandedKeys: Set<String> = emptySet(),
     ) {
         store.edit { prefs ->
             for (key in RemoteDeviceSettings) {
+                if (key in unlandedKeys) continue
                 // The canonical endpoint answers every known key, including
                 // ones with nothing stored anywhere — those come back with
                 // source "default" and the contract default as the value, so
@@ -645,6 +671,10 @@ class AndroidPlayerSettingsStore(
                 val entry = effective[key] ?: continue
                 writeJsonValue(prefs, scope, key, entry.value)
             }
+            // An appearance whose write has not landed leaves the flag and the
+            // granular overlay alone too: they describe where the composite
+            // resolved from, and the response predates the queued edit.
+            if (PlaybackSettingsKeys.SubtitleAppearance in unlandedKeys) return@edit
             // The override flag mirrors where the subtitle appearance
             // actually resolved from. Clearing it when the value no longer
             // comes from this device keeps a previous session's flag from

@@ -1812,8 +1812,14 @@ class TvPlayerViewModel(
         if (recoveryStartParams != null) {
             pendingInitialSubtitleIndex = recoveryStartParams.subtitleTrackIndex
             // A recovery restores the selection the session was already
-            // playing, not a preview: it keeps its manual standing.
-            pendingInitialSubtitleAutoResolved = false
+            // playing, so it restores that selection's STANDING too. The
+            // snapshot carries an index and no provenance, so read it off the
+            // session being replaced — this runs before the flags are cleared
+            // below. Calling it manual unconditionally promoted a pick the app
+            // had made into the viewer's: once resolved it set
+            // manualSubtitleSelectionApplied, and the automatic choice rode the
+            // next episode's handoff and the durable preference.
+            pendingInitialSubtitleAutoResolved = !manualSubtitleSelectionApplied
             pendingInitialSubtitleAttempts = 0
         }
         val loadOwner = playbackMutationFence.beginLoad(
@@ -3955,9 +3961,18 @@ class TvPlayerViewModel(
         // re-run auto over a longer track list and override a selection the
         // viewer has since made.
         if (autoTextSubtitleSelectionAttempted) return
-        if (subtitle.isEmpty()) return
+        // Wait for the player to report SOMETHING: an empty snapshot carries no
+        // selected audio language for the resolver to rank a subtitle against.
+        if (audio.isEmpty() && subtitle.isEmpty()) return
 
         val state = _uiState.value
+        // Media3 only knows what is MOUNTED. A launch whose server inventory is
+        // all external sidecars has an empty text-track list until one of them
+        // is mounted, so standing down on that alone left a deep link, cast or
+        // remote start with subtitles Off even for an Always profile — with the
+        // intended track sitting in subtitleUrls. Stand down only when neither
+        // inventory offers anything to choose from.
+        if (subtitle.isEmpty() && state.subtitleUrls.isEmpty()) return
         // Resolve over the SERVER inventory, not the mounted text tracks: an
         // external sidecar the initial plan did not mount is invisible to
         // Media3, which is how "Auto - <external SRT>" started playing the
@@ -3986,6 +4001,13 @@ class TvPlayerViewModel(
         state: UiState,
         priority: TvSubtitleMountPriority = TvSubtitleMountPriority.Auto,
     ) {
+        // Provenance is recorded BEFORE the already-committed shortcut below,
+        // which publishes no transaction and returns. Exit persistence reads
+        // this marker to tell an app-made choice from the viewer's, so leaving
+        // it unset there wrote the plan's own pick — commonly the detail row's
+        // "Auto - None" — back as a durable manual preference, and every later
+        // launch restored that instead of re-running Auto.
+        autoSelectedSubtitleIdentity = identity
         if (identity == state.committedSubtitleIdentity && state.pendingSubtitleIdentity == null) {
             // Committed is what the adapter BELIEVES is on. At load it is seeded
             // straight from the plan (resetContent) before the player has
@@ -4001,7 +4023,6 @@ class TvPlayerViewModel(
             }
             return
         }
-        autoSelectedSubtitleIdentity = identity
         autoSubtitleSelectionInFlight = true
         nextSubtitleMountPriority = priority
         launchSubtitleTransaction(state) {
@@ -4809,14 +4830,30 @@ class TvPlayerViewModel(
             // replacement never arrives (the old session is kept on failure),
             // stop claiming progress after a bounded wait.
             val previousSessionId = state.sessionId
+            // The replacement publishes isPaused = false (loadContent) and the
+            // screen mirrors that to playWhenReady, so changing the setting
+            // while paused resumed the video behind the HUD. Carry the
+            // pre-switch intent across and re-assert it once the replacement is
+            // adopted — the publication that clears it is the same update that
+            // clears isLoading.
+            val wasPaused = state.isPaused
             _dolbyVisionSwitchInFlight.value = true
             dolbyVisionSwitchWatch?.cancel()
             dolbyVisionSwitchWatch = launch {
                 try {
                     withTimeoutOrNull(OUTPUT_SWITCH_FEEDBACK_TIMEOUT_MS) {
-                        _uiState.first {
-                            it.sessionId != previousSessionId &&
-                                !it.isLoading && !it.isBuffering && it.isPlaying
+                        if (wasPaused) {
+                            // A restored pause never reaches isPlaying, so the
+                            // cue ends at adoption rather than at first frames.
+                            _uiState.first {
+                                it.sessionId != previousSessionId && !it.isLoading
+                            }
+                            setPaused(true)
+                        } else {
+                            _uiState.first {
+                                it.sessionId != previousSessionId &&
+                                    !it.isLoading && !it.isBuffering && it.isPlaying
+                            }
                         }
                     }
                 } finally {

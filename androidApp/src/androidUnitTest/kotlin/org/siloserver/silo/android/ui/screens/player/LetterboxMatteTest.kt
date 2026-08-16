@@ -360,5 +360,10 @@ class LetterboxMatteTest {
         assertNull(letterboxMatteCacheKey("https://silo", "movie-1", null, 3840, 2160))
         assertNull(letterboxMatteCacheKey("https://silo", null, 42, 3840, 2160))
         assertNull(letterboxMatteCacheKey("https://silo", "movie-1", 42, 0, 0))
+        // Content and file ids are scoped to whoever issued them, so without an
+        // origin the tuple names nothing in particular — two servers' downloads
+        // would share it.
+        assertNull(letterboxMatteCacheKey("", "movie-1", 42, 3840, 2160))
+        assertNull(letterboxMatteCacheKey(null, "movie-1", 42, 3840, 2160))
     }
 }

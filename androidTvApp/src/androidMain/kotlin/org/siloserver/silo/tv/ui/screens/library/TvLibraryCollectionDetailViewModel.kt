@@ -34,9 +34,6 @@ class TvLibraryCollectionDetailViewModel(
         val order: String = "desc",
         val facetSelection: TvCatalogFacetSelection = TvCatalogFacetSelection(),
         val facetOptions: CatalogFiltersResponse? = null,
-        /** First page's reported total; null until a page has landed. */
-        val total: Int? = null,
-        val totalExact: Boolean? = null,
         /** What the server says it sorted by (see [CatalogEffectiveSort]). */
         val effectiveSort: CatalogEffectiveSort? = null,
     ) {
@@ -121,17 +118,17 @@ class TvLibraryCollectionDetailViewModel(
                     error = null,
                 )
             }
-            fetchedCount = 0
             val result = fetchVisiblePage(fromOffset = 0)
             if (generation != loadGeneration) return@launch
+            // Only the request that still owns the screen may move the cursor;
+            // see [fetchVisiblePage].
+            fetchedCount = if (result is ApiResult.Success) result.data.fetchedCount else 0
             when (result) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(
                         isLoading = false,
                         items = result.data.items,
                         hasMore = result.data.hasMore,
-                        total = result.data.total,
-                        totalExact = result.data.totalExact,
                         effectiveSort = result.data.effectiveSort,
                         error = null,
                     )
@@ -155,8 +152,8 @@ class TvLibraryCollectionDetailViewModel(
     private data class VisiblePage(
         val items: List<BrowseItem>,
         val hasMore: Boolean,
-        val total: Int?,
-        val totalExact: Boolean?,
+        /** RAW offset this request drained to; see [fetchedCount]. */
+        val fetchedCount: Int,
         val effectiveSort: CatalogEffectiveSort?,
     )
 
@@ -167,16 +164,20 @@ class TvLibraryCollectionDetailViewModel(
      * that filters to empty with `hasMore=true` would strand the grid —
      * TvCatalogGrid skips pagination while its list is empty, so a
      * book-fronted collection would wrongly render as empty (Codex).
-     * Advances [fetchedCount] by RAW page sizes as it goes.
+     *
+     * The raw cursor it drained to is RETURNED rather than written to
+     * [fetchedCount]: a request superseded by a sort/filter reload must not
+     * move the live query's paging offset, and only the caller — after its
+     * generation check — knows whether this request still owns the screen
+     * (Codex).
      */
     private suspend fun fetchVisiblePage(fromOffset: Int): ApiResult<VisiblePage> {
         val state = _uiState.value
         val facetGroups = state.facetSelection.toQueryGroups()
-        // Totals describe the whole result set, so they come from the first
-        // response of the drain, not whichever page happened to be visible.
-        var total: Int? = null
-        var totalExact: Boolean? = null
+        // Describes the whole result set, so it comes from the first response
+        // of the drain, not whichever page happened to be visible.
         var effectiveSort: CatalogEffectiveSort? = null
+        var isFirstResponse = true
         var offset = fromOffset
         while (true) {
             when (val result = sectionRepository.getLibraryCollectionItems(
@@ -193,12 +194,11 @@ class TvLibraryCollectionDetailViewModel(
                 },
             )) {
                 is ApiResult.Success -> {
-                    if (total == null) {
-                        total = result.data.total
-                        totalExact = result.data.totalExact
+                    if (isFirstResponse) {
+                        isFirstResponse = false
                         effectiveSort = result.data.effectiveSort
                     }
-                    fetchedCount = offset + result.data.items.size
+                    val drainedTo = offset + result.data.items.size
                     val visible = result.data.items.visibleOnTv()
                     val hasMore = result.data.hasMore && result.data.items.isNotEmpty()
                     if (visible.isNotEmpty() || !hasMore) {
@@ -206,13 +206,12 @@ class TvLibraryCollectionDetailViewModel(
                             VisiblePage(
                                 items = visible,
                                 hasMore = hasMore,
-                                total = total,
-                                totalExact = totalExact,
+                                fetchedCount = drainedTo,
                                 effectiveSort = effectiveSort,
                             ),
                         )
                     }
-                    offset = fetchedCount
+                    offset = drainedTo
                 }
                 is ApiResult.Error -> return ApiResult.Error(result.code, result.error, result.message)
                 is ApiResult.NetworkError -> return ApiResult.NetworkError(result.exception)
@@ -237,12 +236,16 @@ class TvLibraryCollectionDetailViewModel(
             val result = fetchVisiblePage(fromOffset = fetchedCount)
             if (generation != loadGeneration) return@launch
             when (result) {
-                is ApiResult.Success -> _uiState.update {
-                    it.copy(
-                        isLoadingMore = false,
-                        items = (it.items + result.data.items).distinctBy { item -> item.contentId },
-                        hasMore = result.data.hasMore,
-                    )
+                is ApiResult.Success -> {
+                    fetchedCount = result.data.fetchedCount
+                    _uiState.update {
+                        it.copy(
+                            isLoadingMore = false,
+                            items = (it.items + result.data.items)
+                                .distinctBy { item -> item.contentId },
+                            hasMore = result.data.hasMore,
+                        )
+                    }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> {
                     _uiState.update { it.copy(isLoadingMore = false) }

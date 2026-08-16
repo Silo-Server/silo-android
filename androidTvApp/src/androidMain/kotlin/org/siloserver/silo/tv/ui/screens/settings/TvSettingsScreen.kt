@@ -149,11 +149,6 @@ fun TvSettingsScreen(
     var showSignOutConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        val requester = if (initialManageServersFocus) {
-            detailFocusRequester
-        } else {
-            categoryFocusRequesters.getValue(TvSettingsCategory.General)
-        }
         // Was four attempts judged on requestFocus() returning true — that is
         // acceptance, not arrival. onInitialContentFocus() hands content focus
         // to the shell, so firing it regardless told the shell focus had landed
@@ -161,7 +156,18 @@ fun TvSettingsScreen(
         val focusRestored = requestFocusUntilObserved(
             maxAttempts = TvContentInitialFocusMaxAttempts,
             awaitAttempt = { withFrameNanos { } },
-            requestFocus = requester::requestFocus,
+            // Resolved per attempt rather than captured up front: rememberSaveable
+            // may have restored a category other than General, and the eligibility
+            // fallback below can retarget it on the same frame. Claiming General
+            // unconditionally undid the restore, because that row's onFocused
+            // resets the selection on the way in.
+            requestFocus = {
+                if (initialManageServersFocus) {
+                    detailFocusRequester.requestFocus()
+                } else {
+                    categoryFocusRequesters.getValue(selectedCategory).requestFocus()
+                }
+            },
             isFocused = { categoryColumnHasFocus },
         ) == TvObservedFocusResult.Focused
         if (initialManageServersFocus && focusRestored) onManageServersReturnFocusConsumed()
@@ -172,10 +178,18 @@ fun TvSettingsScreen(
     // server capability refresh). Falling back keeps the pane and the rail in
     // agreement instead of stranding focus in a category that just vanished.
     LaunchedEffect(diagnosticsState.profileEligible) {
-        selectedCategory = tvSettingsCategoryForEligibility(
+        val fallback = tvSettingsCategoryForEligibility(
             selectedCategory,
             diagnosticsState.profileEligible,
         )
+        if (fallback == selectedCategory) return@LaunchedEffect
+        selectedCategory = fallback
+        // Swapping the model is not enough: the row (or detail control) holding
+        // focus is the one that just left the rail, and Compose clears focus
+        // rather than re-homing it, which leaves the remote with nothing to
+        // move from. The fallback's row is always composed, so claim it here.
+        categoryFocusRequesters.getValue(fallback)
+            .claimFocusOrReport(target = "settings_category", action = "eligibility_fallback")
     }
 
     LaunchedEffect(detailFocusRequest) {

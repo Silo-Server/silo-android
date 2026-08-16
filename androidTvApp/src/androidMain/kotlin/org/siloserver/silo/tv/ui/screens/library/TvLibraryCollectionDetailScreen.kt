@@ -84,47 +84,51 @@ fun TvLibraryCollectionDetailScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        if (state.error != null && state.items.isEmpty()) {
-            TvErrorScreen(
-                message = state.error!!,
-                onRetry = viewModel::retry,
-            )
-        } else {
-            // The title, pills, and count live INSIDE the grid as its header
-            // row rather than above it. A header stacked over the grid shrinks
-            // the grid's viewport, so bringing row 2 into view scrolled row 1
-            // half under the pills — the "cards cut off" look. As a grid row
-            // the header scrolls away with the content, and rows leaving the
-            // top go under the screen edge like any scrolling list. The grid
-            // also stays mounted across sort/filter reloads (spinner row), so
-            // the header never blinks out.
-            TvCatalogGrid(
-                items = state.items,
-                isLoading = state.isLoading || state.isLoadingMore,
-                hasMore = state.hasMore,
-                onItemClick = onItemClick,
-                onLoadMore = viewModel::loadMore,
-                fixedColumnCount = 6,
-                contentPadding = PaddingValues(
-                    start = Spacing.safeArea,
-                    top = Spacing.xxl,
-                    end = Spacing.safeArea,
-                    bottom = Spacing.xxxl,
-                ),
-                horizontalSpacing = 20.dp,
-                verticalSpacing = 30.dp,
-                firstItemFocusRequester = firstItemFocusRequester,
-                firstItemCardModifier = Modifier.onFocusChanged { firstCardHasFocus = it.isFocused },
-                header = {
-                    CollectionHeader(
-                        title = viewModel.title.ifBlank { title },
-                        state = state,
-                        onSort = { openPanel = TvCollectionPanel.Sort },
-                        onFilter = { openPanel = TvCollectionPanel.Filter },
-                        onClearFilters = viewModel::clearFilters,
-                    )
-                },
-                emptyState = {
+        // The title, pills, and count live INSIDE the grid as its header
+        // row rather than above it. A header stacked over the grid shrinks
+        // the grid's viewport, so bringing row 2 into view scrolled row 1
+        // half under the pills — the "cards cut off" look. As a grid row
+        // the header scrolls away with the content, and rows leaving the
+        // top go under the screen edge like any scrolling list. The grid
+        // also stays mounted across sort/filter reloads (spinner row), so
+        // the header never blinks out.
+        //
+        // Failures render in the grid's empty slot rather than replacing
+        // the whole surface: load() clears the items before a sort/filter
+        // reload, so a whole-surface error would take the Sort/Filter/Clear
+        // pills away exactly when the viewer needs them to undo the query
+        // that is failing — Retry only repeats it (Codex).
+        TvCatalogGrid(
+            items = state.items,
+            isLoading = state.isLoading || state.isLoadingMore,
+            hasMore = state.hasMore,
+            onItemClick = onItemClick,
+            onLoadMore = viewModel::loadMore,
+            fixedColumnCount = 6,
+            contentPadding = PaddingValues(
+                start = Spacing.safeArea,
+                top = Spacing.xxl,
+                end = Spacing.safeArea,
+                bottom = Spacing.xxxl,
+            ),
+            horizontalSpacing = 20.dp,
+            verticalSpacing = 30.dp,
+            firstItemFocusRequester = firstItemFocusRequester,
+            firstItemCardModifier = Modifier.onFocusChanged { firstCardHasFocus = it.isFocused },
+            header = {
+                CollectionHeader(
+                    title = viewModel.title.ifBlank { title },
+                    state = state,
+                    onSort = { openPanel = TvCollectionPanel.Sort },
+                    onFilter = { openPanel = TvCollectionPanel.Filter },
+                    onClearFilters = viewModel::clearFilters,
+                )
+            },
+            emptyState = {
+                val error = state.error
+                if (error != null) {
+                    TvErrorScreen(message = error, onRetry = viewModel::retry)
+                } else {
                     TvCatalogEmptyState(
                         message = if (state.facetSelection.hasActiveFilters) {
                             "No titles match the current filters."
@@ -132,14 +136,14 @@ fun TvLibraryCollectionDetailScreen(
                             "This collection is empty."
                         },
                     )
-                },
-            )
-        }
+                }
+            },
+        )
     }
 
     when (openPanel) {
         TvCollectionPanel.Sort -> TvBrowseSortPanel(
-            options = TvLibrarySortOption.availableForCollection(),
+            options = TvLibrarySortOption.availableForCollection(libraryType),
             currentSort = state.sort,
             order = state.order,
             onSelect = { option ->
@@ -202,13 +206,15 @@ private fun CollectionHeader(
 }
 
 /**
- * "24 items" beside the controls. An inexact total that is still paging reads
- * as a floor ("60+ items") rather than claiming a count the server hasn't
- * committed to. Hidden until a page has actually landed.
+ * "24 items" beside the controls, counted from the cards this client actually
+ * shows. The server's collection total includes reading items TV hides
+ * (`visibleOnTv`), so reporting it would claim a count the grid can never
+ * reach — and would leak the excluded ebook membership. Hidden until paging
+ * has exhausted, which is the first moment a TV-visible count is knowable.
  */
 private fun itemCountLabel(state: TvLibraryCollectionDetailViewModel.UiState): String? {
-    val total = state.total ?: return null
-    if (state.isLoading) return null
-    if (state.totalExact == false && state.hasMore) return "$total+ items"
+    if (state.isLoading || state.isLoadingMore || state.hasMore) return null
+    val total = state.items.size
+    if (total == 0) return null
     return if (total == 1) "1 item" else "$total items"
 }

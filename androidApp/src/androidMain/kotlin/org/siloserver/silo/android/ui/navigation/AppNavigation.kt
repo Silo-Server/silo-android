@@ -654,6 +654,17 @@ fun AppNavigation(
                 }
             }
         }
+        // Same reasoning for the withdrawn admin dashboard, except that Settings
+        // is where its entry point used to live, so that is where it lands.
+        // Registered, never rendered — the admin surface stays deleted.
+        composable("admin") {
+            LaunchedEffect(Unit) {
+                navController.navigate(Route.Settings.route) {
+                    popUpTo("admin") { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
         composable(Route.Settings.route) {
             SettingsScreen(
                 onNavigateToServers = {

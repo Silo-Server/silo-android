@@ -994,8 +994,16 @@ private fun CollectionsTab(
                 .onFocusChanged { collectionGridHasFocus = it.hasFocus }
                 // Any entry into the grid (the shell's content claim on a
                 // return, D-pad down from the bar) lands on the remembered
-                // card rather than the first one.
-                .focusProperties { enter = { entryFocusRequester } },
+                // card rather than the first one. With no collection to land on
+                // — loading, empty, or the initial-load error — nothing holds
+                // that requester, so entry has to fall back to an ordinary
+                // focus search or the error state's Retry button is unreachable
+                // (Codex).
+                .focusProperties {
+                    enter = {
+                        if (entryCollectionId != null) entryFocusRequester else FocusRequester.Default
+                    }
+                },
             horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
             verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
             contentPadding = PaddingValues(

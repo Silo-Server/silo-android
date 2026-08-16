@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.personal
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +32,8 @@ import androidx.compose.ui.focus.FocusRequester
 import org.siloserver.silo.tv.ui.focus.rememberTvFlatReturnRestoration
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -207,18 +210,27 @@ fun TvHistoryScreen(
 
 /**
  * Binds a list's sort/filter holder to the shared list ViewModel that fetches
- * under it. The holder is Koin-scoped per source, so the standalone page and
- * the For You inline variant of the same list share one selection, and leaving
- * and returning within the session keeps it.
+ * under it. The holder is keyed by source, so the standalone page and the For
+ * You inline variant of the same list share one selection, and leaving and
+ * returning within the session keeps it.
  *
- * Both are keyed on the source so the two lists never cross wires.
+ * It is resolved against the ACTIVITY's ViewModel store rather than the current
+ * owner: inside the nav host the current owner is the destination's back stack
+ * entry, so the inline For You surface and the standalone Favorites/Watchlist
+ * destination have different stores and the key alone would hand each its own
+ * holder — a sort chosen on one would not reach the other (Codex). The activity
+ * is the nearest store both entries share.
  */
 @Composable
 private fun rememberPersonalListControls(
     source: String,
     listViewModel: PersonalListViewModel,
 ): TvPersonalListControlsViewModel {
+    val sharedOwner = LocalActivity.current as? ViewModelStoreOwner
+        ?: LocalViewModelStoreOwner.current
+        ?: error("No ViewModelStoreOwner for personal list controls")
     val controls: TvPersonalListControlsViewModel = koinViewModel(
+        viewModelStoreOwner = sharedOwner,
         key = "personal-controls-$source",
         parameters = { parametersOf(source) },
     )
@@ -356,7 +368,12 @@ private fun PersonalGrid(
         val historyWholeSurfaceState = controls == null && state.items.isEmpty()
         when {
             historyWholeSurfaceState && state.isLoading -> TvLoadingScreen()
-            state.error != null && state.items.isEmpty() -> TvErrorScreen(
+            // Errors too: a failed sort/filter reload leaves the list empty, and
+            // a whole-surface error would take the pills away exactly when the
+            // viewer needs them to undo the query that is failing — Retry only
+            // repeats it. The controlled lists render the failure inside the
+            // grid instead (Codex).
+            historyWholeSurfaceState && state.error != null -> TvErrorScreen(
                 message = state.error ?: "",
                 onRetry = onRetry,
             )
@@ -412,14 +429,19 @@ private fun PersonalGrid(
                         }
                     },
                     emptyState = {
-                        EmptyState(
-                            message = if (controlsState?.facetSelection?.hasActiveFilters == true) {
-                                "No titles match the current filters."
-                            } else {
-                                emptyMessage
-                            },
-                            icon = icon,
-                        )
+                        val error = state.error
+                        if (error != null) {
+                            TvErrorScreen(message = error, onRetry = onRetry)
+                        } else {
+                            EmptyState(
+                                message = if (controlsState?.facetSelection?.hasActiveFilters == true) {
+                                    "No titles match the current filters."
+                                } else {
+                                    emptyMessage
+                                },
+                                icon = icon,
+                            )
+                        }
                     },
                 )
             }
@@ -453,58 +475,58 @@ private fun PersonalInlineGrid(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        if (state.error != null && state.items.isEmpty()) {
-            TvErrorScreen(
-                message = state.error ?: "",
-                onRetry = onRetry,
-            )
-        } else {
-            // For You hands this grid the page's focus claim, and with an empty
-            // list there is no card to give it to. The Sort pill takes it
-            // instead — without a focusable claimant the shell's handover fails
-            // and focus falls back to the menu bar. Only ever one holder: the
-            // pill takes the requester exactly when no first card exists.
-            //
-            // Not while the first page is still in flight, though: the header
-            // renders from frame one, so handing the pill the requester then
-            // would let the claim succeed on it and leave the viewer parked on
-            // Sort once the cards arrive. Unclaimed, the caller simply retries
-            // until a card exists — which is what it did before the header did.
-            val listIsEmpty = state.items.isEmpty() && !state.isLoading && !state.isRefreshing
-            TvCatalogGrid(
-                items = state.items,
-                // A restored deep scroll position sits at the paging threshold,
-                // so the grid would ask for the next page the moment it lands.
-                // During a refresh that page is fetched at an offset the
-                // refresh is about to invalidate — it either gets discarded or
-                // lands after page one and leaves a hole. isLoading keeps the
-                // grid (and its controls) mounted through a sort/filter reload.
-                isLoading = state.isLoading || state.isLoadingMore || state.isRefreshing,
-                hasMore = state.hasMore,
-                onItemClick = onItemClick,
-                onLoadMore = onLoadMore,
-                contentPadding = PaddingValues(
-                    // For You's saved-list grid sits directly beneath its
-                    // selector pills; share their exact leading edge.
-                    start = Spacing.safeArea,
-                    end = Spacing.safeArea,
-                    top = Spacing.md,
-                    bottom = Spacing.xl,
-                ),
-                fixedColumnCount = 6,
-                firstItemFocusRequester = firstItemFocusRequester.takeIf { !listIsEmpty },
-                header = {
-                    PersonalControlHeader(
-                        controlsState = controlsState,
-                        total = state.total,
-                        isLoading = state.isLoading,
-                        onSort = { openPanel = TvPersonalPanel.Sort },
-                        onFilter = { openPanel = TvPersonalPanel.Filter },
-                        onClearFilters = controls::clearFilters,
-                        sortPillFocusRequester = firstItemFocusRequester.takeIf { listIsEmpty },
-                    )
-                },
-                emptyState = {
+        // For You hands this grid the page's focus claim, and with an empty
+        // list there is no card to give it to. The Sort pill takes it
+        // instead — without a focusable claimant the shell's handover fails
+        // and focus falls back to the menu bar. Only ever one holder: the
+        // pill takes the requester exactly when no first card exists.
+        //
+        // Not while the first page is still in flight, though: the header
+        // renders from frame one, so handing the pill the requester then
+        // would let the claim succeed on it and leave the viewer parked on
+        // Sort once the cards arrive. Unclaimed, the caller simply retries
+        // until a card exists — which is what it did before the header did.
+        val listIsEmpty = state.items.isEmpty() && !state.isLoading && !state.isRefreshing
+        TvCatalogGrid(
+            items = state.items,
+            // A restored deep scroll position sits at the paging threshold,
+            // so the grid would ask for the next page the moment it lands.
+            // During a refresh that page is fetched at an offset the
+            // refresh is about to invalidate — it either gets discarded or
+            // lands after page one and leaves a hole. isLoading keeps the
+            // grid (and its controls) mounted through a sort/filter reload.
+            isLoading = state.isLoading || state.isLoadingMore || state.isRefreshing,
+            hasMore = state.hasMore,
+            onItemClick = onItemClick,
+            onLoadMore = onLoadMore,
+            contentPadding = PaddingValues(
+                // For You's saved-list grid sits directly beneath its
+                // selector pills; share their exact leading edge.
+                start = Spacing.safeArea,
+                end = Spacing.safeArea,
+                top = Spacing.md,
+                bottom = Spacing.xl,
+            ),
+            fixedColumnCount = 6,
+            firstItemFocusRequester = firstItemFocusRequester.takeIf { !listIsEmpty },
+            header = {
+                PersonalControlHeader(
+                    controlsState = controlsState,
+                    total = state.total,
+                    isLoading = state.isLoading,
+                    onSort = { openPanel = TvPersonalPanel.Sort },
+                    onFilter = { openPanel = TvPersonalPanel.Filter },
+                    onClearFilters = controls::clearFilters,
+                    sortPillFocusRequester = firstItemFocusRequester.takeIf { listIsEmpty },
+                )
+            },
+            emptyState = {
+                // Inside the grid, not over it: the pills have to stay
+                // reachable so a rejected filter can be changed (Codex).
+                val error = state.error
+                if (error != null) {
+                    TvErrorScreen(message = error, onRetry = onRetry)
+                } else {
                     EmptyState(
                         message = if (controlsState.facetSelection.hasActiveFilters) {
                             "No titles match the current filters."
@@ -513,9 +535,9 @@ private fun PersonalInlineGrid(
                         },
                         icon = emptyIcon,
                     )
-                },
-            )
-        }
+                }
+            },
+        )
     }
 
     PersonalControlPanels(

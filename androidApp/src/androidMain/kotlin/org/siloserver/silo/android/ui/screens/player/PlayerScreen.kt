@@ -747,6 +747,17 @@ fun PlayerScreen(
         viewModel.onMediaMountApplied(uiState.mediaMountGeneration)
     }
 
+    // A new mount leaves the previous item's frame in the SurfaceView until the
+    // new stream decodes its own, and its geometry describes that stale frame.
+    // Forgetting it gates the letterbox probe off until Media3 re-reports a
+    // video size — which it does as the new stream produces its first output —
+    // so the outgoing episode's matte can never settle, or be cached, under the
+    // incoming one's key. The PiP dimensions above are deliberately kept: they
+    // size a window that must not collapse mid-transition.
+    LaunchedEffect(uiState.mediaMountGeneration) {
+        codedVideoAspect = 0f
+    }
+
     // Mid-playback subtitle refresh (downloaded / AI-generated tracks).
     // Subtitle configs are baked into the MediaItem at build time, so when
     // refreshSubtitles merges new tracks it bumps subtitleRefreshNonce and we
@@ -1240,7 +1251,13 @@ fun PlayerScreen(
             // rotation (they are opposite edges in the two landscapes), and it
             // accounts for waterfall edges and multiple cutouts too.
             val layoutDirection = LocalLayoutDirection.current
-            val cutoutSideInsetPx = if (letterboxExpansion == LetterboxExpansion.ClearOfCamera) {
+            // Fill and Stretch are the user asking for the whole display, camera
+            // and all, exactly as they are excluded from expansion below — so
+            // they are not insetted either.
+            val explicitFullScreenGravity = videoGravity == "fill" || videoGravity == "stretch"
+            val cutoutSideInsetPx = if (
+                letterboxExpansion == LetterboxExpansion.ClearOfCamera && !explicitFullScreenGravity
+            ) {
                 val cutout = WindowInsets.displayCutout
                 cutoutSafeHorizontalInset(
                     cutoutLeftPx = cutout.getLeft(density, layoutDirection),
@@ -1259,15 +1276,23 @@ fun PlayerScreen(
             val letterboxContentAspect = rememberLetterboxContentAspect(
                 playerView = playerViewRef,
                 enabled = letterboxExpansion != LetterboxExpansion.Off &&
-                    videoGravity != "fill" &&
-                    videoGravity != "stretch" &&
+                    !explicitFullScreenGravity &&
                     !isInPictureInPictureMode &&
                     !castState.isConnected &&
                     !useTabletopPlayerLayout,
                 videoAspect = codedVideoAspect,
                 mediaKey = uiState.mediaMountGeneration,
                 cacheKey = letterboxMatteCacheKey(
-                    serverUrl = uiState.serverUrl,
+                    // Downloads carry no server URL by design, and content and
+                    // media-file ids are server-scoped, so keying them on the
+                    // rest of the tuple alone would let two servers' downloads
+                    // share an entry. The local URI names those stored bytes
+                    // exactly, and is stable across plays of the download.
+                    origin = uiState.serverUrl.ifBlank {
+                        uiState.streamUrl
+                            ?.takeIf { it.startsWith("file://") || it.startsWith("content://") }
+                            .orEmpty()
+                    },
                     contentId = uiState.contentId,
                     mediaFileId = uiState.mediaFileId,
                     codedWidth = pictureInPictureVideoWidth,

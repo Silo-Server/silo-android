@@ -1,11 +1,18 @@
 package org.siloserver.silo.tv.ui.screens.settings.diagnostics
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -15,21 +22,33 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
 import org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode
 import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsUiState
 import org.siloserver.silo.common.diagnostics.TimedCaptureStatus
 import org.siloserver.silo.tv.ui.focus.TvControlState
+import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
+import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.tvControlSemantics
+import org.siloserver.silo.tv.ui.screens.auth.QrCodePanel
 import org.siloserver.silo.tv.ui.screens.settings.PickerOption
 import org.siloserver.silo.tv.ui.screens.settings.SettingsActionRow
 import org.siloserver.silo.tv.ui.screens.settings.SettingsFooterText
@@ -119,6 +138,7 @@ internal fun TvDiagnosticsSettingsPane(
 
     var activePicker by remember { mutableStateOf<TvDiagnosticsPicker?>(null) }
     var confirmAlways by remember { mutableStateOf(false) }
+    var showPrivacyPolicy by remember { mutableStateOf(false) }
     val model = tvDiagnosticsScreenModel(state)
     val effectiveConsent = tvDiagnosticsEffectiveConsent(state.consent, state.allowsAutomaticUpload)
     val debugLoggingApplies = state.consent != DiagnosticsConsentMode.NEVER
@@ -235,6 +255,16 @@ internal fun TvDiagnosticsSettingsPane(
                     },
                     modifier = Modifier.onSizeChanged { privacyFooterPx = it.height },
                 )
+                if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                    // The address alone is not reachable with a remote: footer
+                    // text is deliberately outside the focus graph, so it can
+                    // neither be activated nor copied. Keep the action row the
+                    // hosted consent surface used to have.
+                    SettingsActionRow(
+                        label = "Privacy Policy",
+                        onClick = { showPrivacyPolicy = true },
+                    )
+                }
             }
         }
         item {
@@ -363,6 +393,74 @@ internal fun TvDiagnosticsSettingsPane(
             },
             onDismiss = { confirmAlways = false },
         )
+    }
+
+    if (showPrivacyPolicy) {
+        TvPrivacyPolicyDialog(onDismiss = { showPrivacyPolicy = false })
+    }
+}
+
+/**
+ * The policy itself is a web page, and an Android TV box is not guaranteed to
+ * have a browser — nor is a TV a comfortable place to read one. So the action
+ * hands the address to a device that is: the same QR idiom the login and
+ * pairing screens use, with the URL spelled out for anyone typing it manually.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvPrivacyPolicyDialog(onDismiss: () -> Unit) {
+    BackHandler(onBack = onDismiss)
+    val closeFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        // Relocation, not acquisition: the dialog window already holds focus,
+        // so a miss only costs the viewer a Back press instead of a Select.
+        repeat(TvFrameRelocationMaxAttempts) {
+            withFrameNanos { }
+            if (closeFocus.claimFocusOrReport(target = "privacy_policy", action = "open")) {
+                return@LaunchedEffect
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.86f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(360.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Privacy Policy",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = "Scan this code with your phone, or type the address below, to read " +
+                        "the full policy.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                QrCodePanel(content = PRIVACY_POLICY_URL, size = 160.dp)
+                Text(
+                    text = PRIVACY_POLICY_URL,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                SettingsActionRow(
+                    label = "Done",
+                    onClick = onDismiss,
+                    focusRequester = closeFocus,
+                )
+            }
+        }
     }
 }
 

@@ -3,12 +3,15 @@ package org.siloserver.silo.common.ui.components
 import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.network.ServerRegistry
 import org.koin.core.context.GlobalContext
@@ -249,19 +252,48 @@ class ProfileAvatarImage internal constructor(
  * instant the signature ages out would discard a perfectly good cached bitmap.
  * A fresh URL arrives with the next `GET /profiles` — on screen re-entry, a
  * profile switch, or relaunch — and clears the failure flag automatically.
+ *
+ * A failure is also not assumed permanent. A DiceBear/CDN blip or a dropped
+ * connection retires a URL that is otherwise perfectly good, and a stable URL
+ * on an always-composed surface (the TV shell avatar) would otherwise never be
+ * requested again for the life of the process. Failures are therefore retried
+ * on the [avatarRetryDelaysMs] backoff before the avatar settles into initials.
  */
 @Composable
 fun rememberProfileAvatarImage(avatar: ProfileAvatarRef): ProfileAvatarImage? {
     val serverUrl = rememberProfileServerUrl()
     val resolved = remember(avatar, serverUrl) { resolveProfileAvatar(serverUrl, avatar) }
     // Keyed on `resolved`, so any newly-signed URL starts trusted again.
+    var failureCount by remember(resolved) { mutableIntStateOf(0) }
     var loadFailed by remember(resolved) { mutableStateOf(false) }
+
+    val retryDelayMs = avatarRetryDelaysMs.getOrNull(failureCount - 1)
+    if (loadFailed && retryDelayMs != null) {
+        LaunchedEffect(resolved, failureCount) {
+            delay(retryDelayMs)
+            loadFailed = false
+        }
+    }
+
     return remember(resolved, loadFailed) {
         resolved
             ?.takeUnless { loadFailed }
-            ?.let { ProfileAvatarImage(it.url, it.cacheKey) { loadFailed = true } }
+            ?.let {
+                ProfileAvatarImage(it.url, it.cacheKey) {
+                    failureCount++
+                    loadFailed = true
+                }
+            }
     }
 }
+
+/**
+ * How long to wait before re-requesting an avatar that failed to load, per
+ * attempt. Bounded on purpose: a genuinely broken ref settles into initials
+ * after the last entry instead of re-requesting forever, while one that failed
+ * during an outage recovers on its own once the network is back.
+ */
+private val avatarRetryDelaysMs = listOf(5_000L, 20_000L, 60_000L)
 
 fun String.profileInitials(): String {
     val trimmed = trim()

@@ -119,10 +119,12 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
         /**
          * Sort keys for a library collection's detail grid. Leads with
          * [CollectionOrder] because that is the collection's own curation and
-         * the state the page opens in.
+         * the state the page opens in; the rest follow the owning library's
+         * media type, so an audiobook collection offers Author/Narrator/Series
+         * rather than the video-only Year/Rating/Resolution keys (Codex).
          */
-        fun availableForCollection(): List<TvLibrarySortOption> =
-            listOf(CollectionOrder, Title, ReleaseDate, DateAdded, Rating, Runtime)
+        fun availableForCollection(libraryType: String): List<TvLibrarySortOption> =
+            listOf(CollectionOrder) + availableFor(libraryType)
 
         /**
          * Sort keys for a personal list (favorites / watchlist). Leads with
