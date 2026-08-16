@@ -58,8 +58,8 @@ class SubtitleBitmapCueAppearanceTest {
             titleSafeFraction = 0f,
         )
 
-        // Bottom padding 0.01 => bottom edge at 0.99, top (START anchor) at 0.89.
-        assertEquals(0.89f, remapped.line, absoluteTolerance = 1e-4f)
+        // Bottom padding 0.06 (no title-safe inset) => bottom edge at 0.94, top (START anchor) at 0.84.
+        assertEquals(0.84f, remapped.line, absoluteTolerance = 1e-4f)
         assertEquals(Cue.LINE_TYPE_FRACTION, remapped.lineType)
     }
 
@@ -70,7 +70,7 @@ class SubtitleBitmapCueAppearanceTest {
         val lowerThird = remapBitmapCue(cue, appearance(SubtitlePositionPreset.LowerThird), 0f).line
         val top = remapBitmapCue(cue, appearance(SubtitlePositionPreset.Top), 0f).line
 
-        assertEquals(0.89f, bottom, absoluteTolerance = 1e-4f)
+        assertEquals(0.84f, bottom, absoluteTolerance = 1e-4f)
         assertEquals(0.72f, lowerThird, absoluteTolerance = 1e-4f)
         // Top is anchored from the top, not derived from a bottom padding.
         assertEquals(SUBTITLE_TOP_LINE_FRACTION, top, absoluteTolerance = 1e-4f)
@@ -85,8 +85,8 @@ class SubtitleBitmapCueAppearanceTest {
             titleSafeFraction = 0.05f,
         )
 
-        // (0.01 - 0.05) / 0.90 is negative, so the correction floors at 0.01.
-        val padding = MIN_SUBTITLE_BOTTOM_PADDING
+        // Physical 6% inside a 5% title-safe inset: (0.06 - 0.05) / 0.90.
+        val padding = (0.06f - 0.05f) / 0.90f
         assertEquals(1f - padding - 0.1f, remapped.line, absoluteTolerance = 1e-4f)
     }
 
@@ -170,8 +170,8 @@ class SubtitleBitmapCueAppearanceTest {
         assertEquals(Cue.ANCHOR_TYPE_END, end.lineAnchor)
         // Authored span 0.2..0.8 (centre 0.5); END anchor reports the right edge.
         assertEquals(0.5f + (0.6f * 1.15f) / 2f, end.position, absoluteTolerance = 1e-4f)
-        // END line anchor reports the bottom edge, which is 1 - 0.01.
-        assertEquals(0.99f, end.line, absoluteTolerance = 1e-4f)
+        // END line anchor reports the bottom edge, which is 1 - 0.06.
+        assertEquals(0.94f, end.line, absoluteTolerance = 1e-4f)
 
         val middle = remapBitmapCue(
             cue = pgsCue(
@@ -185,7 +185,7 @@ class SubtitleBitmapCueAppearanceTest {
             titleSafeFraction = 0f,
         )
         assertEquals(0.5f, middle.position, absoluteTolerance = 1e-4f)
-        assertEquals(0.99f - 0.05f, middle.line, absoluteTolerance = 1e-4f)
+        assertEquals(0.94f - 0.05f, middle.line, absoluteTolerance = 1e-4f)
     }
 
     @Test
@@ -201,7 +201,7 @@ class SubtitleBitmapCueAppearanceTest {
         val remapped = remapBitmapCue(cue, appearance(), titleSafeFraction = 0f)
 
         assertEquals(Cue.LINE_TYPE_FRACTION, remapped.lineType)
-        assertEquals(0.89f, remapped.line, absoluteTolerance = 1e-4f)
+        assertEquals(0.84f, remapped.line, absoluteTolerance = 1e-4f)
         assertEquals(0.2f, remapped.position, absoluteTolerance = 1e-4f)
     }
 

@@ -683,19 +683,21 @@ internal fun subtitleBottomPaddingFraction(
     position: SubtitlePositionPreset,
     titleSafeFraction: Float,
 ): Float {
+    // PHYSICAL fractions of the frame height, measured from the frame edge —
+    // the same on every presentation. Bottom ~6% (tvOS client: ~60px on
+    // 1080; SMPTE ST 2046-1 title-safe is 5%), Lower Third ~18%.
     val base = when (position) {
-        SubtitlePositionPreset.Bottom -> 0.01f
+        SubtitlePositionPreset.Bottom -> 0.06f
         SubtitlePositionPreset.LowerThird -> 0.18f
         SubtitlePositionPreset.Top -> 0.74f
     }
     // The title-safe inset moves the subtitle surface in by f on both
-    // edges, leaving a height of (1 - 2f). Preserve the original physical
-    // preset by solving f + p(1 - 2f) = base for the new padding p.
+    // edges, leaving a height of (1 - 2f). Preserve the physical preset by
+    // solving f + p(1 - 2f) = base for the padding p inside the canvas. On
+    // the phone f is 0 and the base applies raw; on television (f = 0.05)
+    // Bottom becomes ~1% of the canvas, which lands the text ~6% up the frame.
     val remainingScale = 1f - 2f * titleSafeFraction
     if (remainingScale <= 0f) return base
-    // Bottom's reference is inside the title-safe inset, so the correction goes
-    // negative there and the floor is what actually places it: one percent of
-    // the canvas, which on television lands the text ~6% up the frame.
     return ((base - titleSafeFraction) / remainingScale).coerceAtLeast(MIN_SUBTITLE_BOTTOM_PADDING)
 }
 
