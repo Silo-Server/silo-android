@@ -54,6 +54,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.CastMember
+import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 
@@ -111,6 +112,7 @@ fun TvCastCrewSection(
             modifier = Modifier.padding(horizontal = horizontalContentPadding),
         )
 
+        TvRailScrollBehavior(leading = horizontalContentPadding) {
         LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
@@ -186,6 +188,7 @@ fun TvCastCrewSection(
                     onClick = { onCastMemberClick(index, member) },
                 )
             }
+        }
         }
     }
 }

@@ -61,6 +61,7 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
 import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
+import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
@@ -118,6 +119,7 @@ internal fun TvDetailEpisodeRail(
         listState.animateScrollBy(itemCenter - viewportCenter)
     }
 
+    TvRailScrollBehavior(leading = Spacing.safeArea) {
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
@@ -169,6 +171,7 @@ internal fun TvDetailEpisodeRail(
                 },
             )
         }
+    }
     }
 }
 

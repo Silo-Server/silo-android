@@ -29,6 +29,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
+import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.Spacing
 
 /** Visual style of cards inside a [TvMediaRow]. */
@@ -186,6 +187,7 @@ fun TvMediaRow(
                 modifier = Modifier.padding(start = startPadding, end = endPadding),
             )
         }
+        TvRailScrollBehavior(leading = startPadding) {
         LazyRow(
             state = rowState,
             // focusRestorer remembers the last-focused card inside this row.
@@ -346,6 +348,7 @@ fun TvMediaRow(
                     }
                 }
             }
+        }
         }
     }
 }
