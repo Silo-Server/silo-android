@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -55,6 +56,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -96,15 +99,27 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 
-private val HudMaxWidth = 680.dp
-private val HudMinHeight = 290.dp
-private val HudMaxHeight = 360.dp
-private val HudPanelCorner = 18.dp
-private val HudPanelPadding = 22.dp
-private val HudContentGap = 14.dp
-private val HudTabHeight = 40.dp
-private val HudPaneBottomPadding = 14.dp
-private val HudPaneColumnGap = 32.dp
+// Geometry follows tvOS TVPlayerInfoHUD at the 0.5x point→dp map, adjusted for
+// Android's larger body type: the card is WIDE and SHORT (tvOS 1100×380pt on a
+// 1920×1080 canvas — 57% × 35%), with the tab rail floating above it on the
+// video rather than inside it. The previous card was 51% × 67% as rendered — a
+// portrait slab on a landscape screen, sitting on faces.
+private val HudWidthFraction = 0.74f
+private val HudMaxWidth = 720.dp
+/**
+ * Card height wraps the pane between these bounds. A fixed 360dp height left
+ * Audio (two rows) and Stats (nine) as the same 60%-empty slab; wrapping lets
+ * a two-row pane be a two-row card. The max keeps long panes scrolling inside
+ * the card rather than growing it down over the transport.
+ */
+private val HudCardMinHeight = 156.dp
+private val HudCardMaxHeight = 300.dp
+private val HudPanelCorner = 16.dp
+private val HudPanelPadding = 20.dp
+private val HudTabCardGap = 12.dp
+private val HudTabHeight = 38.dp
+private val HudPaneBottomPadding = 4.dp
+private val HudPaneColumnGap = 36.dp
 private val HudTitleTextSize = 21.sp
 private val HudTitleLineHeight = 25.sp
 private val HudBodyTextSize = 16.sp
@@ -147,6 +162,7 @@ private val LocalHudPickerReturnFocus =
  * + scrolls to the selection, commits on Select and closes, and dismisses on
  * Back.
  */
+@OptIn(ExperimentalComposeUiApi::class) // focusProperties enter/exit
 @Composable
 internal fun TvPlayerHud(
     title: String,
@@ -224,6 +240,23 @@ internal fun TvPlayerHud(
     }
 
     val tabFocusRequesters = remember(tabs) { tabs.associateWith { FocusRequester() } }
+
+    // The pane's entry point: each pane attaches this to its first focusable
+    // row, and the card's custom `enter` sends a Down from the rail there.
+    // Only one pane is composed at a time, so one requester serves them all.
+    val paneEntryFocus = remember { FocusRequester() }
+    val activeVersion = fileVersions.firstOrNull { it.fileId == selectedFileId }
+        ?: fileVersions.firstOrNull()
+    // Whether the selected pane has a row the entry requester is attached to.
+    // Redirecting `enter` to an unattached requester cancels the move (and logs
+    // a Compose warning), so read-only panes and an all-disabled Audio pane
+    // fall back to the default search instead.
+    val paneEntryAvailable = when (selectedTab) {
+        HudTab.Video, HudTab.Subtitles -> true
+        HudTab.Audio -> activeVersion?.audioTracks.orEmpty().size > 1 || audioDelayEnabled
+        HudTab.Chapters -> chapters.isNotEmpty()
+        HudTab.Info, HudTab.Stats -> false
+    }
 
     // Preserve the user's current tab when the visible-tabs list changes (Stats /
     // Audio / Chapters arriving asynchronously): only re-seed from initialTab when
@@ -308,20 +341,19 @@ internal fun TvPlayerHud(
     // screen's callback remains responsible for dismissing the HUD itself.
     BackHandler(enabled = activePicker != null) { closePicker() }
 
-    // Top-center card. No full-screen scrim — the video stays visible behind it.
+    // Top-center: a floating tab rail over the video, and a card beneath it
+    // holding only the pane — the TVPlayerInfoHUD composition. No full-screen
+    // scrim; the picture stays visible.
+    //
+    // fillMaxWidth BEFORE widthIn. Chained the other way round, fillMaxWidth
+    // sees the already-capped max and takes its fraction of THAT: 0.72 × 680 =
+    // 490dp, which is what actually rendered — narrow enough to clip the tab
+    // rail ("Chap…") and cramp every two-column pane.
     Box(
         modifier = modifier
             .onFocusChanged { hudHasFocus = it.hasFocus }
+            .fillMaxWidth(HudWidthFraction)
             .widthIn(max = HudMaxWidth)
-            .fillMaxWidth(0.72f)
-            .heightIn(min = HudMinHeight, max = HudMaxHeight)
-            .clip(RoundedCornerShape(HudPanelCorner))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
-            .border(
-                width = 0.5.dp,
-                color = Color.White.copy(alpha = 0.14f),
-                shape = RoundedCornerShape(HudPanelCorner),
-            )
             .onPreviewKeyEvent { ev ->
                 if (ev.key != Key.Back && ev.key != Key.Escape) return@onPreviewKeyEvent false
                 TvFocusLog.d { "hud key BACK type=${ev.type} picker=${activePicker != null}" }
@@ -349,21 +381,21 @@ internal fun TvPlayerHud(
                     }
                     else -> false
                 }
-            }
-            .padding(HudPanelPadding),
+            },
     ) {
         CompositionLocalProvider(LocalHudPickerReturnFocus provides registerPickerReturnFocus) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .graphicsLayer { alpha = if (activePicker != null) 0.28f else 1f },
-            verticalArrangement = Arrangement.spacedBy(HudContentGap),
+            verticalArrangement = Arrangement.spacedBy(HudTabCardGap),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // Horizontal pill tab bar at the top.
+            // Floating tab rail. Centred like the tvOS HStack; the scroll is a
+            // safety net for very long localised labels — at this width the six
+            // English tabs fit with room.
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 tabs.forEach { tab ->
@@ -381,8 +413,62 @@ internal fun TvPlayerHud(
                 }
             }
 
-            // Content pane below the tab bar.
-            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            // The card: wraps its pane between the height bounds, so a
+            // two-row Audio pane is a two-row card and a nine-row Stats pane
+            // scrolls inside a full one. Shadow sits outside the clip.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = HudCardMinHeight, max = HudCardMaxHeight)
+                    .animateContentSize(animationSpec = tween(160))
+                    // The card is a focus group so the rail↔pane hand-offs are
+                    // deliberate rather than geometric. Compose picks a 2D
+                    // candidate first and only then consults these on the
+                    // groups being entered/left, so both redirects apply to
+                    // every row regardless of which control was "nearest".
+                    .focusProperties {
+                        // Down from a pill lands on the pane's FIRST row — the
+                        // top-left control — not whichever swatch or row happens
+                        // to sit under that pill.
+                        enter = { direction ->
+                            if (direction == FocusDirection.Down && paneEntryAvailable) {
+                                paneEntryFocus
+                            } else {
+                                FocusRequester.Default
+                            }
+                        }
+                        // Up out of the pane returns to the SELECTED pill. With
+                        // focus-driven selection, the nearest pill would switch
+                        // panes as a side effect of leaving (tvOS: defaultFocus
+                        // on activeTab, for the same reason).
+                        exit = { direction ->
+                            if (direction == FocusDirection.Up) {
+                                tabFocusRequesters[selectedTab] ?: FocusRequester.Default
+                            } else {
+                                FocusRequester.Default
+                            }
+                        }
+                    }
+                    .focusGroup()
+                    .shadow(
+                        elevation = 14.dp,
+                        shape = RoundedCornerShape(HudPanelCorner),
+                        ambientColor = Color.Black.copy(alpha = 0.6f),
+                        spotColor = Color.Black.copy(alpha = 0.6f),
+                    )
+                    .clip(RoundedCornerShape(HudPanelCorner))
+                    // Near-opaque. The picture showing through the card read as
+                    // "glass" but cost legibility over bright or busy frames —
+                    // and this is a settings surface people squint at from the
+                    // sofa. Keep the video visible AROUND the card, not through it.
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
+                    .border(
+                        width = 0.5.dp,
+                        color = Color.White.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(HudPanelCorner),
+                    )
+                    .padding(HudPanelPadding),
+            ) {
                 when (selectedTab) {
                     HudTab.Info -> HudPaneViewport {
                         HudInfoPane(
@@ -420,6 +506,7 @@ internal fun TvPlayerHud(
                         onAutoSkipIntroChanged = onAutoSkipIntroChanged,
                         autoPlayNext = autoPlayNext,
                         onAutoPlayNextChanged = onAutoPlayNextChanged,
+                        entryFocusRequester = paneEntryFocus,
                         enabled = activePicker == null,
                         onPresentPicker = presentPicker,
                     )
@@ -429,8 +516,7 @@ internal fun TvPlayerHud(
                         // shows what this stream delivered, which a transcode
                         // collapses to one -- that disabled the row outright and
                         // made audio unswitchable for the whole session.
-                        activeVersion = fileVersions.firstOrNull { it.fileId == selectedFileId }
-                            ?: fileVersions.firstOrNull(),
+                        activeVersion = activeVersion,
                         // A locally-confirmed choice is the viewer's answer;
                         // the plan only names what the server last delivered.
                         planAudioOrdinal = desiredAudioOrdinal
@@ -442,6 +528,8 @@ internal fun TvPlayerHud(
                         audioDelayMs = audioDelayMs,
                         audioDelayEnabled = audioDelayEnabled,
                         onAudioDelayChanged = onAudioDelayChanged,
+                        stats = stats,
+                        entryFocusRequester = paneEntryFocus,
                         enabled = activePicker == null,
                         onPresentPicker = presentPicker,
                     )
@@ -455,6 +543,7 @@ internal fun TvPlayerHud(
                         onPaneShown = onSubtitlesPaneShown,
                         onSearchSubtitles = onSearchSubtitles,
                         onTranslateWithAi = onTranslateWithAi,
+                        entryFocusRequester = paneEntryFocus,
                         enabled = activePicker == null,
                         onPresentPicker = presentPicker,
                     )
@@ -462,6 +551,7 @@ internal fun TvPlayerHud(
                         HudChaptersPane(
                             chapters = chapters,
                             onSelectChapter = onSelectChapter,
+                            entryFocusRequester = paneEntryFocus,
                         )
                     }
                 }
@@ -469,11 +559,13 @@ internal fun TvPlayerHud(
         }
         }
 
-        // Centered modal picker dialog, drawn on top of the dimmed panes.
+        // Centered modal picker dialog, drawn on top of the dimmed rail + card.
+        // matchParentSize, not fillMaxSize: the HUD box now wraps its content,
+        // so a fillMaxSize child would see an unbounded height and not stretch.
         val picker = activePicker
         if (picker != null) {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.matchParentSize(),
                 contentAlignment = Alignment.Center,
             ) {
                 HudPickerDialog(
@@ -533,16 +625,25 @@ private fun HudTabPill(
         if (isFocused) onFocused()
     }
 
+    // The rail floats on the video, so an idle pill needs its own ground:
+    // tvOS HUDTabPillBody — black@0.45 fill with a white@0.18 hairline idle;
+    // solid white when selected; white@0.9 when merely focused. A white@0.06
+    // fill (the old idle) vanishes over a bright frame.
+    //
+    // Selection follows focus, so a focused pill is always the selected one.
+    // A selected pill that is NOT focused means focus is down in the pane —
+    // it dims to a marker so the one solid-white element on screen is the
+    // control you're actually on. (Deliberate departure from tvOS, which
+    // keeps the selected pill white throughout.)
     val bg = when {
-        isFocused -> Color.White.copy(alpha = 0.94f)
-        isSelected -> Color.White.copy(alpha = 0.18f)
-        else -> Color.White.copy(alpha = 0.06f)
+        isFocused -> Color.White
+        isSelected -> Color.White.copy(alpha = 0.22f)
+        // Firmer than tvOS's black@0.45: white type on 0.45 loses contrast
+        // over a bright frame, and the rail has no card behind it.
+        else -> Color.Black.copy(alpha = 0.62f)
     }
-    val fg = when {
-        isFocused -> Color.Black
-        isSelected -> Color.White
-        else -> Color.White.copy(alpha = 0.72f)
-    }
+    val fg = if (isFocused) Color.Black else Color.White
+    val stroke = if (isFocused || isSelected) Color.Transparent else Color.White.copy(alpha = 0.18f)
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.0f else 0.96f,
         animationSpec = tween(120),
@@ -553,11 +654,12 @@ private fun HudTabPill(
         modifier = Modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .height(HudTabHeight)
-            .clip(RoundedCornerShape(25.dp))
+            .clip(RoundedCornerShape(50))
             .background(bg)
+            .border(width = 0.5.dp, color = stroke, shape = RoundedCornerShape(50))
             .focusRequester(focusRequester)
             .focusable(enabled = enabled, interactionSource = interactionSource)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 18.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -579,7 +681,7 @@ private fun HudPaneViewport(
 ) {
     Column(
         modifier = modifier
-            .fillMaxSize()
+            .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(bottom = HudPaneBottomPadding),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -638,8 +740,11 @@ private fun HudInfoPane(
                 it.effectiveMediaFileId != null &&
                 it.requestedMediaFileId != it.effectiveMediaFileId
         }?.let { add("Source" to "Alternate version") }
-        stats.videoCodec?.let { add("Video" to it.uppercase()) }
-        stats.audioCodec?.let { add("Audio" to it.uppercase()) }
+        // Names people know, not shouted mimes: "H.264" rather than
+        // "AVC1.640029", "DTS-HD" rather than "AUDIO/VND.DTS.HD". Stats keeps
+        // the raw strings for anyone who needs them.
+        videoCodecShortName(stats.videoCodec)?.let { add("Video" to it) }
+        audioFormatShortName(stats.audioCodec)?.let { add("Audio" to it) }
         val sub = subtitleTracks.firstOrNull { it.isSelected }
         // Built label ("Danish SRT (External)") via the mounted row — the raw
         // Media3 displayLabel echoes sidecar filenames.
@@ -723,6 +828,23 @@ private fun HudInfoPane(
             }
         },
     )
+}
+
+/** Media3 video codec ids / mimes → the short names users know. */
+private fun videoCodecShortName(codecOrMime: String?): String? {
+    val raw = codecOrMime?.trim()?.lowercase(java.util.Locale.US)?.takeIf { it.isNotBlank() } ?: return null
+    val id = raw.substringAfterLast('/')
+    return when {
+        id.startsWith("avc") || id == "h264" -> "H.264"
+        id.startsWith("hev") || id.startsWith("hvc") || id == "hevc" || id == "h265" -> "HEVC"
+        id.startsWith("dvh") || id.startsWith("dva") -> "Dolby Vision"
+        id.startsWith("av01") || id == "av1" -> "AV1"
+        id.startsWith("vp09") || id == "vp9" || id == "x-vnd.on2.vp9" -> "VP9"
+        id.startsWith("vp08") || id == "vp8" -> "VP8"
+        id.startsWith("mp4v") || id == "mpeg4" -> "MPEG-4"
+        id == "mpeg2" || id == "mpeg2video" -> "MPEG-2"
+        else -> id.substringBefore('.').uppercase(java.util.Locale.US).take(12)
+    }
 }
 
 private fun PlaybackExecutionPlan?.validatedHdrBadge(): String? {
@@ -813,29 +935,20 @@ private fun HudStatsPane(stats: PlayerStatsSnapshot, modifier: Modifier = Modifi
         return
     }
 
-    Column(
+    // Two columns, filled top-to-bottom then across, so nine rows read as a
+    // 5+4 grid instead of a single column stretched over the full card width
+    // with each value 500dp from its label.
+    val split = (rows.size + 1) / 2
+    Row(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
     ) {
-        rows.forEach { (label, value) ->
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = label,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = HudBodyTextSize,
-                        lineHeight = HudBodyLineHeight,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = HudBodyTextSize,
-                        lineHeight = HudBodyLineHeight,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+        listOf(rows.take(split), rows.drop(split)).forEach { column ->
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                column.forEach { (label, value) -> LabelValueRow(label = label, value = value) }
             }
         }
     }
@@ -919,12 +1032,23 @@ private fun HudVideoPane(
     onAutoSkipIntroChanged: (Boolean) -> Unit,
     autoPlayNext: Boolean,
     onAutoPlayNextChanged: (Boolean) -> Unit,
+    entryFocusRequester: FocusRequester,
     enabled: Boolean,
     onPresentPicker: (HudPickerPresentation) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Which row carries the pane's entry requester: the first row that is
+    // actually focusable. A disabled row is not focusable, so pointing the
+    // requester at it would cancel the move in from the rail.
+    val hasVersionRow = fileVersions.size > 1
+    val hasQualityRow = videoQualities.size > 1
+    val entryRow = when {
+        hasVersionRow -> "version"
+        hasQualityRow -> "quality"
+        else -> "speed"
+    }
     Row(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
     ) {
         // Playback column — Quality / Speed / Aspect / HDR + auto toggles.
@@ -954,6 +1078,7 @@ private fun HudVideoPane(
                         value = org.siloserver.silo.tv.ui.screens.detail.TvPlaybackFormatting
                             .versionShortLabel(currentVersion),
                         enabled = enabled,
+                        entryFocusRequester = entryFocusRequester.takeIf { entryRow == "version" },
                         onActivate = {
                             onPresentPicker(
                                 HudPickerPresentation(
@@ -988,6 +1113,7 @@ private fun HudVideoPane(
                     label = "Quality",
                     value = qualityValue,
                     enabled = enabled && hasQualityChoice,
+                    entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
                     onActivate = {
                         onPresentPicker(
                             HudPickerPresentation(
@@ -1006,6 +1132,7 @@ private fun HudVideoPane(
                     label = "Speed",
                     value = formatTvPlaybackSpeed(playbackSpeed),
                     enabled = enabled,
+                    entryFocusRequester = entryFocusRequester.takeIf { entryRow == "speed" },
                     onActivate = {
                         onPresentPicker(
                             HudPickerPresentation(
@@ -1043,111 +1170,94 @@ private fun HudVideoPane(
                         )
                     },
                 )
-
-                HudFocusedSettingRow(
-                    label = "HDR passthrough",
-                    value = onOffLabel(hdrEnabled),
-                    enabled = enabled,
-                    onActivate = {
-                        onPresentPicker(
-                            boolPicker(
-                                title = "HDR Passthrough",
-                                value = hdrEnabled,
-                                onSet = onHdrEnabledChanged,
-                            ),
-                        )
-                    },
-                )
-
-                // Off plays DV sources as their base layer (HDR10) — some
-                // users prefer HDR10 even on DV-capable displays. Profile 5
-                // always plays as DV (no watchable base layer); applies from
-                // the next playback start. Apple parity (silo-apple e9bd775).
-                HudFocusedSettingRow(
-                    label = "Dolby Vision",
-                    value = onOffLabel(dolbyVisionEnabled),
-                    enabled = enabled,
-                    onActivate = {
-                        onPresentPicker(
-                            boolPicker(
-                                title = "Dolby Vision",
-                                value = dolbyVisionEnabled,
-                                onSet = onDolbyVisionEnabledChanged,
-                            ),
-                        )
-                    },
-                )
-
-                HudFocusedSettingRow(
-                    label = "Auto-skip intro",
-                    value = onOffLabel(autoSkipIntro),
-                    enabled = enabled,
-                    onActivate = {
-                        onPresentPicker(
-                            boolPicker(
-                                title = "Auto-skip Intro",
-                                value = autoSkipIntro,
-                                onSet = onAutoSkipIntroChanged,
-                            ),
-                        )
-                    },
-                )
-
-                HudFocusedSettingRow(
-                    label = "Auto-play next",
-                    value = onOffLabel(autoPlayNext),
-                    enabled = enabled,
-                    onActivate = {
-                        onPresentPicker(
-                            boolPicker(
-                                title = "Auto-play Next",
-                                value = autoPlayNext,
-                                onSet = onAutoPlayNextChanged,
-                            ),
-                        )
-                    },
-                )
             }
         }
 
-        // Sync / timing column.
-        PaneColumn(
-            "Timers",
+        // Right column: what the device does with the picture, then what the
+        // player does on its own. Previously the left column carried eight
+        // rows against a lone Sleep timer here — the pane scrolled while
+        // half the card sat empty.
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            val activeSleep = sleepTimerState as? SleepTimerState.Active
-            HudFocusedSettingRow(
-                label = "Sleep timer",
-                value = activeSleep?.let { "Sleeping in ${formatSleepRemaining(it.remainingSeconds)}" } ?: "Off",
-                enabled = enabled,
-                onActivate = {
-                    onPresentPicker(
-                        HudPickerPresentation(
-                            title = "Sleep Timer",
-                            options = buildList {
-                                if (activeSleep != null) {
-                                    add(HudPickerOption("cancel", "Cancel timer"))
-                                }
-                                add(HudPickerOption("off", "Off"))
-                                addAll(
-                                    SLEEP_TIMER_PRESETS.map { minutes ->
-                                        HudPickerOption(minutes.toString(), sleepPresetLabel(minutes))
-                                    },
-                                )
-                            },
-                            selectedId = if (activeSleep != null) "cancel" else "off",
-                            onSelect = { id ->
-                                when (id) {
-                                    "cancel", "off" -> onCancelSleepTimer()
-                                    else -> id.toIntOrNull()?.let(onStartSleepTimer)
-                                }
-                            },
-                        ),
+            PaneColumn("Output") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    HudFocusedSettingRow(
+                        label = "HDR passthrough",
+                        value = onOffLabel(hdrEnabled),
+                        enabled = enabled,
+                        showsChevron = false,
+                        onActivate = { onHdrEnabledChanged(!hdrEnabled) },
                     )
-                },
-            )
+
+                    // Off plays DV sources as their base layer (HDR10) — some
+                    // users prefer HDR10 even on DV-capable displays. Profile 5
+                    // always plays as DV (no watchable base layer); applies from
+                    // the next playback start. Apple parity (silo-apple e9bd775).
+                    HudFocusedSettingRow(
+                        label = "Dolby Vision",
+                        value = onOffLabel(dolbyVisionEnabled),
+                        enabled = enabled,
+                        showsChevron = false,
+                        onActivate = { onDolbyVisionEnabledChanged(!dolbyVisionEnabled) },
+                    )
+                }
+            }
+
+            PaneColumn("Automation") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    HudFocusedSettingRow(
+                        label = "Auto-skip intro",
+                        value = onOffLabel(autoSkipIntro),
+                        enabled = enabled,
+                        showsChevron = false,
+                        onActivate = { onAutoSkipIntroChanged(!autoSkipIntro) },
+                    )
+
+                    HudFocusedSettingRow(
+                        label = "Auto-play next",
+                        value = onOffLabel(autoPlayNext),
+                        enabled = enabled,
+                        showsChevron = false,
+                        onActivate = { onAutoPlayNextChanged(!autoPlayNext) },
+                    )
+
+                    val activeSleep = sleepTimerState as? SleepTimerState.Active
+                    HudFocusedSettingRow(
+                        label = "Sleep timer",
+                        value = activeSleep?.let { "Sleeping in ${formatSleepRemaining(it.remainingSeconds)}" } ?: "Off",
+                        enabled = enabled,
+                        onActivate = {
+                            onPresentPicker(
+                                HudPickerPresentation(
+                                    title = "Sleep Timer",
+                                    options = buildList {
+                                        if (activeSleep != null) {
+                                            add(HudPickerOption("cancel", "Cancel timer"))
+                                        }
+                                        add(HudPickerOption("off", "Off"))
+                                        addAll(
+                                            SLEEP_TIMER_PRESETS.map { minutes ->
+                                                HudPickerOption(minutes.toString(), sleepPresetLabel(minutes))
+                                            },
+                                        )
+                                    },
+                                    selectedId = if (activeSleep != null) "cancel" else "off",
+                                    onSelect = { id ->
+                                        when (id) {
+                                            "cancel", "off" -> onCancelSleepTimer()
+                                            else -> id.toIntOrNull()?.let(onStartSleepTimer)
+                                        }
+                                    },
+                                ),
+                            )
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -1220,17 +1330,26 @@ private fun HudAudioPane(
     audioDelayMs: Int,
     audioDelayEnabled: Boolean,
     onAudioDelayChanged: (Int) -> Unit,
+    stats: PlayerStatsSnapshot,
+    entryFocusRequester: FocusRequester,
     enabled: Boolean,
     onPresentPicker: (HudPickerPresentation) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+    // Two columns like every other pane. A lone full-width column put the
+    // value 500dp from its label — "Audio track ……… English · DTS · 5.1" —
+    // and left the card two-thirds empty. The right column is read-only
+    // output facts the viewer would otherwise have to dig out of Stats.
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
     ) {
-        PaneColumn("Track") {
+        PaneColumn(
+            "Track",
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+        ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 val selectedTrack = audioTracks.firstOrNull { it.isSelected }
                 val catalogAudio = activeVersion?.audioTracks.orEmpty()
@@ -1240,8 +1359,12 @@ private fun HudAudioPane(
                     planOrdinal = planAudioOrdinal,
                     version = activeVersion,
                 )
+                // Entry lands on the first row that can take focus: the track
+                // row when there is a choice, else the delay row when PCM.
+                val trackSelectable = catalogAudio.size > 1
                 HudFocusedSettingRow(
                     label = "Audio track",
+                    entryFocusRequester = entryFocusRequester.takeIf { trackSelectable },
                     // SOURCE identity, from the catalog row the plan selected.
                     // The mounted Media3 track is the delivered representation,
                     // so a transcode showed "UND AAC Stereo" for what every
@@ -1291,8 +1414,10 @@ private fun HudAudioPane(
 
                 HudFocusedSettingRow(
                     label = "Delay (PCM only)",
-                    value = if (audioDelayEnabled) delayLabel(audioDelayMs) else "Unavailable during passthrough",
+                    // Output → Mode says why; the row itself just says it can't.
+                    value = if (audioDelayEnabled) delayLabel(audioDelayMs) else "Unavailable",
                     enabled = enabled && audioDelayEnabled,
+                    entryFocusRequester = entryFocusRequester.takeIf { !trackSelectable && audioDelayEnabled },
                     onActivate = {
                         onPresentPicker(
                             delayPicker(
@@ -1308,6 +1433,72 @@ private fun HudAudioPane(
                 )
             }
         }
+
+        // Output — what the device is actually doing with the track. Mode is
+        // the fact behind the delay row's "Unavailable during passthrough":
+        // bitstream passthrough hands the codec to the receiver untouched, so
+        // there is no PCM to delay.
+        val outputRows = buildList<Pair<String, String>> {
+            audioFormatShortName(stats.audioCodec)?.let { add("Codec" to it) }
+            add("Mode" to if (audioDelayEnabled) "Decoded to PCM" else "Passthrough")
+            stats.audioDecoderName
+                ?.takeIf { audioDelayEnabled }
+                ?.let { add("Decoder" to it.removePrefix("OMX.").removePrefix("c2.")) }
+        }
+        PaneColumn(
+            "Output",
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                outputRows.forEach { (label, value) ->
+                    // Same row metrics as the setting rows on the left, so the
+                    // two columns rule up; not focusable, nothing to open.
+                    HudReadOnlyRow(label = label, value = value)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A label/value row on the setting-row grid — same padding and type as
+ * [HudFocusedSettingRow], no focus, no chevron. For facts that sit beside
+ * settings and should line up with them.
+ */
+@Composable
+private fun HudReadOnlyRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = HudBodyTextSize,
+                lineHeight = HudBodyLineHeight,
+                fontWeight = FontWeight.Medium,
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = value,
+            color = Color.White.copy(alpha = 0.72f),
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = HudBodyTextSize,
+                lineHeight = HudBodyLineHeight,
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -1328,6 +1519,7 @@ private fun HudSubtitlesPane(
     onPaneShown: () -> Unit,
     onSearchSubtitles: (() -> Unit)?,
     onTranslateWithAi: (() -> Unit)?,
+    entryFocusRequester: FocusRequester,
     enabled: Boolean,
     onPresentPicker: (HudPickerPresentation) -> Unit,
     modifier: Modifier = Modifier,
@@ -1340,7 +1532,7 @@ private fun HudSubtitlesPane(
     val subtitleOutlineColorFocus = remember { FocusRequester() }
 
     Row(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(HudPaneColumnGap),
     ) {
         // Tracks + sync column.
@@ -1361,6 +1553,7 @@ private fun HudSubtitlesPane(
                         ?: "Off",
                     enabled = enabled,
                     focusRequester = subtitleTrackFocus,
+                    entryFocusRequester = entryFocusRequester,
                     rightFocusRequester = subtitleTextColorFocus,
                     onActivate = {
                         onPresentPicker(
@@ -1511,15 +1704,8 @@ private fun HudSubtitlesPane(
                     // composed when textOutline is on. Right-nav must not target a
                     // detached requester when it's off, so gate the target on it.
                     rightFocusRequester = subtitleOutlineColorFocus.takeIf { appearance.textOutline },
-                    onActivate = {
-                        onPresentPicker(
-                            boolPicker(
-                                title = "Text Outline",
-                                value = appearance.textOutline,
-                                onSet = { onAppearanceChanged(appearance.copy(textOutline = it)) },
-                            ),
-                        )
-                    },
+                    showsChevron = false,
+                    onActivate = { onAppearanceChanged(appearance.copy(textOutline = !appearance.textOutline)) },
                 )
 
                 HudFocusedSettingRow(
@@ -1911,7 +2097,8 @@ private fun formatBitrate(bps: Long): String = when {
 private fun HudEmptyStatePane(message: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .fillMaxSize()
+            .fillMaxWidth()
+            .heightIn(min = HudCardMinHeight - HudPanelPadding * 2)
             .padding(18.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -1931,6 +2118,7 @@ private fun HudEmptyStatePane(message: String, modifier: Modifier = Modifier) {
 private fun HudChaptersPane(
     chapters: List<VersionChapter>,
     onSelectChapter: (Int) -> Unit,
+    entryFocusRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     if (chapters.isEmpty()) {
@@ -1951,6 +2139,7 @@ private fun HudChaptersPane(
             HudChapterRow(
                 chapter = ch,
                 onSelect = { onSelectChapter(idx) },
+                focusRequester = entryFocusRequester.takeIf { idx == 0 },
             )
         }
     }
@@ -1960,6 +2149,7 @@ private fun HudChaptersPane(
 private fun HudChapterRow(
     chapter: VersionChapter,
     onSelect: () -> Unit,
+    focusRequester: FocusRequester? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1970,6 +2160,7 @@ private fun HudChapterRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
             .clickable(enabled = true, interactionSource = interactionSource, indication = null) { onSelect() }
@@ -2024,14 +2215,6 @@ internal data class HudPickerPresentation(
     val onSelect: (String) -> Unit,
 )
 
-private fun boolPicker(title: String, value: Boolean, onSet: (Boolean) -> Unit): HudPickerPresentation =
-    HudPickerPresentation(
-        title = title,
-        options = listOf(HudPickerOption("on", "On"), HudPickerOption("off", "Off")),
-        selectedId = if (value) "on" else "off",
-        onSelect = { onSet(it.equals("on", ignoreCase = true)) },
-    )
-
 private fun delayPicker(
     title: String,
     current: Int,
@@ -2063,8 +2246,19 @@ internal fun HudFocusedSettingRow(
     enabled: Boolean = true,
     colorHex: String? = null,
     focusRequester: FocusRequester? = null,
+    /**
+     * A second requester for the same row — the pane's entry point, which the
+     * HUD card's custom `enter` routes a Down from the rail to. Separate from
+     * [focusRequester] so a pane can keep its own handle on the row too.
+     */
+    entryFocusRequester: FocusRequester? = null,
     leftFocusRequester: FocusRequester? = null,
     rightFocusRequester: FocusRequester? = null,
+    /**
+     * False for a toggle row: Select flips the value in place, so there is no
+     * drill-in to advertise. Mirrors tvOS HUDToggleRow (showsChevron: false).
+     */
+    showsChevron: Boolean = true,
     onActivate: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -2086,6 +2280,7 @@ internal fun HudFocusedSettingRow(
             .fillMaxWidth()
             .focusRequester(selfFocusRequester)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .then(if (entryFocusRequester != null) Modifier.focusRequester(entryFocusRequester) else Modifier)
             .focusProperties {
                 if (leftFocusRequester != null) left = leftFocusRequester
                 if (rightFocusRequester != null) right = rightFocusRequester
@@ -2154,12 +2349,14 @@ internal fun HudFocusedSettingRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
-            Icon(
-                imageVector = Icons.Filled.ChevronRight,
-                contentDescription = null,
-                tint = chevronColor,
-                modifier = Modifier.size(11.dp),
-            )
+            if (showsChevron) {
+                Icon(
+                    imageVector = Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                    tint = chevronColor,
+                    modifier = Modifier.size(11.dp),
+                )
+            }
         }
     }
 }
