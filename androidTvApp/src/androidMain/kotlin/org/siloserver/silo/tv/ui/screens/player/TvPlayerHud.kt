@@ -90,6 +90,7 @@ import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
@@ -244,13 +245,17 @@ internal fun TvPlayerHud(
     // Seed focus on the active tab pill when the HUD first appears.
     LaunchedEffect(Unit) {
         tabFocusRequesters[selectedTab]?.let { requester ->
-            requestFocusUntilObserved(
+            val claimed = requestFocusUntilObserved(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
                 requestFocus = requester::requestFocus,
                 isFocused = { hudHasFocus },
             )
+            TvFocusLog.d { "hud initial focus claim tab=$selectedTab claimed=$claimed" }
         }
+    }
+    LaunchedEffect(hudHasFocus) {
+        TvFocusLog.d { "hud hasFocus=$hudHasFocus" }
     }
 
     // When a picker closes, return focus to the setting row that opened it rather
@@ -318,19 +323,31 @@ internal fun TvPlayerHud(
                 shape = RoundedCornerShape(HudPanelCorner),
             )
             .onPreviewKeyEvent { ev ->
-                if (ev.type == KeyEventType.KeyUp &&
-                    (ev.key == Key.Back || ev.key == Key.Escape)
-                ) {
-                    // Pre-Android-16 remote and keyboard fallback. System Back
-                    // uses the callbacks above and on TvPlayerScreen.
-                    if (activePicker != null) {
-                        activePicker = null
-                    } else {
-                        onDismiss()
+                if (ev.key != Key.Back && ev.key != Key.Escape) return@onPreviewKeyEvent false
+                TvFocusLog.d { "hud key BACK type=${ev.type} picker=${activePicker != null}" }
+                when (ev.type) {
+                    // Consume the DOWN too, not just the UP. Compose maps an
+                    // unconsumed Back/Escape KeyDown to FocusDirection.Exit
+                    // (FocusInteropUtils.toFocusDirection) and the root
+                    // AndroidComposeView runs a focus search on it — which
+                    // moves focus out of the HUD before the UP arrives. Key
+                    // events only route to the focused subtree, so the UP then
+                    // never reached this handler: the panel stayed up with no
+                    // focused pill, and it took a second press (unconsumed →
+                    // onBackPressed → BackHandler) to close it.
+                    KeyEventType.KeyDown -> true
+                    KeyEventType.KeyUp -> {
+                        // Pre-Android-16 remote and keyboard fallback. System
+                        // Back uses the callbacks above and on TvPlayerScreen.
+                        if (activePicker != null) {
+                            activePicker = null
+                        } else {
+                            TvFocusLog.d { "hud key BACK -> onDismiss" }
+                            onDismiss()
+                        }
+                        true
                     }
-                    true
-                } else {
-                    false
+                    else -> false
                 }
             }
             .padding(HudPanelPadding),

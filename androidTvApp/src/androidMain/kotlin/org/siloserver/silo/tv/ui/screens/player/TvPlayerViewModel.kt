@@ -4121,12 +4121,32 @@ class TvPlayerViewModel(
         }
     }
 
+    /**
+     * Whether the transport overlay was on screen when the HUD opened.
+     *
+     * [openHUD] forces `showControls` true, which is invisible while the HUD is
+     * up — the overlay is gated on `!hudOpen` — but closing has to put the
+     * chrome back the way it found it. Without this, a HUD opened from clean
+     * playback closed onto a transport overlay nobody asked for, and Back had
+     * to be pressed twice to get back to the picture.
+     */
+    private var controlsVisibleBeforeHud = false
+
     fun openHUD() {
+        // Only record on a real open. A second openHUD while the HUD is already
+        // up would otherwise capture the forced `true` and lose the real origin.
+        if (!_uiState.value.hudOpen) {
+            controlsVisibleBeforeHud = _uiState.value.showControls
+        }
+        Log.d(TAG, "hud open (controlsBefore=$controlsVisibleBeforeHud, wasOpen=${_uiState.value.hudOpen})")
         _uiState.update { it.copy(hudOpen = true, showSubtitleMenu = false, showControls = true) }
     }
 
     fun closeHUD() {
-        _uiState.update { it.copy(hudOpen = false) }
+        Log.d(TAG, "hud close (restoreControls=$controlsVisibleBeforeHud, wasOpen=${_uiState.value.hudOpen})")
+        _uiState.update {
+            it.copy(hudOpen = false, showControls = controlsVisibleBeforeHud)
+        }
     }
 
     fun openSubtitleMenu() {

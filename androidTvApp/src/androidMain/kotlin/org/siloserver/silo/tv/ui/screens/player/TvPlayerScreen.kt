@@ -143,6 +143,7 @@ import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.watchtogether.shouldNavigateToLocalNext
@@ -892,6 +893,11 @@ fun TvPlayerScreen(
     // remaining player-state ladder on Android 16, where KEYCODE_BACK is no
     // longer dispatched to apps targeting API 36.
     BackHandler {
+        TvFocusLog.d {
+            "player BackHandler hudOpen=${state.hudOpen} showControls=${state.showControls} " +
+                "scrubbing=${state.isScrubbing} quickSubs=$showQuickSubtitlePicker " +
+                "cleanSeek=$cleanSeekRate paused=${state.isPaused}"
+        }
         when {
             cleanSeekRate != 0 -> stopCleanPlaybackSeek()
             state.isScrubbing -> viewModel.cancelScrub()
@@ -925,6 +931,13 @@ fun TvPlayerScreen(
     DisposableEffect(viewModel, roomController) {
         val handler: (KeyEvent) -> Boolean = handler@{ event ->
             val playerState = viewModel.uiState.value
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                TvFocusLog.d {
+                    "player bridge BACK action=${event.action} hudOpen=${playerState.hudOpen} " +
+                        "showControls=${playerState.showControls} paused=${playerState.isPaused} " +
+                        "quickSubs=$latestShowQuickSubtitlePicker cleanSeek=$cleanSeekRate"
+                }
+            }
             if (playerState.streamUrl == null || playerState.isLoading || playerState.error != null) {
                 return@handler false
             }
