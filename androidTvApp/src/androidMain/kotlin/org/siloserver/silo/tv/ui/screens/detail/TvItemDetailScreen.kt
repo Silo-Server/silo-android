@@ -117,6 +117,8 @@ import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
+import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
+import org.siloserver.silo.tv.ui.navigation.explicitTvSubtitleLaunchSelection
 import org.siloserver.silo.tv.ui.components.TvDialogOption
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvHeroActionPill
@@ -144,7 +146,7 @@ import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 fun TvItemDetailScreen(
     contentId: String,
     seasonNumber: Int? = null,
-    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleTrackIndex: Int?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
+    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
     onItemDetailReplace: (contentId: String) -> Unit = onItemDetail,
     onSeriesClick: (seriesId: String) -> Unit,
@@ -218,7 +220,7 @@ private fun TvDetailContent(
     detail: ItemDetail,
     state: TvItemDetailUiState,
     viewModel: TvItemDetailViewModel,
-    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleTrackIndex: Int?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
+    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
     onItemDetailReplace: (contentId: String) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
@@ -649,7 +651,7 @@ private fun TvDetailContent(
                                         null,
                                         state.selectedAudioIndex,
                                         state.audioPickedThisSession,
-                                        state.selectedSubtitleIndex,
+                                        explicitTvSubtitleLaunchSelection(state.selectedSubtitleIndex),
                                         detail.type,
                                         track.startOffsetSeconds,
                                     )
@@ -899,7 +901,7 @@ private fun TvDetailContent(
                                 null,
                                 state.selectedAudioIndex,
                                 state.audioPickedThisSession,
-                                state.selectedSubtitleIndex,
+                                explicitTvSubtitleLaunchSelection(state.selectedSubtitleIndex),
                                 detail.type,
                                 chapter.startSeconds,
                             )
@@ -920,7 +922,7 @@ private fun HeroActionRow(
     viewModel: TvItemDetailViewModel,
     playFocus: FocusRequester,
     selectorFocus: FocusRequester,
-    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleTrackIndex: Int?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
+    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchTogether: (RoomSnapshot) -> Unit,
@@ -1022,6 +1024,27 @@ private fun HeroActionRow(
     }
     val selectedFileId = selectedVersion?.fileId
     val hasTrackOverride = selectorAudioIndex != null || selectorSubtitleIndex != null
+    // Exactly what the Subtitles pill is displaying — including the Auto
+    // preview — so playback starts on that track instead of re-deciding from
+    // the tracks Media3 happens to have mounted. Built from the SAME version
+    // and the SAME context the pill renders from.
+    val subtitleLaunchSelection = TvPlaybackFormatting.subtitleLaunchSelection(
+        version = selectedVersion,
+        selectedSubtitleTrackIndex = selectorSubtitleIndex,
+        // No displayed version means no displayed pill: stay silent and let the
+        // player resolve, rather than asserting an "Auto - None" nobody saw.
+        autoContext = selectedVersion?.let { version ->
+            TvPlaybackFormatting.SubtitleAutoContext(
+                preferredLanguage = state.preferredSubtitleLanguage,
+                mode = state.subtitleMode,
+                showForced = state.showForcedSubtitles,
+                audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
+                    version,
+                    selectorAudioIndex,
+                ),
+            )
+        },
+    )
     val playFileId = selectorSelectedFileId ?: selectedFileId.takeIf { hasTrackOverride }
     // The effective playable version drives the inline playback selector row.
     val isAudiobook = isAudiobookItemType(detail.type)
@@ -1075,7 +1098,7 @@ private fun HeroActionRow(
                         playLaunchPending = true
                         onPlay(
                             playContentId, playFileId,
-                            selectorAudioIndex, selectorAudioPicked, selectorSubtitleIndex,
+                            selectorAudioIndex, selectorAudioPicked, subtitleLaunchSelection,
                             playType, resumePosition,
                         )
                     }
@@ -1094,7 +1117,7 @@ private fun HeroActionRow(
                             playLaunchPending = true
                             onPlay(
                                 playContentId, playFileId,
-                                selectorAudioIndex, selectorAudioPicked, selectorSubtitleIndex,
+                                selectorAudioIndex, selectorAudioPicked, subtitleLaunchSelection,
                                 playType, 0.0,
                             )
                         }

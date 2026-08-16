@@ -98,8 +98,15 @@ sealed class TvRoute(val route: String) {
          * whether the choice carries to the next episode.
          */
         val audioPickedThisSession: Boolean = false,
-        /** Pre-selected subtitle track index (0-based; -1 = Off). */
+        /** Pre-selected subtitle track index (combined space; -1 = Off). */
         val subtitleTrackIndex: Int? = null,
+        /**
+         * True when [subtitleTrackIndex] is the detail row's Auto preview
+         * rather than a pick the viewer made. It still decides what plays —
+         * that is the point of handing it over — but it must never be recorded
+         * as an explicit choice.
+         */
+        val subtitleAutoResolved: Boolean = false,
         /** Consecutive auto-advance count for pass-out protection (0 = manual start). */
         val autoAdvanceCount: Int = 0,
         /** Opaque key for a process-only, target-bound episode selection handoff. */
@@ -116,6 +123,9 @@ sealed class TvRoute(val route: String) {
                 if (audioTrackIndex != null) add("audioTrackIndex=$audioTrackIndex")
                 if (audioPickedThisSession) add("audioPicked=true")
                 if (subtitleTrackIndex != null) add("subtitleTrackIndex=$subtitleTrackIndex")
+                if (subtitleTrackIndex != null && subtitleAutoResolved) {
+                    add("$ARG_SUBTITLE_AUTO_RESOLVED=true")
+                }
                 if (autoAdvanceCount > 0) add("autoAdvanceCount=$autoAdvanceCount")
                 episodeSelectionHandoffNonce
                     ?.takeIf(::isValidTvEpisodeSelectionHandoffNonce)
@@ -131,6 +141,7 @@ sealed class TvRoute(val route: String) {
             const val ROUTE = "player/{contentId}?fileId={fileId}&quality={quality}&roomId={roomId}" +
                 "&audioTrackIndex={audioTrackIndex}&audioPicked={audioPicked}" +
                 "&subtitleTrackIndex={subtitleTrackIndex}" +
+                "&subtitleAutoResolved={subtitleAutoResolved}" +
                 "&autoAdvanceCount={autoAdvanceCount}&resumePosition={resumePosition}" +
                 "&episodeSelectionHandoffNonce={episodeSelectionHandoffNonce}"
             const val ARG_CONTENT_ID = "contentId"
@@ -140,6 +151,7 @@ sealed class TvRoute(val route: String) {
             const val ARG_AUDIO_TRACK_INDEX = "audioTrackIndex"
             const val ARG_AUDIO_PICKED = "audioPicked"
             const val ARG_SUBTITLE_TRACK_INDEX = "subtitleTrackIndex"
+            const val ARG_SUBTITLE_AUTO_RESOLVED = "subtitleAutoResolved"
             const val ARG_AUTO_ADVANCE_COUNT = "autoAdvanceCount"
             const val ARG_RESUME_POSITION = VideoPlayerRouteArgs.RESUME_POSITION
             const val ARG_EPISODE_SELECTION_HANDOFF_NONCE = "episodeSelectionHandoffNonce"

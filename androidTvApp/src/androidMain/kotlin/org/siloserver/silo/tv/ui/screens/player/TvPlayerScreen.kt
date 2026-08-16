@@ -271,6 +271,9 @@ fun TvPlayerScreen(
     initialAudioTrackIndex: Int? = null,
     initialAudioPickedThisSession: Boolean = false,
     initialSubtitleTrackIndex: Int? = null,
+    // True when the carried subtitle index is the detail row's Auto preview
+    // rather than the viewer's own pick (it still decides what starts).
+    initialSubtitleAutoResolved: Boolean = false,
     // Consecutive auto-advance count (pass-out protection); 0 = manual start.
     autoAdvanceCount: Int = 0,
     episodeSelectionHandoff: org.siloserver.silo.common.player.video.EpisodeSelectionHandoff? = null,
@@ -297,6 +300,7 @@ fun TvPlayerScreen(
                     initialAudioTrackIndex = initialAudioTrackIndex,
                     initialAudioPickedThisSession = initialAudioPickedThisSession,
                     initialSubtitleTrackIndex = initialSubtitleTrackIndex,
+                    initialSubtitleAutoResolved = initialSubtitleAutoResolved,
                     autoAdvanceCount = autoAdvanceCount,
                     episodeSelectionHandoff = episodeSelectionHandoff,
                 ),

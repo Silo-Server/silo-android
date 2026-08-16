@@ -35,7 +35,6 @@ import org.siloserver.silo.common.player.SleepTimerController
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.player.StartParams
 import org.siloserver.silo.common.player.MountedSubtitleTrack
-import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.common.player.resolveMountedSubtitle
 import org.siloserver.silo.common.player.backend.VideoBackendCapabilities
 import org.siloserver.silo.common.player.reducePlayerStats
@@ -72,6 +71,12 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.settings.SubtitleAppearance
+import org.siloserver.silo.model.playback.AutoSubtitleCandidate
+import org.siloserver.silo.model.playback.AutoSubtitleContext
+import org.siloserver.silo.model.playback.AutoSubtitleResolution
+import org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates
+import org.siloserver.silo.model.playback.resolveAutoSubtitle
+import org.siloserver.silo.model.playback.selectedCandidate
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlayMethod
@@ -415,71 +420,102 @@ internal sealed class SubtitleAutoSelection {
     data class Select(val index: Int) : SubtitleAutoSelection()
 }
 
+/**
+ * Ranks MOUNTED Media3 text tracks through the shared resolver.
+ *
+ * The ranking itself lives in [resolveAutoSubtitle] — one cascade, one language
+ * table, one SDH predicate, one bitmap predicate, shared with the detail page's
+ * Auto preview. This only adapts [PlayerTrackEntry] into candidates.
+ */
 internal fun resolveAutoSubtitleSelection(
     audioTracks: List<PlayerTrackEntry>,
     subtitleTracks: List<PlayerTrackEntry>,
     preferredLanguage: String?,
     subtitleMode: String?,
     showForced: Boolean,
-): SubtitleAutoSelection {
-    if (subtitleTracks.isEmpty()) return SubtitleAutoSelection.NoChange
-
-    val mode = subtitleMode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "auto"
-    if (mode == "off") return SubtitleAutoSelection.Disable
-
-    if (preferredLanguage != null && preferredLanguage.isBlank()) {
-        return SubtitleAutoSelection.Disable
-    }
-    val targetLanguage = normalizedSubtitleLanguage(preferredLanguage)
-    if (targetLanguage == null) {
-        if (mode == "always") {
-            return bestAutoSubtitleTrack(
-                subtitleTracks = subtitleTracks,
-                targetLanguage = null,
-                preferForced = showForced,
-            )?.let { SubtitleAutoSelection.Select(it.index) }
-                ?: SubtitleAutoSelection.NoChange
-        }
-        return SubtitleAutoSelection.NoChange
+): SubtitleAutoSelection =
+    when (
+        val resolution = resolveAutoSubtitle(
+            candidates = playerTrackAutoSubtitleCandidates(subtitleTracks),
+            context = AutoSubtitleContext(
+                preferredLanguage = preferredLanguage,
+                mode = subtitleMode,
+                showForced = showForced,
+                audioLanguage = audioTracks.firstOrNull { it.isSelected }?.language,
+            ),
+        )
+    ) {
+        AutoSubtitleResolution.NoChange -> SubtitleAutoSelection.NoChange
+        AutoSubtitleResolution.Disable -> SubtitleAutoSelection.Disable
+        is AutoSubtitleResolution.Select ->
+            SubtitleAutoSelection.Select(resolution.candidate.selectionIndex)
     }
 
-    val selectedAudioLanguage = audioTracks
-        .firstOrNull { it.isSelected }
-        ?.language
-        ?.let(::normalizedSubtitleLanguage)
-    if (mode == "auto" && selectedAudioLanguage != null && selectedAudioLanguage == targetLanguage) {
-        if (showForced) {
-            val forcedTarget = bestForcedAutoSubtitleTrack(
-                subtitleTracks = subtitleTracks,
-                targetLanguage = targetLanguage,
-            )
-            if (forcedTarget != null) {
-                // Idempotent re-select even when already selected: NoChange is
-                // reserved for "no track should be on", so the launch-time
-                // consumer can map it to an explicit disable (Apple parity)
-                // without turning off a forced track the defaults picked.
-                return SubtitleAutoSelection.Select(forcedTarget.index)
-            }
-        }
-        return SubtitleAutoSelection.Disable
+/**
+ * The identity Auto resolves to for a launch that carried NO decision (deep
+ * link, cast, remote/realtime start).
+ *
+ * Resolved over the SERVER inventory whenever there is one: `subtitle_urls`
+ * lists external sidecars the initial plan did not mount, and Media3's mounted
+ * text tracks do not. Ranking only what was mounted is what made an external
+ * SRT structurally invisible and started the embedded PGS track instead. If the
+ * winner is not mounted yet the adapter mounts it — a replan that is legitimate
+ * precisely because nobody decided this launch.
+ *
+ * A null resolution maps to an explicit Off: Auto picked nothing, but a
+ * selector or device caption setting may still have a track on, and Apple's
+ * engines start subs OFF ("Auto - None" in the detail preview).
+ */
+internal fun resolveTvAutoSubtitleIdentity(
+    audioTracks: List<PlayerTrackEntry>,
+    subtitleTracks: List<PlayerTrackEntry>,
+    subtitleRows: List<PlayerSubtitleInfo>,
+    preferredLanguage: String?,
+    subtitleMode: String?,
+    showForced: Boolean,
+): SubtitleIdentity {
+    val context = AutoSubtitleContext(
+        preferredLanguage = preferredLanguage,
+        mode = subtitleMode,
+        showForced = showForced,
+        audioLanguage = audioTracks.firstOrNull { it.isSelected }?.language,
+    )
+    if (subtitleRows.isNotEmpty()) {
+        val winner = resolveAutoSubtitle(
+            candidates = inventoryAutoSubtitleCandidates(subtitleRows),
+            context = context,
+        ).selectedCandidate() ?: return SubtitleIdentity.Off
+        return subtitleRows.firstOrNull { it.index == winner.selectionIndex }
+            ?.let(::tvSubtitleIdentity)
+            ?: SubtitleIdentity.Off
     }
+    // No server inventory (a purely local mount): the mounted tracks are then
+    // the whole truth anyway.
+    val winner = resolveAutoSubtitle(
+        candidates = playerTrackAutoSubtitleCandidates(subtitleTracks),
+        context = context,
+    ).selectedCandidate() ?: return SubtitleIdentity.Off
+    return subtitleTracks.firstOrNull { it.index == winner.selectionIndex }
+        ?.let { track -> tvMountedSubtitleIdentity(track, subtitleTracks, subtitleRows) }
+        ?: SubtitleIdentity.Off
+}
 
-    val target = bestAutoSubtitleTrack(
-        subtitleTracks = subtitleTracks,
-        targetLanguage = targetLanguage,
-        preferForced = showForced,
-    ) ?: if (showForced) {
-        subtitleTracks.firstOrNull { it.isForced }
-    } else {
-        null
-    }
-
-    return when (target) {
-        // Idempotent re-select for an already-selected target (see the forced
-        // branch above): NoChange now strictly means "no track should be on".
-        null -> SubtitleAutoSelection.NoChange
-        else -> SubtitleAutoSelection.Select(target.index)
-    }
+/**
+ * Mounted text tracks as resolver candidates, keyed by Media3 track index.
+ *
+ * Hearing-impaired travels as an explicit signal (role flags and both labels),
+ * which the catalog cannot supply and the shared predicate ORs with the title.
+ */
+internal fun playerTrackAutoSubtitleCandidates(
+    subtitleTracks: List<PlayerTrackEntry>,
+): List<AutoSubtitleCandidate> = subtitleTracks.map { track ->
+    AutoSubtitleCandidate(
+        selectionIndex = track.index,
+        language = track.language,
+        codec = track.codecOrMime,
+        forced = track.isForced,
+        hearingImpaired = track.isEffectivelyHearingImpaired(),
+    )
 }
 
 internal fun preferredAutoTextSubtitleIndex(
@@ -503,49 +539,6 @@ internal fun preferredAutoTextSubtitleIndex(
         SubtitleAutoSelection.Disable,
         SubtitleAutoSelection.NoChange -> null
     }
-}
-
-private fun bestAutoSubtitleTrack(
-    subtitleTracks: List<PlayerTrackEntry>,
-    targetLanguage: String?,
-    preferForced: Boolean,
-): PlayerTrackEntry? {
-    val pool = if (targetLanguage == null) {
-        subtitleTracks
-    } else {
-        subtitleTracks.filter { normalizedSubtitleLanguage(it.language) == targetLanguage }
-    }
-    if (pool.isEmpty()) return null
-
-    if (preferForced) {
-        pool.firstOrNull { it.isForced && !it.isEffectivelyHearingImpaired() && !isBitmapSubtitleCodecFamily(it.codecOrMime) }
-            ?.let { return it }
-    }
-    pool.firstOrNull { !it.isForced && !it.isEffectivelyHearingImpaired() && !isBitmapSubtitleCodecFamily(it.codecOrMime) }
-        ?.let { return it }
-    pool.firstOrNull { !it.isForced && !isBitmapSubtitleCodecFamily(it.codecOrMime) }
-        ?.let { return it }
-    pool.firstOrNull { !isBitmapSubtitleCodecFamily(it.codecOrMime) }
-        ?.let { return it }
-    return pool.first()
-}
-
-private fun bestForcedAutoSubtitleTrack(
-    subtitleTracks: List<PlayerTrackEntry>,
-    targetLanguage: String?,
-): PlayerTrackEntry? {
-    val pool = if (targetLanguage == null) {
-        subtitleTracks
-    } else {
-        subtitleTracks.filter { normalizedSubtitleLanguage(it.language) == targetLanguage }
-    }.filter { it.isForced }
-    if (pool.isEmpty()) return null
-
-    pool.firstOrNull { !it.isEffectivelyHearingImpaired() && !isBitmapSubtitleCodecFamily(it.codecOrMime) }
-        ?.let { return it }
-    pool.firstOrNull { !it.isEffectivelyHearingImpaired() }
-        ?.let { return it }
-    return pool.first()
 }
 
 internal fun resolveInitialSubtitleTrackIndex(
@@ -604,26 +597,6 @@ private fun PlayerTrackEntry.toMountedSubtitleTrack(): MountedSubtitleTrack =
         hearingImpaired = isHearingImpaired,
     )
 
-private fun normalizedSubtitleLanguage(language: String?): String? {
-    val primary = language
-        ?.trim()
-        ?.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
-        ?.lowercase()
-        ?.replace('_', '-')
-        ?.substringBefore('-')
-        ?: return null
-    return when (primary) {
-        "eng" -> "en"
-        "spa" -> "es"
-        "fre", "fra" -> "fr"
-        "ger", "deu" -> "de"
-        "dut", "nld" -> "nl"
-        "jpn" -> "ja"
-        "dan" -> "da"
-        else -> primary
-    }
-}
-
 /**
  * How the video surface scales to fill the player area. Session-scoped
  * (resets to [Fit] on each new playback) — matches tvOS behavior.
@@ -660,8 +633,15 @@ data class TvPlayerLaunchArgs(
     val initialAudioTrackIndex: Int? = null,
     /** True when the launch ordinal is a pick made this session, not a restore. */
     val initialAudioPickedThisSession: Boolean = false,
-    /** Pre-selected subtitle track index (null = auto, -1 = Off). */
+    /** Pre-selected subtitle track index (null = no handoff, -1 = Off). */
     val initialSubtitleTrackIndex: Int? = null,
+    /**
+     * True when [initialSubtitleTrackIndex] is the detail row's Auto preview
+     * rather than the viewer's own pick. The player still starts on it — that
+     * is the whole point of the handoff — but must not record it as a manual
+     * selection (no durable persistence, no explicit episode intent).
+     */
+    val initialSubtitleAutoResolved: Boolean = false,
     /**
      * How many consecutive auto-advances led to this playback (0 = a manual
      * start). The player re-mounts per episode, so the pass-out streak rides
@@ -837,6 +817,15 @@ class TvPlayerViewModel(
     private var pendingInitialSubtitleIndex: Int? = launchArgs.initialSubtitleTrackIndex
 
     /**
+     * Whether [pendingInitialSubtitleIndex] is the detail row's Auto preview
+     * rather than the viewer's own pick. Both are applied identically — the
+     * row's decision is what starts — but only an explicit pick may be recorded
+     * as a manual selection.
+     */
+    private var pendingInitialSubtitleAutoResolved: Boolean =
+        launchArgs.initialSubtitleAutoResolved
+
+    /**
      * Non-empty track callbacks the explicit pick has failed to resolve
      * tracks land (Media3 reports everything at once), so an unresolved pick
      * is retried across callbacks until the sidecars arrive — bounded by
@@ -847,6 +836,16 @@ class TvPlayerViewModel(
     private var pendingPersistedAudioFingerprint: String? = null
     private var autoTextSubtitleSelectionAttempted = false
     private var manualSubtitleSelectionApplied = false
+
+    /**
+     * A launch handoff (explicit pick OR the detail row's Auto preview) has been
+     * applied, so the player must not re-decide.
+     *
+     * Separate from [manualSubtitleSelectionApplied], which answers a different
+     * question — "did the VIEWER choose this" — and drives persistence and the
+     * next-episode intent.
+     */
+    private var launchSubtitleSelectionApplied = false
     /**
      * Whether the viewer picked the current audio track themselves.
      *
@@ -1801,6 +1800,9 @@ class TvPlayerViewModel(
         val generation = ++contentLoadGeneration
         if (recoveryStartParams != null) {
             pendingInitialSubtitleIndex = recoveryStartParams.subtitleTrackIndex
+            // A recovery restores the selection the session was already
+            // playing, not a preview: it keeps its manual standing.
+            pendingInitialSubtitleAutoResolved = false
             pendingInitialSubtitleAttempts = 0
         }
         val loadOwner = playbackMutationFence.beginLoad(
@@ -1815,6 +1817,7 @@ class TvPlayerViewModel(
         transportMountGate.beginLoad()
         introAutoSkipController.reset()
         manualSubtitleSelectionApplied = false
+        launchSubtitleSelectionApplied = false
         autoSelectedSubtitleIdentity = null
         autoSubtitleSelectionInFlight = false
         // Cleared here and raised only if the carried choice actually RESOLVES
@@ -1916,6 +1919,10 @@ class TvPlayerViewModel(
                             existingPendingInitialSubtitleIndex = pendingInitialSubtitleIndex,
                         )
                         pendingInitialSubtitleIndex = subtitleSelection.pendingInitialSubtitleIndex
+                        if (episodeSelectionHandoff != null) {
+                            // A carried episode intent is the viewer's, not a preview.
+                            pendingInitialSubtitleAutoResolved = false
+                        }
                         val resolvedSelection = result.resolvedEpisodeSelection
                         if (episodeSelectionHandoff != null && resolvedSelection != null) {
                             pendingInitialSubtitleAttempts = 0
@@ -3896,39 +3903,40 @@ class TvPlayerViewModel(
         audio: List<PlayerTrackEntry>,
         subtitle: List<PlayerTrackEntry>,
     ) {
+        // Fallback ONLY. Any launch that carried a decision (detail-page pick or
+        // its Auto preview, an episode intent, a recovery restore) has already
+        // applied it, and re-deciding here is exactly the bug: this path can
+        // only see what Media3 has mounted.
+        if (launchSubtitleSelectionApplied) return
         // manualSubtitleSelectionApplied is set when a persisted choice OR a
         // RESOLVED explicit detail-page pick was applied — that (not the bare
         // launch intent) is what suppresses auto. An explicit pick that failed to
         // resolve leaves the flag clear, so auto still runs instead of stranding
         // subtitles Off.
         if (manualSubtitleSelectionApplied) return
+        // Reached only by launches with no handoff at all (deep link, cast,
+        // remote/realtime start). The latch stays because the fallback still
+        // runs on every onTracksChanged: without it a second snapshot would
+        // re-run auto over a longer track list and override a selection the
+        // viewer has since made.
         if (autoTextSubtitleSelectionAttempted) return
         if (subtitle.isEmpty()) return
 
         val state = _uiState.value
-        val selection = resolveAutoSubtitleSelection(
+        // Resolve over the SERVER inventory, not the mounted text tracks: an
+        // external sidecar the initial plan did not mount is invisible to
+        // Media3, which is how "Auto - <external SRT>" started playing the
+        // embedded PGS track instead. The adapter mounts the winner if it is
+        // not mounted yet — a legitimate replan for a launch nobody decided.
+        val identity = resolveTvAutoSubtitleIdentity(
             audioTracks = audio,
             subtitleTracks = subtitle,
+            subtitleRows = state.subtitleUrls,
             preferredLanguage = state.preferredTextLanguage,
             subtitleMode = state.preferredSubtitleMode,
             showForced = state.showForcedSubtitles,
         )
         autoTextSubtitleSelectionAttempted = true
-        val identity = when (selection) {
-            // Launch-time only: NoChange means Auto picked nothing, but a
-            // selector or device caption setting may still have a track on —
-            // Apple's engines start subs OFF, so the detail preview truthfully
-            // shows "Auto - None". Disable explicitly to match that preview.
-            SubtitleAutoSelection.Disable,
-            SubtitleAutoSelection.NoChange,
-            -> SubtitleIdentity.Off
-            is SubtitleAutoSelection.Select ->
-                subtitle.firstOrNull { it.index == selection.index }
-                    ?.let { track ->
-                        tvMountedSubtitleIdentity(track, subtitle, state.subtitleUrls)
-                    }
-                    ?: SubtitleIdentity.Off
-        }
         SubDiag.log("AUTO subtitle -> $identity")
         applyAutomaticSubtitleSelection(identity, state)
     }
@@ -4023,11 +4031,14 @@ class TvPlayerViewModel(
      */
     private fun resolvePendingInitialSubtitle(subtitle: List<PlayerTrackEntry>) {
         val index = pendingInitialSubtitleIndex ?: return
+        val autoResolved = pendingInitialSubtitleAutoResolved
         if (index == -1) {
             pendingInitialSubtitleIndex = null
-            // An explicit Off from the detail page is a resolved decision: suppress
-            // the auto fallback so it isn't overridden.
-            manualSubtitleSelectionApplied = true
+            // Off from the detail page is a resolved decision — the row showed
+            // it — so it suppresses the auto fallback. Only an EXPLICIT Off is
+            // also a manual selection; an "Auto - None" preview is not.
+            launchSubtitleSelectionApplied = true
+            if (!autoResolved) manualSubtitleSelectionApplied = true
             applyRestoredSubtitleSelection(SubtitleIdentity.Off)
             return
         }
@@ -4047,7 +4058,8 @@ class TvPlayerViewModel(
         if (resolved != null) {
             pendingInitialSubtitleIndex = null
             pendingInitialSubtitleAttempts = 0
-            manualSubtitleSelectionApplied = true
+            launchSubtitleSelectionApplied = true
+            if (!autoResolved) manualSubtitleSelectionApplied = true
             subtitle.firstOrNull { it.index == resolved }
                 ?.let { track ->
                     applyRestoredSubtitleSelection(

@@ -35,6 +35,8 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
+import org.siloserver.silo.tv.ui.navigation.explicitTvSubtitleLaunchSelection
 import org.siloserver.silo.tv.ui.components.TvPoster
 import org.siloserver.silo.tv.ui.components.TvPrimaryPillButton
 import org.siloserver.silo.tv.ui.components.TvSecondaryPillButton
@@ -48,7 +50,7 @@ internal fun TvAudiobookDetailHero(
     detail: ItemDetail,
     state: TvItemDetailUiState,
     playFocus: FocusRequester,
-    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleTrackIndex: Int?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
+    onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     overview: String?,
     modifier: Modifier = Modifier,
 ) {
@@ -173,7 +175,7 @@ internal fun TvAudiobookDetailHero(
                                 null,
                                 state.selectedAudioIndex,
                                 state.audioPickedThisSession,
-                                state.selectedSubtitleIndex,
+                                explicitTvSubtitleLaunchSelection(state.selectedSubtitleIndex),
                                 detail.type,
                                 startPosition,
                             )
@@ -188,7 +190,7 @@ internal fun TvAudiobookDetailHero(
                                 null,
                                 state.selectedAudioIndex,
                                 state.audioPickedThisSession,
-                                state.selectedSubtitleIndex,
+                                explicitTvSubtitleLaunchSelection(state.selectedSubtitleIndex),
                                 detail.type,
                                 0.0,
                             )
