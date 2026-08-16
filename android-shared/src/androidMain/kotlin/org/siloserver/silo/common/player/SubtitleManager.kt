@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import androidx.media3.common.C
@@ -1375,6 +1376,17 @@ private class SubtitleVideoRectSync(
         contentFrameClipped = clipped
         frame.clipChildren = clipped
         frame.clipToPadding = clipped
+        // A parent's clipChildren clips each CHILD'S drawing to that child's own
+        // bounds — so with the frame un-clipped, the PlayerView would still cut
+        // the frame's overflow (our canvas in the bar) at the picture's edge.
+        // Verified on a Shield: captions stopped exactly at the frame bottom
+        // until this was released too. The PlayerView's own bounds are never
+        // exceeded (the canvas ends at the PlayerView bottom), and its parent
+        // keeps clipping to it, so nothing can escape the player surface.
+        (frame.parent as? ViewGroup)?.let { host ->
+            host.clipChildren = clipped
+            host.clipToPadding = clipped
+        }
     }
 
     /**
