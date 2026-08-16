@@ -791,7 +791,10 @@ private fun TvDetailContent(
                                 detail = detail,
                                 modifier = Modifier
                                     .detailBodySectionAnchor(listState, coroutineScope)
-                                    .padding(horizontal = Spacing.safeArea),
+                                    // The section pads its own inner inset so the
+                                    // focus highlight box extends past the text
+                                    // instead of starting flush at its left edge.
+                                    .padding(horizontal = Spacing.safeArea - TvDetailsFocusInset),
                             )
                         }
 
@@ -1404,7 +1407,7 @@ private fun EpisodesSection(
                 selectedSeason = state.selectedSeason,
                 onSeasonSelected = onSeasonSelected,
                 onDirectionUp = onReturnToHero,
-                modifier = Modifier.padding(horizontal = Spacing.safeArea),
+                horizontalContentPadding = Spacing.safeArea,
             )
         }
 
@@ -1543,13 +1546,21 @@ private fun DetailsSection(
             .background(
                 color = if (factsFocused) Color.White.copy(alpha = 0.06f) else Color.Transparent,
                 shape = RoundedCornerShape(18.dp),
-            ),
+            )
+            .padding(horizontal = TvDetailsFocusInset, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
         TvDetailSectionHeader(title = "Details")
         TvDetailFactsTable(detail = detail)
     }
 }
+
+/**
+ * Inner inset between the Details focus-highlight box and its text; the
+ * caller subtracts it from the safe-area padding so the text stays aligned
+ * with the other sections while the box breathes around it.
+ */
+private val TvDetailsFocusInset = 20.dp
 
 @Composable
 private fun TvAudiobookPartsSection(
