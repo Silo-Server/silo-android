@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import kotlin.math.roundToInt
+
 /**
  * Geometry for auto-filling video whose black bars are baked into the picture.
  *
@@ -111,6 +113,55 @@ internal fun zoomVerticalCropFraction(videoAspect: Float, containerAspect: Float
     if (videoAspect <= 0f || containerAspect <= 0f) return 0f
     if (videoAspect >= containerAspect) return 0f
     return (1f - videoAspect / containerAspect) / 2f
+}
+
+/**
+ * Horizontal inset that keeps an expanded picture clear of a display cutout,
+ * given the cutout insets the platform reports for the CURRENT rotation.
+ *
+ * Applied symmetrically, which costs twice the cutout width, and that is a
+ * deliberate trade. A punch-hole sits on one edge only, so insetting just that
+ * edge would buy back the other half — on the reference device 2981px of image
+ * instead of 2842px, about 10% more area. It would also leave the picture flush
+ * against one bezel with a black stripe down the other, and that stripe reads as
+ * a rendering fault rather than a decision. Worse, the two landscape rotations
+ * put the cutout on opposite edges (ROTATION_90 left, ROTATION_270 right), so a
+ * single-edge inset makes the image jump sideways by the full inset when the
+ * phone is flipped end for end. A centred image costs a little width and stays
+ * put, which is the right default for something you sit and watch. The vertical
+ * letterbox is symmetric for the same reason.
+ *
+ * Insets only horizontally: the player is landscape by default, where the
+ * cutout is on a side edge and the picture reaches the sides. In portrait the
+ * cutout is on the top edge and the video is nowhere near it, so the reported
+ * top inset is deliberately ignored rather than pushing the picture down.
+ */
+internal fun cutoutSafeHorizontalInset(cutoutLeftPx: Int, cutoutRightPx: Int): Int =
+    maxOf(cutoutLeftPx, cutoutRightPx, 0)
+
+/** On-screen size of the picture itself, with the encoded matte discounted. */
+internal data class ExpandedImageSize(val width: Int, val height: Int)
+
+/**
+ * Size the picture is drawn at once ZOOM expands a coded frame of [codedAspect]
+ * — carrying content of [contentAspect] behind an encoded matte — to cover a
+ * [boxWidth] x [boxHeight] surface.
+ *
+ * The matte only ever occupies rows, so the content spans the full coded width
+ * and the expanded picture is exactly as wide as the box. Null when the coded
+ * frame is not narrower than the box, which is the case expansion declines.
+ */
+internal fun expandedImageSize(
+    boxWidth: Int,
+    boxHeight: Int,
+    codedAspect: Float,
+    contentAspect: Float,
+): ExpandedImageSize? {
+    if (boxWidth <= 0 || boxHeight <= 0) return null
+    if (codedAspect <= 0f || contentAspect <= 0f) return null
+    if (codedAspect >= boxWidth.toFloat() / boxHeight) return null
+    val height = (boxWidth / contentAspect).roundToInt().coerceAtMost(boxHeight)
+    return ExpandedImageSize(width = boxWidth, height = height)
 }
 
 /**

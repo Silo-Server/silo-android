@@ -107,12 +107,12 @@ object PlaybackSettingsKeys {
     const val PictureInPictureEnabled = "player.picture_in_picture_enabled"
 
     /**
-     * Local-only per-profile setting: expand video whose black bars are encoded
-     * into the picture so the image itself fills the screen. It depends on
-     * reading back decoded frames, which is a device capability rather than a
-     * server playback preference, so this never enters [DeviceSettings].
+     * Local-only per-profile setting: how far to expand video whose black bars
+     * are encoded into the picture. It depends on reading back decoded frames
+     * and on this display's cutout geometry — both device capabilities rather
+     * than server playback preferences — so this never enters [DeviceSettings].
      */
-    const val AutoFillLetterboxedVideo = "player.auto_fill_letterboxed_video"
+    const val LetterboxExpansion = "player.letterbox_expansion"
 
     val DeviceSettings = listOf(
         PreferredQuality,

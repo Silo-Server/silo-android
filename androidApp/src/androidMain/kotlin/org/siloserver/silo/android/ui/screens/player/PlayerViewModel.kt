@@ -46,6 +46,7 @@ import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
 import org.siloserver.silo.common.player.video.canPlayResolvedStreamDirectly
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
+import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.domain.player.IntroAutoSkipController
@@ -563,9 +564,9 @@ class PlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, "fit")
     /** Modulates "fit" only: expand past a letterbox that is encoded into the
      *  picture. Never changes what [videoGravity] itself stores or means. */
-    val autoFillLetterboxedVideo: StateFlow<Boolean> =
-        playerSettingsStore.autoFillLetterboxedVideoFlow
-            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val letterboxExpansion: StateFlow<String> =
+        playerSettingsStore.letterboxExpansionFlow
+            .stateIn(viewModelScope, SharingStarted.Eagerly, LetterboxExpansion.Default)
     // iOS parity (PlayerOrientationCoordinator): the phone player defaults to
     // landscape-locked; "rotateFreely" is the persisted opt-out written by the
     // HUD lock toggle. Any other stored value (including the legacy "auto"
@@ -3890,8 +3891,8 @@ class PlayerViewModel(
         viewModelScope.launch { playerSettingsStore.setVideoGravity(value) }
     }
 
-    fun onSetAutoFillLetterboxedVideo(value: Boolean) {
-        viewModelScope.launch { playerSettingsStore.setAutoFillLetterboxedVideo(value) }
+    fun onSetLetterboxExpansion(value: String) {
+        viewModelScope.launch { playerSettingsStore.setLetterboxExpansion(value) }
     }
 
     /** HUD lock toggle — persisted like iOS's `setPlayerOrientationMode`. */

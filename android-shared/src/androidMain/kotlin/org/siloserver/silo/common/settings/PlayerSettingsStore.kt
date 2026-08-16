@@ -6,6 +6,32 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import org.siloserver.silo.player.DolbyVisionPolicy
 
+/**
+ * How far the phone player may expand a picture whose letterbox is encoded into
+ * the video (see the player's `LetterboxMatte`). Expansion never crops picture —
+ * it only eats black the file itself carries — so the question a user actually
+ * has is what to do about the camera cutout once the image reaches the edges.
+ */
+object LetterboxExpansion {
+    /** Expand, but keep the image clear of the display cutout. */
+    const val ClearOfCamera = "clear_of_camera"
+
+    /** Expand to the full display width; the camera overlaps the picture. */
+    const val FullWidth = "full_width"
+
+    /** Never expand — the coded frame is fitted whole, bars and all. */
+    const val Off = "off"
+
+    /**
+     * Biggest picture that is neither cropped nor covered. Expansion itself is
+     * free (the clip lands in encoded black), so it is on; stopping at the
+     * cutout costs width but is what keeps the whole image visible.
+     */
+    const val Default = ClearOfCamera
+
+    val Valid = setOf(ClearOfCamera, FullWidth, Off)
+}
+
 interface PlayerSettingsStore {
     // Booleans
     val autoSkipIntroFlow: Flow<Boolean>
@@ -18,16 +44,14 @@ interface PlayerSettingsStore {
     val pictureInPictureEnabledFlow: Flow<Boolean>
 
     /**
-     * Whether to expand video whose black bars are encoded into the picture
-     * (a 2.39:1 film inside a 16:9 frame) so the image fills the screen.
+     * How far to expand video whose black bars are encoded into the picture
+     * (a 2.39:1 film inside a 16:9 frame) — see [LetterboxExpansion].
      *
      * Defaulted here rather than declared abstract so the existing fakes in the
-     * player tests keep compiling; the real store overrides it. Default off —
-     * it is decided from measured frames, and the safe answer when nothing has
-     * been measured is today's untouched fit.
+     * player tests keep compiling; the real store overrides it.
      */
-    val autoFillLetterboxedVideoFlow: Flow<Boolean>
-        get() = flowOf(false)
+    val letterboxExpansionFlow: Flow<String>
+        get() = flowOf(LetterboxExpansion.Default)
 
     /** Per-profile preference for restricting downloads to unmetered (Wi-Fi)
      *  networks. Default true. Consumed by [DownloadEnqueuer] at enqueue
@@ -92,7 +116,7 @@ interface PlayerSettingsStore {
     suspend fun setDolbyVisionEnabled(value: Boolean)
     suspend fun setMatchContentFrameRate(value: Boolean)
     suspend fun setPictureInPictureEnabled(value: Boolean)
-    suspend fun setAutoFillLetterboxedVideo(value: Boolean) = Unit
+    suspend fun setLetterboxExpansion(value: String) = Unit
     suspend fun setDownloadsWifiOnly(value: Boolean)
     suspend fun setKeepWatchedDownloads(value: Boolean)
     suspend fun setDefaultDownloadQuality(value: String)

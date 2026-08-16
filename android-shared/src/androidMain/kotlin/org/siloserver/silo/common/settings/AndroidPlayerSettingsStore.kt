@@ -249,9 +249,11 @@ class AndroidPlayerSettingsStore(
     override val pictureInPictureEnabledFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.PictureInPictureEnabled, true) }
 
-    override val autoFillLetterboxedVideoFlow: Flow<Boolean> =
-        profileScopedFlow(false) { p, s ->
-            p.boolFor(s, PlaybackSettingsKeys.AutoFillLetterboxedVideo, false)
+    override val letterboxExpansionFlow: Flow<String> =
+        profileScopedFlow(LetterboxExpansion.Default) { p, s ->
+            p.stringFor(s, PlaybackSettingsKeys.LetterboxExpansion, LetterboxExpansion.Default)
+                .takeIf { it in LetterboxExpansion.Valid }
+                ?: LetterboxExpansion.Default
         }
 
     override val downloadsWifiOnlyFlow: Flow<Boolean> =
@@ -399,8 +401,10 @@ class AndroidPlayerSettingsStore(
     override suspend fun setPictureInPictureEnabled(value: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.PictureInPictureEnabled, value)
 
-    override suspend fun setAutoFillLetterboxedVideo(value: Boolean) =
-        writeBoolLocal(PlaybackSettingsKeys.AutoFillLetterboxedVideo, value)
+    override suspend fun setLetterboxExpansion(value: String) {
+        val safe = if (value in LetterboxExpansion.Valid) value else LetterboxExpansion.Default
+        writeStringLocal(PlaybackSettingsKeys.LetterboxExpansion, safe)
+    }
 
     override suspend fun setDownloadsWifiOnly(value: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.DownloadsWifiOnly, value)

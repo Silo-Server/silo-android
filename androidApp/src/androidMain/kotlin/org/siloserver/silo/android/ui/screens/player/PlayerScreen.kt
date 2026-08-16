@@ -16,6 +16,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,6 +47,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -77,6 +80,7 @@ import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
+import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
 import org.siloserver.silo.common.player.video.mountedAudioTracks
@@ -1227,7 +1231,7 @@ fun PlayerScreen(
             val controller = mediaController
             val videoGravity by viewModel.videoGravity.collectAsState()
             var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
-            val autoFillLetterboxed by viewModel.autoFillLetterboxedVideo.collectAsState()
+            val letterboxExpansion by viewModel.letterboxExpansion.collectAsState()
             // Scope films ship as a 2.39:1 image encoded inside a 16:9 frame, so
             // FIT fits the black bars too and pillarboxes what is already wider
             // than the display. This measures the encoded matte and only reports
@@ -1236,7 +1240,7 @@ fun PlayerScreen(
             // and off for the gravities where the user has already decided.
             val letterboxFillEngaged = rememberLetterboxFillEngaged(
                 playerView = playerViewRef,
-                enabled = autoFillLetterboxed &&
+                enabled = letterboxExpansion != LetterboxExpansion.Off &&
                     videoGravity != "fill" &&
                     videoGravity != "stretch" &&
                     !isInPictureInPictureMode &&
@@ -1252,6 +1256,22 @@ fun PlayerScreen(
                 // black, so this fills the width without losing any picture.
                 letterboxFillEngaged -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+            }
+            // The camera only reaches the picture once expansion pushes it out
+            // to the edges — at FIT's 2560px the pillarbox already swallows it.
+            // Read the platform's resolved cutout rather than deriving it from
+            // rotation: it already knows which edge the camera is on in THIS
+            // rotation (they are opposite edges in the two landscapes), and it
+            // accounts for waterfall edges and multiple cutouts too.
+            val layoutDirection = LocalLayoutDirection.current
+            val cutoutSideInsetPx = if (letterboxExpansion == LetterboxExpansion.ClearOfCamera) {
+                val cutout = WindowInsets.displayCutout
+                cutoutSafeHorizontalInset(
+                    cutoutLeftPx = cutout.getLeft(density, layoutDirection),
+                    cutoutRightPx = cutout.getRight(density, layoutDirection),
+                )
+            } else {
+                0
             }
             val subtitleAppearance by viewModel.subtitleAppearance.collectAsState()
 
@@ -1274,6 +1294,16 @@ fun PlayerScreen(
                     .height(with(density) { activeTabletopPaneLayout.videoHeightPx.toDp() })
             } else {
                 Modifier.fillMaxSize()
+            }.let { surface ->
+                // Shrinking the surface is what keeps the camera off the
+                // picture, and it also feeds the probe: the estimator measures
+                // its clip against this box, so the crop it approves is the one
+                // for the inset width, not the full display.
+                if (cutoutSideInsetPx > 0) {
+                    surface.padding(horizontal = with(density) { cutoutSideInsetPx.toDp() })
+                } else {
+                    surface
+                }
             }
 
             if (controller != null) {

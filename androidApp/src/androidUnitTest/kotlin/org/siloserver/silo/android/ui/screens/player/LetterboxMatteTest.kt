@@ -11,8 +11,14 @@ import kotlin.test.assertTrue
  * The reference case measured on a Galaxy S26 Ultra: a 2.39:1 film encoded
  * inside a 3840x2160 frame, played landscape on a 3120x1440 window.
  */
+private const val WINDOW_WIDTH = 3120
+private const val WINDOW_HEIGHT = 1440
 private const val CODED_ASPECT = 3840f / 2160f
-private const val CONTAINER_ASPECT = 3120f / 1440f
+private const val CONTAINER_ASPECT = WINDOW_WIDTH.toFloat() / WINDOW_HEIGHT
+private const val CONTENT_ASPECT = 2.393f
+
+/** Landscape width of the S26 Ultra punch-hole, per `dumpsys window displays`. */
+private const val CUTOUT_PX = 139
 
 /** Matte per edge for 2.39:1 content in a 16:9 frame, as a fraction of height. */
 private const val SCOPE_MATTE = 0.1281f
@@ -118,6 +124,81 @@ class LetterboxMatteTest {
         assertEquals(0f, zoomVerticalCropFraction(CONTAINER_ASPECT, CONTAINER_ASPECT))
         assertEquals(0f, zoomVerticalCropFraction(2.39f, CONTAINER_ASPECT))
         assertEquals(0f, zoomVerticalCropFraction(0f, CONTAINER_ASPECT))
+    }
+
+    // ---- cutout ------------------------------------------------------------
+
+    @Test
+    fun insetsSymmetricallyForEitherLandscapeRotation() {
+        // The S26 Ultra's 80x139 punch-hole lands against the left edge at
+        // ROTATION_90 and the right edge at ROTATION_270. Both must inset the
+        // same amount, or flipping the phone end for end would shift the image.
+        assertEquals(CUTOUT_PX, cutoutSafeHorizontalInset(cutoutLeftPx = CUTOUT_PX, cutoutRightPx = 0))
+        assertEquals(CUTOUT_PX, cutoutSafeHorizontalInset(cutoutLeftPx = 0, cutoutRightPx = CUTOUT_PX))
+    }
+
+    @Test
+    fun leavesAScreenWithoutASideCutoutAlone() {
+        // Portrait reports the cutout on the top edge, which this ignores: the
+        // video is nowhere near it and must not be pushed down.
+        assertEquals(0, cutoutSafeHorizontalInset(cutoutLeftPx = 0, cutoutRightPx = 0))
+    }
+
+    @Test
+    fun clearOfCameraExpandsToTheWidestSizeThatMissesThePunchHole() {
+        val inset = cutoutSafeHorizontalInset(CUTOUT_PX, 0)
+        val image = expandedImageSize(
+            boxWidth = WINDOW_WIDTH - 2 * inset,
+            boxHeight = WINDOW_HEIGHT,
+            codedAspect = CODED_ASPECT,
+            contentAspect = CONTENT_ASPECT,
+        )
+        requireNotNull(image)
+        assertEquals(2842, image.width)
+        assertEquals(1188, image.height)
+        // Centred, so the camera column sits entirely in the side bar.
+        assertEquals(CUTOUT_PX, (WINDOW_WIDTH - image.width) / 2)
+    }
+
+    @Test
+    fun fullWidthReachesBothEdgesAndLeavesOnlyGenuineLetterbox() {
+        val image = expandedImageSize(
+            boxWidth = WINDOW_WIDTH,
+            boxHeight = WINDOW_HEIGHT,
+            codedAspect = CODED_ASPECT,
+            contentAspect = CONTENT_ASPECT,
+        )
+        requireNotNull(image)
+        assertEquals(WINDOW_WIDTH, image.width)
+        assertEquals(1304, image.height)
+        // ~68px per edge: the real 2.39-versus-2.17 difference, nothing more.
+        assertTrue(abs((WINDOW_HEIGHT - image.height) / 2 - 68) <= 1)
+    }
+
+    @Test
+    fun clearOfCameraStillClearsTheClipItNeeds() {
+        // Insetting narrows the box, which lowers the clip ZOOM has to take —
+        // so an expansion that was safe at full width stays safe here.
+        val inset = cutoutSafeHorizontalInset(CUTOUT_PX, 0)
+        val narrowed = (WINDOW_WIDTH - 2 * inset).toFloat() / WINDOW_HEIGHT
+        val crop = zoomVerticalCropFraction(CODED_ASPECT, narrowed)
+        assertTrue(crop < zoomVerticalCropFraction(CODED_ASPECT, CONTAINER_ASPECT))
+        assertTrue(SCOPE_MATTE >= crop + MATTE_ENGAGE_MARGIN)
+
+        val estimator = LetterboxFillEstimator()
+        var engaged = false
+        repeat(MATTE_SAMPLES_TO_ENGAGE) {
+            engaged = estimator.onSample(scopeSample(), CODED_ASPECT, narrowed)
+        }
+        assertTrue(engaged)
+    }
+
+    @Test
+    fun expansionDeclinesForContentWithNoStoredBars() {
+        // A 16:9 episode on this panel: nothing to eat, so nothing changes —
+        // exactly what the setting's copy promises.
+        val estimator = LetterboxFillEstimator()
+        assertFalse(feed(estimator, MatteSample(0f, 0f), times = 40))
     }
 
     // ---- estimator ----------------------------------------------------------
