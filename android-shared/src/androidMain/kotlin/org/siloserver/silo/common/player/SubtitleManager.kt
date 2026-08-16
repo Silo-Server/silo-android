@@ -595,35 +595,69 @@ internal fun neutralizeFullWidthCueSize(cue: Cue): Cue {
 }
 
 /**
- * Clears the parser's DEFAULT vertical placement from a text cue so the user's
- * Position preset can take effect.
+ * Where the TOP edge of a Top-preset caption sits, as a fraction of the caption
+ * canvas.
  *
- * The preset is applied as `SubtitleView.setBottomPaddingFraction`, and Media3
- * 1.10.1's `SubtitlePainter.setupTextLayout` only consults that fraction when
- * `cue.line == DIMEN_UNSET` — any explicit line wins outright. Every cue from a
- * streamed SRT/VTT sidecar carries WebVTT's default "auto" placement, which the
- * parser materializes as `line = -1` with `LINE_TYPE_NUMBER` ("one line up from
- * the bottom"), so Bottom / Lower Third / Top were all drawn in the same place.
- *
- * Only that exact default is cleared. An authored placement — a fraction line,
- * any other line number — is the author positioning the caption around the
- * picture and is left alone, as are bitmap cues (see [remapBitmapCue]) and ASS,
- * which libass renders and never reaches this path.
+ * Top is anchored from the top rather than expressed as a bottom padding: a
+ * bottom padding places the BOTTOM of the text block, so a two-line cue starts
+ * lower than a one-line cue and neither lands where "top" means. The canvas is
+ * already inset by the title-safe fraction on television, so 0.01 of it is
+ * about 6% down the picture — the tvOS client's ~70px on 1080.
  */
-internal fun remapDefaultTextCuePlacement(cue: Cue): Cue {
+internal const val SUBTITLE_TOP_LINE_FRACTION = 0.01f
+
+/**
+ * The smallest gap the bottom-anchored presets may leave below the caption, as
+ * a fraction of the canvas. Mirrors [SUBTITLE_TOP_LINE_FRACTION] at the other
+ * edge: enough that the text never touches the picture edge.
+ */
+internal const val MIN_SUBTITLE_BOTTOM_PADDING = 0.01f
+
+/**
+ * Re-places a text cue that carries the parser's DEFAULT vertical placement, so
+ * the user's Position preset decides where it lands.
+ *
+ * Bottom and Lower Third are applied as `SubtitleView.setBottomPaddingFraction`,
+ * and Media3 1.10.1's `SubtitlePainter.setupTextLayout` only consults that
+ * fraction when `cue.line == DIMEN_UNSET` — any explicit line wins outright.
+ * Every cue from a streamed SRT/VTT sidecar carries WebVTT's default "auto"
+ * placement, which the parser materializes as `line = -1` with
+ * `LINE_TYPE_NUMBER` ("one line up from the bottom"), so all three presets were
+ * drawn in the same place. Clearing the line hands those two back to the
+ * padding; Top instead gets an explicit top-anchored line
+ * ([SUBTITLE_TOP_LINE_FRACTION]).
+ *
+ * Only that exact default is re-placed. An authored placement — a fraction
+ * line, any other line number — is the author positioning the caption around
+ * the picture and is left alone, as are bitmap cues (see [remapBitmapCue]) and
+ * ASS, which libass renders and never reaches this path.
+ */
+internal fun remapDefaultTextCuePlacement(
+    cue: Cue,
+    position: SubtitlePositionPreset,
+): Cue {
     if (cue.bitmap != null || cue.text == null) return cue
     if (cue.lineType != Cue.LINE_TYPE_NUMBER || cue.line != -1f) return cue
     // The parser emits the default with no meaningful line anchor; a cue that
     // anchors its line elsewhere is expressing a real placement.
     if (cue.lineAnchor != Cue.TYPE_UNSET && cue.lineAnchor != Cue.ANCHOR_TYPE_START) return cue
+    if (position == SubtitlePositionPreset.Top) {
+        return cue.buildUpon()
+            .setLine(SUBTITLE_TOP_LINE_FRACTION, Cue.LINE_TYPE_FRACTION)
+            .setLineAnchor(Cue.ANCHOR_TYPE_START)
+            .build()
+    }
     return cue.buildUpon().setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET).build()
 }
 
-internal fun remapDefaultTextCuePlacements(cueGroup: CueGroup): CueGroup {
+internal fun remapDefaultTextCuePlacements(
+    cueGroup: CueGroup,
+    position: SubtitlePositionPreset,
+): CueGroup {
     if (cueGroup.cues.isEmpty()) return cueGroup
     var changed = false
     val mapped = cueGroup.cues.map { original ->
-        val next = remapDefaultTextCuePlacement(original)
+        val next = remapDefaultTextCuePlacement(original, position)
         if (next !== original) changed = true
         next
     }
@@ -636,13 +670,21 @@ internal fun remapDefaultTextCuePlacements(cueGroup: CueGroup): CueGroup {
  *
  * Shared by the text path ([androidx.media3.ui.SubtitleView.setBottomPaddingFraction])
  * and the bitmap path ([remapBitmapCue]) so both presets land in the same place.
+ *
+ * The bases are the broadcast/Apple references measured from the frame edge:
+ * Bottom sits just inside the picture (SMPTE ST 2046-1 title-safe is 90% of the
+ * frame, and the tvOS client places captions ~60px above the bottom on 1080),
+ * Lower Third about a fifth up. Top does not belong here at all — it is
+ * top-anchored per [SUBTITLE_TOP_LINE_FRACTION] — and its value is inert: the
+ * only text cues that read this fraction are the ones the Top branch of
+ * [remapDefaultTextCuePlacement] has given an explicit line instead.
  */
 internal fun subtitleBottomPaddingFraction(
     position: SubtitlePositionPreset,
     titleSafeFraction: Float,
 ): Float {
     val base = when (position) {
-        SubtitlePositionPreset.Bottom -> 0.09f
+        SubtitlePositionPreset.Bottom -> 0.01f
         SubtitlePositionPreset.LowerThird -> 0.18f
         SubtitlePositionPreset.Top -> 0.74f
     }
@@ -651,7 +693,10 @@ internal fun subtitleBottomPaddingFraction(
     // preset by solving f + p(1 - 2f) = base for the new padding p.
     val remainingScale = 1f - 2f * titleSafeFraction
     if (remainingScale <= 0f) return base
-    return ((base - titleSafeFraction) / remainingScale).coerceAtLeast(0.02f)
+    // Bottom's reference is inside the title-safe inset, so the correction goes
+    // negative there and the floor is what actually places it: one percent of
+    // the canvas, which on television lands the text ~6% up the frame.
+    return ((base - titleSafeFraction) / remainingScale).coerceAtLeast(MIN_SUBTITLE_BOTTOM_PADDING)
 }
 
 /**
@@ -725,9 +770,14 @@ internal fun remapBitmapCue(
     val centerX = left + width / 2f
     val scaledLeft = (centerX - scaledWidth / 2f)
         .coerceIn(0f, (1f - scaledWidth).coerceAtLeast(0f))
-    val bottomPadding = subtitleBottomPaddingFraction(appearance.position, titleSafeFraction)
-    val scaledTop = (1f - bottomPadding - scaledHeight)
-        .coerceIn(0f, (1f - scaledHeight).coerceAtLeast(0f))
+    // Top is anchored from the top for the same reason the text path is: a
+    // bottom padding places the bottom of a block whose height varies.
+    val unclampedTop = if (appearance.position == SubtitlePositionPreset.Top) {
+        SUBTITLE_TOP_LINE_FRACTION
+    } else {
+        1f - subtitleBottomPaddingFraction(appearance.position, titleSafeFraction) - scaledHeight
+    }
+    val scaledTop = unclampedTop.coerceIn(0f, (1f - scaledHeight).coerceAtLeast(0f))
 
     val newPosition = when (cue.positionAnchor) {
         Cue.ANCHOR_TYPE_END -> scaledLeft + scaledWidth
@@ -1007,7 +1057,10 @@ private class SubtitleVideoRectSync(
         lastCueGroup = cueGroup
         val subtitleView = playerView.subtitleView ?: return
         val cues = remapBitmapCues(
-            cueGroup = remapDefaultTextCuePlacements(neutralizeFullWidthCueSizes(cueGroup)),
+            cueGroup = remapDefaultTextCuePlacements(
+                cueGroup = neutralizeFullWidthCueSizes(cueGroup),
+                position = appearance.position,
+            ),
             appearance = appearance,
             titleSafeFraction = titleSafeFraction,
         ).cues

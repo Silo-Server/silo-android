@@ -47,7 +47,7 @@ class SubtitleManagerAppearanceTest {
         method.isAccessible = true
 
         assertEquals(
-            0.09f,
+            0.01f,
             method.invoke(
                 SubtitleManager(),
                 SubtitlePositionPreset.Bottom,
@@ -56,7 +56,7 @@ class SubtitleManagerAppearanceTest {
     }
 
     @Test
-    fun titleSafeCompensationDoesNotDoubleShiftTopSubtitles() {
+    fun titleSafeCompensationKeepsTheBottomAnchoredPresetsInPlace() {
         val manager = SubtitleManager().apply {
             titleSafeFraction = 0.05f
         }
@@ -69,13 +69,11 @@ class SubtitleManagerAppearanceTest {
         // The padding fraction is evaluated inside a surface scaled to 90% of
         // the original video height. Preserve the original physical presets:
         // f + p(1 - 2f) = base, so p = (base - f) / (1 - 2f).
+        // Top is top-anchored (SUBTITLE_TOP_LINE_FRACTION) and reads no padding.
+        // Bottom's reference sits inside the title-safe inset itself, so the
+        // correction floors at the minimum padding rather than going negative.
         assertEquals(
-            expected = (0.74f - 0.05f) / 0.90f,
-            actual = method.invoke(manager, SubtitlePositionPreset.Top) as Float,
-            absoluteTolerance = 0.0001f,
-        )
-        assertEquals(
-            expected = (0.09f - 0.05f) / 0.90f,
+            expected = 0.01f,
             actual = method.invoke(manager, SubtitlePositionPreset.Bottom) as Float,
             absoluteTolerance = 0.0001f,
         )
