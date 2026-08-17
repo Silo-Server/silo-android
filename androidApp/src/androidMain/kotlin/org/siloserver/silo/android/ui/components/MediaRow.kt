@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
@@ -120,12 +121,15 @@ fun MediaRow(
                         imageVector = icon,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(20.dp),
                     )
                 }
+                // Row headings read a step larger than the 16sp headline so
+                // "Continue Watching" / "Next Up" carry the feed against
+                // 14sp card captions.
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = MaterialTheme.typography.headlineSmall.copy(fontSize = 20.sp, lineHeight = 26.sp),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
