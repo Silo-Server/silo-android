@@ -47,7 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
-import org.siloserver.silo.android.ui.components.LoadingIndicator
+import org.siloserver.silo.android.ui.components.PosterGridSkeleton
+import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.MediaCardContextMenu
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.WatchedBadge
@@ -203,9 +204,14 @@ private fun PersonalMediaGridContent(
 
     when {
         state.isLoading -> {
+            // Poster-grid skeleton (not a spinner) so the list keeps its shape
+            // while it loads; the header's controls stay reachable above it.
             Column(modifier = modifier.padding(contentPadding)) {
                 header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
-                LoadingIndicator(modifier = Modifier.weight(1f))
+                PosterGridSkeleton(
+                    progress = rememberShimmerProgress(),
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
         state.error != null && state.items.isEmpty() -> {

@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
+import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -117,8 +118,22 @@ fun RecommendationsScreen(
 
     when {
         state.isLoading && state.sections.isEmpty() -> {
-            // iOS phone loading state is an empty (Color.clear) placeholder.
-            Box(modifier = Modifier.fillMaxSize().padding(top = contentTopPadding))
+            // Skeleton in the shape of the feed (pill row + poster rows) so the
+            // tab is never a blank black page while recommendations load.
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = contentTopPadding + 16.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    SavedShortcutsRow(
+                        onWatchlistClick = { onSavedListSelectionChange(ForYouList.Watchlist) },
+                        onFavoritesClick = { onSavedListSelectionChange(ForYouList.Favorites) },
+                    )
+                }
+                MediaRowsSkeleton(rowCount = 3)
+            }
         }
 
         state.error != null && state.sections.isEmpty() -> {
