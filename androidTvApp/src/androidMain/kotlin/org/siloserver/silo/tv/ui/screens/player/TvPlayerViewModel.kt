@@ -66,6 +66,7 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.player.settlingFalseEdges
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
@@ -1261,8 +1262,17 @@ class TvPlayerViewModel(
         TvPlayerMutationFence(loadOwners, subtitleTransactions::invalidate)
     }
 
-    /** Intro auto-skip banner state. The screen consumes this directly. */
+    /** Intro skip pill state. The screen consumes this directly. */
     val introSkipState: StateFlow<IntroAutoSkipState> = introAutoSkipController.state
+
+    /** Bumps whenever the pill's timer (re)starts, so the fill can re-anchor. */
+    val introSkipCountdownRun: StateFlow<Int> = introAutoSkipController.countdownRun
+
+    /** False while the pill is up but its timer is frozen by a pause. */
+    val introSkipTimerRunning: StateFlow<Boolean> = introAutoSkipController.timerRunning
+
+    /** Total seconds a fresh intro prompt runs for, for the fill's arithmetic. */
+    val introSkipTotalSeconds: Int = introAutoSkipController.totalCountdownSeconds
 
     private val seekRequestChannel = Channel<Double>(capacity = Channel.BUFFERED)
     val seekRequests: Flow<Double> = seekRequestChannel.receiveAsFlow()
@@ -1346,8 +1356,8 @@ class TvPlayerViewModel(
     // ---- Player settings flows (per-profile, DataStore-backed) -----------------
     val playbackSpeed: StateFlow<Double> = playerSettingsStore.playbackSpeedFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1.0)
-    val autoSkipIntroEnabled: StateFlow<Boolean> = playerSettingsStore.autoSkipIntroFlow
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val introSkipMode: StateFlow<IntroSkipMode> = playerSettingsStore.introSkipModeFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, IntroSkipMode.Default)
     val autoPlayNextEnabled: StateFlow<Boolean> = playerSettingsStore.autoPlayNextFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     // Per-profile "Still watching?" threshold (default 3; 0 = off).
@@ -2225,14 +2235,16 @@ class TvPlayerViewModel(
         // Auto-skip is a local transport action: in a Watch Together room only
         // the host's transport may move position, so never auto-skip in a room
         // (a guest jump would fight the host's broadcast in a yank-back loop).
-        // The observer still runs in a room — with enabled pinned false the
-        // controller only ever surfaces ShowingButton (prompt visible, never
-        // counts down or auto-fires), keeping the manual Skip Intro button
-        // alive; its press routes through the screen's gate-checked seek.
-        val autoSkipEnabled = if (roomId != null) {
-            flowOf(false)
+        // The observer still runs in a room — with the mode pinned to `ask` the
+        // controller never seeks on its own, and the Skip Intro pill it offers
+        // stays live; its Select routes through the screen's gate-checked seek.
+        // A room member who chose `never` still gets the pill, which is the
+        // lesser wrong: the alternative is a mode whose only implementation is
+        // a seek nobody in the room is allowed to make.
+        val effectiveMode = if (roomId != null) {
+            flowOf(IntroSkipMode.ASK)
         } else {
-            playerSettingsStore.autoSkipIntroFlow
+            playerSettingsStore.introSkipModeFlow
         }
         introObserveJob?.cancel()
         introObserveJob = introAutoSkipController.observe(
@@ -2242,7 +2254,7 @@ class TvPlayerViewModel(
             introRange = _uiState
                 .map { it.intro }
                 .distinctUntilChanged(),
-            autoSkipEnabled = autoSkipEnabled,
+            mode = effectiveMode,
             introKey = _uiState
                 .map { state ->
                     state.intro?.let { intro ->
@@ -2250,15 +2262,15 @@ class TvPlayerViewModel(
                     }
                 }
                 .distinctUntilChanged(),
-            onAutoSkipFire = { seekToSec -> seekImmediate(seekToSec) },
+            // Only reachable outside a room, where the mode is pinned to `ask`.
+            onSeek = { seekToSec -> seekImmediate(seekToSec) },
             // Filtered, not raw: isPlaying dips for a rebuffer exactly as it
-            // does for a deliberate pause, and the controller restarts the
-            // countdown from full whenever it sees a pause. Unfiltered, a
-            // stuttering stream renews its own countdown on every hiccup and
-            // the prompt can sit there without ever firing.
+            // does for a deliberate pause, and a pause that reaches the
+            // controller freezes the timer. Unfiltered, a stuttering stream
+            // would stall the prompt on every hiccup.
             //
             // isPaused is the viewer's own press and needs no filtering, so it
-            // stops the countdown on the frame of the press rather than after
+            // freezes the timer on the frame of the press rather than after
             // the grace window.
             playbackActive = _uiState
                 .map { it.isPlaying && !it.isLoading }
@@ -4396,28 +4408,30 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Skip the intro now: returns the seek target in seconds so the screen
-     * can call MediaController.seekTo. Returns null if there is no active
-     * intro range.
+     * The intro pill's Select: skip the intro (`ask`) or play it after all
+     * (`always`'s undo). Returns the seek target in seconds so the screen can
+     * call MediaController.seekTo, or null when no pill is showing.
      *
      * Returning the value (instead of seeking internally) keeps the VM free
-     * of MediaController references — the screen owns the controller.
+     * of MediaController references — the screen owns the controller — and is
+     * what lets a room route the seek through its transport gate.
      */
-    fun onSkipIntroNow(): Double? {
-        val intro = _uiState.value.intro ?: return null
-        introAutoSkipController.cancelCountdown()
+    fun onSelectIntroPrompt(): Double? {
+        val target = introAutoSkipController.select() ?: return null
         // Pre-write the resolved source position so the credits crossing check
         // treats this as a deliberate jump. The caller routes the actual seek
         // through either the room controller or seekImmediate; the latter owns
         // the pending-position guard for solo playback.
-        _uiState.update { it.copy(position = intro.end) }
-        return intro.end
+        _uiState.update { it.copy(position = target) }
+        return target
     }
 
-    /** Cancel an in-flight auto-skip countdown — banner falls back to manual Skip. */
-    fun onCancelIntroAutoSkip() {
-        introAutoSkipController.cancelCountdown()
-    }
+    /**
+     * Back while the intro pill is showing: take it down and resolve the intro
+     * without moving playback. True when a pill was actually dismissed, so the
+     * caller consumes the press only then.
+     */
+    fun onDismissIntroPrompt(): Boolean = introAutoSkipController.dismiss()
 
     /**
      * HUD Chapters pane picked a row. Returns the seek target in seconds;
@@ -4791,8 +4805,8 @@ class TvPlayerViewModel(
         viewModelScope.launch { playerSettingsStore.setPlaybackSpeed(value) }
     }
 
-    fun onSetAutoSkipIntro(value: Boolean) {
-        viewModelScope.launch { playerSettingsStore.setAutoSkipIntro(value) }
+    fun onSetIntroSkipMode(value: IntroSkipMode) {
+        viewModelScope.launch { playerSettingsStore.setIntroSkipMode(value) }
     }
 
     fun onSetAutoPlayNext(value: Boolean) {

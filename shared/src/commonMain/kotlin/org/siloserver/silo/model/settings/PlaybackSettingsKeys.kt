@@ -11,7 +11,22 @@ object PlaybackSettingsKeys {
      */
     const val MaxBitrateKbps = "playback.max_bitrate_kbps"
     const val AudioLanguage = "playback.audio_language"
+    /**
+     * Deprecated in contract revision 7 by [IntroSkipMode], which says what a
+     * boolean could not: `never` (no prompt at all). Kept because the profile
+     * DTO carries it as a NOT NULL column and older clients still read it; the
+     * server mirrors the two keys at write time for one release. Nothing in
+     * this app should read it except as the pre-revision-7 fallback.
+     */
     const val AutoSkipIntro = "playback.auto_skip_intro"
+
+    /**
+     * `never` | `ask` | `always` — see
+     * [org.siloserver.silo.domain.player.IntroSkipMode] and the server's
+     * `docs/design/2026-08-16-intro-skip-mode.md`. Same scopes and resolution
+     * order as [AutoSkipIntro], which it supersedes.
+     */
+    const val IntroSkipMode = "playback.intro_skip_mode"
     const val AutoSkipCredits = "playback.auto_skip_credits"
     const val AutoPlayNext = "playback.auto_play_next"
     // Renamed at the settings cutover: every other key carries a domain prefix
@@ -119,6 +134,7 @@ object PlaybackSettingsKeys {
         MaxBitrateKbps,
         AudioLanguage,
         AutoSkipIntro,
+        IntroSkipMode,
         AutoSkipCredits,
         AutoPlayNext,
         SubtitleAppearance,

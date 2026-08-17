@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
 import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
@@ -107,11 +108,65 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
-    fun `setAutoSkipIntro updates flow value`() = runTest {
+    fun `setIntroSkipMode updates the mode flow and the boolean projected from it`() = runTest {
         val store = newStore()
+        assertEquals(IntroSkipMode.ASK, store.introSkipModeFlow.first())
         assertEquals(false, store.autoSkipIntroFlow.first())
-        store.setAutoSkipIntro(true)
+
+        store.setIntroSkipMode(IntroSkipMode.ALWAYS)
+        assertEquals(IntroSkipMode.ALWAYS, store.introSkipModeFlow.first())
         assertEquals(true, store.autoSkipIntroFlow.first())
+
+        // The mode the boolean could never express degrades to its `false`.
+        store.setIntroSkipMode(IntroSkipMode.NEVER)
+        assertEquals(IntroSkipMode.NEVER, store.introSkipModeFlow.first())
+        assertEquals(false, store.autoSkipIntroFlow.first())
+    }
+
+    @Test
+    fun `the deprecated boolean setter writes the enum that superseded it`() = runTest {
+        val store = newStore()
+        store.setAutoSkipIntro(true)
+        assertEquals(IntroSkipMode.ALWAYS, store.introSkipModeFlow.first())
+        assertTrue(
+            fakeFlusher.calls.any {
+                it.key == PlaybackSettingsKeys.IntroSkipMode && it.value == "always"
+            },
+        )
+        assertFalse(
+            fakeFlusher.calls.any { it.key == PlaybackSettingsKeys.AutoSkipIntro },
+            "writing the boolean too would let the server's lossy mirror rewrite a `never`",
+        )
+    }
+
+    @Test
+    fun `a server that does not know the enum falls back to the boolean it does`() = runTest {
+        // The revision < 7 case: the effective-values response answers
+        // auto_skip_intro and says nothing about intro_skip_mode, so the local
+        // enum slot stays empty and the boolean decides.
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                defaulted(PlaybackSettingsKeys.AutoSkipIntro, JsonPrimitive(true)),
+            ),
+        )
+        val store = newStore(repository = SettingsRepository(api))
+        store.refreshFromServer()
+        assertEquals(IntroSkipMode.ALWAYS, store.introSkipModeFlow.first())
+    }
+
+    @Test
+    fun `a revision 7 server hydrates the enum, which outranks the mirrored boolean`() = runTest {
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                // What the server's write mirror produces for `never`: the
+                // boolean cannot say it, so it degrades to false.
+                defaulted(PlaybackSettingsKeys.AutoSkipIntro, JsonPrimitive(false)),
+                defaulted(PlaybackSettingsKeys.IntroSkipMode, JsonPrimitive("never")),
+            ),
+        )
+        val store = newStore(repository = SettingsRepository(api))
+        store.refreshFromServer()
+        assertEquals(IntroSkipMode.NEVER, store.introSkipModeFlow.first())
     }
 
     @Test
@@ -188,12 +243,12 @@ class AndroidPlayerSettingsStoreTest {
     @Test
     fun `flush enqueue is called on each setter`() = runTest {
         val store = newStore()
-        store.setAutoSkipIntro(true)
+        store.setIntroSkipMode(IntroSkipMode.ALWAYS)
         store.setPreferredQuality("720p")
         store.setPlaybackSpeed(1.5)
 
         val calls = fakeFlusher.calls
-        assertTrue(calls.any { it.key == PlaybackSettingsKeys.AutoSkipIntro && it.value == "true" })
+        assertTrue(calls.any { it.key == PlaybackSettingsKeys.IntroSkipMode && it.value == "always" })
         assertTrue(calls.any { it.key == PlaybackSettingsKeys.PreferredQuality && it.value == "720p" })
         assertTrue(calls.any { it.key == PlaybackSettingsKeys.PlaybackSpeed && it.value == "1.5" })
         assertTrue(calls.all { it.profileId == activeProfileId })
@@ -331,17 +386,17 @@ class AndroidPlayerSettingsStoreTest {
         // rather than surviving locally.
         val api = FakeSettingsApi(
             effective = mapOf(
-                defaulted(PlaybackSettingsKeys.AutoSkipIntro, JsonPrimitive(false)),
+                defaulted(PlaybackSettingsKeys.IntroSkipMode, JsonPrimitive("ask")),
                 defaulted(PlaybackSettingsKeys.NextUpPromptSeconds, JsonPrimitive(30)),
             ),
         )
         val store = newStore(repository = SettingsRepository(api))
-        store.setAutoSkipIntro(true)
+        store.setIntroSkipMode(IntroSkipMode.ALWAYS)
         store.setNextUpPromptSeconds(90)
 
         store.refreshFromServer()
 
-        assertEquals(false, store.autoSkipIntroFlow.first())
+        assertEquals(IntroSkipMode.ASK, store.introSkipModeFlow.first())
         assertEquals(30, store.nextUpPromptSecondsFlow.first())
     }
 
@@ -351,11 +406,11 @@ class AndroidPlayerSettingsStoreTest {
         // contract revision predates it — not that it was reset.
         val api = FakeSettingsApi(effective = emptyMap())
         val store = newStore(repository = SettingsRepository(api))
-        store.setAutoSkipIntro(true)
+        store.setIntroSkipMode(IntroSkipMode.NEVER)
 
         store.refreshFromServer()
 
-        assertEquals(true, store.autoSkipIntroFlow.first())
+        assertEquals(IntroSkipMode.NEVER, store.introSkipModeFlow.first())
     }
 
     @Test
@@ -598,9 +653,9 @@ class AndroidPlayerSettingsStoreTest {
         // queued op that outlives a server switch can only be told apart by the
         // origin the store stamps on it here.
         val store = newStore()
-        store.setAutoSkipIntro(true)
+        store.setIntroSkipMode(IntroSkipMode.ALWAYS)
 
-        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.AutoSkipIntro }
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.IntroSkipMode }
         assertEquals(serverUrl, call.serverUrl)
     }
 

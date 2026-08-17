@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.LanguageOptions
@@ -221,10 +222,30 @@ class AndroidPlayerSettingsStore(
             }
         }
 
-    // ---- Booleans ------------------------------------------------------
-    override val autoSkipIntroFlow: Flow<Boolean> =
-        profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.AutoSkipIntro, false) }
+    /**
+     * The stored enum, falling back to the deprecated boolean when there is no
+     * enum to read.
+     *
+     * That fallback IS the "server contract revision < 7" case the spec asks
+     * for, without a second copy of the revision to keep in step:
+     * [applyEffectiveLocally] only writes keys the effective-values response
+     * actually answered, and a server older than revision 7 does not know
+     * `playback.intro_skip_mode` — so the slot stays empty and the boolean the
+     * same response *did* answer decides. A revision-7 server answers both and
+     * the enum wins, which is what the write mirror keeps consistent.
+     *
+     * [autoSkipIntroFlow] is not overridden: the interface projects it from
+     * here so the two can never disagree locally.
+     */
+    override val introSkipModeFlow: Flow<IntroSkipMode> =
+        profileScopedFlow(IntroSkipMode.Default) { p, s ->
+            IntroSkipMode.fromWire(p.stringFor(s, PlaybackSettingsKeys.IntroSkipMode, ""))
+                ?: IntroSkipMode.fromLegacyBoolean(
+                    p.boolFor(s, PlaybackSettingsKeys.AutoSkipIntro, false),
+                )
+        }
 
+    // ---- Booleans ------------------------------------------------------
     override val autoSkipCreditsFlow: Flow<Boolean> =
         profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.AutoSkipCredits, false) }
 
@@ -377,8 +398,18 @@ class AndroidPlayerSettingsStore(
         writeBoolLocal(PlaybackSettingsKeys.NavShowAudiobooks, enabled)
 
     // ---- Setters (write to scoped key + enqueue server flush) ---------
-    override suspend fun setAutoSkipIntro(value: Boolean) =
-        writeBool(PlaybackSettingsKeys.AutoSkipIntro, value)
+    /**
+     * Writes only the enum, never the boolean beside it.
+     *
+     * The server mirrors the pair at write time, and its boolean -> enum
+     * direction is lossy (`false` means `ask`). Enqueueing both would let the
+     * boolean's mirror land second and rewrite a `never` the viewer just chose
+     * back to `ask`. On a server older than revision 7 this write is rejected
+     * per key — the flusher drops that one op rather than poisoning the rest —
+     * and the local value still stands.
+     */
+    override suspend fun setIntroSkipMode(value: IntroSkipMode) =
+        writeString(PlaybackSettingsKeys.IntroSkipMode, value.wireValue)
 
     override suspend fun setAutoSkipCredits(value: Boolean) =
         writeBool(PlaybackSettingsKeys.AutoSkipCredits, value)

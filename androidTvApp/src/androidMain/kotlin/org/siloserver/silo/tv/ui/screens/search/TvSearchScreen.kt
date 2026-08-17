@@ -1028,7 +1028,13 @@ private fun SearchStage(
                             event.key == Key.DirectionLeft &&
                             !isKeyboardOpen &&
                             voiceSearch.isAvailable -> {
-                            runCatching { voiceFocusRequester.requestFocus() }.getOrDefault(false)
+                            // A key handler answers synchronously, so this is
+                            // the single-shot claim; a miss is reported rather
+                            // than swallowed.
+                            voiceFocusRequester.claimFocusOrReport(
+                                target = "search_voice",
+                                action = "field_left",
+                            )
                         }
                         // DOWN too. With the keyboard closed and a query in the
                         // field, the read-only text field still swallows Down
@@ -1040,8 +1046,10 @@ private fun SearchStage(
                         event.type == KeyEventType.KeyDown &&
                             event.key == Key.DirectionDown &&
                             !isKeyboardOpen -> {
-                            runCatching { firstFilterChipFocusRequester.requestFocus() }
-                                .getOrDefault(false)
+                            firstFilterChipFocusRequester.claimFocusOrReport(
+                                target = "search_first_filter_chip",
+                                action = "field_down",
+                            )
                         }
                         else -> false
                     }

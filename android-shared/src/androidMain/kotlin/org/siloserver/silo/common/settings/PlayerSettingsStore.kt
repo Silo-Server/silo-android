@@ -1,9 +1,11 @@
 package org.siloserver.silo.common.settings
 
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import org.siloserver.silo.player.DolbyVisionPolicy
 
 /**
@@ -33,8 +35,25 @@ object LetterboxExpansion {
 }
 
 interface PlayerSettingsStore {
+    /**
+     * What the player does when an intro starts — `playback.intro_skip_mode`,
+     * contract revision 7. See the server's
+     * `docs/design/2026-08-16-intro-skip-mode.md`.
+     */
+    val introSkipModeFlow: Flow<IntroSkipMode>
+
     // Booleans
+    /**
+     * The deprecated boolean, projected from [introSkipModeFlow] rather than
+     * read separately so the two cannot disagree — `always` is the only mode
+     * the boolean's `true` ever meant, and `never` degrades to the same `false`
+     * an old client would have shown as "ask".
+     *
+     * Nothing in the app should read this: it exists for the compatibility
+     * window while the server still mirrors the two keys.
+     */
     val autoSkipIntroFlow: Flow<Boolean>
+        get() = introSkipModeFlow.map { it == IntroSkipMode.ALWAYS }
     val autoSkipCreditsFlow: Flow<Boolean>
     val autoPlayNextFlow: Flow<Boolean>
     val hdrEnabledFlow: Flow<Boolean>
@@ -108,7 +127,15 @@ interface PlayerSettingsStore {
     val effectiveSubtitleAppearanceFlow: Flow<org.siloserver.silo.model.settings.SubtitleAppearance>
 
     // Setters
-    suspend fun setAutoSkipIntro(value: Boolean)
+    suspend fun setIntroSkipMode(value: IntroSkipMode)
+
+    /**
+     * Deprecated shim for the boolean. Routes to [setIntroSkipMode] so a caller
+     * that has not moved yet still writes the canonical key; the server mirrors
+     * the boolean back at the same identity.
+     */
+    suspend fun setAutoSkipIntro(value: Boolean) =
+        setIntroSkipMode(IntroSkipMode.fromLegacyBoolean(value))
     suspend fun setAutoSkipCredits(value: Boolean)
     suspend fun setAutoPlayNext(value: Boolean)
     suspend fun setHdrEnabled(value: Boolean)

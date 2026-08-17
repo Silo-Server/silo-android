@@ -338,10 +338,12 @@ fun TvPlayerScreen(
     }
     val sessionState by viewModel.sessionState.collectAsState()
     val introSkipState by viewModel.introSkipState.collectAsState()
+    val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
+    val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
     val subtitleAppearance by viewModel.subtitleAppearance.collectAsState()
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
     val sleepTimerState by viewModel.sleepTimerState.collectAsState()
-    val autoSkipIntroEnabled by viewModel.autoSkipIntroEnabled.collectAsState()
+    val introSkipMode by viewModel.introSkipMode.collectAsState()
     val autoPlayNextEnabled by viewModel.autoPlayNextEnabled.collectAsState()
     val audioDelayMs by viewModel.audioDelayMs.collectAsState()
     val subtitleDelayMs by viewModel.subtitleDelayMs.collectAsState()
@@ -628,17 +630,21 @@ fun TvPlayerScreen(
         )
     }
 
-    fun handleSkipIntroNow(): Boolean {
+    fun handleIntroPromptSelect(): Boolean {
         val playerState = viewModel.uiState.value
-        val target = playerState.intro?.end ?: return false
+        if (!latestIntroSkipState.isVisible) return false
+        // The controller decides where Select goes — the intro's end for the
+        // `ask` offer, its start for `always`'s undo — and resolves the intro.
+        // In a room the gate is checked BEFORE asking, so a guest's refused
+        // press leaves the pill (and the intro) exactly as it was.
         if (roomController != null) {
             if (tvRoomTransportGate(latestRoomSnapshot, TvTransportIntent.Seek) != TransportGate.Send) {
                 return true
             }
-            viewModel.onSkipIntroNow() ?: return false
+            val target = viewModel.onSelectIntroPrompt() ?: return false
             roomController.onUserSeek(target)
         } else {
-            val soloTarget = viewModel.onSkipIntroNow() ?: return false
+            val soloTarget = viewModel.onSelectIntroPrompt() ?: return false
             viewModel.seekImmediate(soloTarget)
         }
         // The pill unmounts with the intro state, taking its focus with it, so
@@ -921,8 +927,7 @@ fun TvPlayerScreen(
             // the legacy key bridge — on API 36 Back never reaches
             // dispatchKeyEvent, so a countdown Back would otherwise fall
             // through to hiding the controls or exiting the player.
-            latestIntroSkipState is IntroAutoSkipState.CountingDown ->
-                viewModel.onCancelIntroAutoSkip()
+            latestIntroSkipState.isVisible -> viewModel.onDismissIntroPrompt()
             showQuickSubtitlePicker -> showQuickSubtitlePicker = false
             state.showSubtitleStyleDialog -> viewModel.closeSubtitleStyleDialog()
             state.showSubtitleMenu -> viewModel.closeSubtitleMenu()
@@ -1100,13 +1105,13 @@ fun TvPlayerScreen(
                 return@handler false
             }
 
-            // Back stops the timer and leaves the prompt up, like a D-pad nudge.
-            // Consumed so the press cannot also exit playback; afterwards the
-            // state is no longer CountingDown, so Back behaves normally.
-            // Mirrors the BackHandler ladder's priority: a scrub or clean seek
-            // owns Back first, so the countdown must not swallow it here on
-            // older Android and leave the scrub running.
-            if (latestIntroSkipState is IntroAutoSkipState.CountingDown &&
+            // Back takes the pill down and resolves the intro. Consumed so the
+            // press cannot also exit playback; afterwards no pill is showing,
+            // so a second Back behaves normally. Mirrors the BackHandler
+            // ladder's priority: a scrub or clean seek owns Back first, so the
+            // pill must not swallow it here on older Android and leave the
+            // scrub running.
+            if (latestIntroSkipState.isVisible &&
                 event.keyCode == KeyEvent.KEYCODE_BACK &&
                 cleanSeekRate == 0 &&
                 !state.isScrubbing
@@ -1114,26 +1119,14 @@ fun TvPlayerScreen(
                 // Both phases are consumed: a leaked ACTION_UP would reach the
                 // activity's back dispatcher.
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    viewModel.onCancelIntroAutoSkip()
+                    viewModel.onDismissIntroPrompt()
                 }
                 return@handler true
             }
 
-            // A D-pad direction stops the timer but leaves the prompt up. Handled
-            // here rather than on the button, which is not reliably in the focus
-            // tree. Falls through so navigation and seek still run.
-            if (event.action == KeyEvent.ACTION_DOWN &&
-                event.repeatCount == 0 &&
-                latestIntroSkipState is IntroAutoSkipState.CountingDown &&
-                event.keyCode in setOf(
-                    KeyEvent.KEYCODE_DPAD_UP,
-                    KeyEvent.KEYCODE_DPAD_DOWN,
-                    KeyEvent.KEYCODE_DPAD_LEFT,
-                    KeyEvent.KEYCODE_DPAD_RIGHT,
-                )
-            ) {
-                viewModel.onCancelIntroAutoSkip()
-            }
+            // D-pad directions deliberately do NOT touch the pill: the contract
+            // says focus moves as normal and the timer keeps running, so the
+            // viewer can look at the transport without losing the offer.
 
             if (!playerState.showControls && !playerState.showNextUp && horizontalDirection != 0) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
@@ -1144,10 +1137,7 @@ fun TvPlayerScreen(
 
             if (event.action == KeyEvent.ACTION_DOWN &&
                 event.repeatCount == 0 &&
-                (
-                    latestIntroSkipState is IntroAutoSkipState.ShowingButton ||
-                        latestIntroSkipState is IntroAutoSkipState.CountingDown
-                    ) &&
+                latestIntroSkipState.isVisible &&
                 // Only while the transport overlay is hidden: with controls up
                 // a focused button owns Select — hijacking it here made every
                 // OK press skip the intro for the whole intro window.
@@ -1158,7 +1148,7 @@ fun TvPlayerScreen(
                     KeyEvent.KEYCODE_NUMPAD_ENTER,
                 )
             ) {
-                return@handler handleSkipIntroNow()
+                return@handler handleIntroPromptSelect()
             }
 
             // Back while PLAYING with the transport overlay up: hide the
@@ -2209,8 +2199,8 @@ fun TvPlayerScreen(
                             sleepTimerState = sleepTimerState,
                             onStartSleepTimer = viewModel::onStartSleepTimer,
                             onCancelSleepTimer = viewModel::onCancelSleepTimer,
-                            autoSkipIntro = autoSkipIntroEnabled,
-                            onAutoSkipIntroChanged = viewModel::onSetAutoSkipIntro,
+                            introSkipMode = introSkipMode,
+                            onIntroSkipModeChanged = viewModel::onSetIntroSkipMode,
                             autoPlayNext = autoPlayNextEnabled,
                             onAutoPlayNextChanged = viewModel::onSetAutoPlayNext,
                             audioDelayMs = audioDelayMs,
@@ -2399,6 +2389,9 @@ fun TvPlayerScreen(
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
             autoPlayNextEnabled = autoPlayNextEnabled,
             introSkipState = introSkipState,
+            introSkipCountdownRun = introSkipCountdownRun,
+            introSkipTimerRunning = introSkipTimerRunning,
+            introSkipTotalSeconds = viewModel.introSkipTotalSeconds,
             // The scrubber commits its seek on focus loss, so the prompt must
             // not take focus out from under an active scrub.
             introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0,
@@ -2420,7 +2413,7 @@ fun TvPlayerScreen(
             onKeepWatching = viewModel::dismissNextUp,
             onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
             onExitPlayback = { stopPlaybackAndExit() },
-            onSkipIntroNow = { handleSkipIntroNow() },
+            onIntroPromptSelect = { handleIntroPromptSelect() },
         )
     }
 }
@@ -3494,6 +3487,11 @@ private fun TvPlayerOverlays(
     nextUpCountdownTotalSeconds: Int,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
+    /** Bumps when the pill's timer (re)starts, so its fill re-anchors. */
+    introSkipCountdownRun: Int,
+    /** False while the pill is up but its timer is frozen by a pause. */
+    introSkipTimerRunning: Boolean,
+    introSkipTotalSeconds: Int,
     /** False while a scrub owns focus — see TvIntroAutoSkipBanner.mayTakeFocus. */
     introBannerMayTakeFocus: Boolean,
     /** True only while the video branch is composed — not loading, not errored. */
@@ -3507,7 +3505,7 @@ private fun TvPlayerOverlays(
     onKeepWatching: () -> Unit,
     onToggleAutoPlayNext: () -> Unit,
     onExitPlayback: () -> Unit,
-    onSkipIntroNow: () -> Unit,
+    onIntroPromptSelect: () -> Unit,
 ) {
         // Lifecycle-driven notice toast (top-start). Slides in for outage
         // recovery, fades out when the lifecycle clears the notice.
@@ -3690,10 +3688,10 @@ private fun TvPlayerOverlays(
             }
         }
 
-        // Intro auto-skip banner (bottom-end, above the transport cluster).
+        // Intro skip pill (bottom-end, above the transport cluster).
         // It must remain visible even when transport controls auto-hide; D-pad
-        // Center routes directly to [onSkipIntroNow] while the manual prompt
-        // is active, so the viewer does not need a first click just to reveal UI.
+        // Center routes straight to the pill's Select while it is showing, so
+        // the viewer does not need a first click just to reveal UI.
         // Bottom inset (200dp) clears the transport cluster + scrubber column.
         if (!isInPictureInPictureMode) {
             if (!hudOpen && !showNextUp) {
@@ -3712,7 +3710,10 @@ private fun TvPlayerOverlays(
                 ) {
                     TvIntroAutoSkipBanner(
                         state = introSkipState,
-                        onSkipNow = onSkipIntroNow,
+                        onSelect = onIntroPromptSelect,
+                        totalSeconds = introSkipTotalSeconds,
+                        countdownRun = introSkipCountdownRun,
+                        timerRunning = introSkipTimerRunning,
                         // Not while the viewer is working the timeline: the
                         // scrubber commits its seek on focus loss, so taking
                         // focus here would land a seek they never confirmed.

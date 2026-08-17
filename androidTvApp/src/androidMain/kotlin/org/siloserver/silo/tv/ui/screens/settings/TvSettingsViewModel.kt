@@ -7,6 +7,7 @@ import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.model.auth.User
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -94,7 +95,7 @@ class TvSettingsViewModel(
         val effectiveSubtitleAppearance: SubtitleAppearance = SubtitleAppearance.DEFAULT,
         val subtitleUsesDeviceOverride: Boolean = false,
         val autoPlayNext: Boolean = true,
-        val autoSkipIntro: Boolean = false,
+        val introSkipMode: IntroSkipMode = IntroSkipMode.Default,
         val matchContentFrameRate: Boolean = false,
         val dolbyVisionEnabled: Boolean = true,
         val showAudiobooksTab: Boolean = false,
@@ -287,7 +288,7 @@ class TvSettingsViewModel(
                 playerSettingsStore.preferredQualityFlow,
                 playerSettingsStore.maxBitrateKbpsFlow,
                 playerSettingsStore.autoPlayNextFlow,
-                playerSettingsStore.autoSkipIntroFlow,
+                playerSettingsStore.introSkipModeFlow,
                 playerSettingsStore.autoSkipCreditsFlow,
                 playerSettingsStore.savedCustomSubtitleAppearanceFlow,
                 playerSettingsStore.audioLanguageFlow,
@@ -300,7 +301,7 @@ class TvSettingsViewModel(
                 @Suppress("UNCHECKED_CAST")
                 val autoPlay = values[2] as Boolean
                 @Suppress("UNCHECKED_CAST")
-                val skipIntro = values[3] as Boolean
+                val skipIntro = values[3] as IntroSkipMode
                 @Suppress("UNCHECKED_CAST")
                 val skipCredits = values[4] as Boolean
                 @Suppress("UNCHECKED_CAST")
@@ -319,7 +320,7 @@ class TvSettingsViewModel(
                         qualityResolution = snap.quality,
                         maxBitrateKbps = snap.maxBitrateKbps,
                         autoPlayNext = snap.autoPlay,
-                        autoSkipIntro = snap.skipIntro,
+                        introSkipMode = snap.skipIntro,
                         autoSkipCredits = snap.skipCredits,
                         subtitleSize = snap.appearance.fontSize.toTvSubtitleSize(),
                         subtitleAppearance = snap.appearance,
@@ -567,8 +568,8 @@ class TvSettingsViewModel(
         viewModelScope.launch { playerSettingsStore.setDvProfile7HDR10Fallback(value) }
     }
 
-    fun onAutoSkipIntroChanged(value: Boolean) {
-        viewModelScope.launch { playerSettingsStore.setAutoSkipIntro(value) }
+    fun onIntroSkipModeChanged(value: IntroSkipMode) {
+        viewModelScope.launch { playerSettingsStore.setIntroSkipMode(value) }
     }
 
     fun onAutoSkipCreditsChanged(value: Boolean) {
@@ -646,7 +647,7 @@ class TvSettingsViewModel(
         val quality: String,
         val maxBitrateKbps: Int?,
         val autoPlay: Boolean,
-        val skipIntro: Boolean,
+        val skipIntro: IntroSkipMode,
         val skipCredits: Boolean,
         val appearance: SubtitleAppearance,
         val audioLanguage: String,

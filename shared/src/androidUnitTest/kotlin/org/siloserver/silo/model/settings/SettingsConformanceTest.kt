@@ -88,6 +88,7 @@ class SettingsConformanceTest {
     @Serializable
     private data class ConformanceContext(
         @SerialName("profile_id") val profileId: String? = null,
+        @SerialName("client_family") val clientFamily: String? = null,
         @SerialName("device_id") val deviceId: String? = null,
         @SerialName("library_ids") val libraryIds: List<Int> = emptyList(),
         @SerialName("series_ids") val seriesIds: List<String> = emptyList(),
@@ -98,6 +99,7 @@ class SettingsConformanceTest {
         val key: String,
         val scope: String,
         @SerialName("profile_id") val profileId: String? = null,
+        @SerialName("client_family") val clientFamily: String? = null,
         @SerialName("device_id") val deviceId: String? = null,
         @SerialName("library_id") val libraryId: Int? = null,
         @SerialName("series_id") val seriesId: String? = null,
@@ -306,6 +308,7 @@ class SettingsConformanceTest {
                         key = row.key,
                         scope = row.scope,
                         profileId = row.profileId,
+                        clientFamily = row.clientFamily,
                         deviceId = row.deviceId,
                         libraryId = row.libraryId,
                         seriesId = row.seriesId,
@@ -314,6 +317,7 @@ class SettingsConformanceTest {
                 },
                 context = SettingResolutionContext(
                     profileId = case.context?.profileId,
+                    clientFamily = case.context?.clientFamily,
                     deviceId = case.context?.deviceId,
                     libraryIds = case.context?.libraryIds.orEmpty(),
                     seriesIds = case.context?.seriesIds.orEmpty(),

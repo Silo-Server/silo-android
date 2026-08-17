@@ -62,7 +62,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.android.R
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.player.SleepTimerState
 
@@ -89,8 +92,8 @@ fun PlayerSettingsSheet(
     onSetVideoGravity: (String) -> Unit,
     letterboxExpansion: String = LetterboxExpansion.Default,
     onSetLetterboxExpansion: (String) -> Unit = {},
-    autoSkipIntroEnabled: Boolean,
-    onSetAutoSkipIntro: (Boolean) -> Unit,
+    introSkipMode: IntroSkipMode,
+    onSetIntroSkipMode: (IntroSkipMode) -> Unit,
     autoPlayNextEnabled: Boolean,
     onSetAutoPlayNext: (Boolean) -> Unit,
     hdrEnabled: Boolean,
@@ -140,8 +143,8 @@ fun PlayerSettingsSheet(
             onSetVideoGravity = onSetVideoGravity,
             letterboxExpansion = letterboxExpansion,
             onSetLetterboxExpansion = onSetLetterboxExpansion,
-            autoSkipIntroEnabled = autoSkipIntroEnabled,
-            onSetAutoSkipIntro = onSetAutoSkipIntro,
+            introSkipMode = introSkipMode,
+            onSetIntroSkipMode = onSetIntroSkipMode,
             autoPlayNextEnabled = autoPlayNextEnabled,
             onSetAutoPlayNext = onSetAutoPlayNext,
             audioDelayMs = audioDelayMs,
@@ -302,8 +305,8 @@ private fun SettingsCategoryContent(
     onSetVideoGravity: (String) -> Unit,
     letterboxExpansion: String,
     onSetLetterboxExpansion: (String) -> Unit,
-    autoSkipIntroEnabled: Boolean,
-    onSetAutoSkipIntro: (Boolean) -> Unit,
+    introSkipMode: IntroSkipMode,
+    onSetIntroSkipMode: (IntroSkipMode) -> Unit,
     autoPlayNextEnabled: Boolean,
     onSetAutoPlayNext: (Boolean) -> Unit,
     audioDelayMs: Int,
@@ -355,11 +358,9 @@ private fun SettingsCategoryContent(
                 }
 
                 SettingsCategory.Episodes -> {
-                    ToggleRow(
-                        label = "Auto-skip intro",
-                        subtitle = "Skip after the five-second countdown",
-                        checked = autoSkipIntroEnabled,
-                        onCheckedChange = onSetAutoSkipIntro,
+                    IntroSkipModeSetting(
+                        selected = introSkipMode,
+                        onSelect = onSetIntroSkipMode,
                     )
                     PlayerSheetDivider(modifier = Modifier.padding(horizontal = 16.dp))
                     ToggleRow(
@@ -565,6 +566,65 @@ private fun LetterboxExpansionSetting(
                 "file, never into the picture itself. Full width uses the whole " +
                 "display and lets the camera sit on the image. Video without stored " +
                 "bars already fits and does not change.",
+            color = Color.White.copy(alpha = 0.6f),
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.Black.copy(alpha = 0.22f))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            options.forEach { (value, label) ->
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(
+                            if (selected == value) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        )
+                        .clickable { onSelect(value) }
+                        .heightIn(min = 42.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        color = if (selected == value) Color.Black else Color.White.copy(alpha = 0.72f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The three-way `playback.intro_skip_mode` control — the schema recommends a
+ * select, and this app has a segmented control, so it uses one (same shape as
+ * [LetterboxExpansionSetting]). Copy is fixed by the contract.
+ */
+@Composable
+private fun IntroSkipModeSetting(
+    selected: IntroSkipMode,
+    onSelect: (IntroSkipMode) -> Unit,
+) {
+    val options = listOf(
+        IntroSkipMode.NEVER to stringResource(R.string.settings_intro_skip_never),
+        IntroSkipMode.ASK to stringResource(R.string.settings_intro_skip_ask),
+        IntroSkipMode.ALWAYS to stringResource(R.string.settings_intro_skip_always),
+    )
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+        SettingTitle(title = stringResource(R.string.settings_intro_skip_title))
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "What happens when a detected intro starts: leave it alone, " +
+                "offer a Skip Intro button, or skip it and offer an undo.",
             color = Color.White.copy(alpha = 0.6f),
             fontSize = 12.sp,
             lineHeight = 16.sp,

@@ -1214,7 +1214,8 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         val SAFE_DOTTED_SETTING_KEYS = setOf(
             "catalog.metadata_language", "playback.audio_language", "playback.auto_play_next",
             "playback.auto_play_next_preview", "playback.auto_skip_credits", "playback.auto_skip_intro",
-            "playback.auto_skip_recap", "playback.max_bitrate_kbps", "playback.next_up_prompt_seconds",
+            "playback.auto_skip_recap", "playback.intro_skip_mode", "playback.max_bitrate_kbps",
+            "playback.next_up_prompt_seconds",
             "playback.preferred_quality", "playback.show_forced_subtitles", "playback.subtitle_appearance",
             "playback.subtitle_language", "playback.subtitle_mode", "player.audio_sync_ms",
             "player.dolby_vision_enabled", "player.dv_profile7_hdr10_fallback", "player.hdr_enabled",

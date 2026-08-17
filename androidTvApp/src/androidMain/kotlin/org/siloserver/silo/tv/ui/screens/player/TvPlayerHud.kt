@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import androidx.activity.compose.BackHandler
+import androidx.annotation.StringRes
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -53,6 +54,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,6 +86,8 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
 import org.siloserver.silo.common.player.PlayerStatsSnapshot
+import org.siloserver.silo.domain.player.IntroSkipMode
+import org.siloserver.silo.tv.R
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
@@ -191,8 +195,8 @@ internal fun TvPlayerHud(
     sleepTimerState: SleepTimerState,
     onStartSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
-    autoSkipIntro: Boolean,
-    onAutoSkipIntroChanged: (Boolean) -> Unit,
+    introSkipMode: IntroSkipMode,
+    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     autoPlayNext: Boolean,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     audioDelayMs: Int,
@@ -507,8 +511,8 @@ internal fun TvPlayerHud(
                         sleepTimerState = sleepTimerState,
                         onStartSleepTimer = onStartSleepTimer,
                         onCancelSleepTimer = onCancelSleepTimer,
-                        autoSkipIntro = autoSkipIntro,
-                        onAutoSkipIntroChanged = onAutoSkipIntroChanged,
+                        introSkipMode = introSkipMode,
+                        onIntroSkipModeChanged = onIntroSkipModeChanged,
                         autoPlayNext = autoPlayNext,
                         onAutoPlayNextChanged = onAutoPlayNextChanged,
                         entryFocusRequester = paneEntryFocus,
@@ -1028,8 +1032,8 @@ private fun HudVideoPane(
     sleepTimerState: SleepTimerState,
     onStartSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
-    autoSkipIntro: Boolean,
-    onAutoSkipIntroChanged: (Boolean) -> Unit,
+    introSkipMode: IntroSkipMode,
+    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     autoPlayNext: Boolean,
     onAutoPlayNextChanged: (Boolean) -> Unit,
     entryFocusRequester: FocusRequester,
@@ -1225,12 +1229,15 @@ private fun HudVideoPane(
 
             PaneColumn("Automation") {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // Three values, so Select cycles rather than toggles —
+                    // the same one-press shape as the rows around it, without
+                    // a picker sheet over the picture. Settings has the list.
                     HudFocusedSettingRow(
-                        label = "Auto-skip intro",
-                        value = onOffLabel(autoSkipIntro),
+                        label = stringResource(R.string.settings_intro_skip_title),
+                        value = stringResource(introSkipModeLabel(introSkipMode)),
                         enabled = enabled,
                         showsChevron = false,
-                        onActivate = { onAutoSkipIntroChanged(!autoSkipIntro) },
+                        onActivate = { onIntroSkipModeChanged(introSkipMode.next()) },
                     )
 
                     HudFocusedSettingRow(
@@ -2567,3 +2574,15 @@ private fun formatTime(seconds: Double): String {
     val s = total % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
+
+/** The label each intro-skip mode is offered under; the copy is contract-fixed. */
+@StringRes
+private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
+    IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
+    IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
+    IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
+}
+
+/** Declaration order, wrapping: never -> ask -> always -> never. */
+private fun IntroSkipMode.next(): IntroSkipMode =
+    IntroSkipMode.entries[(ordinal + 1) % IntroSkipMode.entries.size]

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.download.DownloadQuality
@@ -62,7 +63,7 @@ data class SettingsUiState(
     // BCP 47 tag, "" = no preference. The picker converts to and from labels.
     val audioLanguage: String = "",
     val audioLanguageSuggestions: List<String> = emptyList(),
-    val autoSkipIntro: Boolean = false,
+    val introSkipMode: IntroSkipMode = IntroSkipMode.Default,
     val autoSkipCredits: Boolean = false,
     val pictureInPictureEnabled: Boolean = true,
     val dolbyVisionEnabled: Boolean = true,
@@ -183,7 +184,7 @@ class SettingsViewModel(
         val quality: String,
         val maxBitrateKbps: Int?,
         val audioLanguage: String,
-        val autoSkipIntro: Boolean,
+        val introSkipMode: IntroSkipMode,
         val autoSkipCredits: Boolean,
     )
 
@@ -192,7 +193,7 @@ class SettingsViewModel(
             playerSettingsStore.preferredQualityFlow,
             playerSettingsStore.maxBitrateKbpsFlow,
             playerSettingsStore.audioLanguageFlow,
-            playerSettingsStore.autoSkipIntroFlow,
+            playerSettingsStore.introSkipModeFlow,
             playerSettingsStore.autoSkipCreditsFlow,
             ::PlayerSettingsSnapshot,
         ).onEach { snap ->
@@ -201,7 +202,7 @@ class SettingsViewModel(
                     qualityResolution = snap.quality,
                     maxBitrateKbps = snap.maxBitrateKbps,
                     audioLanguage = snap.audioLanguage,
-                    autoSkipIntro = snap.autoSkipIntro,
+                    introSkipMode = snap.introSkipMode,
                     autoSkipCredits = snap.autoSkipCredits,
                 )
             }
@@ -384,8 +385,8 @@ class SettingsViewModel(
         }
     }
 
-    fun setAutoSkipIntro(enabled: Boolean) {
-        viewModelScope.launch { playerSettingsStore.setAutoSkipIntro(enabled) }
+    fun setIntroSkipMode(mode: IntroSkipMode) {
+        viewModelScope.launch { playerSettingsStore.setIntroSkipMode(mode) }
     }
 
     fun setAutoSkipCredits(enabled: Boolean) {

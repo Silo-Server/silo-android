@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.settings
 
 import androidx.activity.compose.BackHandler
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -54,6 +55,8 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.tv.ui.components.TvDialogOption
+import org.siloserver.silo.tv.ui.components.TvOptionDialog
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
@@ -69,6 +72,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,6 +89,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.network.clientVersionLabel
 import org.siloserver.silo.model.settings.LanguageOptions
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SettingKeys
@@ -94,6 +99,7 @@ import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.model.settings.pointSize
 import org.siloserver.silo.tv.BuildConfig
+import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.ui.screens.player.TvSubtitleAppearanceOptions
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSettingsPane
@@ -247,7 +253,7 @@ fun TvSettingsScreen(
         onQualityPresetSelected = viewModel::onQualityPresetSelected,
         onAudioLanguageChanged = viewModel::onAudioLanguageChanged,
         onAutoPlayNextChanged = viewModel::onAutoPlayNextChanged,
-        onAutoSkipIntroChanged = viewModel::onAutoSkipIntroChanged,
+        onIntroSkipModeChanged = viewModel::onIntroSkipModeChanged,
         onAutoSkipCreditsChanged = viewModel::onAutoSkipCreditsChanged,
         onMatchContentFrameRateChanged = viewModel::onMatchContentFrameRateChanged,
         onDolbyVisionEnabledChanged = viewModel::onDolbyVisionEnabledChanged,
@@ -385,7 +391,7 @@ private fun SettingsSplitLayout(
     onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
-    onAutoSkipIntroChanged: (Boolean) -> Unit,
+    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
     onMatchContentFrameRateChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
@@ -457,7 +463,7 @@ private fun SettingsSplitLayout(
             onQualityPresetSelected = onQualityPresetSelected,
             onAudioLanguageChanged = onAudioLanguageChanged,
             onAutoPlayNextChanged = onAutoPlayNextChanged,
-            onAutoSkipIntroChanged = onAutoSkipIntroChanged,
+            onIntroSkipModeChanged = onIntroSkipModeChanged,
             onAutoSkipCreditsChanged = onAutoSkipCreditsChanged,
             onMatchContentFrameRateChanged = onMatchContentFrameRateChanged,
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
@@ -719,7 +725,7 @@ private fun SettingsDetailPane(
     onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
-    onAutoSkipIntroChanged: (Boolean) -> Unit,
+    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
     onMatchContentFrameRateChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
@@ -780,7 +786,7 @@ private fun SettingsDetailPane(
                 onQualityPresetSelected = onQualityPresetSelected,
                 onAudioLanguageChanged = onAudioLanguageChanged,
                 onAutoPlayNextChanged = onAutoPlayNextChanged,
-                onAutoSkipIntroChanged = onAutoSkipIntroChanged,
+                onIntroSkipModeChanged = onIntroSkipModeChanged,
                 onAutoSkipCreditsChanged = onAutoSkipCreditsChanged,
             onMatchContentFrameRateChanged = onMatchContentFrameRateChanged,
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
@@ -879,7 +885,7 @@ private fun TvPlaybackSettingsPane(
     onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
     onAutoPlayNextChanged: (Boolean) -> Unit,
-    onAutoSkipIntroChanged: (Boolean) -> Unit,
+    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
     onMatchContentFrameRateChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
@@ -954,10 +960,13 @@ private fun TvPlaybackSettingsPane(
                     value = nextUpPromptLabel(state.nextUpPromptSeconds),
                     onClick = { activePicker = PlaybackPicker.NextUpPrompt },
                 )
-                SettingsToggleRow(
-                    label = "Auto-Skip Intros",
-                    checked = state.autoSkipIntro,
-                    onCheckedChange = onAutoSkipIntroChanged,
+                // Three-way, not a switch: the schema's recommended control
+                // is a select and TV has no segmented control, so this uses the
+                // same value row + picker sheet every other enum here does.
+                SettingsValueRow(
+                    label = stringResource(R.string.settings_intro_skip_title),
+                    value = stringResource(introSkipModeLabel(state.introSkipMode)),
+                    onClick = { activePicker = PlaybackPicker.IntroSkipMode },
                 )
                 SettingsToggleRow(
                     label = "Auto-Skip Credits",
@@ -1019,6 +1028,23 @@ private fun TvPlaybackSettingsPane(
             onSelect = { id ->
                 id.toIntOrNull()?.let(onNextUpPromptSecondsChanged)
                 activePicker = null
+            },
+            onDismiss = { activePicker = null },
+        )
+        // Three short options: a compact popup over the settings list, not the
+        // full-screen picker the longer lists use.
+        PlaybackPicker.IntroSkipMode -> TvOptionDialog(
+            title = stringResource(R.string.settings_intro_skip_title),
+            options = IntroSkipMode.entries.map { mode ->
+                TvDialogOption(
+                    key = mode.wireValue,
+                    title = stringResource(introSkipModeLabel(mode)),
+                    selected = mode == state.introSkipMode,
+                    onClick = {
+                        onIntroSkipModeChanged(mode)
+                        activePicker = null
+                    },
+                )
             },
             onDismiss = { activePicker = null },
         )
@@ -1493,7 +1519,22 @@ private fun accountSubtitle(state: TvSettingsViewModel.UiState): String {
     return state.user?.username?.takeIf { it.isNotBlank() } ?: "Signed in"
 }
 
-private enum class PlaybackPicker { Quality, AudioLanguage, NextUpPrompt, ResumeRewind, PassOutThreshold }
+private enum class PlaybackPicker {
+    Quality,
+    AudioLanguage,
+    NextUpPrompt,
+    IntroSkipMode,
+    ResumeRewind,
+    PassOutThreshold,
+}
+
+/** The label each intro-skip mode is offered under. The copy is fixed by the contract. */
+@StringRes
+private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
+    IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
+    IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
+    IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
+}
 
 private enum class SubtitlePicker {
     Mode,

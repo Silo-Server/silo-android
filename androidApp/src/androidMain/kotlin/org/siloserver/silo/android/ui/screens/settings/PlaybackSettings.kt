@@ -1,8 +1,12 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.android.R
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SettingKeys
@@ -37,7 +41,7 @@ fun PlaybackSettings(
     maxBitrateKbps: Int?,
     audioLanguage: String,
     audioLanguageSuggestions: List<String> = emptyList(),
-    autoSkipIntro: Boolean,
+    introSkipMode: IntroSkipMode,
     autoSkipCredits: Boolean,
     pictureInPictureEnabled: Boolean,
     dolbyVisionEnabled: Boolean,
@@ -49,7 +53,7 @@ fun PlaybackSettings(
     /** Receives a [QualityPresets] preset id. */
     onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
-    onAutoSkipIntroChanged: (Boolean) -> Unit,
+    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
     onPictureInPictureEnabledChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
@@ -68,6 +72,7 @@ fun PlaybackSettings(
             runtimeValues = audioLanguageSuggestions,
         )
     }
+    val introSkipOptions = IntroSkipMode.entries.map { it to stringResource(introSkipModeLabel(it)) }
     SettingsSection(title = "Playback", modifier = modifier) {
         // A pair no preset covers (set through the API, or left by a legacy
         // compound value) still gets a truthful label rather than a picker
@@ -93,11 +98,17 @@ fun PlaybackSettings(
             },
         )
 
-        SettingsSwitchRow(
-            label = "Auto-skip intros",
-            description = "Jump past intros automatically when Silo can detect them.",
-            checked = autoSkipIntro,
-            onCheckedChange = onAutoSkipIntroChanged,
+        // Three-way, not a switch: the boolean this replaced could not say
+        // "never". Labels and semantics are fixed by the contract.
+        SettingsDropdownRow(
+            label = stringResource(R.string.settings_intro_skip_title),
+            description = "What happens when a detected intro starts: leave it alone, " +
+                "offer a Skip Intro button, or skip it and offer an undo.",
+            value = stringResource(introSkipModeLabel(introSkipMode)),
+            options = introSkipOptions.map { it.second },
+            onOptionSelected = { label ->
+                introSkipOptions.firstOrNull { it.second == label }?.let { onIntroSkipModeChanged(it.first) }
+            },
         )
 
         SettingsSwitchRow(
@@ -175,4 +186,12 @@ fun PlaybackSettings(
             onClick = onResetPlaybackOverrides,
         )
     }
+}
+
+/** The label each intro-skip mode is offered under; the copy is contract-fixed. */
+@StringRes
+private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
+    IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
+    IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
+    IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
 }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.onboarding.OnboardingFlow
 import org.siloserver.silo.model.onboarding.OnboardingStep
 import org.siloserver.silo.model.profile.UpdateProfileRequest
@@ -275,7 +276,13 @@ class OnboardingTourViewModel(
                 // tour just showed has no visible effect in this app.
                 when (spec.key) {
                     "quality_preference" -> playerSettingsStore.setPreferredQuality(value)
-                    "auto_skip_intro" -> playerSettingsStore.setAutoSkipIntro(value.toBoolean())
+                    // The tour's step is still the profile DTO's boolean, but
+                    // what this device plays back with is the enum that
+                    // superseded it, so the mirror writes the mode. `never` is
+                    // not reachable from the tour; the settings screen offers it.
+                    "auto_skip_intro" -> playerSettingsStore.setIntroSkipMode(
+                        IntroSkipMode.fromLegacyBoolean(value.toBoolean()),
+                    )
                     "auto_skip_credits" -> playerSettingsStore.setAutoSkipCredits(value.toBoolean())
                 }
                 // Best-effort against the profile: the local store above is
