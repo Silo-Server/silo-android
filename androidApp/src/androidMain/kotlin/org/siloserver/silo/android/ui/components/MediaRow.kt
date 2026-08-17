@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.model.section.SectionItem
@@ -126,10 +127,17 @@ fun MediaRow(
                 }
                 // Row headings read a step larger than the 16sp headline so
                 // "Continue Watching" / "Next Up" carry the feed against
-                // 14sp card captions.
+                // 14sp card captions. 20sp at the default font scale (and it
+                // grows with larger settings as usual), but floored at 20dp
+                // so a "small" system font cannot shrink it into a caption.
+                val density = LocalDensity.current
+                val headingSize = with(density) { maxOf(20.sp.toPx(), 20.dp.toPx()).toSp() }
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontSize = 20.sp, lineHeight = 26.sp),
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontSize = headingSize,
+                        lineHeight = headingSize * 1.3f,
+                    ),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
