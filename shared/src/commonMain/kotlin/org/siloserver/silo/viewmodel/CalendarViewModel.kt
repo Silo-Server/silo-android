@@ -131,6 +131,10 @@ class CalendarViewModel(
                 val cached = cache[it.cacheKey]
                 it.copy(
                     isLoading = cached == null,
+                    // A load that supersedes an in-flight refresh takes over
+                    // the refresh flag too; the refresh coroutine will refuse
+                    // to clear it once its generation is stale.
+                    isRefreshing = false,
                     days = cached.orEmpty(),
                     error = null,
                     today = todayProvider(),

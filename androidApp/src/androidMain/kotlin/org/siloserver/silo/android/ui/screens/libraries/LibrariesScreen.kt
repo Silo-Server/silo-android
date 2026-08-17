@@ -1020,11 +1020,16 @@ private fun BrowseTabContent(
                 )
             }
             state.catalogError != null && state.catalogItems.isEmpty() -> {
-                ErrorView(
-                    message = state.catalogError ?: "Failed to load catalog",
-                    onRetry = onRetry,
-                    modifier = Modifier.fillMaxSize().padding(top = topInset),
-                )
+                // Controls stay mounted so a rejected sort/filter/letter can be
+                // changed from here rather than only retried.
+                Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
+                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
+                    ErrorView(
+                        message = state.catalogError ?: "Failed to load catalog",
+                        onRetry = onRetry,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
             state.catalogItems.isEmpty() -> {
                 Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {

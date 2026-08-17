@@ -307,15 +307,7 @@ private fun CatalogLetterIndex(
                 }
                 .clip(RoundedCornerShape(13.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                .onSizeChanged { railHeightPx = it.height }
-                .pointerInput(Unit) {
-                    // Direct taps once the rail is open.
-                    detectTapGestures { offset ->
-                        if (!open) return@detectTapGestures
-                        currentOnSelected(prefixAt(offset.y))
-                        interactionTick++
-                    }
-                },
+                .onSizeChanged { railHeightPx = it.height },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             CatalogLetterOptions.forEach { prefix ->
@@ -407,7 +399,20 @@ private fun CatalogLetterIndex(
                     )
                 }
                 .pointerInput(Unit) {
-                    detectTapGestures(onTap = { if (open) closeRail() else openRail() })
+                    // The zone sits over the rail, so it owns taps too: on the
+                    // open rail a tap picks the letter under it (the rail and
+                    // zone share the same height, so y maps directly); on the
+                    // closed tab a tap opens the rail.
+                    detectTapGestures(
+                        onTap = { offset ->
+                            if (open) {
+                                currentOnSelected(prefixAt(offset.y))
+                                interactionTick++
+                            } else {
+                                openRail()
+                            }
+                        },
+                    )
                 },
         )
 

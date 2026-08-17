@@ -254,6 +254,23 @@ class CalendarViewModelTest {
     }
 
     @Test
+    fun `a week change during a refresh clears the refreshing flag`() = runTest(dispatcher) {
+        val api = FakeCalendarApi(ApiResult.Success(CalendarResponse()))
+        val vm = viewModel(api)
+
+        val gate = CompletableDeferred<Unit>()
+        api.beforeAnswer = { gate.await() }
+        vm.refresh()
+        assertTrue(vm.uiState.value.isRefreshing)
+
+        api.beforeAnswer = {}
+        vm.nextWeek()
+        assertFalse(vm.uiState.value.isRefreshing)
+        gate.complete(Unit)
+        assertFalse(vm.uiState.value.isRefreshing)
+    }
+
+    @Test
     fun `refresh evicts the cache so a failure shows the error`() = runTest(dispatcher) {
         val weekA = CalendarResponse(events = listOf(CalendarDay(date = "2026-06-09", items = listOf(stubItem("a")))))
         val api = FakeCalendarApi(ApiResult.Success(weekA))
