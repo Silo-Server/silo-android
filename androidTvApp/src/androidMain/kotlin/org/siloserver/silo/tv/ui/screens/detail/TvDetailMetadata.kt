@@ -1,6 +1,5 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
-import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import java.time.Instant
@@ -8,7 +7,8 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
-import kotlin.math.round
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Pure functions that build the hero metadata for the cinematic detail
@@ -17,14 +17,21 @@ import kotlin.math.round
  */
 internal object TvDetailMetadata {
 
+    private fun normalizedGenres(detail: ItemDetail): List<String> =
+        detail.genres
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .take(2)
+
     fun sourceTokens(detail: ItemDetail): List<String> = when {
         detail.type.equals("episode", ignoreCase = true) -> buildList {
-            episodeNumberLabel(detail)?.let { add(it) }
-            detail.genres.firstOrNull { it.isNotBlank() }?.let { add(it) }
+            episodeNumberLabel(detail)?.let(::add)
+            addAll(normalizedGenres(detail))
         }
         detail.type.equals("series", ignoreCase = true) -> buildList {
             add("TV Show")
-            detail.genres.filter { it.isNotBlank() }.take(2).forEach { add(it) }
+            addAll(normalizedGenres(detail))
         }
         detail.type.equals("season", ignoreCase = true) -> buildList {
             // tvOS `TVSeasonDetailView.sourceTokens`: leading episode-count token,
@@ -32,7 +39,7 @@ internal object TvDetailMetadata {
             detail.episodeCount?.takeIf { it > 0 }?.let {
                 add("$it Episode${if (it == 1) "" else "s"}")
             }
-            detail.genres.filter { it.isNotBlank() }.take(2).forEach { add(it) }
+            addAll(normalizedGenres(detail))
         }
         isAudiobookItemType(detail.type) -> listOfNotNull(
             "Audiobook",
@@ -41,17 +48,18 @@ internal object TvDetailMetadata {
         )
         else -> buildList {
             add(typeLabel(detail))
-            detail.genres.filter { it.isNotBlank() }.take(2).forEach { add(it) }
+            addAll(normalizedGenres(detail))
         }
     }
 
     fun ratingChip(detail: ItemDetail): String? =
-        detail.contentRating?.trim()?.takeIf { it.isNotEmpty() }
+        detail.contentRating
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.uppercase()
 
     fun factsLine(
         detail: ItemDetail,
-        preferredQuality: String? = null,
-        selectedFileId: Int? = null,
         zone: ZoneId = ZoneId.systemDefault(),
     ): List<TvHeroFactToken> {
         val tokens = mutableListOf<TvHeroFactToken>()
@@ -70,10 +78,9 @@ internal object TvDetailMetadata {
             else ->
                 runtimeLabel(detail.runtime)?.let { tokens += TvHeroFactToken.TextToken(it) }
         }
-        detail.ratingImdb?.let {
-            tokens += TvHeroFactToken.TextToken("★ ${formatOneDecimal(it)}")
-        }
-        tokens += qualityTokens(detail, preferredQuality, selectedFileId)
+        detail.ratingImdb
+            ?.takeIf { it.isFinite() && it > 0.0 && it <= 10.0 }
+            ?.let { tokens += TvHeroFactToken.TextToken("★ ${formatOneDecimal(it)}") }
         return tokens
     }
 
@@ -133,74 +140,7 @@ internal object TvDetailMetadata {
             ?: runCatching { LocalDate.parse(raw).atStartOfDay(ZoneOffset.UTC).toInstant() }.getOrNull()
 
     private fun formatOneDecimal(value: Double): String {
-        val rounded = round(value * 10.0) / 10.0
-        val whole = rounded.toInt()
-        val tenths = (round((rounded - whole) * 10.0)).toInt().coerceIn(0, 9)
-        return "$whole.$tenths"
-    }
-
-    private fun qualityTokens(
-        detail: ItemDetail,
-        preferredQuality: String?,
-        selectedFileId: Int?,
-    ): List<TvHeroFactToken> {
-        val version = preferredVersion(detail, preferredQuality, selectedFileId) ?: return emptyList()
-        val tokens = mutableListOf<TvHeroFactToken>()
-        resolutionLabel(version.resolution)?.let { tokens += TvHeroFactToken.Chip(it) }
-        when {
-            TvPlaybackFormatting.isDolbyVision(version) ->
-                tokens += TvHeroFactToken.Chip("DOLBY VISION")
-            TvPlaybackFormatting.isHdr(version) ->
-                tokens += TvHeroFactToken.Chip("HDR")
-        }
-        primaryAudioLabel(version)?.let { tokens += TvHeroFactToken.Chip(it) }
-        if (hasSubtitles(version, detail)) tokens += TvHeroFactToken.Chip("CC")
-        return tokens
-    }
-
-    private fun preferredVersion(
-        detail: ItemDetail,
-        preferredQuality: String?,
-        selectedFileId: Int?,
-    ): FileVersion? {
-        return selectTvDetailDisplayVersion(
-            versions = detail.versions,
-            selectedFileId = selectedFileId,
-            lastFileId = detail.userData?.lastFileId,
-            preferredQuality = preferredQuality,
-        )
-    }
-
-    private fun resolutionLabel(raw: String?): String? {
-        val v = raw?.lowercase() ?: return null
-        return when {
-            "2160" in v || "4k" in v -> "4K"
-            "1080" in v -> "HD"
-            "720" in v -> "HD"
-            "480" in v -> "SD"
-            else -> null
-        }
-    }
-
-    private fun primaryAudioLabel(version: FileVersion): String? {
-        val tracks = version.audioTracks ?: return null
-        val track = tracks.firstOrNull { it.isDefault } ?: tracks.firstOrNull() ?: return null
-        track.channelLayout?.lowercase()?.let { layout ->
-            if ("atmos" in layout) return "ATMOS"
-            if ("7.1" in layout) return "7.1"
-            if ("5.1" in layout) return "5.1"
-            if ("stereo" in layout || layout == "2.0") return null
-        }
-        return when (track.channels) {
-            8 -> "7.1"
-            6 -> "5.1"
-            else -> null
-        }
-    }
-
-    private fun hasSubtitles(version: FileVersion, detail: ItemDetail): Boolean {
-        val versionSubs = version.subtitleTracks
-        if (!versionSubs.isNullOrEmpty()) return true
-        return detail.subtitles.isNotEmpty()
+        val tenths = (value * 10.0).roundToInt()
+        return "${tenths / 10}.${abs(tenths % 10)}"
     }
 }

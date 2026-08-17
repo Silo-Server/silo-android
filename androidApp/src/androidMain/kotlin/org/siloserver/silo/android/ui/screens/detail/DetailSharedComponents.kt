@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
@@ -385,6 +386,8 @@ fun DetailHero(
     translation: (@Composable () -> Unit)? = null,
     actions: @Composable () -> Unit,
 ) {
+    val normalizedContentRating = HeroMetadata.contentRating(detail)
+
     Column(modifier = modifier.fillMaxWidth()) {
         Backdrop(
             backdropUrl = detail.backdropUrl,
@@ -405,10 +408,10 @@ fun DetailHero(
                 EyebrowChip(text = eyebrow)
             }
             HeroTitle(detail = detail)
-            if (sourceTokens.isNotEmpty() || detail.contentRating != null) {
+            if (sourceTokens.isNotEmpty() || normalizedContentRating != null) {
                 SourceRow(
                     tokens = sourceTokens,
-                    ratingChip = detail.contentRating,
+                    ratingChip = normalizedContentRating,
                 )
             }
             actions()
@@ -1162,13 +1165,16 @@ fun SeasonChips(
 
 object HeroMetadata {
 
-    fun movieEyebrow(detail: ItemDetail): String? {
-        val rating = detail.ratingImdb?.let { "IMDb %.1f".format(it) }
-            ?: detail.ratingTmdb?.let { "TMDB %.1f".format(it) }
-        return rating
-    }
+    fun movieEyebrow(detail: ItemDetail): String? =
+        validImdb(detail.ratingImdb)?.let { "IMDb ${formatOneDecimal(it)}" }
 
     fun seriesEyebrow(detail: ItemDetail): String? = movieEyebrow(detail)
+
+    fun contentRating(detail: ItemDetail): String? =
+        detail.contentRating
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.uppercase(Locale.US)
 
     fun episodeEyebrow(detail: ItemDetail): String? {
         val s = detail.seasonNumber
@@ -1183,7 +1189,9 @@ object HeroMetadata {
     fun movieSourceTokens(detail: ItemDetail): List<String> = buildList {
         if (detail.year > 0) add(detail.year.toString())
         if (detail.runtime > 0) add(formatRuntime(detail.runtime))
-        detail.studios.firstOrNull()?.takeIf { it.isNotBlank() }?.let { add(it) }
+        detail.studios
+            .firstNotNullOfOrNull { it.trim().takeIf(String::isNotEmpty) }
+            ?.let(::add)
     }
 
     fun seriesSourceTokens(detail: ItemDetail): List<String> = buildList {
@@ -1191,22 +1199,34 @@ object HeroMetadata {
         detail.seasonCount?.takeIf { it > 0 }?.let {
             add("$it Season${if (it > 1) "s" else ""}")
         }
-        detail.networks.firstOrNull()?.takeIf { it.isNotBlank() }?.let { add(it) }
+        detail.networks
+            .firstNotNullOfOrNull { it.trim().takeIf(String::isNotEmpty) }
+            ?.let(::add)
     }
 
-    fun movieFactsLine(detail: ItemDetail): List<String> = buildList {
-        if (detail.genres.isNotEmpty()) {
-            add(detail.genres.take(3).joinToString(" · "))
+    fun movieFactsLine(detail: ItemDetail): List<String> = detailFactsLine(detail)
+
+    fun seriesFactsLine(detail: ItemDetail): List<String> = detailFactsLine(detail)
+
+    private fun detailFactsLine(detail: ItemDetail): List<String> = buildList {
+        normalizedGenres(detail.genres).takeIf { it.isNotEmpty() }?.let {
+            add(it.joinToString(" · "))
         }
-        detail.ratingImdb?.let { add("IMDb %.1f".format(it)) }
+        validImdb(detail.ratingImdb)?.let { add("IMDb ${formatOneDecimal(it)}") }
     }
 
-    fun seriesFactsLine(detail: ItemDetail): List<String> = buildList {
-        if (detail.genres.isNotEmpty()) {
-            add(detail.genres.take(3).joinToString(" · "))
-        }
-        detail.ratingImdb?.let { add("IMDb %.1f".format(it)) }
-    }
+    private fun normalizedGenres(genres: List<String>): List<String> =
+        genres
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .take(2)
+
+    private fun validImdb(rating: Double?): Double? =
+        rating?.takeIf { it.isFinite() && it > 0.0 && it <= 10.0 }
+
+    private fun formatOneDecimal(value: Double): String =
+        String.format(Locale.US, "%.1f", value)
 
     private fun formatRuntime(minutes: Int): String {
         if (minutes <= 0) return ""

@@ -434,11 +434,6 @@ private fun TvDetailContent(
             emptyList()
         }
     }
-    val heroSelectedFileId = if (detail.type == "series" || detail.type == "season") {
-        state.selectedNextUpFileId
-    } else {
-        state.selectedFileId
-    }
     val heroArtwork = resolveTvDetailHeroArtwork(detail, state.nextUpEpisode)
     var chaptersDialogOpen by remember(detail.contentId) { mutableStateOf(false) }
 
@@ -592,11 +587,7 @@ private fun TvDetailContent(
                             ratingChip = TvDetailMetadata.ratingChip(detail),
                             overview = detail.overview,
                             tagline = detail.tagline,
-                            factsLine = TvDetailMetadata.factsLine(
-                                detail = detail,
-                                preferredQuality = state.preferredQuality,
-                                selectedFileId = heroSelectedFileId,
-                            ),
+                            factsLine = TvDetailMetadata.factsLine(detail),
                             directorText = movieDirectorCredit(detail),
                             translation = translationSlot,
                             actions = {

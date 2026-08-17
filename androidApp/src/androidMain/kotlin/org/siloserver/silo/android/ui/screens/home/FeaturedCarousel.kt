@@ -89,6 +89,7 @@ fun FeaturedCarousel(
 
     val pagerState = rememberPagerState(pageCount = { items.size })
     val configuration = LocalConfiguration.current
+    val maxHeroGenres = featuredHeroMaxGenres(configuration.screenWidthDp)
     val screenWidthDp = configuration.screenWidthDp.toFloat()
 
     // Match iOS metrics: card width is screen minus 32pt margin (capped at 780),
@@ -142,6 +143,7 @@ fun FeaturedCarousel(
 
             FeaturedCard(
                 item = item,
+                maxGenres = maxHeroGenres,
                 emphasis = emphasis,
                 cornerRadius = cardCornerRadius,
                 onPlayClick = { onPlayClick(item.contentId, playbackResumePosition(item)) },
@@ -185,6 +187,7 @@ fun FeaturedCarousel(
 @Composable
 private fun FeaturedCard(
     item: SectionItem,
+    maxGenres: Int,
     emphasis: Float,
     cornerRadius: androidx.compose.ui.unit.Dp,
     onPlayClick: () -> Unit,
@@ -248,6 +251,7 @@ private fun FeaturedCard(
 
         FeaturedCardContent(
             item = item,
+            maxGenres = maxGenres,
             visibility = emphasis,
             onPlayClick = onPlayClick,
             onInfoClick = onInfoClick,
@@ -275,6 +279,7 @@ private fun FeaturedCard(
 @OptIn(ExperimentalLayoutApi::class)
 private fun FeaturedCardContent(
     item: SectionItem,
+    maxGenres: Int,
     visibility: Float,
     onPlayClick: () -> Unit,
     onInfoClick: () -> Unit,
@@ -330,7 +335,9 @@ private fun FeaturedCardContent(
             )
         }
 
-        val chips = remember(item) { featuredHeroMetadata(item) }
+        val chips = remember(item, maxGenres) {
+            featuredHeroMetadata(item = item, maxGenres = maxGenres)
+        }
         if (chips.isNotEmpty()) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),

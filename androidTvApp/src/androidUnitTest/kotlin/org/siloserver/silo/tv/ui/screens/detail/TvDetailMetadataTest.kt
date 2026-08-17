@@ -74,66 +74,16 @@ class TvDetailMetadataTest {
     }
 
     @Test
-    fun factsLineUsesPreferredQualityForVersionBadges() {
+    fun movieDetailUsesNormalizedEditorialMetadataAndOmitsAllTechnicalTokens() {
         val detail = ItemDetail(
-            contentId = "m1",
+            contentId = "movie-detail",
             type = "movie",
-            title = "Movie",
-            versions = listOf(
-                FileVersion(fileId = 1080, resolution = "1080p"),
-                FileVersion(fileId = 2160, resolution = "2160p", hdr = true),
-            ),
-        )
-
-        assertEquals(
-            listOf(TvHeroFactToken.Chip("HD")),
-            TvDetailMetadata.factsLine(detail, preferredQuality = "1080p"),
-        )
-    }
-
-    @Test
-    fun factsLineUsesSelectedFileIdForVersionBadges() {
-        val detail = ItemDetail(
-            contentId = "m1",
-            type = "movie",
-            title = "Movie",
-            versions = listOf(
-                FileVersion(
-                    fileId = 1080,
-                    resolution = "1080p",
-                    audioTracks = listOf(AudioTrack(channels = 2, isDefault = true)),
-                ),
-                FileVersion(
-                    fileId = 2160,
-                    resolution = "2160p",
-                    hdr = true,
-                    audioTracks = listOf(AudioTrack(channels = 6, isDefault = true)),
-                    subtitleTracks = listOf(SubtitleTrack(language = "en")),
-                ),
-            ),
-        )
-
-        assertEquals(
-            listOf(
-                TvHeroFactToken.Chip("4K"),
-                TvHeroFactToken.Chip("HDR"),
-                TvHeroFactToken.Chip("5.1"),
-                TvHeroFactToken.Chip("CC"),
-            ),
-            TvDetailMetadata.factsLine(
-                detail = detail,
-                preferredQuality = "1080p",
-                selectedFileId = 2160,
-            ),
-        )
-    }
-
-    @Test
-    fun factsLineNamesDolbyVisionFromVideoTrackMetadata() {
-        val detail = ItemDetail(
-            contentId = "m1",
-            type = "movie",
-            title = "Movie",
+            title = "Arrival",
+            year = 2016,
+            runtime = 116,
+            ratingImdb = 7.9,
+            genres = listOf(" Science Fiction ", "", "Drama", "Drama", "Thriller"),
+            contentRating = " pg-13 ",
             versions = listOf(
                 FileVersion(
                     fileId = 2160,
@@ -142,16 +92,94 @@ class TvDetailMetadataTest {
                     videoTracks = listOf(
                         VideoTrack(codec = "hevc", dolbyVision = "Profile 8", hdr = true),
                     ),
+                    audioTracks = listOf(
+                        AudioTrack(channelLayout = "Atmos", channels = 8, isDefault = true),
+                    ),
+                    subtitleTracks = listOf(SubtitleTrack(language = "en")),
                 ),
             ),
         )
 
         assertEquals(
+            listOf("Movie", "Science Fiction", "Drama"),
+            TvDetailMetadata.sourceTokens(detail),
+        )
+        assertEquals("PG-13", TvDetailMetadata.ratingChip(detail))
+        assertEquals(
             listOf(
-                TvHeroFactToken.Chip("4K"),
-                TvHeroFactToken.Chip("DOLBY VISION"),
+                TvHeroFactToken.TextToken("2016"),
+                TvHeroFactToken.TextToken("1h 56m"),
+                TvHeroFactToken.TextToken("★ 7.9"),
             ),
             TvDetailMetadata.factsLine(detail),
         )
+    }
+
+    @Test
+    fun episodeDetailAllowsTwoNormalizedGenresAndKeepsEditorialFactOrder() {
+        val detail = ItemDetail(
+            contentId = "episode-detail",
+            type = "episode",
+            title = "Long, Long Time",
+            seasonNumber = 1,
+            episodeNumber = 3,
+            airDate = "2026-03-30T00:00:00Z",
+            runtime = 76,
+            ratingImdb = 8.6,
+            genres = listOf("Drama", " Horror ", "Drama"),
+            contentRating = " tv-ma ",
+        )
+
+        assertEquals(
+            listOf("Season 1 · Episode 3", "Drama", "Horror"),
+            TvDetailMetadata.sourceTokens(detail),
+        )
+        assertEquals("TV-MA", TvDetailMetadata.ratingChip(detail))
+        assertEquals(
+            listOf(
+                TvHeroFactToken.TextToken("Mar 30, 2026"),
+                TvHeroFactToken.TextToken("1h 16m"),
+                TvHeroFactToken.TextToken("★ 8.6"),
+            ),
+            TvDetailMetadata.factsLine(detail, zone = ZoneId.of("UTC")),
+        )
+    }
+
+    @Test
+    fun detailRatingRoundsHalfUpAtOneDecimal() {
+        val detail = ItemDetail(
+            contentId = "rounding-boundary",
+            type = "movie",
+            title = "Rounding Boundary",
+            ratingImdb = 8.05,
+        )
+
+        assertEquals(
+            listOf(TvHeroFactToken.TextToken("★ 8.1")),
+            TvDetailMetadata.factsLine(detail),
+        )
+    }
+
+    @Test
+    fun invalidDetailRatingsAndBlankClassificationsAreOmitted() {
+        listOf(
+            Double.NaN,
+            Double.POSITIVE_INFINITY,
+            Double.NEGATIVE_INFINITY,
+            0.0,
+            -1.0,
+            10.1,
+        ).forEach { invalid ->
+            val detail = ItemDetail(
+                contentId = "invalid-$invalid",
+                type = "movie",
+                title = "Invalid",
+                ratingImdb = invalid,
+                contentRating = "  ",
+            )
+
+            assertEquals(emptyList(), TvDetailMetadata.factsLine(detail))
+            assertEquals(null, TvDetailMetadata.ratingChip(detail))
+        }
     }
 }
