@@ -117,6 +117,7 @@ kotlin {
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.coil.compose)
+            implementation(libs.haze)
             implementation(libs.coil.network.ktor)
             implementation(libs.jsoup)
             implementation(libs.media3.exoplayer)

@@ -38,6 +38,8 @@ import org.siloserver.silo.android.ui.components.MainAppHeaderBodyHeight
 import org.siloserver.silo.android.ui.components.MainAppTopBar
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.navigation.SiloBottomNavBar
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.android.ui.navigation.Tab
 import org.siloserver.silo.android.ui.navigation.tabForRoute
@@ -275,6 +277,9 @@ fun MainScreen(
             null
         }
 
+    // Tab content registers as the blur source for the floating tab bar's
+    // glass; the pill blurs whatever scrolls beneath it.
+    val hazeState = rememberHazeState()
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
@@ -307,6 +312,7 @@ fun MainScreen(
                         }
                     },
                     tabs = visibleTabs,
+                    hazeState = hazeState,
                 )
             }
         },
@@ -316,7 +322,8 @@ fun MainScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                .consumeWindowInsets(padding),
+                .consumeWindowInsets(padding)
+                .hazeSource(hazeState),
         ) {
             // Content extends edge-to-edge under the translucent bottom chrome
             // (iOS glass tab bar); screens read the measured chrome height and
