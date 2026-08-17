@@ -35,6 +35,7 @@ import org.siloserver.silo.android.downloads.LEGACY_PUBLIC_DOWNLOAD_PERMISSION
 import org.siloserver.silo.android.downloads.hasLegacyPublicDownloadPermission
 import org.siloserver.silo.android.ui.components.DetailLoadingSkeleton
 import org.siloserver.silo.android.ui.components.ErrorView
+import org.siloserver.silo.android.ui.components.swipeBackToDismiss
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.downloads.openDownloadTargetInExternalApp
 import org.siloserver.silo.android.ui.screens.watchtogether.SuggestToRoomViewModel
@@ -292,6 +293,10 @@ fun ItemDetailScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
+            // Swipe right on the page to go back (iOS interactive pop) — a
+            // lighter alternative to reaching for the back arrow on a tall
+            // detail page.
+            .swipeBackToDismiss(onDismiss = onBackClick)
             .background(MaterialTheme.colorScheme.background),
     ) {
         when {
