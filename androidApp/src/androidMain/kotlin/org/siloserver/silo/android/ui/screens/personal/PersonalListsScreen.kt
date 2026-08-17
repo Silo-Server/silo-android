@@ -49,18 +49,30 @@ fun PersonalListsScreen(
             }
 
             when (selectedTabIndex) {
-                0 -> FavoritesGridContent(
-                    onItemClick = onItemClick,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxSize(),
-                )
-                else -> WatchlistGridContent(
-                    onItemClick = onItemClick,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxSize(),
-                )
+                0 -> {
+                    val controls = rememberPersonalListControls(PersonalListSource.Favorites)
+                    val query by controls.queryState()
+                    FavoritesGridContent(
+                        onItemClick = onItemClick,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize(),
+                        query = query,
+                        header = { state -> PersonalListControlsRow(controls = controls, total = state.total) },
+                    )
+                }
+                else -> {
+                    val controls = rememberPersonalListControls(PersonalListSource.Watchlist)
+                    val query by controls.queryState()
+                    WatchlistGridContent(
+                        onItemClick = onItemClick,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize(),
+                        query = query,
+                        header = { state -> PersonalListControlsRow(controls = controls, total = state.total) },
+                    )
+                }
             }
         }
     }

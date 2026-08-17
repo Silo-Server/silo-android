@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.personal
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import org.siloserver.silo.android.ui.components.SiloTopBar
 
 /**
@@ -28,9 +29,13 @@ fun FavoritesScreen(
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
+        val controls = rememberPersonalListControls(PersonalListSource.Favorites)
+        val query by controls.queryState()
         FavoritesGridContent(
             onItemClick = onItemClick,
             contentPadding = padding,
+            query = query,
+            header = { state -> PersonalListControlsRow(controls = controls, total = state.total) },
         )
     }
 }

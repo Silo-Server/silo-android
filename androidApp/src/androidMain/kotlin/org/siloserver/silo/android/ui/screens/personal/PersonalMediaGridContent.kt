@@ -56,6 +56,7 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.viewmodel.FavoritesViewModel
 import org.siloserver.silo.viewmodel.HistoryViewModel
+import org.siloserver.silo.viewmodel.PersonalListQuery
 import org.siloserver.silo.viewmodel.PersonalListUiState
 import org.siloserver.silo.viewmodel.WatchlistViewModel
 import org.koin.compose.viewmodel.koinViewModel
@@ -65,10 +66,15 @@ fun FavoritesGridContent(
     onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
-    header: (@Composable () -> Unit)? = null,
+    header: (@Composable (PersonalListUiState) -> Unit)? = null,
+    /** Sort/filter to fetch with; null keeps whatever the ViewModel has. */
+    query: PersonalListQuery? = null,
     viewModel: FavoritesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    if (query != null) {
+        LaunchedEffect(query) { viewModel.applyQuery(query) }
+    }
 
     PersonalMediaGridContent(
         state = state,
@@ -97,10 +103,15 @@ fun WatchlistGridContent(
     onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
-    header: (@Composable () -> Unit)? = null,
+    header: (@Composable (PersonalListUiState) -> Unit)? = null,
+    /** Sort/filter to fetch with; null keeps whatever the ViewModel has. */
+    query: PersonalListQuery? = null,
     viewModel: WatchlistViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    if (query != null) {
+        LaunchedEffect(query) { viewModel.applyQuery(query) }
+    }
 
     PersonalMediaGridContent(
         state = state,
@@ -129,7 +140,7 @@ fun HistoryGridContent(
     onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
-    header: (@Composable () -> Unit)? = null,
+    header: (@Composable (PersonalListUiState) -> Unit)? = null,
     viewModel: HistoryViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -168,9 +179,10 @@ private fun PersonalMediaGridContent(
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     // Optional full-width row that scrolls with the grid (For You's saved-list
-    // pills). It also renders above the loading / empty / error views so the
-    // control stays reachable when the list has nothing to show.
-    header: (@Composable () -> Unit)? = null,
+    // pills, the sort/filter controls). It also renders above the loading /
+    // empty / error views so the controls stay reachable when the list has
+    // nothing to show. Receives the state so it can show the item count.
+    header: (@Composable (PersonalListUiState) -> Unit)? = null,
 ) {
     val gridState = rememberLazyGridState()
     val layoutDirection = LocalLayoutDirection.current
@@ -192,13 +204,13 @@ private fun PersonalMediaGridContent(
     when {
         state.isLoading -> {
             Column(modifier = modifier.padding(contentPadding)) {
-                header?.let { Box(modifier = Modifier.padding(16.dp)) { it() } }
+                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
                 LoadingIndicator(modifier = Modifier.weight(1f))
             }
         }
         state.error != null && state.items.isEmpty() -> {
             Column(modifier = modifier.padding(contentPadding)) {
-                header?.let { Box(modifier = Modifier.padding(16.dp)) { it() } }
+                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
                 ErrorView(
                     message = state.error ?: "Unknown error",
                     onRetry = onRetry,
@@ -208,10 +220,13 @@ private fun PersonalMediaGridContent(
         }
         state.items.isEmpty() -> {
             Column(modifier = modifier.padding(contentPadding)) {
-                header?.let { Box(modifier = Modifier.padding(16.dp)) { it() } }
+                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
+                // A narrowed query with no hits is not an empty list — say so,
+                // and keep the header's controls reachable to widen it (TV parity).
+                val filtered = !state.query.isDefault
                 EmptyStateView(
-                    title = emptyTitle,
-                    subtitle = emptySubtitle,
+                    title = if (filtered) "No matches" else emptyTitle,
+                    subtitle = if (filtered) "No titles match the current filters." else emptySubtitle,
                     icon = emptyIcon,
                     modifier = Modifier.weight(1f),
                 )
@@ -239,7 +254,7 @@ private fun PersonalMediaGridContent(
                 ) {
                     if (header != null) {
                         item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
-                            header()
+                            header(state)
                         }
                     }
                     items(

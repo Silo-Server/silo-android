@@ -400,6 +400,14 @@ val androidModule = module {
     viewModel { params -> LibraryCollectionsViewModel(get(), params.get()) }
     viewModel { FavoritesViewModel(get(), get()) }
     viewModel { WatchlistViewModel(get(), get()) }
+    // Sort/filter for one saved list; callers scope it to the Activity keyed
+    // by source so the For You grid and the standalone screens share it.
+    viewModel { params ->
+        org.siloserver.silo.android.ui.screens.personal.PersonalListControlsViewModel(
+            source = params.get(),
+            catalogRepository = get(),
+        )
+    }
     viewModel { HistoryViewModel(get()) }
     viewModel { CollectionsViewModel(get()) }
     viewModel { params -> CollectionDetailViewModel(get(), get(), params.get()) }

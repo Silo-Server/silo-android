@@ -41,6 +41,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.siloserver.silo.android.ui.screens.personal.FavoritesGridContent
 import org.siloserver.silo.android.ui.screens.personal.WatchlistGridContent
+import org.siloserver.silo.android.ui.screens.personal.PersonalListControlsRow
+import org.siloserver.silo.android.ui.screens.personal.PersonalListSource
+import org.siloserver.silo.android.ui.screens.personal.queryState
+import org.siloserver.silo.android.ui.screens.personal.rememberPersonalListControls
+import org.siloserver.silo.viewmodel.PersonalListUiState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -262,18 +267,34 @@ private fun SavedListGrid(
         top = contentTopPadding,
         bottom = 24.dp + LocalBottomChromeInset.current,
     )
+    // Sort/filter controls (TV parity), shared with the standalone
+    // Watchlist / Favorites screens through the activity-scoped holder.
+    val source = when (list) {
+        ForYouList.Watchlist -> PersonalListSource.Watchlist
+        ForYouList.Favorites -> PersonalListSource.Favorites
+    }
+    val controls = rememberPersonalListControls(source)
+    val query by controls.queryState()
+    val gridHeader: @Composable (PersonalListUiState) -> Unit = { state ->
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            header()
+            PersonalListControlsRow(controls = controls, total = state.total)
+        }
+    }
     when (list) {
         ForYouList.Watchlist -> WatchlistGridContent(
             onItemClick = onItemClick,
             modifier = Modifier.fillMaxSize(),
             contentPadding = contentPadding,
-            header = header,
+            query = query,
+            header = gridHeader,
         )
         ForYouList.Favorites -> FavoritesGridContent(
             onItemClick = onItemClick,
             modifier = Modifier.fillMaxSize(),
             contentPadding = contentPadding,
-            header = header,
+            query = query,
+            header = gridHeader,
         )
     }
 }

@@ -63,15 +63,17 @@ import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun FilterSheet(
-    viewDensity: CatalogViewDensity,
-    onSelectDensity: (CatalogViewDensity) -> Unit,
     currentFilters: CatalogFilterState,
     availableFilters: CatalogFiltersResponse?,
     mediaType: BrowseFacetMediaType,
-    preserveFilters: Boolean,
     onCommit: (CatalogFilterState) -> Unit,
-    onSetPreserve: (Boolean) -> Unit,
     onDismiss: () -> Unit,
+    // Browse-only rows. Saved lists (Watchlist / Favorites) pass neither: they
+    // have one density and are session-scoped, so the rows are omitted.
+    viewDensity: CatalogViewDensity? = null,
+    onSelectDensity: ((CatalogViewDensity) -> Unit)? = null,
+    preserveFilters: Boolean? = null,
+    onSetPreserve: ((Boolean) -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var draft by remember { mutableStateOf(currentFilters) }
@@ -129,19 +131,21 @@ fun FilterSheet(
 
             // View density lives here rather than beside the sort controls,
             // where the layout options read as extra sort choices.
-            Text(
-                text = "View",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CatalogViewDensity.entries.forEach { density ->
-                    FilterChip(
-                        selected = viewDensity == density,
-                        onClick = { onSelectDensity(density) },
-                        label = { Text(density.label) },
-                    )
+            if (viewDensity != null && onSelectDensity != null) {
+                Text(
+                    text = "View",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CatalogViewDensity.entries.forEach { density ->
+                        FilterChip(
+                            selected = viewDensity == density,
+                            onClick = { onSelectDensity(density) },
+                            label = { Text(density.label) },
+                        )
+                    }
                 }
             }
 
@@ -251,17 +255,19 @@ fun FilterSheet(
                 modifier = Modifier.padding(top = 4.dp),
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Preserve sort & filters",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                Switch(checked = preserveFilters, onCheckedChange = onSetPreserve)
+            if (preserveFilters != null && onSetPreserve != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Preserve sort & filters",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(checked = preserveFilters, onCheckedChange = onSetPreserve)
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
