@@ -20,9 +20,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
@@ -53,6 +53,17 @@ fun SearchResults(
     footer: (@Composable () -> Unit)? = null,
 ) {
     val gridState = rememberLazyGridState()
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    // Scrolling the results is a clear signal the user is done typing: get the
+    // keyboard out of the way so more of the grid is visible.
+    LaunchedEffect(gridState.isScrollInProgress) {
+        if (gridState.isScrollInProgress) {
+            keyboardController?.hide()
+            focusManager.clearFocus()
+        }
+    }
 
     // Trigger load more when scrolled near bottom
     val shouldLoadMore by remember {
@@ -70,7 +81,7 @@ fun SearchResults(
     LazyVerticalGrid(
         columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
         state = gridState,
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
         verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
         modifier = modifier,
@@ -79,10 +90,11 @@ fun SearchResults(
         item(span = { GridItemSpan(maxLineSpan) }, contentType = "search-result-count") {
             Text(
                 text = "$total result${if (total == 1) "" else "s"}",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Normal,
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 4.dp),
+                // The grid's own contentPadding supplies the 16.dp gutters, so
+                // the header only needs to clear the first row of cards.
+                modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
             )
         }
 

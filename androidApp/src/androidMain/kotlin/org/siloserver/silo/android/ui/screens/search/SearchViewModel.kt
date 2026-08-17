@@ -6,6 +6,7 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.mobileMediaModeForLibraryType
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.CatalogRepository
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -111,6 +112,13 @@ class SearchViewModel(
 
     private val pageSize = 60
 
+    /**
+     * A voice query that [onVoiceQuery] already searched for immediately. The
+     * debounced collector consumes and skips it once so the same query is not
+     * requested twice.
+     */
+    private var pendingVoiceQuery: String? = null
+
     init {
         // Debounce search queries
         viewModelScope.launch {
@@ -118,6 +126,10 @@ class SearchViewModel(
                 .debounce(300)
                 .distinctUntilChanged()
                 .collectLatest { query ->
+                    if (query.isNotBlank() && query == pendingVoiceQuery) {
+                        pendingVoiceQuery = null
+                        return@collectLatest
+                    }
                     if (query.isBlank()) {
                         _uiState.update {
                             it.copy(
@@ -142,14 +154,41 @@ class SearchViewModel(
      * Called as the user types in the search field.
      */
     fun onQueryChanged(query: String) {
+        // Typing supersedes any voice query still waiting to be skipped by the
+        // debounce, so a later identical keystroke run is searched normally.
+        pendingVoiceQuery = null
         _uiState.update { it.copy(query = query) }
         _queryFlow.value = query
+    }
+
+    /**
+     * Accepts a query dictated through speech recognition. Unlike typing, the
+     * user has already committed to the phrase, so this searches immediately
+     * instead of waiting out the debounce window.
+     */
+    fun onVoiceQuery(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return
+        pendingVoiceQuery = trimmed
+        _uiState.update { it.copy(query = trimmed) }
+        _queryFlow.value = trimmed
+        viewModelScope.launch { performSearch(trimmed, reset = true) }
+    }
+
+    /**
+     * Re-runs the current query after a failure.
+     */
+    fun retry() {
+        val query = _uiState.value.query
+        if (query.isBlank()) return
+        viewModelScope.launch { performSearch(query, reset = true) }
     }
 
     /**
      * Clears the search query and results.
      */
     fun clearSearch() {
+        pendingVoiceQuery = null
         _uiState.update {
             it.copy(
                 query = "",
@@ -283,7 +322,7 @@ class SearchViewModel(
                     _uiState.update {
                         it.copy(
                             isSearching = false,
-                            error = "Network error. Check your connection.",
+                            error = result.errorMessage("Search failed"),
                             hasSearched = true,
                         )
                     }
