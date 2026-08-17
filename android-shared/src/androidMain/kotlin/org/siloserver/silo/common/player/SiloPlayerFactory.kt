@@ -44,6 +44,8 @@ import org.siloserver.silo.common.player.audio.DelayAudioProcessor
 import org.siloserver.silo.common.player.audio.PassthroughSuppressingAudioSink
 import org.siloserver.silo.common.player.subtitle.OffsetSubtitleParserFactory
 import org.siloserver.silo.common.player.subtitle.PgsSupExtractor
+import org.siloserver.silo.common.player.subtitle.SidecarPlaybackFloor
+import org.siloserver.silo.common.player.subtitle.SidecarSubtitleMediaSource
 import org.siloserver.silo.common.player.subtitle.SubtitleOffsetHolder
 import org.siloserver.silo.common.player.subtitle.StreamingWebvttExtractor
 import org.siloserver.silo.common.player.video.SiloMediaCodecVideoRenderer
@@ -644,6 +646,9 @@ class SiloPlayerFactory(
                     subtitleParserFactory.getCueReplacementBehavior(baseFormat),
                 )
                 .build()
+            // Shared with the non-gating wrapper below: it publishes the live
+            // position, the extractor treats anything before it as history.
+            val playbackFloor = SidecarPlaybackFloor()
             val extractorsFactory = when (configuration.mimeType) {
                 MimeTypes.APPLICATION_PGS -> ExtractorsFactory {
                     arrayOf(
@@ -651,6 +656,7 @@ class SiloPlayerFactory(
                             subtitleParserFactory,
                             subtitleOffsetProvider,
                             outputFormat,
+                            playbackFloor::get,
                         ),
                     )
                 }
@@ -677,7 +683,7 @@ class SiloPlayerFactory(
             } else {
                 dataSourceFactory
             }
-            return ProgressiveMediaSource.Factory(subtitleDataSourceFactory, extractorsFactory)
+            val progressive = ProgressiveMediaSource.Factory(subtitleDataSourceFactory, extractorsFactory)
                 .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
                 .createMediaSource(
                     MediaItem.Builder()
@@ -685,6 +691,10 @@ class SiloPlayerFactory(
                         .setMimeType(configuration.mimeType)
                         .build(),
                 )
+            // A sidecar must not decide when playback starts or what loads
+            // next — left as a plain merged child it starves the video until
+            // its own download reaches the resume point. See the wrapper.
+            return SidecarSubtitleMediaSource(progressive, playbackFloor)
         }
     }
 
