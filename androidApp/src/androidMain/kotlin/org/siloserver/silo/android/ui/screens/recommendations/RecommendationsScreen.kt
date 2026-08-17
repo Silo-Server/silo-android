@@ -33,7 +33,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -49,13 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.siloserver.silo.android.ui.screens.home.FeaturedCarousel
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
-import org.siloserver.silo.model.section.ResolvedSection
-import org.siloserver.silo.model.catalog.isAudiobookItemType
-import org.siloserver.silo.model.catalog.isBookLikeItemType
-import org.siloserver.silo.model.section.SectionItem
-import org.siloserver.silo.model.section.splitFeatured
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
@@ -65,16 +58,15 @@ import org.koin.compose.viewmodel.koinViewModel
  *
  * Mirrors iOS `RecommendationsView.swift` (phone): a saved-shortcuts pill
  * row (Watchlist / Favorites) above the feed, and the iOS sparkles empty
- * state. The feed itself follows the Libraries "Recommended" shape — the same
- * FeaturedCarousel over HomeSectionRow rows — so the browse surfaces read as
- * one app. The screen title + actions header is supplied by the shared
+ * state. The feed itself follows the Libraries "Recommended" shape — plain
+ * HomeSectionRow rows in server order, no hero carousel — so the browse
+ * surfaces read as one app. The screen title + actions header is supplied by the shared
  * `MainAppTopBar` in `MainScreen` (matching iOS `TabTopBarActions`).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecommendationsScreen(
     onItemClick: (String) -> Unit,
-    onPlayClick: (String, Double?) -> Unit,
     contentTopPadding: Dp = 0.dp,
     viewModel: RecommendationsViewModel = koinViewModel(),
 ) {
@@ -226,9 +218,6 @@ fun RecommendationsScreen(
                             .weight(1f)
                             .fillMaxWidth(),
                     ) {
-                        val heroItems = remember(state.sections) {
-                            recommendationsHeroItems(state.sections)
-                        }
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             // Keep room for the floating bottom nav while preserving
@@ -237,31 +226,6 @@ fun RecommendationsScreen(
                             // iOS sectionSpacing (phone) = largePadding (24).
                             verticalArrangement = Arrangement.spacedBy(24.dp),
                         ) {
-                            if (heroItems.isNotEmpty()) {
-                                item(key = "for-you-featured") {
-                                    FeaturedCarousel(
-                                        items = heroItems,
-                                        // The unfiltered discover feed can promote an
-                                        // audiobook or a book into the hero, and Play
-                                        // maps to the video player. Send those to their
-                                        // detail page instead, which dispatches the
-                                        // audiobook/reading flow — same rule as Home's
-                                        // Continue Watching play glyph.
-                                        onPlayClick = { contentId, resumePositionSeconds ->
-                                            val type = heroItems
-                                                .firstOrNull { it.contentId == contentId }
-                                                ?.type
-                                            if (isAudiobookItemType(type) || isBookLikeItemType(type)) {
-                                                onItemClick(contentId)
-                                            } else {
-                                                onPlayClick(contentId, resumePositionSeconds)
-                                            }
-                                        },
-                                        onInfoClick = onItemClick,
-                                    )
-                                }
-                            }
-
                             items(
                                 items = state.sections,
                                 key = { it.id },
@@ -283,34 +247,6 @@ fun RecommendationsScreen(
 
 /** Which saved list the empty-state fallback is showing. */
 private enum class SavedList { Watchlist, Favorites }
-
-/**
- * How many hero cards the carousel is allowed to page through. A personalised
- * row can be long, and every card auto-advances on an 8s timer, so an uncapped
- * hero would take minutes to cycle and hold that many backdrops resident.
- */
-private const val HeroItemLimit = 10
-
-/**
- * Picks the hero items for the feed. Every section — including the one the
- * hero is drawn from — still renders as a row below.
- *
- * The shared conversion flags the server's "for-you-main" row as featured, so
- * [splitFeatured] finds the hero on modern servers. Older servers (and profiles
- * with no personalised row yet) send no such row, and a hero-less For You tab
- * would look nothing like Home or Libraries — so the first non-empty section
- * stands in.
- *
- * Unlike Libraries, the hero row is NOT removed from the rows: the carousel
- * shows at most [HeroItemLimit] items and offers no way to reach the rest, and
- * the personalised row is precisely the one whose tail should stay reachable.
- */
-internal fun recommendationsHeroItems(sections: List<ResolvedSection>): List<SectionItem> {
-    val hero = sections.splitFeatured().featured
-        ?: sections.firstOrNull { it.items.isNotEmpty() }
-        ?: return emptyList()
-    return hero.items.take(HeroItemLimit)
-}
 
 /**
  * Watchlist / Favorites pill row. Mirrors iOS `SavedShortcutsRow` (phone):

@@ -15,9 +15,6 @@ class LibraryChromeInsetSourceTest {
     private val libraries = source(
         "org/siloserver/silo/android/ui/screens/libraries/LibrariesScreen.kt",
     )
-    private val carousel = source(
-        "org/siloserver/silo/android/ui/screens/home/FeaturedCarousel.kt",
-    )
     private val catalogGrid = source(
         "org/siloserver/silo/android/ui/screens/browse/CatalogGrid.kt",
     )
@@ -36,8 +33,6 @@ class LibraryChromeInsetSourceTest {
         assertFalse(libraries.contains("LibrariesChromeContentHeight"))
         assertFalse(libraries.contains("extraTopInset = 50.dp"))
         assertFalse(libraries.contains(".windowInsetsPadding(WindowInsets.statusBars)"))
-        assertFalse(carousel.contains("WindowInsets.statusBars"))
-        assertTrue(carousel.contains("topInset: androidx.compose.ui.unit.Dp = 16.dp"))
     }
 
     @Test

@@ -66,7 +66,6 @@ import org.siloserver.silo.common.ui.components.LocalImagePresentationDeferral
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.profile.Profile
-import org.siloserver.silo.model.section.splitFeatured
 import org.siloserver.silo.viewmodel.HomeViewModel
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
@@ -77,8 +76,8 @@ private const val ChromeFadeDistanceDp = 72f
  * Phone Home screen.
  *
  * Mirrors iOS `HomeView.swift` (phone) 1:1: a flat OLED background (no hero —
- * iOS deliberately excludes `featured` sections from Home so the configured
- * Home rows render without a separate hero surface), a runway spacer that
+ * a `featured` section renders as an ordinary row in its server order; the
+ * phone apps have no hero surface at all), a runway spacer that
  * reserves room under the floating chrome, the resume-first section rows, and
  * a floating top chrome (wordmark + search + profile menu) that fades in a
  * subtle glass surface as content scrolls underneath it. The screen owns its
@@ -114,10 +113,10 @@ fun HomeScreen(
     var presentedPairingTarget by remember { mutableStateOf<CompanionPairingTarget?>(null) }
     var dismissedPairingSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val sections = state.sections
-    // iOS Home excludes `featured` sections entirely (HomeViewModel.regularSections)
-    // — Home renders only the configured rows, never a hero billboard.
+    // No hero billboard on phone (matches iOS): a `featured` section is just
+    // another row, rendered in the order the server configured it.
     val regularSections = remember(sections) {
-        sections.splitFeatured().rest.filter { it.items.isNotEmpty() }
+        sections.filter { it.items.isNotEmpty() }
     }
 
     val listState = rememberLazyListState()

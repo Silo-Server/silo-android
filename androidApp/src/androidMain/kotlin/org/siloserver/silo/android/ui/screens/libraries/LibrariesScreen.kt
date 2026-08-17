@@ -78,8 +78,6 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
-import org.siloserver.silo.android.ui.components.HeroBackdropImage
-import org.siloserver.silo.android.ui.components.HeroTintBackground
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
@@ -103,12 +101,10 @@ import org.siloserver.silo.catalog.filter.CatalogFilterState
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.isAudiobookItemType
-import org.siloserver.silo.android.ui.screens.home.FeaturedCarousel
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.util.formatCardDate
-import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.MediaItemUserState
@@ -116,7 +112,6 @@ import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.ResolvedSection
-import org.siloserver.silo.model.section.splitFeatured
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
@@ -728,7 +723,6 @@ private const val ChromeFadeDistanceDp = 80f
 @Composable
 fun LibrariesScreen(
     onItemClick: (String) -> Unit,
-    onPlayClick: (String, Double?) -> Unit,
     onCollectionClick: (String, Int) -> Unit,
     viewModel: LibrariesViewModel,
     activeProfile: Profile?,
@@ -745,24 +739,8 @@ fun LibrariesScreen(
     val state by viewModel.uiState.collectAsState()
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
 
-    // Hero backdrop sampled from the active featured carousel page. Mirrors
-    // iOS `LibraryRecommendedView` — the parent owns the URL so the page-level
-    // tint + blur extend past the carousel.
-    var heroBackdropUrl by rememberSaveable(state.selectedLibraryId) {
-        mutableStateOf<String?>(null)
-    }
-    var heroBackdropThumbhash by rememberSaveable(state.selectedLibraryId) {
-        mutableStateOf<String?>(null)
-    }
-
-    val heroTint by rememberDominantColor(
-        imageUrl = heroBackdropUrl,
-        fallback = MaterialTheme.colorScheme.background,
-    )
-
     // Recommended tab scroll state — drives the chrome scrim opacity so the
-    // header reads as part of the artwork while the hero is at rest, then
-    // resolves to a solid scrim once the user scrolls past.
+    // header fades in its scrim once the user scrolls the rows underneath it.
     val recommendedListState = rememberLazyListState()
     val density = LocalDensity.current
     val chromeFadePx = remember(density) {
@@ -783,23 +761,11 @@ fun LibrariesScreen(
         1f
     }
 
-    val showHero = state.selectedTab == LibrariesSubtab.Recommended &&
-        state.sections.any { it.featured } &&
-        heroBackdropUrl != null
-
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        if (showHero) {
-            HeroTintBackground(tint = heroTint)
-            HeroBackdropImage(
-                url = heroBackdropUrl,
-                thumbhash = heroBackdropThumbhash,
-            )
-        }
-
         Column(modifier = Modifier.fillMaxSize()) {
             LibrariesFloatingChrome(
                 scrimProgress = chromeScrimProgress,
@@ -850,12 +816,7 @@ fun LibrariesScreen(
                             state = state,
                             listState = recommendedListState,
                             onItemClick = onItemClick,
-                            onPlayClick = onPlayClick,
                             onRetry = viewModel::retryCurrentTab,
-                            onActiveBackdropChange = { url, thumbhash ->
-                                heroBackdropUrl = url
-                                heroBackdropThumbhash = thumbhash
-                            },
                         )
                     }
                     state.selectedTab == LibrariesSubtab.Browse -> {
@@ -904,9 +865,7 @@ private fun RecommendedTabContent(
     state: LibrariesUiState,
     listState: androidx.compose.foundation.lazy.LazyListState,
     onItemClick: (String) -> Unit,
-    onPlayClick: (String, Double?) -> Unit,
     onRetry: () -> Unit,
-    onActiveBackdropChange: (url: String?, thumbhash: String?) -> Unit,
 ) {
     when {
         state.isLoadingSections && state.sections.isEmpty() -> {
@@ -930,10 +889,8 @@ private fun RecommendedTabContent(
             )
         }
         else -> {
-            val (featuredSection, regularSections) = remember(state.sections) {
-                state.sections.splitFeatured().let { it.featured to it.rest }
-            }
-
+            // No hero carousel (matches iOS): a `featured` section is just
+            // another row, kept in the order the server configured it.
             // iOS `LibraryRecommendedView`: LazyVStack(spacing: largePadding = 24)
             // between section rows.
             LazyColumn(
@@ -941,23 +898,12 @@ private fun RecommendedTabContent(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
-                if (featuredSection != null && featuredSection.items.isNotEmpty()) {
-                    item(key = "library-featured") {
-                        FeaturedCarousel(
-                            items = featuredSection.items,
-                            onPlayClick = onPlayClick,
-                            onInfoClick = onItemClick,
-                            onActiveBackdropChange = onActiveBackdropChange,
-                        )
-                    }
-                } else {
-                    item(key = "no-featured") {
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
+                item(key = "top-runway") {
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
 
                 items(
-                    items = regularSections,
+                    items = state.sections,
                     key = { section -> section.id },
                 ) { section ->
                     // No "See All" — iOS has no such affordance (H3, Jim

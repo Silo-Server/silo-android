@@ -366,9 +366,6 @@ fun MainScreen(
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
                             },
-                            onPlayClick = { contentId, resumePositionSeconds ->
-                                playVideo(contentId, resumePositionSeconds = resumePositionSeconds)
-                            },
                             onCollectionClick = { collectionId, libraryId ->
                                 navController.navigate(Route.CollectionDetail(collectionId, libraryId).route)
                             },
@@ -392,9 +389,6 @@ fun MainScreen(
                         RecommendationsScreen(
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
-                            },
-                            onPlayClick = { contentId, resumePositionSeconds ->
-                                playVideo(contentId, resumePositionSeconds = resumePositionSeconds)
                             },
                             contentTopPadding = headerContentTop,
                         )
