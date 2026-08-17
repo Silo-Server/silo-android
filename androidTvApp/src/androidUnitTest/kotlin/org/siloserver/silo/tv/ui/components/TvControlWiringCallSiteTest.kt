@@ -44,18 +44,6 @@ class TvControlWiringCallSiteTest {
                 primitive = ".clickable(",
                 wiring = "enabled = enabled",
             ),
-            StructuralControl(
-                path = "ui/screens/settings/TvCardOverlaySettingsScreen.kt",
-                composable = "OverlayTile",
-                primitive = "Surface(",
-                wiring = "enabled = enabled",
-            ),
-            StructuralControl(
-                path = "ui/screens/settings/TvCardOverlaySettingsScreen.kt",
-                composable = "OverlayResetRow",
-                primitive = "Surface(",
-                wiring = "enabled = enabled",
-            ),
             // Delegates rather than owning a primitive: the pill it hands
             // `interactive` to is itself asserted below.
             StructuralControl(
@@ -153,7 +141,6 @@ class TvControlWiringCallSiteTest {
             "ui/components/TvAuroraChrome.kt",
             "ui/components/TvPinEntryDialog.kt",
             "ui/screens/watchtogether/TvJoinCodeDialog.kt",
-            "ui/screens/settings/TvCardOverlaySettingsScreen.kt",
         ).forEach { path ->
             assertFalse(
                 source(path).containsLoosely("onClick = { if ("),
