@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import dev.chrisbanes.haze.HazeState
@@ -165,17 +166,31 @@ private val TopBarGlassFallback = Color(0xFF0A0A0A).copy(alpha = 0.86f)
 
 /**
  * The header glass shared by every tab bar: content registered on [state]
- * via `hazeSource` is blurred and lightly tinted beneath this node. Over an
+ * via `hazeSource` is blurred and lightly tinted beneath this node. With
+ * [progressive] the glass feathers out along its bottom edge. Over an
  * empty top runway the blur is invisible, so pinned bars only "turn on" once
  * content slides beneath — iOS's scroll-edge effect for free. To fade the
  * glass with scroll (Home), put it on a background-only box behind a
  * `graphicsLayer { alpha }` rather than in the Haze block: Haze does not
  * re-run its style block on snapshot reads.
  */
-fun Modifier.topBarGlass(state: HazeState): Modifier =
+fun Modifier.topBarGlass(state: HazeState, progressive: Boolean = false): Modifier =
     hazeEffect(state = state) {
         blurRadius = TopBarGlassBlurRadius
         noiseFactor = 0f
         tints = listOf(HazeTint(TopBarGlassTint))
         fallbackTint = HazeTint(TopBarGlassFallback)
+        if (progressive) {
+            // Progressive glass: solid for the top ~80% of the bar, then
+            // feathering to clear so content dissolves into the header
+            // instead of meeting a hard edge (iOS scroll-edge effect for a
+            // taller chrome that carries a pinned selector row).
+            mask = Brush.verticalGradient(
+                0f to Color.Black,
+                ProgressiveGlassSolidFraction to Color.Black,
+                1f to Color.Transparent,
+            )
+        }
     }
+
+private const val ProgressiveGlassSolidFraction = 0.78f

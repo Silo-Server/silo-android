@@ -65,7 +65,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -82,6 +81,14 @@ import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
 import org.siloserver.silo.android.ui.components.TabTopBarActions
+import org.siloserver.silo.android.ui.components.topBarGlass
+import dev.chrisbanes.haze.rememberHazeState
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.HazeState
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.mutableIntStateOf
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.FilterList
@@ -761,36 +768,35 @@ fun LibrariesScreen(
         1f
     }
 
+    // The chrome floats over the content, which scrolls up beneath its
+    // feathered glass edge. Its height is measured (the selector wraps to two
+    // lines) and handed to each subtab as the inset its own top must clear.
+    val chromeHaze = rememberHazeState()
+    var chromeHeightPx by remember { mutableIntStateOf(0) }
+    val chromeHeight = with(density) { chromeHeightPx.toDp() }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            LibrariesFloatingChrome(
-                scrimProgress = chromeScrimProgress,
-                selectedLibrary = selectedLibrary,
-                canSwitch = state.libraries.size > 1,
-                activeProfile = activeProfile,
-                selectedTab = state.selectedTab,
-                onLibrarySelectorClick = onLibrarySelectorClick,
-                onTabSelected = viewModel::selectTab,
-                onSearchClick = onSearchClick,
-                onRequestsClick = onRequestsClick,
-                onWatchTogetherClick = onWatchTogetherClick,
-                onSettingsClick = onSettingsClick,
-                onSwitchProfileClick = onSwitchProfileClick,
-                onSwitchServerClick = onSwitchServerClick,
-                onSignOutClick = onSignOutClick,
-            )
-
-            LibraryContentViewport(
-                modifier = Modifier.weight(1f).clipToBounds(),
-            ) {
+        LibraryContentViewport(
+            modifier = Modifier
+                .fillMaxSize()
+                // Background inside the source so the glass captures an
+                // opaque scene rather than compositing over the sharp content.
+                .hazeSource(chromeHaze)
+                .background(MaterialTheme.colorScheme.background)
+                .clipToBounds(),
+        ) {
+            // Hold content until the chrome has been measured once so the
+            // first frame does not lay rows out under the header and jump.
+            if (chromeHeightPx > 0) {
+                val topInset = chromeHeight
                 when {
                     state.isLoadingLibraries && state.libraries.isEmpty() -> {
                         Box(
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().padding(top = topInset),
                             contentAlignment = Alignment.Center,
                         ) {
                             CircularProgressIndicator()
@@ -800,7 +806,7 @@ fun LibrariesScreen(
                         ErrorView(
                             message = state.librariesError ?: "Failed to load libraries",
                             onRetry = viewModel::refresh,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().padding(top = topInset),
                         )
                     }
                     selectedLibrary == null -> {
@@ -808,13 +814,14 @@ fun LibrariesScreen(
                             title = "No libraries available",
                             subtitle = "Libraries visible to this profile will show up here",
                             icon = Icons.Default.VideoLibrary,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().padding(top = topInset),
                         )
                     }
                     state.selectedTab == LibrariesSubtab.Recommended -> {
                         RecommendedTabContent(
                             state = state,
                             listState = recommendedListState,
+                            topInset = topInset,
                             onItemClick = onItemClick,
                             onRetry = viewModel::retryCurrentTab,
                         )
@@ -822,6 +829,7 @@ fun LibrariesScreen(
                     state.selectedTab == LibrariesSubtab.Browse -> {
                         BrowseTabContent(
                             state = state,
+                            topInset = topInset,
                             onItemClick = onItemClick,
                             onRetry = viewModel::retryCurrentTab,
                             onLoadMore = viewModel::loadMoreCatalog,
@@ -835,6 +843,7 @@ fun LibrariesScreen(
                     else -> {
                         CollectionsTabContent(
                             state = state,
+                            topInset = topInset,
                             onCollectionClick = { collectionId ->
                                 state.selectedLibraryId?.let { libraryId ->
                                     onCollectionClick(collectionId, libraryId)
@@ -846,6 +855,25 @@ fun LibrariesScreen(
                 }
             }
         }
+
+        LibrariesFloatingChrome(
+            scrimProgress = chromeScrimProgress,
+            hazeState = chromeHaze,
+            selectedLibrary = selectedLibrary,
+            canSwitch = state.libraries.size > 1,
+            activeProfile = activeProfile,
+            selectedTab = state.selectedTab,
+            onLibrarySelectorClick = onLibrarySelectorClick,
+            onTabSelected = viewModel::selectTab,
+            onSearchClick = onSearchClick,
+            onRequestsClick = onRequestsClick,
+            onWatchTogetherClick = onWatchTogetherClick,
+            onSettingsClick = onSettingsClick,
+            onSwitchProfileClick = onSwitchProfileClick,
+            onSwitchServerClick = onSwitchServerClick,
+            onSignOutClick = onSignOutClick,
+            modifier = Modifier.onSizeChanged { chromeHeightPx = it.height },
+        )
     }
 }
 
@@ -864,20 +892,21 @@ private fun LibraryContentViewport(
 private fun RecommendedTabContent(
     state: LibrariesUiState,
     listState: androidx.compose.foundation.lazy.LazyListState,
+    topInset: Dp,
     onItemClick: (String) -> Unit,
     onRetry: () -> Unit,
 ) {
     when {
         state.isLoadingSections && state.sections.isEmpty() -> {
             MediaRowsSkeleton(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.sectionsError != null && state.sections.isEmpty() -> {
             ErrorView(
                 message = state.sectionsError ?: "Failed to load recommendations",
                 onRetry = onRetry,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.sections.isEmpty() -> {
@@ -885,7 +914,7 @@ private fun RecommendedTabContent(
                 title = "No recommendations yet",
                 subtitle = "Try switching libraries or browsing the full catalog",
                 icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         else -> {
@@ -896,11 +925,10 @@ private fun RecommendedTabContent(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
+                // Rows start below the floating chrome and scroll up under it.
+                contentPadding = PaddingValues(top = topInset + 16.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
-                item(key = "top-runway") {
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
 
                 items(
                     items = state.sections,
@@ -925,6 +953,7 @@ private fun RecommendedTabContent(
 @Composable
 private fun BrowseTabContent(
     state: LibrariesUiState,
+    topInset: Dp,
     onItemClick: (String) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
@@ -936,7 +965,9 @@ private fun BrowseTabContent(
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
     Column(
-        modifier = Modifier.fillMaxSize(),
+        // The sort row is pinned, so the whole tab clears the chrome rather
+        // than scrolling under it.
+        modifier = Modifier.fillMaxSize().padding(top = topInset),
     ) {
         // Sort chips + a Filter button that opens the shared FilterSheet. Genre
         // is now a Categories facet inside the sheet (no inline genre rail, L3),
@@ -1104,6 +1135,7 @@ private fun LibraryActiveFilterChip(
 @Composable
 private fun CollectionsTabContent(
     state: LibrariesUiState,
+    topInset: Dp,
     onCollectionClick: (String) -> Unit,
     onRetry: () -> Unit,
 ) {
@@ -1111,14 +1143,14 @@ private fun CollectionsTabContent(
         state.isLoadingCollections && state.collections.isEmpty() -> {
             PosterGridSkeleton(
                 progress = rememberShimmerProgress(),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.collectionsError != null && state.collections.isEmpty() -> {
             ErrorView(
                 message = state.collectionsError ?: "Failed to load collections",
                 onRetry = onRetry,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.collections.isEmpty() -> {
@@ -1126,7 +1158,7 @@ private fun CollectionsTabContent(
                 title = "No collections found",
                 subtitle = "This library does not have any collections yet",
                 icon = Icons.Default.VideoLibrary,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         else -> {
@@ -1140,7 +1172,7 @@ private fun CollectionsTabContent(
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
-                    top = 16.dp,
+                    top = topInset + 16.dp,
                     bottom = 24.dp + LocalBottomChromeInset.current,
                 ),
             ) {
@@ -1218,6 +1250,7 @@ private fun InlineLibraryCollectionCard(
 @Composable
 private fun LibrariesFloatingChrome(
     scrimProgress: Float,
+    hazeState: HazeState,
     selectedLibrary: UserLibrary?,
     canSwitch: Boolean,
     activeProfile: Profile?,
@@ -1231,6 +1264,7 @@ private fun LibrariesFloatingChrome(
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
     onSignOutClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
     val animatedFill by animateFloatAsState(
@@ -1238,22 +1272,21 @@ private fun LibrariesFloatingChrome(
         label = "librariesChromeFill",
     )
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                // iOS chrome scrim: LinearGradient(black@0.55 → black@0.25 →
-                // clear) faded in by the scroll-driven opacity.
-                Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.background.copy(alpha = 0.55f * animatedFill),
-                        MaterialTheme.colorScheme.background.copy(alpha = 0.25f * animatedFill),
-                        MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                    ),
-                ),
-            )
-            .padding(top = statusBarPadding.calculateTopPadding() + 8.dp),
-    ) {
+    Box(modifier = modifier.fillMaxWidth()) {
+        // Progressive glass, faded in by the scroll-driven opacity on the
+        // Recommended tab and always on for Browse / Collections. Its bottom
+        // edge feathers to clear so rows dissolve into the chrome.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = animatedFill }
+                .topBarGlass(hazeState, progressive = true),
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = statusBarPadding.calculateTopPadding() + 8.dp),
+        ) {
         // Top row: library selector on the left, action icons on the right.
         Row(
             modifier = Modifier
@@ -1291,8 +1324,9 @@ private fun LibrariesFloatingChrome(
             modifier = Modifier.padding(horizontal = 16.dp),
         )
 
-        // iOS: tab selector bottom inset = padding (16).
-        Spacer(modifier = Modifier.height(16.dp))
+            // iOS: tab selector bottom inset = padding (16).
+            Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 }
 
