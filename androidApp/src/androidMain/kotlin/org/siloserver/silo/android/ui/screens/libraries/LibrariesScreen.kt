@@ -81,7 +81,7 @@ import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
-import org.siloserver.silo.android.ui.components.ProfileMenu
+import org.siloserver.silo.android.ui.components.TabTopBarActions
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.FilterList
@@ -1268,28 +1268,16 @@ private fun LibrariesFloatingChrome(
                 modifier = Modifier.weight(1f),
             )
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ChromeIconButton(onClick = onSearchClick) {
-                    Icon(
-                        imageVector = Icons.Outlined.Search,
-                        contentDescription = "Search",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                ChromeProfileMenu(
-                    activeProfile = activeProfile,
-                    onRequestsClick = onRequestsClick,
-                    onWatchTogetherClick = onWatchTogetherClick,
-                    onSettingsClick = onSettingsClick,
-                    onSwitchProfileClick = onSwitchProfileClick,
-                    onSwitchServerClick = onSwitchServerClick,
-                    onSignOutClick = onSignOutClick,
-                )
-            }
+            TabTopBarActions(
+                activeProfile = activeProfile,
+                onSearchClick = onSearchClick,
+                onRequestsClick = onRequestsClick,
+                onWatchTogetherClick = onWatchTogetherClick,
+                onSettingsClick = onSettingsClick,
+                onSwitchProfileClick = onSwitchProfileClick,
+                onSwitchServerClick = onSwitchServerClick,
+                onSignOutClick = onSignOutClick,
+            )
         }
 
         // iOS: top bar bottom inset = smallPadding (8).
@@ -1356,71 +1344,6 @@ private fun LibrarySelectorButton(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun ChromeIconButton(
-    onClick: () -> Unit,
-    content: @Composable BoxScope.() -> Unit,
-) {
-    // iOS `TopBarIconButton`/`ProfileAvatarMenu`: plain 40pt hit target with
-    // no surface fill or border — just the icon/avatar over the chrome scrim.
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-        content = content,
-    )
-}
-
-@Composable
-private fun ChromeProfileMenu(
-    activeProfile: Profile?,
-    onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
-    onSettingsClick: () -> Unit,
-    onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
-) {
-    var menuExpanded by rememberSaveable { mutableStateOf(false) }
-    Box {
-        ChromeIconButton(onClick = { menuExpanded = true }) {
-            if (activeProfile != null) {
-                ProfileAvatar(
-                    avatar = activeProfile.avatarRef(),
-                    name = activeProfile.name,
-                    size = 36.dp,
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Person,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        ProfileMenu(
-            expanded = menuExpanded,
-            onDismissRequest = { menuExpanded = false },
-            onRequestsClick = onRequestsClick,
-            onWatchTogetherClick = onWatchTogetherClick,
-            onSettingsClick = onSettingsClick,
-            onSwitchProfileClick = onSwitchProfileClick,
-            onSwitchServerClick = onSwitchServerClick,
-            onSignOutClick = onSignOutClick,
         )
     }
 }

@@ -322,8 +322,7 @@ fun MainScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                .consumeWindowInsets(padding)
-                .hazeSource(hazeState),
+                .consumeWindowInsets(padding),
         ) {
             // Content extends edge-to-edge under the translucent bottom chrome
             // (iOS glass tab bar); screens read the measured chrome height and
@@ -331,7 +330,17 @@ fun MainScreen(
             CompositionLocalProvider(
                 LocalBottomChromeInset provides padding.calculateBottomPadding(),
             ) {
-            Box(modifier = Modifier.fillMaxSize()) {
+            // The tab content is the blur source for both the floating pill and
+            // the shared top bar. Both effects sit outside this Box (bottomBar,
+            // and the sibling MainAppTopBar below) — an effect must never live
+            // inside the source it reads. The background is painted inside the
+            // source so the capture is opaque.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .hazeSource(hazeState)
+                    .background(MaterialTheme.colorScheme.background),
+            ) {
                 when (currentTab) {
                     Tab.Home -> {
                         val homeViewModel = koinViewModel<HomeViewModel>()
@@ -455,6 +464,7 @@ fun MainScreen(
                 MainAppTopBar(
                     activeProfile = headerState.activeProfile,
                     isProfileLoading = headerState.isLoading,
+                    hazeState = hazeState,
                     onSearchClick = { navController.navigate(Route.Search().route) },
                     onRequestsClick = requestsMenuAction,
                     onWatchTogetherClick = watchTogetherMenuAction,
