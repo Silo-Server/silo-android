@@ -81,6 +81,8 @@ import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
 import org.siloserver.silo.android.ui.components.TabTopBarActions
+import org.siloserver.silo.android.ui.components.SortFilterControlsRow
+import org.siloserver.silo.android.ui.components.SortMenuOption
 import org.siloserver.silo.android.ui.components.topBarGlass
 import dev.chrisbanes.haze.rememberHazeState
 import dev.chrisbanes.haze.hazeSource
@@ -964,102 +966,78 @@ private fun BrowseTabContent(
     onSetPreserve: (Boolean) -> Unit,
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
-    Column(
-        // The sort row is pinned, so the whole tab clears the chrome rather
-        // than scrolling under it.
-        modifier = Modifier.fillMaxSize().padding(top = topInset),
-    ) {
-        // Sort chips + a Filter button that opens the shared FilterSheet. Genre
-        // is now a Categories facet inside the sheet (no inline genre rail, L3),
-        // and view-density moved into the sheet's "View" section (L4).
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                LibraryBrowseSort.entries.forEach { sort ->
-                    FilterChip(
-                        selected = state.browseSort == sort,
-                        onClick = { onSortChanged(sort) },
-                        label = { Text(sort.label) },
-                        colors = libraryChipColors(state.browseSort == sort),
-                    )
-                }
-            }
-            BadgedBox(
-                badge = {
-                    if (state.filterState.activeFacetCount > 0) {
-                        Badge { Text("${state.filterState.activeFacetCount}") }
-                    }
+    val isCustomised = state.browseSort != LibraryBrowseSort.RecentlyAdded ||
+        state.filterState.hasActiveFilters ||
+        state.selectedNamePrefix != null
+
+    // Sort ▾ / Filter (n) / Reset — the same control row as the saved lists —
+    // plus removable chips for active facets. Rendered as the grid's header
+    // so it scrolls with the content under the chrome's glass.
+    val controlsHeader: @Composable () -> Unit = {
+        Column(modifier = Modifier.padding(bottom = 4.dp)) {
+            SortFilterControlsRow(
+                sortLabel = state.browseSort.label,
+                sortActive = state.browseSort != LibraryBrowseSort.RecentlyAdded,
+                sortOptions = LibraryBrowseSort.entries.map { SortMenuOption(id = it.name, label = it.label) },
+                selectedSortId = state.browseSort.name,
+                onSelectSort = { id -> onSortChanged(LibraryBrowseSort.valueOf(id)) },
+                filterCount = state.filterState.activeFacetCount,
+                onOpenFilters = { showFilterSheet = true },
+                showReset = isCustomised,
+                onReset = {
+                    onSortChanged(LibraryBrowseSort.RecentlyAdded)
+                    onApplyFilter(state.filterState.resetFilters())
+                    onNamePrefixChanged(null)
                 },
-            ) {
-                IconButton(onClick = { showFilterSheet = true }) {
-                    Icon(
-                        imageVector = Icons.Default.FilterList,
-                        contentDescription = "Filters",
-                    )
-                }
-            }
-        }
-
-        // Active filter chips — removable capsules, one per selected facet value.
-        if (state.filterState.hasActiveFilters) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
-                    .padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                CatalogFacet.available(state.browseMediaType).forEach { facet ->
-                    state.filterState.valuesFor(facet).sorted().forEach { value ->
-                        LibraryActiveFilterChip(
-                            label = facetValueLabel(facet, value),
-                            onRemove = { onApplyFilter(state.filterState.toggle(facet, value)) },
-                        )
+            )
+            if (state.filterState.hasActiveFilters) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CatalogFacet.available(state.browseMediaType).forEach { facet ->
+                        state.filterState.valuesFor(facet).sorted().forEach { value ->
+                            LibraryActiveFilterChip(
+                                label = facetValueLabel(facet, value),
+                                onRemove = { onApplyFilter(state.filterState.toggle(facet, value)) },
+                            )
+                        }
                     }
                 }
             }
         }
+    }
 
+    Box(modifier = Modifier.fillMaxSize()) {
         when {
             state.isLoadingCatalog && state.catalogItems.isEmpty() -> {
                 PosterGridSkeleton(
                     progress = rememberShimmerProgress(),
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().padding(top = topInset),
                 )
             }
             state.catalogError != null && state.catalogItems.isEmpty() -> {
                 ErrorView(
                     message = state.catalogError ?: "Failed to load catalog",
                     onRetry = onRetry,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().padding(top = topInset),
                 )
             }
             state.catalogItems.isEmpty() -> {
-                EmptyStateView(
-                    title = "No items found",
-                    subtitle = "Try adjusting the sort or switching libraries",
-                    icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
-                    modifier = Modifier.fillMaxSize(),
-                )
+                Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
+                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
+                    EmptyStateView(
+                        title = if (isCustomised) "No matches" else "No items found",
+                        subtitle = if (isCustomised) "No titles match the current sort or filters." else "Try switching libraries",
+                        icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
             else -> {
-                Text(
-                    text = "${state.catalogTotal} items",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
                 CatalogGrid(
                     items = state.catalogItems,
                     isLoadingMore = state.isLoadingMoreCatalog,
@@ -1077,6 +1055,8 @@ private fun BrowseTabContent(
                     onNamePrefixSelected = onNamePrefixChanged,
                     viewDensity = state.catalogDensity,
                     bottomContentInset = LocalBottomChromeInset.current,
+                    topContentInset = topInset,
+                    header = controlsHeader,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
