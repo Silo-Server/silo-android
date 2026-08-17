@@ -46,9 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -342,23 +340,26 @@ private fun HomeFloatingChrome(
     onSignOutClick: () -> Unit,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
-    // iOS chrome: glass that fades in as rows scroll under, plus a bottom
-    // hairline that strengthens with it (white 0.06 → 0.10, 0.75pt).
+    // iOS chrome: progressive glass that fades in as rows scroll under and
+    // feathers out along its bottom edge (same recipe as Libraries), so rows
+    // dissolve into the header rather than meeting a hard line. The glass
+    // extends past the action row so the feather has room on a short bar.
     // headerTopReclaim(16) pulls the row up beside the status-bar glyphs;
     // horizontal = SiloTheme.padding(16), bottom = SiloTheme.smallPadding(8).
     Box(modifier = Modifier.fillMaxWidth()) {
         // Glass fades in with scroll; alpha lives on a graphics layer so the
-        // buttons above stay fully visible at rest.
+        // buttons above stay fully visible at rest. It matches the whole
+        // chrome, i.e. the action row plus the feather runway below it.
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .graphicsLayer { alpha = scrollProgress.value }
-                .topBarGlass(hazeState),
+                .topBarGlass(hazeState, progressive = true),
         )
         Box(
             modifier = Modifier
                 .padding(top = statusBarPadding.calculateTopPadding())
-                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp + HomeChromeFeatherExtension)
                 .fillMaxWidth(),
         ) {
             // Leading: Silo wordmark (iOS SiloWordmarkView width: 72).
@@ -436,20 +437,9 @@ private fun HomeFloatingChrome(
                 },
             )
         }
-
-        // Bottom hairline border (iOS 0.75pt, white 0.06–0.10).
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(0.75.dp)
-                .drawBehind {
-                    drawRect(
-                        color = Color.White,
-                        alpha = 0.06f + 0.04f * scrollProgress.value,
-                    )
-                }
-        )
     }
 }
+
+/** How far the Home chrome's glass runs past its action row to feather out. */
+private val HomeChromeFeatherExtension = 40.dp
 
