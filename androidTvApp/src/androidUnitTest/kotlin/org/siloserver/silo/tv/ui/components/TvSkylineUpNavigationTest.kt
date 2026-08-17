@@ -56,4 +56,46 @@ class TvSkylineUpNavigationTest {
             ),
         )
     }
+
+    @Test
+    fun staleFirstRowIndexWhileBandIsScrolledDownStepsToPreviousRow() {
+        // The card focus callback lagged (or was clamped by a row refresh) and
+        // still says row 0, but the band shows row 3 at its top: a fast Up must
+        // step up, not leave for the menu.
+        assertEquals(
+            TvSkylineUpAction.TryPreviousRow,
+            tvSkylineUpAction(
+                currentRow = 0,
+                rowCount = 6,
+                isRepeat = false,
+                relocationInFlight = false,
+                bandTopRow = 3,
+            ),
+        )
+        assertEquals(3, tvSkylineEffectiveRow(focusedRow = 0, bandTopRow = 3, rowCount = 6))
+    }
+
+    @Test
+    fun unknownFocusedRowFallsBackToBandTopRow() {
+        assertEquals(
+            TvSkylineUpAction.TryPreviousRow,
+            tvSkylineUpAction(
+                currentRow = -1,
+                rowCount = 6,
+                isRepeat = false,
+                relocationInFlight = false,
+                bandTopRow = 2,
+            ),
+        )
+        assertEquals(
+            TvSkylineUpAction.EnterMenu,
+            tvSkylineUpAction(
+                currentRow = -1,
+                rowCount = 6,
+                isRepeat = false,
+                relocationInFlight = false,
+                bandTopRow = 0,
+            ),
+        )
+    }
 }
