@@ -413,6 +413,7 @@ val androidModule = module {
             repository = get(),
             timezoneId = java.util.TimeZone.getDefault().id,
             todayProvider = { java.time.LocalDate.now().toString() },
+            filterStore = org.siloserver.silo.android.ui.screens.calendar.CalendarPrefsStore(androidContext()),
         )
     }
     viewModel { params ->
