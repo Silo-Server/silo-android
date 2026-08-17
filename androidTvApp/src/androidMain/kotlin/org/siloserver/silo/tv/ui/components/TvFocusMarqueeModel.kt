@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.OverlaySummary
 import org.siloserver.silo.model.section.SectionItem
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -34,6 +35,13 @@ data class TvMarqueeContent(
     val synopsis: String?,
     /** A quieter detail line: cast / air-date when carried by the payload. */
     val detailLine: String?,
+    /**
+     * Playback format, `4K · Dolby Vision · EAC3 5.1`, from the section
+     * payload's overlay summary. Rendered as a muted spec line under the
+     * detail line rather than as chips, so the content rating stays the only
+     * badge on the hero and the format is there when the viewer looks for it.
+     */
+    val specLine: String?,
     val backdropUrl: String?,
     val backdropThumbhash: String?,
     val posterUrl: String?,
@@ -86,12 +94,14 @@ data class TvMarqueeContent(
                 episodeToken(item.seasonNumber, item.episodeNumber)?.let(meta::add)
                 if (item.title.isNotBlank()) meta.add(item.title)
                 lengthText(item.runtime, item.durationSeconds)?.let(meta::add)
+                timeLeftText(item.positionSeconds, item.durationSeconds)?.let(meta::add)
                 ratingToken(item.ratingImdb)?.let(meta::add)
             } else {
                 if (item.year > 0) meta.add(item.year.toString())
                 lengthText(item.runtime, item.durationSeconds)?.let(meta::add)
                 ratingToken(item.ratingImdb)?.let(meta::add)
                 item.genres.firstOrNull { it.isNotBlank() }?.let(meta::add)
+                timeLeftText(item.positionSeconds, item.durationSeconds)?.let(meta::add)
             }
 
             val badges = item.contentRating
@@ -110,6 +120,7 @@ data class TvMarqueeContent(
                 metaParts = meta,
                 synopsis = item.overview?.takeIf { it.isNotBlank() },
                 detailLine = null,
+                specLine = specLine(item.overlaySummary),
                 // Match tvOS: a section backdrop (or poster fallback) is always
                 // available for the first rested frame. Episode enrichment may
                 // replace it with series art later.
@@ -137,7 +148,43 @@ data class TvMarqueeContent(
             if (position == null || duration == null || duration <= 0) return null
             if (position <= 60 || position / duration >= 0.95) return null
             val remaining = (((duration - position) / 60.0)).let { kotlin.math.ceil(it).toInt() }.coerceAtLeast(1)
-            return "${remaining}m left"
+            return "$remaining min left"
+        }
+
+        /**
+         * `4K · Dolby Vision · EAC3 5.1` from the payload's overlay summary —
+         * the same resolution / dynamic-range / audio trio the tvOS marquee
+         * shows, spelled out rather than uppercased since it is a text line
+         * here, not a chip row.
+         */
+        internal fun specLine(summary: OverlaySummary?): String? {
+            if (summary == null) return null
+            val parts = mutableListOf<String>()
+            prettyResolution(summary.resolution)?.let(parts::add)
+            summary.hdr?.trim()?.takeIf { it.isNotEmpty() }?.let { hdr ->
+                parts.add(
+                    if (hdr.contains("dv", ignoreCase = true) || hdr.contains("dolby", ignoreCase = true)) {
+                        "Dolby Vision"
+                    } else {
+                        hdr.uppercase(Locale.US)
+                    },
+                )
+            }
+            summary.audio?.trim()?.takeIf { it.isNotEmpty() }?.let { audio ->
+                val codec = if (audio.contains("atmos", ignoreCase = true)) "Atmos" else audio.uppercase(Locale.US)
+                val channels = summary.audioChannels?.trim()?.takeIf { it.isNotEmpty() }
+                parts.add(if (channels != null) "$codec $channels" else codec)
+            }
+            return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+        }
+
+        private fun prettyResolution(value: String?): String? {
+            val v = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            return when (v.lowercase(Locale.US)) {
+                "2160p", "4k", "uhd" -> "4K"
+                "4320p", "8k" -> "8K"
+                else -> v.uppercase(Locale.US)
+            }
         }
 
         /** Episode/movie length: the metadata runtime when present, else
