@@ -78,17 +78,13 @@ fun MediaRow(
             } else {
                 null
             }
-            val isEpisode = item.seriesTitle != null
-            val imageUrl = if (isEpisode) {
-                item.posterUrl ?: item.backdropUrl
-            } else {
-                item.backdropUrl ?: item.posterUrl
-            }
-            val imageThumbhash = if (isEpisode) {
-                item.posterThumbhash ?: item.backdropThumbhash
-            } else {
-                item.backdropThumbhash ?: item.posterThumbhash
-            }
+            // Landscape cards take the backdrop first for every item type
+            // (iOS EpisodeThumbCard). For episodes the server's backdrop_url
+            // IS the episode still (falling back to the series backdrop),
+            // while poster_url is the season/series portrait — which the
+            // 16:9 frame used to crop down to a sliver of the title art.
+            val imageUrl = item.backdropUrl ?: item.posterUrl
+            val imageThumbhash = item.backdropThumbhash ?: item.posterThumbhash
             MediaRowItemModel(
                 item = item,
                 progress = progress,
