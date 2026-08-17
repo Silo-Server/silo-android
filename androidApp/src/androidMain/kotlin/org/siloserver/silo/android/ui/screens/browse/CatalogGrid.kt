@@ -3,10 +3,12 @@ package org.siloserver.silo.android.ui.screens.browse
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -37,15 +40,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,6 +59,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
@@ -171,6 +178,7 @@ fun CatalogGrid(
             CatalogLetterIndex(
                 selectedNamePrefix = selectedNamePrefix,
                 onNamePrefixSelected = onSelected,
+                revealWhileScrolling = gridState.isScrollInProgress,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
@@ -183,46 +191,78 @@ fun CatalogGrid(
 // MARK: - A–Z index
 
 private val CatalogLetterOptions: List<String?> = listOf(null) + ('A'..'Z').map { it.toString() }
-private const val IndexAutoHideMillis = 1_600L
-private val IndexHandleSize = 28.dp
+private const val IndexAutoHideMillis = 1_400L
+private val IndexTabWidth = 22.dp
+private val IndexTabHeight = 64.dp
 private val IndexRailWidth = 26.dp
 private val IndexBubbleSize = 64.dp
+private val IndexPullThreshold = 24.dp
 
 /**
- * Trailing-edge name-prefix index. At rest only a small round handle shows
- * (the active letter, or "A–Z"). Press-and-hold anywhere along the edge
- * slides the rail in and turns the hold into a scrub — drag up and down and
- * the letter under the finger is previewed in a bubble beside the rail,
- * applied on release. A plain tap on the handle toggles the rail for direct
- * letter taps. The rail slides away after a moment of no interaction.
+ * Trailing-edge name-prefix index.
+ *
+ * At rest a small "pull tab" sits half-docked on the edge (showing the
+ * active letter, or "A–Z"). Drag it leftward and it stretches like a drop
+ * as you pull; past [IndexPullThreshold] the rail springs open with a little
+ * overshoot and, without lifting, the same finger scrubs up and down the
+ * letters with a preview bubble — applied on release. A tap on the tab opens
+ * the rail for direct letter taps. The rail also fades in while the grid is
+ * scrolling ([revealWhileScrolling]) so it is easy to discover, and tucks
+ * away after a moment of no interaction.
  */
 @Composable
 private fun CatalogLetterIndex(
     selectedNamePrefix: String?,
     onNamePrefixSelected: (String?) -> Unit,
+    revealWhileScrolling: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val haptics = LocalHapticFeedback.current
-    var railVisible by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val pullThresholdPx = with(density) { IndexPullThreshold.toPx() }
+    val railWidthPx = with(density) { (IndexRailWidth + 8.dp).toPx() }
+
+    // 0 = tucked away, 1 = fully open. Driven by the pull while dragging,
+    // then animated to a resting state.
+    val railProgress = remember { Animatable(0f) }
+    var open by remember { mutableStateOf(false) }
     var scrubbing by remember { mutableStateOf(false) }
+    var pulling by remember { mutableStateOf(false) }
     var previewPrefix by remember { mutableStateOf<String?>(null) }
     var railHeightPx by remember { mutableIntStateOf(0) }
     var interactionTick by remember { mutableIntStateOf(0) }
     val currentOnSelected by rememberUpdatedState(onNamePrefixSelected)
-
-    // Auto-hide once nothing has touched the index for a moment.
-    LaunchedEffect(railVisible, scrubbing, interactionTick) {
-        if (railVisible && !scrubbing) {
-            delay(IndexAutoHideMillis)
-            railVisible = false
-        }
-    }
 
     fun prefixAt(y: Float): String? {
         if (railHeightPx <= 0) return null
         val slot = railHeightPx.toFloat() / CatalogLetterOptions.size
         val index = (y / slot).toInt().coerceIn(0, CatalogLetterOptions.lastIndex)
         return CatalogLetterOptions[index]
+    }
+
+    fun openRail() {
+        open = true
+        interactionTick++
+        scope.launch {
+            railProgress.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow))
+        }
+    }
+
+    fun closeRail() {
+        open = false
+        scope.launch { railProgress.animateTo(0f, tween(durationMillis = 220)) }
+    }
+
+    // Reveal while the grid scrolls; tuck away once everything is quiet.
+    LaunchedEffect(revealWhileScrolling) {
+        if (revealWhileScrolling && !open) openRail()
+    }
+    LaunchedEffect(open, scrubbing, pulling, revealWhileScrolling, interactionTick) {
+        if (open && !scrubbing && !pulling && !revealWhileScrolling) {
+            delay(IndexAutoHideMillis)
+            closeRail()
+        }
     }
 
     BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.CenterEnd) {
@@ -253,115 +293,157 @@ private fun CatalogLetterIndex(
             }
         }
 
-        // The rail itself.
-        AnimatedVisibility(
-            visible = railVisible,
-            enter = slideInHorizontally { it } + fadeIn(),
-            exit = slideOutHorizontally { it } + fadeOut(),
-            modifier = Modifier.align(Alignment.CenterEnd),
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(end = 4.dp)
-                    .width(IndexRailWidth)
-                    .height(railHeight)
-                    .clip(RoundedCornerShape(13.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                    .onSizeChanged { railHeightPx = it.height }
-                    .pointerInput(Unit) {
-                        // Direct taps once the rail is open.
-                        detectTapGestures { offset ->
-                            val prefix = prefixAt(offset.y)
-                            currentOnSelected(prefix)
-                            interactionTick++
-                        }
-                    },
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                CatalogLetterOptions.forEach { prefix ->
-                    val active = if (scrubbing) previewPrefix == prefix else selectedNamePrefix == prefix
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = prefix ?: "•",
-                            color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 10.sp,
-                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                        )
+        // The rail: slides in from the edge as railProgress rises.
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 4.dp)
+                .width(IndexRailWidth)
+                .height(railHeight)
+                .graphicsLayer {
+                    val p = railProgress.value.coerceIn(0f, 1.2f)
+                    translationX = (1f - p) * railWidthPx
+                    alpha = p.coerceIn(0f, 1f)
+                }
+                .clip(RoundedCornerShape(13.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+                .onSizeChanged { railHeightPx = it.height }
+                .pointerInput(Unit) {
+                    // Direct taps once the rail is open.
+                    detectTapGestures { offset ->
+                        if (!open) return@detectTapGestures
+                        currentOnSelected(prefixAt(offset.y))
+                        interactionTick++
                     }
+                },
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            CatalogLetterOptions.forEach { prefix ->
+                val active = if (scrubbing) previewPrefix == prefix else selectedNamePrefix == prefix
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = prefix ?: "•",
+                        color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 10.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
                 }
             }
         }
 
-        // Edge touch zone: hold to open + scrub; tap the handle to toggle.
+        // The pull tab + gesture surface. Drag left to pull the rail open
+        // (stretching like a drop), keep dragging vertically to scrub; tap
+        // to open. The tab's own patch of the edge is excluded from the
+        // system back gesture (small regions are allowed) so a touch that
+        // starts on the tab is ours; the rest of the edge stays the OS's.
+        var pullPx by remember { mutableStateOf(0f) }
         Box(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .width(IndexRailWidth + 8.dp)
+                .width(IndexRailWidth + 12.dp)
                 .fillMaxHeight()
                 .pointerInput(Unit) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { offset ->
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            railVisible = true
-                            scrubbing = true
-                            previewPrefix = prefixAt(offset.y)
+                    detectDragGestures(
+                        onDragStart = {
+                            pulling = true
+                            pullPx = 0f
+                            interactionTick++
                         },
-                        onDrag = { change, _ ->
+                        onDrag = { change, drag ->
                             change.consume()
-                            val next = prefixAt(change.position.y)
-                            if (next != previewPrefix) {
-                                previewPrefix = next
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            if (!open) {
+                                pullPx = (pullPx - drag.x).coerceAtLeast(0f)
+                                val p = (pullPx / pullThresholdPx).coerceIn(0f, 1f)
+                                scope.launch { railProgress.snapTo(p) }
+                                // Open once pulled far enough — or as soon as the
+                                // finger turns vertical with the rail mostly out,
+                                // so nobody has to hunt for the exact distance.
+                                val turnedVertical = p > 0.4f && kotlin.math.abs(drag.y) > kotlin.math.abs(drag.x)
+                                if (pullPx >= pullThresholdPx || turnedVertical) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    openRail()
+                                    scrubbing = true
+                                    previewPrefix = prefixAt(change.position.y)
+                                }
+                            } else {
+                                if (!scrubbing) {
+                                    scrubbing = true
+                                    previewPrefix = prefixAt(change.position.y)
+                                }
+                                val next = prefixAt(change.position.y)
+                                if (next != previewPrefix) {
+                                    previewPrefix = next
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
                             }
                         },
                         onDragEnd = {
-                            currentOnSelected(previewPrefix)
-                            scrubbing = false
+                            pulling = false
+                            if (scrubbing) {
+                                currentOnSelected(previewPrefix)
+                                scrubbing = false
+                            } else if (!open) {
+                                // A decent tug that stopped short still opens the
+                                // rail for tapping; a nudge snaps the tab back.
+                                if (railProgress.value > 0.4f) openRail()
+                                else scope.launch { railProgress.animateTo(0f, spring(dampingRatio = 0.5f)) }
+                            }
+                            pullPx = 0f
                             interactionTick++
                         },
-                        onDragCancel = { scrubbing = false },
+                        onDragCancel = {
+                            pulling = false
+                            scrubbing = false
+                            pullPx = 0f
+                            if (!open) scope.launch { railProgress.animateTo(0f) }
+                        },
                     )
+                }
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { if (open) closeRail() else openRail() })
                 },
         )
-        // A visible handle so the index is discoverable: the active letter,
-        // or "A–Z" at rest. Sits over the edge zone so tapping it toggles.
-        AnimatedVisibility(
-            visible = !railVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 4.dp),
+
+        // The tab: half-docked pill on the edge that stretches as it is
+        // pulled and hides once the rail is open.
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .systemGestureExclusion()
+                .graphicsLayer {
+                    val p = railProgress.value.coerceIn(0f, 1f)
+                    val stretch = 1f + 0.35f * p
+                    translationX = -pullPx * 0.6f
+                    scaleY = stretch
+                    scaleX = 1f - 0.2f * p
+                    alpha = if (open) (1f - p) else 1f
+                    transformOrigin = TransformOrigin(1f, 0.5f)
+                }
+                .width(IndexTabWidth)
+                .height(IndexTabHeight)
+                .clip(RoundedCornerShape(topStart = 11.dp, bottomStart = 11.dp))
+                .background(
+                    if (selectedNamePrefix != null) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                ),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(IndexHandleSize)
-                    .clip(CircleShape)
-                    .background(
-                        if (selectedNamePrefix != null) MaterialTheme.colorScheme.onSurface
-                        else Color.White.copy(alpha = 0.10f),
-                    )
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = { railVisible = true; interactionTick++ },
-                        )
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = selectedNamePrefix ?: "A–Z",
-                    color = if (selectedNamePrefix != null) MaterialTheme.colorScheme.background
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = if (selectedNamePrefix != null) 12.sp else 8.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                )
-            }
+            Text(
+                text = selectedNamePrefix ?: "A\nZ",
+                color = if (selectedNamePrefix != null) MaterialTheme.colorScheme.background
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = if (selectedNamePrefix != null) 12.sp else 9.sp,
+                lineHeight = 10.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
