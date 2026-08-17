@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import org.siloserver.silo.android.ui.components.MainAppHeaderBodyHeight
 import org.siloserver.silo.android.ui.components.MainAppTopBar
+import org.siloserver.silo.android.ui.components.TabTopBarActions
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.navigation.SiloBottomNavBar
 import dev.chrisbanes.haze.hazeSource
@@ -417,13 +418,28 @@ fun MainScreen(
                         )
                     }
                     Tab.Calendar -> {
+                        // Calendar's floating week card is its own header (iOS):
+                        // the shared actions ride inside the card, no title row.
                         CalendarScreen(
-                            onBackClick = { navController.popBackStack() },
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
                             },
-                            showTopBar = false,
-                            contentTopPadding = headerContentTop,
+                            headerActions = {
+                                TabTopBarActions(
+                                    activeProfile = headerState.activeProfile,
+                                    onSearchClick = { navController.navigate(Route.Search().route) },
+                                    onRequestsClick = requestsMenuAction,
+                                    onWatchTogetherClick = watchTogetherMenuAction,
+                                    onSettingsClick = { navController.navigate(Route.Settings.route) },
+                                    onSwitchProfileClick = {
+                                        navController.navigate(Route.ProfileSelection.route)
+                                    },
+                                    onSwitchServerClick = {
+                                        navController.navigate(Route.ServerList.route)
+                                    },
+                                    onSignOutClick = ::signOutFromProfileMenu,
+                                )
+                            },
                         )
                     }
                     Tab.Downloads -> {
@@ -459,11 +475,10 @@ fun MainScreen(
                 }
             }
 
-            // Home and Libraries paint their own floating chrome. Calendar,
-            // Downloads, and For You use the shared iOS-style top chrome.
-            if (currentTab == Tab.Downloads || currentTab == Tab.ForYou || currentTab == Tab.Calendar) {
+            // Home, Libraries and Calendar paint their own floating chrome.
+            // Downloads and For You use the shared iOS-style top chrome.
+            if (currentTab == Tab.Downloads || currentTab == Tab.ForYou) {
                 val title = when (currentTab) {
-                    Tab.Calendar -> "Calendar"
                     Tab.Downloads -> "Downloads"
                     // Names what For You is showing: the feed, or a saved list.
                     Tab.ForYou -> forYouList.headerTitle()
