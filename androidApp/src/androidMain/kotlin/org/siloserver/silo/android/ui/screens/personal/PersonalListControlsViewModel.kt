@@ -27,7 +27,7 @@ enum class PersonalListSort(
     private val ascendingLabel: String,
     private val descendingLabel: String,
 ) {
-    RecentlySaved(null, "Recently Saved", "desc", "", ""),
+    RecentlyAdded(null, "Recently Added", "desc", "", ""),
     Title("title", "Title", "asc", "A–Z", "Z–A"),
     DateAdded("added_at", "Date Added", "desc", "Oldest first", "Newest first"),
     Year("year", "Year", "desc", "Oldest first", "Newest first"),
@@ -42,14 +42,18 @@ enum class PersonalListSort(
 }
 
 data class PersonalListControlsState(
-    val sort: PersonalListSort = PersonalListSort.RecentlySaved,
-    val order: String = PersonalListSort.RecentlySaved.defaultOrder,
+    val sort: PersonalListSort = PersonalListSort.RecentlyAdded,
+    val order: String = PersonalListSort.RecentlyAdded.defaultOrder,
     /** Facet selections + match mode; its sort/order fields are unused here. */
     val filters: CatalogFilterState = CatalogFilterState(),
     /** Vocabularies scoped to this list (`/catalog/filters?source=…`). */
     val availableFilters: CatalogFiltersResponse? = null,
 ) {
     val activeFacetCount: Int get() = filters.activeFacetCount
+
+    /** Anything to reset — a non-default sort or any facet. */
+    val isCustomised: Boolean
+        get() = sort != PersonalListSort.RecentlyAdded || filters.hasActiveFilters
 
     /** What the shared list ViewModel should fetch with. */
     val query: PersonalListQuery
@@ -97,6 +101,17 @@ class PersonalListControlsViewModel(
 
     fun resetFilters() {
         _uiState.update { it.copy(filters = it.filters.resetFilters()) }
+    }
+
+    /** Back to the defaults: list order, no facets. */
+    fun resetAll() {
+        _uiState.update {
+            it.copy(
+                sort = PersonalListSort.RecentlyAdded,
+                order = PersonalListSort.RecentlyAdded.defaultOrder,
+                filters = it.filters.resetFilters(),
+            )
+        }
     }
 
     private fun loadFilters() {

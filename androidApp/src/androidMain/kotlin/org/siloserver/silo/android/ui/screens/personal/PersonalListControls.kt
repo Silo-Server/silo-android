@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.ButtonDefaults
@@ -25,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -113,7 +115,7 @@ fun PersonalListControlsRow(
             ControlPill(
                 icon = Icons.AutoMirrored.Filled.Sort,
                 label = state.sort.label,
-                active = state.sort != PersonalListSort.RecentlySaved,
+                active = state.sort != PersonalListSort.RecentlyAdded,
                 trailingChevron = true,
                 onClick = { sortMenuOpen = true },
             )
@@ -157,6 +159,20 @@ fun PersonalListControlsRow(
             active = state.activeFacetCount > 0,
             onClick = { showFilterSheet = true },
         )
+
+        // Reset appears only once something is customised — one tap back to
+        // list order with no facets.
+        if (state.isCustomised) {
+            TextButton(
+                onClick = controls::resetAll,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.height(34.dp),
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Reset", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
 
         Spacer(modifier = Modifier.weight(1f))
 
