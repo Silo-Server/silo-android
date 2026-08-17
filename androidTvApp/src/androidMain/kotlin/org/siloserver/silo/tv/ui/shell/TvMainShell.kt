@@ -619,10 +619,26 @@ fun TvMainShell(
 
     val navigateToRoute: (String) -> Unit = { route ->
         if (route != currentRoute) {
-            nestedNav.navigate(route) {
-                popUpTo(nestedNav.graph.startDestinationId) { saveState = true }
-                launchSingleTop = true
-                restoreState = true
+            val startRoute = nestedNav.graph.startDestinationRoute
+            if (route == startRoute && nestedNav.popBackStack(route, inclusive = false, saveState = true)) {
+                // Home is the graph root, so "go Home" is a pop, never a push.
+                // The bottom-nav idiom below (popUpTo(start){saveState} +
+                // restoreState) is unsafe for the root itself: NavController
+                // maps the state it just popped onto the popUpTo destination
+                // when that destination has no saved-state key yet, and the
+                // restoreState step then re-pushes exactly what was popped —
+                // Home from a dropdown-opened For You (navigateToSecondary,
+                // which never seeds Home's key) landed straight back on the
+                // saved list. Tab→Home only worked because the earlier
+                // navigate() to the tab had seeded Home's key with null.
+                // saveState stays on so the popped tab/secondary route keeps
+                // its scroll state for a later restoreState re-entry.
+            } else {
+                nestedNav.navigate(route) {
+                    popUpTo(nestedNav.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
             }
         }
     }

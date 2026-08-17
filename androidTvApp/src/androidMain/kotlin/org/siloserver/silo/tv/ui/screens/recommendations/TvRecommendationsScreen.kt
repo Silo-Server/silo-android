@@ -28,12 +28,14 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
@@ -148,6 +150,8 @@ fun TvRecommendationsScreen(
         }
     }
 
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+
     // Menu→content handover for the saved lists only; the feed answers the same
     // token itself. Guarded so a later recomposition (or the return from a
     // detail page, where the shell's restorer owns focus) cannot replay it.
@@ -156,6 +160,14 @@ fun TvRecommendationsScreen(
         if (savedListSelection == null) return@LaunchedEffect
         if (focusRequest == lastAppliedFocusRequest) return@LaunchedEffect
         lastAppliedFocusRequest = focusRequest
+        // The shell bumps its token for EVERY menu selection, and during the
+        // route crossfade this exiting screen is still composed — without this
+        // gate, selecting Home from a Watchlist/Favorites view let the saved
+        // list claim focus (its first card or Sort/Filter pill) instead of
+        // Home's first row. Same gate as TvSkylineSectionFeed: exiting nav
+        // entries fall to STARTED and never resume, so they park here until
+        // disposal with the token already consumed.
+        lifecycleOwner.lifecycle.currentStateFlow.first { it.isAtLeast(Lifecycle.State.RESUMED) }
         claimSavedListFocus()
     }
 
@@ -164,7 +176,6 @@ fun TvRecommendationsScreen(
     // an empty discover response otherwise leaves this tab a permanent dead end
     // until a profile switch/restart. If the feed is still the empty fallback
     // when the user returns (e.g. after watching and rating content), re-check.
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
