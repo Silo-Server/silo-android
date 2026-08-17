@@ -96,7 +96,10 @@ abstract class PersonalListViewModel(
     fun applyQuery(newQuery: PersonalListQuery) {
         if (newQuery == query) return
         query = newQuery
-        _uiState.update { it.copy(query = newQuery) }
+        // The old query's rows must not stand in for the new one — not while
+        // it loads, and not if it fails (the grid would silently keep showing
+        // cards that do not match the selected sort/filters).
+        _uiState.update { it.copy(query = newQuery, items = emptyList(), total = 0, hasMore = false) }
         load(reset = true)
     }
 

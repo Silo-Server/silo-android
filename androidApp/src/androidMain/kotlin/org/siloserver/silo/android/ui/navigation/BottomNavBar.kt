@@ -4,7 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -229,7 +229,10 @@ private fun PillTabItem(
         modifier = modifier
             .clip(CircleShape)
             .background(chip)
-            .clickable(
+            // selectable (not clickable) so TalkBack announces which tab is
+            // active — the chip and filled icon alone are not perceivable.
+            .selectable(
+                selected = selected,
                 interactionSource = interaction,
                 indication = ripple(bounded = true, color = Color.White),
                 role = Role.Tab,

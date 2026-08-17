@@ -286,6 +286,9 @@ fun MainScreen(
     // For You's Watchlist / Favorites toggle lives here so the shared header
     // can title itself after what the tab is showing.
     var forYouList by rememberSaveable { mutableStateOf<ForYouList?>(null) }
+    // What For You is actually showing (the empty-feed fallback shows the
+    // Watchlist without making it an explicit selection); drives the title.
+    var forYouDisplayed by remember { mutableStateOf<ForYouList?>(null) }
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
@@ -414,6 +417,7 @@ fun MainScreen(
                             },
                             savedListSelection = forYouList,
                             onSavedListSelectionChange = { forYouList = it },
+                            onDisplayedListChange = { forYouDisplayed = it },
                             contentTopPadding = headerContentTop,
                         )
                     }
@@ -481,7 +485,7 @@ fun MainScreen(
                 val title = when (currentTab) {
                     Tab.Downloads -> "Downloads"
                     // Names what For You is showing: the feed, or a saved list.
-                    Tab.ForYou -> forYouList.headerTitle()
+                    Tab.ForYou -> forYouDisplayed.headerTitle()
                     else -> null
                 }
                 MainAppTopBar(

@@ -15,12 +15,14 @@ import androidx.compose.ui.Modifier
 import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelStoreOwner
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.android.ui.components.SortFilterControlsRow
 import org.siloserver.silo.android.ui.components.SortMenuOption
 import org.siloserver.silo.android.ui.screens.browse.FilterSheet
 import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.viewmodel.PersonalListQuery
 import org.siloserver.silo.viewmodel.PersonalListViewModel
 
@@ -32,21 +34,28 @@ object PersonalListSource {
 
 /**
  * The sort/filter controls for one saved list, resolved against the
- * Activity's ViewModelStore keyed by [source] so the For You inline grid and
- * the standalone Watchlist / Favorites screens share one selection (nav
- * back-stack entries would otherwise each get their own).
+ * Activity's ViewModelStore keyed by [source] and the active server/profile
+ * so the For You inline grid and the standalone Watchlist / Favorites screens
+ * share one selection (nav back-stack entries would otherwise each get their
+ * own), while a profile or server switch starts fresh instead of inheriting
+ * the previous identity's query and facet vocabulary.
  */
 @Composable
 fun rememberPersonalListControls(source: String): PersonalListControlsViewModel {
+    val registry: ServerRegistry = koinInject()
+    val serverId by registry.activeServerId.collectAsState()
+    val entry by registry.activeEntry.collectAsState()
+    val identity = "${serverId ?: "-"}:${entry?.profileId ?: "-"}"
+    val key = "personal-controls-$source-$identity"
     val activity = LocalActivity.current as? ComponentActivity
     return if (activity != null) {
         koinViewModel(
             viewModelStoreOwner = activity as ViewModelStoreOwner,
-            key = "personal-controls-$source",
+            key = key,
             parameters = { parametersOf(source) },
         )
     } else {
-        koinViewModel(key = "personal-controls-$source", parameters = { parametersOf(source) })
+        koinViewModel(key = key, parameters = { parametersOf(source) })
     }
 }
 

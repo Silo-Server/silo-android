@@ -136,10 +136,11 @@ fun CalendarScreen(
     val cardHeight = with(density) { cardHeightPx.toDp() }
 
     // Explicit scroll requests only (day tap / Today), never on first
-    // composition — iOS opens at the top of the week. Keyed on weekDates too
-    // so a "Today" that changes weeks scrolls once the new week is in.
+    // composition — iOS opens at the top of the week. Keyed on weekDates and
+    // on whether the shelves exist yet, so a request made while the week is
+    // still loading is honoured once its content arrives.
     var scrollTarget by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(scrollTarget, state.weekDates) {
+    LaunchedEffect(scrollTarget, state.weekDates, state.hasAnyItems) {
         val target = scrollTarget ?: return@LaunchedEffect
         val index = state.weekDates.indexOf(target)
         if (index >= 0 && state.hasAnyItems) {

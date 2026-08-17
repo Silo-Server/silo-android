@@ -664,6 +664,18 @@ fun AppNavigation(
                 }
             }
         }
+        // The Card overlays editor was removed (overlays are edited on the web
+        // app); a saved back stack from an older build can still hold its
+        // route, so keep a hidden redirect to Settings rather than crash on
+        // restore. Registered, never rendered.
+        composable("settings/card_overlays") {
+            LaunchedEffect(Unit) {
+                navController.navigate(Route.Settings.route) {
+                    popUpTo("settings/card_overlays") { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
         composable(Route.Settings.route) {
             SettingsScreen(
                 onNavigateToServers = {

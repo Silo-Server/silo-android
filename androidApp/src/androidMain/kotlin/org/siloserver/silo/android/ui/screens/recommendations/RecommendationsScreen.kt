@@ -29,6 +29,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -79,10 +80,19 @@ fun RecommendationsScreen(
     onItemClick: (String) -> Unit,
     savedListSelection: ForYouList?,
     onSavedListSelectionChange: (ForYouList?) -> Unit,
+    /**
+     * What the screen is actually showing, for the header title. Differs from
+     * [savedListSelection] only in the empty-feed fallback, which shows the
+     * Watchlist without turning that into an explicit selection.
+     */
+    onDisplayedListChange: (ForYouList?) -> Unit = {},
     contentTopPadding: Dp = 0.dp,
     viewModel: RecommendationsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val inFallback = !state.isLoading && state.error == null && state.sections.isEmpty()
+    val displayedList = if (inFallback) savedListSelection ?: ForYouList.Watchlist else savedListSelection
+    LaunchedEffect(displayedList) { onDisplayedListChange(displayedList) }
 
     // Self-heal the "For You" fallback. The shared VM loads only in init{} and
     // survives tab switches (saveState/restoreState), so an empty server
