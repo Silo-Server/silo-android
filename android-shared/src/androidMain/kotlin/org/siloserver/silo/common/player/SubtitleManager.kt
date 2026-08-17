@@ -657,6 +657,7 @@ internal const val SUBTITLE_BOTTOM_SCREEN_FRACTION = 0.06f
  * the picture and is left alone, as are bitmap cues (see [remapBitmapCue]) and
  * ASS, which libass renders and never reaches this path.
  */
+@UnstableApi
 internal fun remapDefaultTextCuePlacement(
     cue: Cue,
     position: SubtitlePositionPreset,
@@ -675,6 +676,7 @@ internal fun remapDefaultTextCuePlacement(
     return cue.buildUpon().setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET).build()
 }
 
+@UnstableApi
 internal fun remapDefaultTextCuePlacements(
     cueGroup: CueGroup,
     position: SubtitlePositionPreset,
@@ -846,6 +848,7 @@ internal fun bitmapCueScaleFor(preset: SubtitleFontSizePreset): Float = when (pr
  * bitmap's own aspect against the parent width, which is not knowable here.
  * Text cues are never touched, and neither is ASS (libass renders that itself).
  */
+@UnstableApi
 internal fun remapBitmapCue(
     cue: Cue,
     appearance: SubtitleAppearance,
@@ -920,6 +923,7 @@ internal fun remapBitmapCue(
 private fun isUsableCueFraction(value: Float): Boolean =
     value.isFinite() && value > 0f && value <= 1f
 
+@UnstableApi
 internal fun remapBitmapCues(
     cueGroup: CueGroup,
     appearance: SubtitleAppearance,
@@ -937,6 +941,7 @@ internal fun remapBitmapCues(
     return if (changed) CueGroup(mapped, cueGroup.presentationTimeUs) else cueGroup
 }
 
+@UnstableApi
 internal fun neutralizeFullWidthCueSizes(cueGroup: CueGroup): CueGroup {
     if (cueGroup.cues.isEmpty()) return cueGroup
     var changed = false
@@ -1641,6 +1646,7 @@ private class SubtitleVideoRectSync(
     }
 }
 
+@UnstableApi
 private fun PlayerView.contentFrameSubtitleRect(): SubtitleVideoRect? {
     val frame = findViewById<AspectRatioFrameLayout>(
         androidx.media3.ui.R.id.exo_content_frame

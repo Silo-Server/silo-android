@@ -13,6 +13,7 @@ class WatchTogetherMenuEntrySourceTest {
     }
 
     private val topBar = source("org/siloserver/silo/android/ui/components/MainAppTopBar.kt")
+    private val topBarActions = source("org/siloserver/silo/android/ui/components/TopBarActions.kt")
     private val home = source("org/siloserver/silo/android/ui/screens/home/HomeScreen.kt")
     private val libraries = source("org/siloserver/silo/android/ui/screens/libraries/LibrariesScreen.kt")
     private val main = source("org/siloserver/silo/android/ui/screens/MainScreen.kt")
@@ -25,14 +26,18 @@ class WatchTogetherMenuEntrySourceTest {
      * The three anchors — the floating top bar, Home's own chrome, Libraries'
      * own chrome — used to carry a hand-rolled copy of this menu each, which
      * is what this test originally had to check three times over. They now
-     * delegate to one [ProfileMenu], so the ordering is asserted once and the
-     * delegation is asserted here, which is what stops a fourth copy drifting
-     * back in.
+     * all delegate to the one shared trailing cluster ([TabTopBarActions]),
+     * which owns the single [ProfileMenu] anchor, so the ordering is asserted
+     * once and the delegation is asserted here, which is what stops a fourth
+     * copy drifting back in.
      */
     @Test
     fun everyPhoneProfileMenuPlacesWatchTogetherAfterRequestsAndBeforeSettings() {
         listOf(topBar, home, libraries).forEach { text ->
-            assertTrue(text.contains("ProfileMenu("))
+            assertTrue(text.contains("TabTopBarActions("))
+        }
+        assertTrue(topBarActions.contains("ProfileMenu("))
+        listOf(topBar, topBarActions, home, libraries).forEach { text ->
             assertFalse(text.contains("\"Watch Together\""))
             assertFalse(text.contains("\"Watch together\""))
             assertFalse(text.contains("\"Switch Profile\""))

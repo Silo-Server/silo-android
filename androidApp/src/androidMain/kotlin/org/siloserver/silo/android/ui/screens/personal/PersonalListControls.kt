@@ -12,7 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelStoreOwner
 import org.koin.compose.viewmodel.koinViewModel
@@ -38,7 +38,7 @@ object PersonalListSource {
  */
 @Composable
 fun rememberPersonalListControls(source: String): PersonalListControlsViewModel {
-    val activity = LocalContext.current as? ComponentActivity
+    val activity = LocalActivity.current as? ComponentActivity
     return if (activity != null) {
         koinViewModel(
             viewModelStoreOwner = activity as ViewModelStoreOwner,
