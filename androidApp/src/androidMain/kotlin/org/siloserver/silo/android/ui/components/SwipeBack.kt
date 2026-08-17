@@ -75,8 +75,18 @@ fun Modifier.swipeBackToDismiss(
                 val flick = velocity > FlingVelocityPxPerSec && offset.value > flingMinTravelPx
                 if (offset.value >= threshold || flick) {
                     dismissing = true
-                    offset.animateTo(widthPx.toFloat(), tween(durationMillis = 180))
-                    currentOnDismiss()
+                    // Finish in the composable's scope, not this suspend
+                    // callback: a new touch during the slide-off cancels
+                    // onDragStopped, which used to strand the page mid-way
+                    // with the dismiss never delivered. The pop is called
+                    // even if the animation is interrupted.
+                    scope.launch {
+                        try {
+                            offset.animateTo(widthPx.toFloat(), tween(durationMillis = 180))
+                        } finally {
+                            currentOnDismiss()
+                        }
+                    }
                 } else {
                     offset.animateTo(0f, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium))
                 }
