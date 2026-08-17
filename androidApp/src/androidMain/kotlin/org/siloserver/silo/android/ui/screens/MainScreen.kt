@@ -57,7 +57,9 @@ import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesScreen
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesSelectorSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesViewModel
+import org.siloserver.silo.android.ui.screens.recommendations.ForYouList
 import org.siloserver.silo.android.ui.screens.recommendations.RecommendationsScreen
+import org.siloserver.silo.android.ui.screens.recommendations.headerTitle
 import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherMenuEntrySheet
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
@@ -280,6 +282,9 @@ fun MainScreen(
     // Tab content registers as the blur source for the floating tab bar's
     // glass; the pill blurs whatever scrolls beneath it.
     val hazeState = rememberHazeState()
+    // For You's Watchlist / Favorites toggle lives here so the shared header
+    // can title itself after what the tab is showing.
+    var forYouList by rememberSaveable { mutableStateOf<ForYouList?>(null) }
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
@@ -406,6 +411,8 @@ fun MainScreen(
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
                             },
+                            savedListSelection = forYouList,
+                            onSavedListSelectionChange = { forYouList = it },
                             contentTopPadding = headerContentTop,
                         )
                     }
@@ -458,7 +465,8 @@ fun MainScreen(
                 val title = when (currentTab) {
                     Tab.Calendar -> "Calendar"
                     Tab.Downloads -> "Downloads"
-                    Tab.ForYou -> "For You"
+                    // Names what For You is showing: the feed, or a saved list.
+                    Tab.ForYou -> forYouList.headerTitle()
                     else -> null
                 }
                 MainAppTopBar(

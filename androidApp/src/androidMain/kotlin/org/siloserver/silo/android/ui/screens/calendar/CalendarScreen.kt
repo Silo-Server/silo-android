@@ -153,7 +153,9 @@ fun CalendarScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(top = contentTopPadding),
+                // Breathing room between the floating header's hairline and the
+                // pinned filter row when embedded in the tab shell.
+                .padding(top = if (showTopBar) contentTopPadding else contentTopPadding + 8.dp),
         ) {
             when {
                 state.isLoading -> {

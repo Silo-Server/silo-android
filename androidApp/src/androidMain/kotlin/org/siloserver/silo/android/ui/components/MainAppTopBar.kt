@@ -23,9 +23,10 @@ import org.siloserver.silo.android.R
 import org.siloserver.silo.model.profile.Profile
 
 // Height of the floating top bar's body, excluding the status-bar inset
-// (6dp top + 40dp action row + 28dp bottom). Callers add WindowInsets.statusBars
-// so tab content clears the bar regardless of status-bar height.
-val MainAppHeaderBodyHeight = 74.dp
+// (4dp top + 40dp action row + 8dp bottom — iOS headerTopInset / smallPadding,
+// same as Home's chrome). Callers add WindowInsets.statusBars so tab content
+// clears the bar regardless of status-bar height.
+val MainAppHeaderBodyHeight = 52.dp
 
 /**
  * Shared floating header for the tabs that do not paint their own chrome
@@ -59,10 +60,10 @@ fun MainAppTopBar(
         Box(
             modifier = Modifier
                 .padding(
-                    top = statusBarPadding.calculateTopPadding() + 6.dp,
+                    top = statusBarPadding.calculateTopPadding() + 4.dp,
                     start = 16.dp,
                     end = 16.dp,
-                    bottom = 28.dp,
+                    bottom = 8.dp,
                 )
                 .fillMaxWidth(),
         ) {
