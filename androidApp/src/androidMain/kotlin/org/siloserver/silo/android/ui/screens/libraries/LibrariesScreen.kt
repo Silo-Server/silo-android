@@ -1142,10 +1142,11 @@ private fun CollectionsTabContent(
             )
         }
         else -> {
-            // iOS `LibraryCollectionsView`: adaptive 110pt poster grid with
-            // shared column/row spacing and 16pt padding insets.
+            // iOS `LibraryCollectionsView`: adaptive poster grid with shared
+            // column/row spacing and 16pt padding insets. Follows the Library
+            // grid's view density so both tabs show the same column count.
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+                columns = GridCells.Adaptive(state.catalogDensity.minCardWidth),
                 horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
                 verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
                 modifier = Modifier.fillMaxSize(),
