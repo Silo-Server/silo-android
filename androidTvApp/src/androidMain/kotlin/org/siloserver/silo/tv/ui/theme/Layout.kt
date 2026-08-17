@@ -15,7 +15,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import kotlinx.coroutines.launch
@@ -108,11 +107,16 @@ fun rememberTvGridBringIntoViewSpec(topInset: Dp): BringIntoViewSpec {
  *
  * - [Modifier.tvRailPinOnFocus] performs the pin as a ONE-SHOT clamped
  *   `animateScrollBy` when a card gains focus (mirroring the detail page's
- *   section anchors).
- * - [TvRailScrollBehavior] gives the LazyRow's automatic bring-into-view a
- *   *satisfiable* rule (minimal reveal) plus the same animation spec, so the
- *   two never fight and the auto request settles as soon as the card is
- *   visible.
+ *   section anchors). It is the ONLY horizontal scroll a focus change
+ *   triggers, and it starts on the focus frame itself, so the highlight and
+ *   the glide begin together and read as one motion.
+ * - [TvRailScrollBehavior] tells the LazyRow's automatic bring-into-view to
+ *   stay out of it horizontally (distance 0 — the request is satisfied at
+ *   once, nothing loops). Before this, the auto request started a "minimal
+ *   reveal" animation on the focus frame and the pin cancelled and restarted
+ *   it a frame later from zero velocity: the highlight visibly landed on the
+ *   right, paused, then the row re-launched leftward — the "jumpy" rail.
+ *   Vertical requests keep bubbling to the enclosing column's own spec.
  *
  * The pin must NOT be expressed as the BringIntoViewSpec's scroll distance:
  * Compose keeps re-launching the bring-into-view animation on every layout
@@ -136,19 +140,15 @@ val TvRailScrollSpec: AnimationSpec<Float> = tween(
 private val TvRailBringIntoViewSpec: BringIntoViewSpec = object : BringIntoViewSpec {
     override val scrollAnimationSpec: AnimationSpec<Float> = TvRailScrollSpec
 
-    // Minimal reveal only: satisfiable at both row ends, so the automatic
-    // request never loops. The pin itself is done by tvRailPinOnFocus.
-    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
-        when {
-            offset < 0f -> offset
-            offset + size > containerSize -> minOf(offset, offset + size - containerSize)
-            else -> 0f
-        }
+    // Never scroll horizontally on the row's own account: the pin
+    // (tvRailPinOnFocus) owns every focus-driven horizontal move, and a
+    // second animation racing it is exactly the hitch this avoids.
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
 }
 
 /**
- * Wrap a `LazyRow` so its automatic horizontal bring-into-view uses the rail
- * spec. Vertical requests keep bubbling to the enclosing column's spec.
+ * Wrap a `LazyRow` so its automatic horizontal bring-into-view defers to the
+ * pin. Vertical requests keep bubbling to the enclosing column's spec.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -158,21 +158,52 @@ fun TvRailScrollBehavior(content: @Composable () -> Unit) {
 
 /**
  * Slide the item at [index] so its leading edge sits [leadingPx] from the
- * viewport start, clamped by the list's own bounds. Waits a frame first so the
- * focus system's automatic bring-into-view is enqueued and then replaced.
+ * viewport start, clamped by the list's own bounds.
+ *
+ * `LazyListItemInfo.offset` is measured from the CONTENT start (after the
+ * start padding), so the target in item coordinates is
+ * `leadingPx + viewportStartOffset` — zero when [leadingPx] equals the row's
+ * start padding, which is how every rail calls it. (Subtracting [leadingPx]
+ * from the raw offset, as this once did, parked composed cards a full padding
+ * width past the pin while a deep-restored card landed on it.)
+ *
+ * A card that is not yet in `visibleItemsInfo` — the neighbour just past the
+ * viewport edge that D-pad focus reaches through beyond-bounds layout — is
+ * extrapolated from the nearest visible card, since rail cards share a width
+ * and spacing; the list clamps the result. Only a genuinely far target (deep
+ * restore) falls back to `animateScrollToItem`.
  */
 suspend fun LazyListState.tvRailPinItem(index: Int, leadingPx: Float) {
-    withFrameNanos { }
-    val item = layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
-    if (item != null) {
-        val distance = item.offset - leadingPx
+    val info = layoutInfo
+    val visible = info.visibleItemsInfo
+    val target = leadingPx + info.viewportStartOffset
+    val item = visible.firstOrNull { it.index == index }
+    val distance = when {
+        item != null -> item.offset - target
+        visible.isEmpty() -> null
+        index > visible.last().index && index - visible.last().index <= NEAR_EDGE_ITEMS -> {
+            val last = visible.last()
+            val stride = last.size + info.mainAxisItemSpacing
+            last.offset + (index - last.index) * stride - target
+        }
+        index < visible.first().index && visible.first().index - index <= NEAR_EDGE_ITEMS -> {
+            val first = visible.first()
+            val stride = first.size + info.mainAxisItemSpacing
+            first.offset - (first.index - index) * stride - target
+        }
+        else -> null
+    }
+    if (distance != null) {
         if (abs(distance) >= 1f) animateScrollBy(distance, TvRailScrollSpec)
     } else {
-        // Not composed (deep restore): the stock jump lands it at the content
+        // Far away (deep restore): the stock jump lands it at the content
         // start, i.e. exactly at the start padding.
         animateScrollToItem(index)
     }
 }
+
+/** How many cards past the viewport edge [tvRailPinItem] extrapolates from a visible neighbour. */
+private const val NEAR_EDGE_ITEMS = 2
 
 /**
  * Pin the item at [index] (see [tvRailPinItem]) whenever it gains focus.
