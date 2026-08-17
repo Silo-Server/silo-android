@@ -17,8 +17,9 @@ import org.siloserver.silo.viewmodel.PersonalListQuery
 /**
  * Sort keys for the saved lists (Watchlist / Favorites). Mirrors the TV
  * `TvLibrarySortOption.availableForPersonalList()` set: the default is the
- * server's stored list order (most recently saved first), which is "no sort"
- * on the wire, so [value] is null there and it has no direction.
+ * server's stored list order, which is "no sort" on the wire, so [value] is
+ * null there and it has no direction. "Recently Added" is the explicit
+ * added_at sort (newest first by default).
  */
 enum class PersonalListSort(
     val value: String?,
@@ -27,9 +28,9 @@ enum class PersonalListSort(
     private val ascendingLabel: String,
     private val descendingLabel: String,
 ) {
-    RecentlyAdded(null, "Recently Added", "desc", "", ""),
+    ListOrder(null, "List Order", "desc", "", ""),
     Title("title", "Title", "asc", "A–Z", "Z–A"),
-    DateAdded("added_at", "Date Added", "desc", "Oldest first", "Newest first"),
+    RecentlyAdded("added_at", "Recently Added", "desc", "Oldest first", "Newest first"),
     Year("year", "Year", "desc", "Oldest first", "Newest first"),
     Rating("rating_imdb", "Rating", "desc", "Lowest first", "Highest first"),
     Runtime("runtime", "Runtime", "asc", "Shortest first", "Longest first"),
@@ -42,8 +43,8 @@ enum class PersonalListSort(
 }
 
 data class PersonalListControlsState(
-    val sort: PersonalListSort = PersonalListSort.RecentlyAdded,
-    val order: String = PersonalListSort.RecentlyAdded.defaultOrder,
+    val sort: PersonalListSort = PersonalListSort.ListOrder,
+    val order: String = PersonalListSort.ListOrder.defaultOrder,
     /** Facet selections + match mode; its sort/order fields are unused here. */
     val filters: CatalogFilterState = CatalogFilterState(),
     /** Vocabularies scoped to this list (`/catalog/filters?source=…`). */
@@ -53,7 +54,7 @@ data class PersonalListControlsState(
 
     /** Anything to reset — a non-default sort or any facet. */
     val isCustomised: Boolean
-        get() = sort != PersonalListSort.RecentlyAdded || filters.hasActiveFilters
+        get() = sort != PersonalListSort.ListOrder || filters.hasActiveFilters
 
     /** What the shared list ViewModel should fetch with. */
     val query: PersonalListQuery
@@ -107,8 +108,8 @@ class PersonalListControlsViewModel(
     fun resetAll() {
         _uiState.update {
             it.copy(
-                sort = PersonalListSort.RecentlyAdded,
-                order = PersonalListSort.RecentlyAdded.defaultOrder,
+                sort = PersonalListSort.ListOrder,
+                order = PersonalListSort.ListOrder.defaultOrder,
                 filters = it.filters.resetFilters(),
             )
         }

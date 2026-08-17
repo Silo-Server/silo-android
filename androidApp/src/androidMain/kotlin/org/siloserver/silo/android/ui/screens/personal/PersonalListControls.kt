@@ -115,7 +115,7 @@ fun PersonalListControlsRow(
             ControlPill(
                 icon = Icons.AutoMirrored.Filled.Sort,
                 label = state.sort.label,
-                active = state.sort != PersonalListSort.RecentlyAdded,
+                active = state.sort != PersonalListSort.ListOrder,
                 trailingChevron = true,
                 onClick = { sortMenuOpen = true },
             )
