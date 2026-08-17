@@ -94,7 +94,6 @@ fun SettingsScreen(
     onNavigateToFavorites: () -> Unit = {},
     onNavigateToHistory: () -> Unit = {},
     onNavigateToCollections: () -> Unit = {},
-    onNavigateToCardOverlays: () -> Unit = {},
     onNavigateToDiagnostics: () -> Unit = {},
     showTopBar: Boolean = false,
     onBackClick: (() -> Unit)? = null,
@@ -163,16 +162,6 @@ fun SettingsScreen(
                     onPairDevice = onPairDevice,
                     onSignOut = viewModel::logout,
                 )
-            }
-
-            item {
-                SettingsSectionCard {
-                    SettingsNavigationRow(
-                        label = "Card overlays",
-                        description = "Badges drawn on poster cards, and where they sit.",
-                        onClick = onNavigateToCardOverlays,
-                    )
-                }
             }
 
             if (shouldShowDiagnosticsEntry(diagnosticsState)) {

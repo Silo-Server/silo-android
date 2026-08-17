@@ -79,7 +79,6 @@ import org.siloserver.silo.android.ui.screens.search.SearchScreen
 import org.siloserver.silo.android.ui.screens.search.SearchViewModel
 import org.siloserver.silo.android.ui.screens.servers.ServerListScreen
 import org.siloserver.silo.android.ui.screens.servers.ServerSwitchDestination
-import org.siloserver.silo.android.ui.screens.settings.CardOverlaySettingsScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsScreen
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsPromptDialog
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
@@ -678,9 +677,6 @@ fun AppNavigation(
                 onNavigateToFavorites = { navController.navigate(Route.Favorites.route) },
                 onNavigateToHistory = { navController.navigate(Route.History.route) },
                 onNavigateToCollections = { navController.navigate(Route.Collections().route) },
-                onNavigateToCardOverlays = {
-                    navController.navigate(Route.CardOverlays.route)
-                },
                 onNavigateToDiagnostics = {
                     navController.navigate(Route.Diagnostics.route)
                 },
@@ -690,12 +686,6 @@ fun AppNavigation(
                     }
                 },
                 showTopBar = true,
-                onBackClick = { navController.popBackStack() },
-            )
-        }
-        composable(Route.CardOverlays.route) {
-            CardOverlaySettingsScreen(
-                store = overlayPrefsStore,
                 onBackClick = { navController.popBackStack() },
             )
         }
