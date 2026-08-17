@@ -105,6 +105,99 @@ class PgsSupExtractorTest {
         assertEquals(2_500_000L, track.getSampleTimeUs(1))
     }
 
+    /**
+     * A SUP is read from the top on every seek, so every caption before the
+     * target streams through first. PGS is REPLACE with no duration: publish
+     * those and each one is "the newest cue at or before the position" for as
+     * long as the next takes to download — the film's caption history replays
+     * on screen while the video buffers at the resume point (seen on an onn
+     * box and reproduced on the TV emulator: a fresh caption every ~0.8s at a
+     * pinned position). Only the set in force at the seek point survives, and
+     * it lands AT the seek point.
+     */
+    @Test
+    fun captionsBeforeTheSeekPointAreNotPublishedExceptTheOneInForce() {
+        val factory = RecordingParserFactory()
+        val extractor = PgsSupExtractor(factory, { 0L }, pgsFormat())
+        val output = FakeExtractorOutput()
+        extractor.init(output)
+        extractor.seek(0L, 4_000_000L)
+
+        drain(extractor, FakeExtractorInput.Builder().setData(threeSetStream()).build())
+
+        // 1s never reached the parser; 3s (in force at 4s) and 5s did.
+        assertEquals(2, factory.parsed.size)
+        val track = output.trackOutputs[0]!!
+        assertEquals(2, track.sampleCount)
+        assertEquals(4_000_000L, track.getSampleTimeUs(0))
+        assertEquals(5_000_000L, track.getSampleTimeUs(1))
+    }
+
+    /**
+     * The re-anchored case that bit in the field: the server starts the
+     * stream at the resume point, so the player timeline is 0 there and the
+     * offset shifts the SUP's absolute times back by that much. Everything
+     * before the resume point goes negative — it must not clamp to zero and
+     * publish, it must be dropped, bar the one caption in force.
+     */
+    @Test
+    fun aReanchoredTimelineDropsTheNegativeHistoryInsteadOfClampingIt() {
+        val factory = RecordingParserFactory()
+        val extractor = PgsSupExtractor(factory, { -3_500_000L }, pgsFormat())
+        val output = FakeExtractorOutput()
+        extractor.init(output)
+        extractor.seek(0L, 0L)
+
+        drain(extractor, FakeExtractorInput.Builder().setData(threeSetStream()).build())
+
+        val track = output.trackOutputs[0]!!
+        assertEquals(2, track.sampleCount)
+        // 3s (in force at the resume point) lands at 0; 5s lands at 1.5s.
+        assertEquals(0L, track.getSampleTimeUs(0))
+        assertEquals(1_500_000L, track.getSampleTimeUs(1))
+    }
+
+    /**
+     * With the sidecar taken out of the loading gate the video runs ahead of
+     * this download, so a set can arrive after the playhead has passed it.
+     * That set would flash for one render tick; the live floor drops it too.
+     */
+    @Test
+    fun aSetThePlayheadHasAlreadyPassedIsHistoryToo() {
+        val factory = RecordingParserFactory()
+        var playheadUs = 0L
+        val extractor = PgsSupExtractor(factory, { 0L }, pgsFormat(), { playheadUs })
+        val output = FakeExtractorOutput()
+        extractor.init(output)
+        extractor.seek(0L, 0L)
+        playheadUs = 4_000_000L // playing at 4s while the SUP is still arriving
+
+        drain(extractor, FakeExtractorInput.Builder().setData(threeSetStream()).build())
+
+        val track = output.trackOutputs[0]!!
+        assertEquals(2, track.sampleCount)
+        // 1s dropped; 3s is the caption in force at 4s and keeps its own time
+        // (the seek point is 0); 5s is ahead of the playhead and published as is.
+        assertEquals(3_000_000L, track.getSampleTimeUs(0))
+        assertEquals(5_000_000L, track.getSampleTimeUs(1))
+    }
+
+    /** A resume past the last caption still gets the set in force there. */
+    @Test
+    fun aSeekPastEveryCaptionPublishesTheLastOneAtTheSeekPoint() {
+        val factory = RecordingParserFactory()
+        val extractor = PgsSupExtractor(factory, { 0L }, pgsFormat())
+        val output = FakeExtractorOutput()
+        extractor.init(output)
+        extractor.seek(0L, 9_000_000L)
+
+        drain(extractor, FakeExtractorInput.Builder().setData(threeSetStream()).build())
+
+        val track = output.trackOutputs[0]!!
+        assertEquals(1, track.sampleCount)
+        assertEquals(9_000_000L, track.getSampleTimeUs(0))
+    }
+
     @Test
     fun theEmittedTrackKeepsTheSidecarIdentity() {
         val extractor = PgsSupExtractor(RecordingParserFactory(), { 0L }, pgsFormat())
@@ -267,6 +360,15 @@ class PgsSupExtractorTest {
         out.writeSegment(pts90kHz = 90_000, type = PgsSupExtractor.SEGMENT_TYPE_END, payload = ByteArray(0))
         out.writeSegment(pts90kHz = 270_000, type = SEGMENT_TYPE_PCS, payload = byteArrayOf(0xCC.toByte()))
         out.writeSegment(pts90kHz = 270_000, type = PgsSupExtractor.SEGMENT_TYPE_END, payload = ByteArray(0))
+        return out.toByteArray()
+    }
+
+    /** Three display sets: PTS 1s, 3s and 5s. */
+    private fun threeSetStream(): ByteArray {
+        val out = ByteArrayOutputStream()
+        out.write(supStream())
+        out.writeSegment(pts90kHz = 450_000, type = SEGMENT_TYPE_PCS, payload = byteArrayOf(0xDD.toByte()))
+        out.writeSegment(pts90kHz = 450_000, type = PgsSupExtractor.SEGMENT_TYPE_END, payload = ByteArray(0))
         return out.toByteArray()
     }
 
