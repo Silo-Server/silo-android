@@ -1,5 +1,22 @@
 package org.siloserver.silo.android.ui.navigation
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -13,25 +30,27 @@ import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
-import androidx.navigation.NavHostController
-import androidx.navigation.NavOptionsBuilder
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.ui.unit.sp
+import androidx.navigation.NavHostController
+import androidx.navigation.NavOptionsBuilder
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
 
 /**
  * Total height of the translucent bottom chrome (cast mini bar + nav bar +
@@ -110,77 +129,132 @@ internal fun NavOptionsBuilder.tabSwitchNavOptions(anchorRoute: String?) {
     restoreState = true
 }
 
+private val PillHeight = 60.dp
+private val PillHorizontalMargin = 20.dp
+private val PillBottomMargin = 10.dp
+private val PillTopMargin = 8.dp
+// Glass recipe: content beneath is blurred by Haze, then tinted with this
+// wash so labels stay legible over bright posters. On API < 31 Haze cannot
+// blur and paints only the tint, so the fallback fill is heavier.
+private val PillGlassTint = Color(0xFF1C1C1E).copy(alpha = 0.72f)
+private val PillFallbackFill = Color(0xFF1C1C1E).copy(alpha = 0.96f)
+private val PillBlurRadius = 24.dp
+private val PillHairline = Color.White.copy(alpha = 0.12f)
+private val SelectedChipFill = Color.White.copy(alpha = 0.14f)
+
 /**
- * Material 3 bottom navigation bar themed for Silo's dark-first design.
+ * Floating pill tab bar, matching the iOS app's detached bottom capsule.
+ *
+ * The bar draws no full-width scrim: tab content scrolls edge-to-edge and
+ * shows around the capsule. The capsule itself is real glass — [hazeState]
+ * must be the state the tab content is registered on via `hazeSource`, so
+ * the pill blurs whatever scrolls beneath it and tints the result. The selected tab
+ * carries a soft chip highlight and a filled icon; unselected tabs are
+ * outlined and muted. Colors animate on switch so the highlight reads as
+ * moving rather than popping.
  */
 @Composable
 fun SiloBottomNavBar(
     currentTab: Tab,
     onTabSelected: (Tab) -> Unit,
+    hazeState: HazeState,
     // Caller decides which tabs to render — used to hide the Downloads tab
     // when the user has no downloads in flight or on disk. Defaults to all
     // tabs for backwards-compat.
     tabs: List<Tab> = Tab.entries.toList(),
 ) {
-    // Paint the bar background on the outer Box so it extends behind the
-    // gesture-nav inset, then apply the inset as padding around the
-    // NavigationBar itself. This keeps a clean 60dp content area for the
-    // items so they sit vertically centered, instead of getting squeezed
-    // toward the top by NavigationBar's internal inset padding.
-    //
-    // Translucent glass (iOS tab bar): content scrolls edge-to-edge beneath
-    // the bar, so the fill is a light-to-heavier scrim — enough see-through
-    // to read as glass, enough ink to keep labels legible over bright
-    // posters — capped with the same hairline the top chrome uses. True
-    // backdrop blur needs API 31 + a blur pipeline; the scrim is the
-    // dependency-free equivalent.
-    val glass = MaterialTheme.colorScheme.background
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    0f to glass.copy(alpha = 0.72f),
-                    1f to glass.copy(alpha = 0.94f),
-                ),
+            .navigationBarsPadding()
+            .padding(
+                start = PillHorizontalMargin,
+                end = PillHorizontalMargin,
+                top = PillTopMargin,
+                bottom = PillBottomMargin,
             ),
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(0.75.dp)
-                .background(Color.White.copy(alpha = 0.08f)),
-        )
-        Box(modifier = Modifier.navigationBarsPadding()) {
-            NavigationBar(
-                containerColor = Color.Transparent,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                tonalElevation = 0.dp,
-                windowInsets = WindowInsets(0),
-                modifier = Modifier.height(60.dp),
-            ) {
-                tabs.forEach { tab ->
-                    val selected = tab == currentTab
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = { onTabSelected(tab) },
-                        icon = {
-                            Icon(
-                                imageVector = if (selected) tab.selectedIcon else tab.icon,
-                                contentDescription = tab.label,
-                            )
-                        },
-                        label = { Text(text = tab.label, style = MaterialTheme.typography.labelSmall) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.onSurface,
-                            selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            indicatorColor = Color.White.copy(alpha = 0.08f),
-                        ),
-                    )
+                .height(PillHeight)
+                .shadow(elevation = 16.dp, shape = CircleShape, clip = false)
+                .clip(CircleShape)
+                .hazeEffect(state = hazeState) {
+                    blurRadius = PillBlurRadius
+                    noiseFactor = 0f
+                    backgroundColor = PillFallbackFill
+                    tints = listOf(HazeTint(PillGlassTint))
+                    fallbackTint = HazeTint(PillFallbackFill)
                 }
+                .border(0.75.dp, PillHairline, CircleShape)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            tabs.forEach { tab ->
+                PillTabItem(
+                    tab = tab,
+                    selected = tab == currentTab,
+                    onClick = { onTabSelected(tab) },
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun PillTabItem(
+    tab: Tab,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val chip by animateColorAsState(
+        targetValue = if (selected) SelectedChipFill else Color.Transparent,
+        animationSpec = tween(durationMillis = 220),
+        label = "tabChip",
+    )
+    val tint by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.onSurface
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "tabTint",
+    )
+    val interaction = remember { MutableInteractionSource() }
+    Column(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(chip)
+            // selectable (not clickable) so TalkBack announces which tab is
+            // active — the chip and filled icon alone are not perceivable.
+            .selectable(
+                selected = selected,
+                interactionSource = interaction,
+                indication = ripple(bounded = true, color = Color.White),
+                role = Role.Tab,
+                onClick = onClick,
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = if (selected) tab.selectedIcon else tab.icon,
+            contentDescription = tab.label,
+            tint = tint,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = tab.label,
+            color = tint,
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }

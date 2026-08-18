@@ -4,14 +4,21 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -36,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.DarkOutline
+import org.siloserver.silo.android.ui.theme.DarkSurface
 import org.siloserver.silo.android.ui.theme.DarkSurfaceVariant
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
@@ -47,6 +55,13 @@ import org.siloserver.silo.player.DolbyVisionDetection
  * Subtitles) — the phone counterpart of the TV detail's selector row.
  * Icon + group label on the left, the current value (ellipsized) and a
  * chevron on the right; tap opens the matching bottom-sheet picker.
+ *
+ * [interactive] = false when the group holds a single real choice (one
+ * version, one audio track, one subtitle track), mirroring Apple's
+ * `DetailPlaybackFormatting.shouldEnable*Selector`. The row then keeps its
+ * box and its value but drops the chevron and the tap target: a picker whose
+ * only outcome is the value already printed is a dead end, not a choice. The
+ * "Auto"/"Off" rows the sheets prepend are pseudo-entries and do not count.
  */
 @Composable
 fun TrackSelectorRow(
@@ -55,6 +70,7 @@ fun TrackSelectorRow(
     value: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    interactive: Boolean = true,
 ) {
     Row(
         modifier = modifier
@@ -62,7 +78,7 @@ fun TrackSelectorRow(
             .clip(RoundedCornerShape(8.dp))
             .background(DarkSurfaceVariant.copy(alpha = 0.7f))
             .border(1.dp, DarkOutline, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .then(if (interactive) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -89,12 +105,14 @@ fun TrackSelectorRow(
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1f),
         )
-        Icon(
-            imageVector = Icons.Outlined.KeyboardArrowDown,
-            contentDescription = "Select",
-            modifier = Modifier.size(14.dp),
-            tint = Color.White.copy(alpha = 0.62f),
-        )
+        if (interactive) {
+            Icon(
+                imageVector = Icons.Outlined.KeyboardArrowDown,
+                contentDescription = "Select",
+                modifier = Modifier.size(14.dp),
+                tint = Color.White.copy(alpha = 0.62f),
+            )
+        }
     }
 }
 
@@ -108,47 +126,30 @@ fun VersionPickerSheet(
     onSelect: (Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        PickerHeader(title = "Select Version")
-
-        LazyColumn(
-            modifier = Modifier.heightIn(max = 400.dp),
-            contentPadding = PaddingValues(bottom = 32.dp),
-        ) {
-            item {
-                PickerItem(
-                    title = "Auto",
-                    subtitle = "Best available version",
-                    badges = emptyList(),
-                    isSelected = selectedIndex == null,
-                    onClick = { onSelect(null) },
-                )
-                if (versions.isNotEmpty()) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
+    PickerSheetScaffold(title = "Select Version", onDismiss = onDismiss) {
+        item {
+            PickerItem(
+                title = "Auto",
+                subtitle = "Best available version",
+                badges = emptyList(),
+                isSelected = selectedIndex == null,
+                onClick = { onSelect(null) },
+            )
+            if (versions.isNotEmpty()) {
+                HorizontalDivider(color = DarkOutline)
             }
+        }
 
-            itemsIndexed(versions) { index, version ->
-                PickerItem(
-                    title = formatVersionTitle(version),
-                    subtitle = formatVersionSubtitle(version),
-                    badges = buildVersionBadges(version),
-                    isSelected = index == selectedIndex,
-                    onClick = { onSelect(index) },
-                )
-                if (index < versions.lastIndex) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
+        itemsIndexed(versions) { index, version ->
+            PickerItem(
+                title = formatVersionTitle(version),
+                subtitle = formatVersionSubtitle(version),
+                badges = buildVersionBadges(version),
+                isSelected = index == selectedIndex,
+                onClick = { onSelect(index) },
+            )
+            if (index < versions.lastIndex) {
+                HorizontalDivider(color = DarkOutline)
             }
         }
     }
@@ -162,47 +163,30 @@ fun AudioPickerSheet(
     onSelect: (Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        PickerHeader(title = "Select Audio Track")
-
-        LazyColumn(
-            modifier = Modifier.heightIn(max = 400.dp),
-            contentPadding = PaddingValues(bottom = 32.dp),
-        ) {
-            item {
-                PickerItem(
-                    title = "Auto",
-                    subtitle = "Use the file default track",
-                    badges = emptyList(),
-                    isSelected = selectedIndex == null,
-                    onClick = { onSelect(null) },
-                )
-                if (tracks.isNotEmpty()) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
+    PickerSheetScaffold(title = "Select Audio Track", onDismiss = onDismiss) {
+        item {
+            PickerItem(
+                title = "Auto",
+                subtitle = "Use the file default track",
+                badges = emptyList(),
+                isSelected = selectedIndex == null,
+                onClick = { onSelect(null) },
+            )
+            if (tracks.isNotEmpty()) {
+                HorizontalDivider(color = DarkOutline)
             }
+        }
 
-            itemsIndexed(tracks) { index, track ->
-                PickerItem(
-                    title = formatAudioTitle(track, index),
-                    subtitle = formatAudioSubtitle(track),
-                    badges = buildAudioBadges(track),
-                    isSelected = index == selectedIndex,
-                    onClick = { onSelect(index) },
-                )
-                if (index < tracks.lastIndex) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
+        itemsIndexed(tracks) { index, track ->
+            PickerItem(
+                title = formatAudioTitle(track, index),
+                subtitle = formatAudioSubtitle(track),
+                badges = buildAudioBadges(track),
+                isSelected = index == selectedIndex,
+                onClick = { onSelect(index) },
+            )
+            if (index < tracks.lastIndex) {
+                HorizontalDivider(color = DarkOutline)
             }
         }
     }
@@ -216,76 +200,96 @@ fun SubtitlePickerSheet(
     onSelect: (Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        PickerHeader(title = "Select Subtitles")
+    PickerSheetScaffold(title = "Select Subtitles", onDismiss = onDismiss) {
+        item {
+            PickerItem(
+                title = "Auto",
+                subtitle = "Use the file default track",
+                badges = emptyList(),
+                isSelected = selectedIndex == null,
+                onClick = { onSelect(null) },
+            )
+            HorizontalDivider(color = DarkOutline)
+        }
 
-        LazyColumn(
-            modifier = Modifier.heightIn(max = 400.dp),
-            contentPadding = PaddingValues(bottom = 32.dp),
-        ) {
-            item {
-                PickerItem(
-                    title = "Auto",
-                    subtitle = "Use the file default track",
-                    badges = emptyList(),
-                    isSelected = selectedIndex == null,
-                    onClick = { onSelect(null) },
-                )
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
+        // Off option
+        item {
+            PickerItem(
+                title = "Off",
+                subtitle = "No subtitles",
+                badges = emptyList(),
+                isSelected = selectedIndex == -1,
+                onClick = { onSelect(-1) },
+            )
+            if (tracks.isNotEmpty()) {
+                HorizontalDivider(color = DarkOutline)
             }
+        }
 
-            // Off option
-            item {
-                PickerItem(
-                    title = "Off",
-                    subtitle = "No subtitles",
-                    badges = emptyList(),
-                    isSelected = selectedIndex == -1,
-                    onClick = { onSelect(-1) },
-                )
-                if (tracks.isNotEmpty()) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
-            }
-
-            itemsIndexed(tracks) { index, track ->
-                PickerItem(
-                    title = formatSubtitleTitle(track, index),
-                    subtitle = formatSubtitleSubtitle(track),
-                    badges = buildSubtitleBadges(track),
-                    isSelected = index == selectedIndex,
-                    onClick = { onSelect(index) },
-                )
-                if (index < tracks.lastIndex) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
+        itemsIndexed(tracks) { index, track ->
+            PickerItem(
+                title = formatSubtitleTitle(track, index),
+                subtitle = formatSubtitleSubtitle(track),
+                badges = buildSubtitleBadges(track),
+                isSelected = index == selectedIndex,
+                onClick = { onSelect(index) },
+            )
+            if (index < tracks.lastIndex) {
+                HorizontalDivider(color = DarkOutline)
             }
         }
     }
 }
 
+/**
+ * Shared bottom-sheet chrome for the three playback pickers, matching the
+ * detail page's card language: a plain header followed by a bordered,
+ * rounded options card (same DarkSurfaceVariant @0.7 + 1dp DarkOutline
+ * treatment as [TrackSelectorRow]) instead of a full-bleed M3 list.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PickerHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-    )
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+private fun PickerSheetScaffold(
+    title: String,
+    onDismiss: () -> Unit,
+    content: LazyListScope.() -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = DarkSurface,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            modifier = Modifier.padding(horizontal = 20.dp),
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(DarkSurfaceVariant.copy(alpha = 0.7f))
+                .border(1.dp, DarkOutline, RoundedCornerShape(12.dp)),
+        ) {
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 420.dp),
+                content = content,
+            )
+        }
+
+        // Insets first, then the fixed gap — the other order would clamp the
+        // spacer to 16.dp and swallow the nav-bar inset entirely.
+        Spacer(
+            modifier = Modifier
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .height(16.dp),
+        )
+    }
 }
 
 @Composable
@@ -301,11 +305,12 @@ private fun PickerItem(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .background(if (isSelected) Color.White.copy(alpha = 0.06f) else Color.Transparent)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -314,6 +319,9 @@ private fun PickerItem(
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 badges.forEach { badge ->
                     BadgePill(text = badge)
@@ -324,17 +332,22 @@ private fun PickerItem(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
-        if (isSelected) {
-            Icon(
-                imageVector = Icons.Outlined.Check,
-                contentDescription = "Selected",
-                tint = Color.White,
-                modifier = Modifier.size(20.dp),
-            )
+        Spacer(modifier = Modifier.width(12.dp))
+        Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+            if (isSelected) {
+                Icon(
+                    imageVector = Icons.Outlined.Check,
+                    contentDescription = "Selected",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }

@@ -64,10 +64,10 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.common.ui.components.isImageAvatar
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
+import org.siloserver.silo.common.ui.components.isEmojiAvatar
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
-import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
-import org.siloserver.silo.common.ui.components.resolveAvatarUrl
+import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.tv.ui.components.TvAuroraBackdrop
 import org.siloserver.silo.tv.ui.components.TvAuroraVariant
 import org.siloserver.silo.tv.ui.components.TvHeroActionPill
@@ -104,6 +104,12 @@ data class TvProfileFormState(
     val subtitle: String = "Pick a look and give it a name.",
     val name: String,
     val selectedAvatar: String?,
+    /**
+     * Server-supplied URL for [selectedAvatar] as it was LOADED, so an uploaded
+     * avatar shows in the preview tile. Null for create, and ignored once the
+     * picker moves the selection off the stored ref.
+     */
+    val selectedAvatarUrl: String? = null,
     val avatarStyleId: String,
     val selectedAvatarSeed: String?,
     val avatarBatch: Int,
@@ -487,7 +493,7 @@ private fun TvProfileFormSection(
 
 @Composable
 private fun TvProfilePreviewColumn(
-    avatar: String?,
+    avatar: ProfileAvatarRef,
     name: String,
     hasPin: Boolean,
     isChild: Boolean,
@@ -517,20 +523,15 @@ private fun TvProfilePreviewColumn(
 
 @Composable
 private fun TvProfileTilePreview(
-    avatar: String?,
+    avatar: ProfileAvatarRef,
     name: String,
     hasPin: Boolean,
     isChild: Boolean,
 ) {
-    val serverUrl = rememberProfileServerUrl()
     val avatarText = remember(avatar, name) { profileAvatarDisplayText(avatar, name) }
-    val avatarUrl = remember(avatar, serverUrl) {
-        avatar
-            ?.takeIf(::isImageAvatar)
-            ?.let { resolveAvatarUrl(serverUrl, it) ?: resolveAvatarUrl("", it) }
-    }
+    val avatarImage = rememberProfileAvatarImage(avatar)
     val shape = RoundedCornerShape(18.dp)
-    val tint = remember(name, avatar) { profilePreviewTint("$name-$avatar") }
+    val tint = remember(name, avatar) { profilePreviewTint("$name-${avatar.avatar}") }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
@@ -540,14 +541,16 @@ private fun TvProfileTilePreview(
                 .border(1.dp, Color.White.copy(alpha = 0.14f), shape),
             contentAlignment = Alignment.Center,
         ) {
-            if (avatarUrl != null) {
+            if (avatarImage != null) {
                 ThumbhashImage(
-                    url = avatarUrl,
+                    url = avatarImage.url,
                     thumbhash = null,
                     contentDescription = name,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                     transparent = true,
+                    cacheKey = avatarImage.cacheKey,
+                    onError = avatarImage.onLoadFailed,
                 )
                 Box(
                     modifier = Modifier
@@ -562,7 +565,7 @@ private fun TvProfileTilePreview(
             } else {
                 Text(
                     text = avatarText,
-                    fontSize = if (!avatar.isNullOrBlank() && !isImageAvatar(avatar)) 70.sp else 60.sp,
+                    fontSize = if (isEmojiAvatar(avatar)) 70.sp else 60.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White.copy(alpha = 0.94f),
                 )
@@ -887,14 +890,19 @@ private fun TvProfileBadge(icon: androidx.compose.ui.graphics.vector.ImageVector
     }
 }
 
-private fun TvProfileFormState.previewAvatarRef(): String? =
-    TvProfileAvatarPresets.effectiveAvatarRef(
+private fun TvProfileFormState.previewAvatarRef(): ProfileAvatarRef {
+    val ref = TvProfileAvatarPresets.effectiveAvatarRef(
         styleId = avatarStyleId,
         selectedSeed = selectedAvatarSeed,
         batch = avatarBatch,
         name = name,
         fallbackAvatar = selectedAvatar,
     )
+    // The stored URL describes the stored ref only. Once the picker has moved
+    // the preview onto a preset, pairing it with the old URL would show the
+    // upload while the form is about to save something else.
+    return ProfileAvatarRef(ref, selectedAvatarUrl?.takeIf { ref == selectedAvatar })
+}
 
 private fun profilePreviewTint(key: String): Color {
     val palette = listOf(

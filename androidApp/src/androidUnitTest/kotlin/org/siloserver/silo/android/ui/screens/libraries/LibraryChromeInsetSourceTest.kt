@@ -15,20 +15,28 @@ class LibraryChromeInsetSourceTest {
     private val libraries = source(
         "org/siloserver/silo/android/ui/screens/libraries/LibrariesScreen.kt",
     )
-    private val carousel = source(
-        "org/siloserver/silo/android/ui/screens/home/FeaturedCarousel.kt",
-    )
     private val catalogGrid = source(
         "org/siloserver/silo/android/ui/screens/browse/CatalogGrid.kt",
     )
 
+    /**
+     * The chrome floats over the viewport (composed after it, so it draws on
+     * top and reads the viewport as its blur source) and every tab clears the
+     * chrome's *measured* height rather than a hard-coded runway.
+     */
     @Test
     fun sharedChromeOwnsReservedSpaceBeforeEveryLibraryTab() {
-        val chrome = libraries.indexOf("LibrariesFloatingChrome(")
         val viewport = libraries.indexOf("LibraryContentViewport(")
-        assertTrue(chrome >= 0)
-        assertTrue(viewport > chrome)
-        assertTrue(libraries.contains("Modifier.weight(1f).clipToBounds()"))
+        val chrome = libraries.indexOf("LibrariesFloatingChrome(", viewport)
+        assertTrue(viewport >= 0)
+        assertTrue(chrome > viewport)
+        assertTrue(libraries.contains(".hazeSource(chromeHaze)"))
+        assertTrue(libraries.contains(".clipToBounds()"))
+        assertTrue(libraries.contains("onSizeChanged { chromeHeightPx = it.height }"))
+        // Each subtab receives the measured inset.
+        assertTrue(Regex("RecommendedTabContent\\([\\s\\S]*?topInset = topInset").containsMatchIn(libraries))
+        assertTrue(Regex("BrowseTabContent\\([\\s\\S]*?topInset = topInset").containsMatchIn(libraries))
+        assertTrue(Regex("CollectionsTabContent\\([\\s\\S]*?topInset = topInset").containsMatchIn(libraries))
     }
 
     @Test
@@ -36,15 +44,16 @@ class LibraryChromeInsetSourceTest {
         assertFalse(libraries.contains("LibrariesChromeContentHeight"))
         assertFalse(libraries.contains("extraTopInset = 50.dp"))
         assertFalse(libraries.contains(".windowInsetsPadding(WindowInsets.statusBars)"))
-        assertFalse(carousel.contains("WindowInsets.statusBars"))
-        assertTrue(carousel.contains("topInset: androidx.compose.ui.unit.Dp = 16.dp"))
     }
 
     @Test
     fun browseCatalogAndAlphabetRailReserveMeasuredBottomChromeInset() {
         assertTrue(libraries.contains("bottomContentInset = LocalBottomChromeInset.current"))
+        assertTrue(libraries.contains("topContentInset = topInset"))
         assertTrue(catalogGrid.contains("bottomContentInset: Dp = 0.dp"))
         assertTrue(catalogGrid.contains("bottom = 8.dp + bottomContentInset"))
-        assertTrue(catalogGrid.contains(".padding(bottom = bottomContentInset)"))
+        // The letter index keeps clear of both the floating chrome and the
+        // bottom pill.
+        assertTrue(catalogGrid.contains(".padding(top = topContentInset + 8.dp, bottom = bottomContentInset + 8.dp)"))
     }
 }

@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,48 +13,60 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material.icons.outlined.GridView
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.downloads.DownloadsViewModel
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.shouldShowDiagnosticsEntry
+import org.siloserver.silo.android.ui.theme.SettingsDimens
+import org.siloserver.silo.android.ui.theme.SettingsTextStyles
+import org.siloserver.silo.android.ui.theme.SiloBorder
+import org.siloserver.silo.android.ui.theme.SiloDestructive
+import org.siloserver.silo.android.ui.theme.SiloForeground
+import org.siloserver.silo.android.ui.theme.SiloMutedText
+import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
+import org.siloserver.silo.android.ui.theme.SiloSurfaceContainer
+import org.siloserver.silo.android.ui.theme.SiloSurfaceContainerHigh
+import org.siloserver.silo.android.ui.theme.siloRowTopDivider
 import org.siloserver.silo.android.ui.util.formatBytes
 import org.siloserver.silo.model.download.DownloadQuality
 import org.koin.compose.koinInject
@@ -71,19 +84,16 @@ import org.siloserver.silo.model.metadata.MetadataAiOnView
  * @param showTopBar Whether to show the top bar (false when inside MainScreen tab).
  * @param onBackClick Back navigation handler for standalone mode.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onLoggedOut: () -> Unit,
     onNavigateToServers: () -> Unit = {},
     onPairDevice: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
-    onNavigateToAdmin: () -> Unit = {},
     onNavigateToWatchlist: () -> Unit = {},
     onNavigateToFavorites: () -> Unit = {},
     onNavigateToHistory: () -> Unit = {},
     onNavigateToCollections: () -> Unit = {},
-    onNavigateToCardOverlays: () -> Unit = {},
     onNavigateToDiagnostics: () -> Unit = {},
     showTopBar: Boolean = false,
     onBackClick: (() -> Unit)? = null,
@@ -101,7 +111,6 @@ fun SettingsScreen(
     )
     val downloadsState by downloadsViewModel.uiState.collectAsState()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
-    val sessionsSheetState = rememberModalBottomSheetState()
     var showRemoveAllDownloadsConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.loggedOut) {
@@ -117,26 +126,30 @@ fun SettingsScreen(
                 SiloTopBar(
                     title = "Settings",
                     onBackClick = onBackClick,
+                    containerColor = SiloSettingsBackground,
                 )
             }
         },
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = SiloSettingsBackground,
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            contentPadding = PaddingValues(SettingsDimens.pageGutter),
+            verticalArrangement = Arrangement.spacedBy(SettingsDimens.sectionGap),
         ) {
             item {
                 if (!showTopBar) {
                     Text(
                         text = "Settings",
                         style = MaterialTheme.typography.displayMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
+                        color = SiloForeground,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        modifier = Modifier.padding(
+                            top = SettingsDimens.pageTopPadding,
+                            bottom = SettingsDimens.headerStartInset,
+                        ),
                     )
                 }
             }
@@ -146,33 +159,17 @@ fun SettingsScreen(
                     onSwitchProfile = onSwitchProfile,
                     user = state.user,
                     isLoadingUser = state.isLoadingUser,
-                    isAdminVisible = state.isAdminVisible,
-                    onManageSessions = viewModel::loadSessions,
                     onPairDevice = onPairDevice,
-                    onAdmin = onNavigateToAdmin,
                     onSignOut = viewModel::logout,
                 )
-            }
-
-            item {
-                SettingsSectionCard {
-                    SettingsRowLabel(
-                        title = "Card Overlays",
-                        icon = Icons.Filled.Layers,
-                        badgeColor = SettingsBadgeIndigo,
-                        onClick = onNavigateToCardOverlays,
-                        showChevron = true,
-                    )
-                }
             }
 
             if (shouldShowDiagnosticsEntry(diagnosticsState)) {
                 item {
                     SettingsSectionCard {
-                        SettingsRowLabel(
-                            title = "Diagnostics",
-                            icon = Icons.Outlined.Info,
-                            badgeColor = SettingsBadgeOrange,
+                        SettingsNavigationRow(
+                            label = "Diagnostics",
+                            description = "Capture and review a report when something goes wrong.",
                             value = when (diagnosticsState.availability) {
                                 org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi.AVAILABLE -> "Available"
                                 org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi.DISABLED -> "Disabled"
@@ -181,7 +178,6 @@ fun SettingsScreen(
                                 org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi.INELIGIBLE -> null
                             },
                             onClick = onNavigateToDiagnostics,
-                            showChevron = true,
                         )
                     }
                 }
@@ -199,7 +195,7 @@ fun SettingsScreen(
                     maxBitrateKbps = state.maxBitrateKbps,
                     audioLanguage = state.audioLanguage,
                     audioLanguageSuggestions = state.audioLanguageSuggestions,
-                    autoSkipIntro = state.autoSkipIntro,
+                    introSkipMode = state.introSkipMode,
                     autoSkipCredits = state.autoSkipCredits,
                     pictureInPictureEnabled = state.pictureInPictureEnabled,
                     dolbyVisionEnabled = state.dolbyVisionEnabled,
@@ -210,7 +206,7 @@ fun SettingsScreen(
                     passOutThreshold = state.passOutThreshold,
                     onQualityPresetSelected = viewModel::setQualityPreset,
                     onAudioLanguageChanged = viewModel::setAudioLanguage,
-                    onAutoSkipIntroChanged = viewModel::setAutoSkipIntro,
+                    onIntroSkipModeChanged = viewModel::setIntroSkipMode,
                     onAutoSkipCreditsChanged = viewModel::setAutoSkipCredits,
                     onPictureInPictureEnabledChanged = viewModel::setPictureInPictureEnabled,
                     onDolbyVisionEnabledChanged = viewModel::setDolbyVisionEnabled,
@@ -246,30 +242,30 @@ fun SettingsScreen(
             }
 
             item {
-                SettingsSectionCard {
-                    SettingsSectionHeader(title = "Library")
-                    SettingsClickableRow(
-                        icon = Icons.Outlined.BookmarkBorder,
+                SettingsSection(title = "Library") {
+                    SettingsNavigationRow(
                         label = "Watchlist",
+                        description = "Titles you saved to watch later.",
                         onClick = onNavigateToWatchlist,
                     )
-                    SettingsClickableRow(
-                        icon = Icons.Outlined.FavoriteBorder,
+                    SettingsNavigationRow(
                         label = "Favorites",
+                        description = "Titles you marked as favorites.",
                         onClick = onNavigateToFavorites,
                     )
-                    SettingsClickableRow(
-                        icon = Icons.Outlined.History,
-                        label = "Watch History",
+                    SettingsNavigationRow(
+                        label = "Watch history",
+                        description = "Everything you have played, most recent first.",
                         onClick = onNavigateToHistory,
                     )
-                    SettingsClickableRow(
-                        icon = Icons.Outlined.GridView,
+                    SettingsNavigationRow(
                         label = "Collections",
+                        description = "Curated groups of titles from your libraries.",
                         onClick = onNavigateToCollections,
                     )
                     SettingsSwitchRow(
-                        label = "Show Audiobooks",
+                        label = "Show audiobooks",
+                        description = "Show the Audiobooks section in navigation.",
                         checked = state.showAudiobooks,
                         onCheckedChange = viewModel::setShowAudiobooks,
                     )
@@ -278,31 +274,35 @@ fun SettingsScreen(
 
             if (state.notificationsAvailable) {
                 item {
-                    SettingsSectionCard {
-                        SettingsSectionHeader(title = "Notifications")
+                    SettingsSection(title = "Notifications") {
                         SettingsSwitchRow(
                             label = "In-app notifications",
+                            description = "Show alerts inside Silo as new releases arrive.",
                             checked = state.notificationsEnabled,
                             onCheckedChange = viewModel::setNotificationsEnabled,
                         )
                         if (state.notificationsEnabled) {
                             SettingsSwitchRow(
                                 label = "Favorites",
+                                description = "Notify when something you favorited has a new episode.",
                                 checked = state.notifyFavorites,
                                 onCheckedChange = viewModel::setNotifyFavorites,
                             )
                             SettingsSwitchRow(
                                 label = "Watchlist",
+                                description = "Notify when something on your watchlist becomes available.",
                                 checked = state.notifyWatchlist,
                                 onCheckedChange = viewModel::setNotifyWatchlist,
                             )
                             SettingsSwitchRow(
                                 label = "Continue watching",
+                                description = "Notify about titles you started but have not finished.",
                                 checked = state.notifyContinueWatching,
                                 onCheckedChange = viewModel::setNotifyContinueWatching,
                             )
                             SettingsSwitchRow(
                                 label = "Next up",
+                                description = "Notify when the next episode of a series you watch arrives.",
                                 checked = state.notifyNextUp,
                                 onCheckedChange = viewModel::setNotifyNextUp,
                             )
@@ -312,37 +312,37 @@ fun SettingsScreen(
             }
 
             item {
-                SettingsSectionCard {
-                    SettingsSectionHeader(title = "Downloads")
+                SettingsSection(title = "Downloads") {
                     SettingsDropdownRow(
-                        label = "Default Quality",
+                        label = "Download quality",
+                        description = "Quality preset used for new downloads.",
                         value = state.defaultDownloadQuality,
                         options = DownloadQuality.entries.map { it.label },
                         onOptionSelected = viewModel::setDefaultDownloadQuality,
                     )
                     SettingsSwitchRow(
-                        label = "Wi-Fi only",
+                        label = "Download over Wi-Fi only",
+                        description = "Only download while connected to Wi-Fi.",
                         checked = state.downloadsWifiOnly,
                         onCheckedChange = viewModel::setDownloadsWifiOnly,
                     )
                     SettingsSwitchRow(
                         label = "Keep watched downloads",
+                        description = "Do not suggest reclaiming space from downloads you have finished.",
                         checked = state.keepWatchedDownloads,
                         onCheckedChange = viewModel::setKeepWatchedDownloads,
                     )
                     if (!downloadsState.isEmpty || downloadsState.totalBytesUsed > 0L) {
-                        SettingsClickableRow(
-                            icon = Icons.Outlined.Delete,
+                        SettingsDestructiveRow(
                             label = if (downloadsState.isRemovingAllDownloads) {
-                                "Removing Downloads..."
+                                "Removing downloads…"
                             } else {
-                                "Remove All Downloads"
+                                "Remove all downloads"
                             },
-                            onClick = { showRemoveAllDownloadsConfirm = true },
-                            labelColor = SettingsBadgeRed,
-                            iconTint = SettingsBadgeRed,
+                            description = "Delete every downloaded file from this device.",
+                            value = formatBytes(downloadsState.totalBytesUsed),
                             enabled = !downloadsState.isRemovingAllDownloads,
-                            trailingText = formatBytes(downloadsState.totalBytesUsed),
+                            onClick = { showRemoveAllDownloadsConfirm = true },
                         )
                     }
                 }
@@ -356,47 +356,22 @@ fun SettingsScreen(
             }
 
             // Bottom spacing
-            item { Spacer(modifier = Modifier.height(32.dp)) }
+            item { Spacer(modifier = Modifier.height(SettingsDimens.pageBottomSpacer)) }
         }
     }
 
-    // Sessions bottom sheet
-    if (state.showSessions) {
-        SessionsSheet(
-            sheetState = sessionsSheetState,
-            sessions = state.sessions,
-            isLoading = state.isLoadingSessions,
-            onRevokeSession = viewModel::revokeSession,
-            onDismiss = viewModel::hideSessions,
-        )
-    }
-
     if (showRemoveAllDownloadsConfirm) {
-        AlertDialog(
-            onDismissRequest = { showRemoveAllDownloadsConfirm = false },
-            title = { Text("Remove all downloads?") },
-            text = {
-                Text(
-                    "This removes ${formatBytes(downloadsState.totalBytesUsed)} of downloaded files from this device. " +
-                        "Your library and server media stay intact.",
-                )
+        SiloConfirmDialog(
+            title = "Remove all downloads?",
+            body = "This removes ${formatBytes(downloadsState.totalBytesUsed)} of downloaded files " +
+                "from this device. Your library and server media stay intact.",
+            confirmLabel = if (downloadsState.isRemovingAllDownloads) "Removing…" else "Remove all",
+            confirmEnabled = !downloadsState.isRemovingAllDownloads,
+            onConfirm = {
+                showRemoveAllDownloadsConfirm = false
+                downloadsViewModel.removeAllDownloads()
             },
-            confirmButton = {
-                TextButton(
-                    enabled = !downloadsState.isRemovingAllDownloads,
-                    onClick = {
-                        showRemoveAllDownloadsConfirm = false
-                        downloadsViewModel.removeAllDownloads()
-                    },
-                ) {
-                    Text(if (downloadsState.isRemovingAllDownloads) "Removing..." else "Remove All")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRemoveAllDownloadsConfirm = false }) {
-                    Text("Cancel")
-                }
-            },
+            onDismiss = { showRemoveAllDownloadsConfirm = false },
         )
     }
 }
@@ -412,178 +387,320 @@ fun SettingsScreen(
  */
 @Composable
 fun SettingsUpgradeRequiredNotice(modifier: Modifier = Modifier) {
-    SettingsSectionCard(modifier = modifier) {
-        SettingsSectionHeader(title = "Server Update Needed")
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp)) {
-            Text(
-                text = "This server is too old for profile settings",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "Subtitle and metadata preferences are stored by the server, and this one " +
-                    "does not support them yet. Playback still works using this device's settings. " +
-                    "Ask whoever runs the server to update it.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+    SettingsSection(title = "Server update needed", modifier = modifier) {
+        SettingsProse(
+            title = "This server is too old for profile settings",
+            body = "Subtitle and metadata preferences are stored by the server, and this one " +
+                "does not support them yet. Playback still works using this device's settings. " +
+                "Ask whoever runs the server to update it.",
+        )
     }
 }
 
-// --- iOS system-color badge palette (maps SwiftUI .blue/.pink/etc.) ---
-
-val SettingsBadgeBlue = Color(0xFF0A84FF)
-val SettingsBadgePink = Color(0xFFFF375F)
-val SettingsBadgeIndigo = Color(0xFF5E5CE6)
-val SettingsBadgeTeal = Color(0xFF64D2FF)
-val SettingsBadgeOrange = Color(0xFFFF9F0A)
-val SettingsBadgeRed = Color(0xFFFF453A)
-val SettingsBadgeGray = Color(0xFF8E8E93)
-val SettingsBadgePurple = Color(0xFFBF5AF2)
-
 // --- Shared Settings UI Components ---
+//
+// The grouped surface these build is the Silo web client's, adapted to Android
+// row mechanics: an opaque card on a lifted page ground, a lettered heading
+// above rather than inside it, a label over a muted description, and the
+// control kept trailing rather than stacked underneath the way the web layout
+// stacks it. Metrics live in `ui.theme.SettingsDimens` / `SettingsTextStyles`.
+//
+// There is deliberately no leading icon on any row. The web client puts icons
+// only in its settings *sidebar*, never on a row; Android has no sidebar, so
+// its destination rows sit inline among the value rows and an icon on half of
+// them is exactly the "iOS Settings at the ends, unstyled form in the middle"
+// split this pass removed. The description line is the scanning aid now, and
+// the trailing affordance (chevron / value / switch) is what separates a
+// destination from a setting.
 
 /**
- * Card container for a settings section. Mirrors the iOS inset-grouped
- * `Section` whose rows sit on `siloSurfaceElevated`. iOS uses a
- * ~10pt corner radius for grouped sections.
+ * Per-card row counter backing the "no divider above the first row" rule.
+ *
+ * Rows claim a slot on first composition and remember it, so the index is
+ * stable across recomposition and follows source order within the card. A card
+ * whose *first* row is conditional would need [SettingsRow]'s `showDivider`
+ * override — no section does that today, since every card's opening row is
+ * unconditional.
+ */
+@Stable
+internal class SettingsSectionSlots {
+    private var next = 0
+
+    fun claim(): Int = next++
+}
+
+internal val LocalSettingsSectionSlots = staticCompositionLocalOf<SettingsSectionSlots?> { null }
+
+/** True for the first row composed into the enclosing [SettingsSectionCard]. */
+@Composable
+private fun isFirstSettingsRow(): Boolean {
+    val slots = LocalSettingsSectionSlots.current ?: return true
+    return remember(slots) { slots.claim() } == 0
+}
+
+/**
+ * Claims a row slot for a card child that is not a [SettingsRow] — the account
+ * header, a prose pane — and reports whether it should draw a hairline above
+ * itself. A custom child that skips this is invisible to the divider rule, and
+ * the row after it would wrongly believe it is the card's first.
+ *
+ * Pair with [settingsRowDivider].
+ */
+@Composable
+fun settingsRowDividerVisible(): Boolean = !isFirstSettingsRow()
+
+/** Draws the standard inter-row hairline along this element's top edge. */
+fun Modifier.settingsRowDivider(show: Boolean): Modifier = settingsRowTopDivider(show)
+
+// The hairline itself lives in `ui.theme` beside the tokens it draws with:
+// the popup menus rule their rows the same way, and one line rendered by two
+// implementations is how two lines end up different.
+private fun Modifier.settingsRowTopDivider(show: Boolean): Modifier = siloRowTopDivider(show)
+
+/**
+ * A settings group: a lettered heading sitting above its card.
+ *
+ * The heading used to render *inside* the card as its first child, which is
+ * what made every section start with a stray caps line on the same surface as
+ * the rows. Its own KDoc always described the intended placement.
+ */
+@Composable
+fun SettingsSection(
+    title: String?,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (!title.isNullOrBlank()) {
+            SettingsSectionHeader(title)
+        }
+        SettingsSectionCard(content = content)
+    }
+}
+
+/**
+ * Card container for a settings section, and the owner of the row dividers.
  */
 @Composable
 fun SettingsSectionCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            // iOS rows sit on `siloSurfaceElevated`, which the Android
-            // theme exposes as `primaryContainer` (0xFF15171C).
-            .background(MaterialTheme.colorScheme.primaryContainer),
-        content = content,
-    )
+    val slots = remember { SettingsSectionSlots() }
+    CompositionLocalProvider(LocalSettingsSectionSlots provides slots) {
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(SettingsDimens.cardRadius))
+                .background(SiloSurfaceContainer),
+            content = content,
+        )
+    }
 }
 
 /**
- * Section header text. iOS grouped-list section headers are uppercased
- * footnote text in the secondary color, sitting above the card with a
- * small inset.
+ * Section heading — uppercased, letter-spaced, muted, sitting above the card
+ * with a small inset.
  */
 @Composable
 fun SettingsSectionHeader(title: String) {
     Text(
         text = title.uppercase(),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 6.dp),
+        style = SettingsTextStyles.sectionHeader,
+        color = SiloMutedText,
+        modifier = Modifier.padding(
+            start = SettingsDimens.headerStartInset,
+            end = SettingsDimens.headerStartInset,
+            bottom = SettingsDimens.headerBottomGap,
+        ),
     )
 }
 
 /**
- * iOS Settings-app style row: a colored rounded-square icon badge
- * (cornerRadius 7, 29x29), the row title, and an optional trailing
- * value in secondary color. Mirrors `SettingsRowLabel`.
+ * Disclosure chevron.
  */
 @Composable
-fun SettingsRowLabel(
-    title: String,
-    icon: ImageVector,
-    badgeColor: Color,
-    modifier: Modifier = Modifier,
-    value: String? = null,
-    onClick: (() -> Unit)? = null,
-    showChevron: Boolean = false,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        androidx.compose.foundation.layout.Box(
-            modifier = Modifier
-                .size(29.dp)
-                .clip(RoundedCornerShape(7.dp))
-                .background(badgeColor),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(17.dp),
-            )
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-        )
-
-        if (value != null) {
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        }
-
-        if (showChevron) {
-            Spacer(modifier = Modifier.width(8.dp))
-            SettingsRowChevron()
-        }
-    }
-}
-
-/**
- * Disclosure chevron matching the iOS `SettingsRowChevron`.
- */
-@Composable
-fun SettingsRowChevron() {
+fun SettingsRowChevron(enabled: Boolean = true) {
     Icon(
         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
         contentDescription = null,
-        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-        modifier = Modifier.size(18.dp),
+        tint = SiloMutedText.copy(alpha = if (enabled) 1f else SettingsDimens.disabledAlpha),
+        modifier = Modifier.size(SettingsDimens.chevronSize),
     )
 }
 
 /**
- * Generic settings row with a label and a trailing content slot.
+ * The one settings row.
+ *
+ * Every other row type in this package is this one with a different trailing
+ * slot: label over an optional description, control trailing, a 60dp floor so
+ * a described row and a bare row still read as the same list, and a hairline
+ * above every row but the card's first.
+ *
+ * A trailing [value] shares the *label's* line rather than sitting beside the
+ * whole text block. That is the structural half of a real defect: with the
+ * value beside the block, a long one ("30 seconds before end") squeezed the
+ * description into a narrow column whose last line then ended a few dp from
+ * the value, and the two read as touching. On the label's line the value can
+ * never abut the description — the description runs the full width beneath it
+ * — and the wider column costs a line rather than adding one, so the page gets
+ * shorter, not taller. Only [trailing] controls (chevron, switch, radio) sit
+ * beside the block now, and an icon at [SettingsDimens.rowTrailingGap] does
+ * not read as a collision the way text does.
+ *
+ * @param showDivider Overrides the automatic first-row rule. Only needed in a
+ *   card whose opening row is conditional.
  */
 @Composable
 fun SettingsRow(
     label: String,
     modifier: Modifier = Modifier,
+    description: String? = null,
+    value: String? = null,
+    labelColor: Color = SiloForeground,
+    enabled: Boolean = true,
+    onClick: (() -> Unit)? = null,
+    showDivider: Boolean? = null,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
+    val contentAlpha = if (enabled) 1f else SettingsDimens.disabledAlpha
+    val divider = showDivider ?: !isFirstSettingsRow()
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 11.dp),
+            .heightIn(min = SettingsDimens.rowMinHeight)
+            .settingsRowTopDivider(divider)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(enabled = enabled, onClick = onClick)
+                } else {
+                    Modifier
+                },
+            )
+            .padding(
+                horizontal = SettingsDimens.rowHorizontalPadding,
+                vertical = SettingsDimens.rowVerticalPadding,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
+        Column(
             modifier = Modifier.weight(1f),
-        )
+            verticalArrangement = Arrangement.spacedBy(SettingsDimens.rowLabelGap),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = label,
+                    style = SettingsTextStyles.rowLabel,
+                    color = labelColor.copy(alpha = contentAlpha),
+                    // Fills the line so the value stays trailing-aligned, and
+                    // yields — by wrapping — when a capped value needs room.
+                    modifier = Modifier.weight(1f),
+                )
+                if (value != null) {
+                    Spacer(modifier = Modifier.width(SettingsDimens.rowLabelValueGap))
+                    SettingsRowValue(value = value, enabled = enabled)
+                }
+            }
+            if (!description.isNullOrBlank()) {
+                Text(
+                    text = description,
+                    style = SettingsTextStyles.rowDescription,
+                    color = SiloMutedText.copy(alpha = contentAlpha),
+                )
+            }
+        }
         trailing()
     }
 }
 
 /**
- * Settings row with a switch toggle.
+ * A row that navigates somewhere, optionally showing the current value.
+ *
+ * Replaces the old `SettingsRowLabel` (iOS coloured badge) and
+ * `SettingsClickableRow` (bare 20dp icon), which differed only in their
+ * leading treatment.
+ */
+@Composable
+fun SettingsNavigationRow(
+    label: String,
+    modifier: Modifier = Modifier,
+    description: String? = null,
+    value: String? = null,
+    onClick: (() -> Unit)? = null,
+    showChevron: Boolean = onClick != null,
+    enabled: Boolean = true,
+    labelColor: Color = SiloForeground,
+) {
+    SettingsRow(
+        label = label,
+        modifier = modifier,
+        description = description,
+        value = value,
+        labelColor = labelColor,
+        enabled = enabled,
+        onClick = onClick,
+    ) {
+        if (showChevron) {
+            Spacer(modifier = Modifier.width(SettingsDimens.rowTrailingGap))
+            SettingsRowChevron(enabled = enabled)
+        }
+    }
+}
+
+/**
+ * Destructive row. One tint, [SiloDestructive], for every destructive action
+ * on this surface — Sign out, Reset playback settings, Remove all downloads —
+ * which previously used three different layouts and two different reds.
+ */
+@Composable
+fun SettingsDestructiveRow(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    description: String? = null,
+    value: String? = null,
+    enabled: Boolean = true,
+) {
+    SettingsNavigationRow(
+        label = label,
+        modifier = modifier,
+        description = description,
+        value = value,
+        onClick = onClick,
+        showChevron = false,
+        enabled = enabled,
+        labelColor = SiloDestructive,
+    )
+}
+
+/**
+ * Trailing value text — smaller and muted, so a picker's current choice does
+ * not read as a second label.
+ *
+ * Unweighted, so [SettingsRow]'s label line measures it first: it gets the
+ * width it asks for up to [SettingsDimens.rowValueMaxWidth], and the label
+ * takes what is left.
+ */
+@Composable
+private fun SettingsRowValue(value: String, enabled: Boolean) {
+    Text(
+        text = value,
+        style = SettingsTextStyles.rowValue,
+        color = SiloMutedText.copy(alpha = if (enabled) 1f else SettingsDimens.disabledAlpha),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        textAlign = TextAlign.End,
+        modifier = Modifier.widthIn(max = SettingsDimens.rowValueMaxWidth),
+    )
+}
+
+/**
+ * Settings row with a switch toggle. The whole row toggles, not just the
+ * thumb, and [enabled] now exists — the diagnostics screen used to hand-roll
+ * its own copy of this row purely to get a disabled switch.
  */
 @Composable
 fun SettingsSwitchRow(
@@ -591,63 +708,163 @@ fun SettingsSwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    description: String? = null,
+    enabled: Boolean = true,
 ) {
-    SettingsRow(label = label, modifier = modifier) {
+    SettingsRow(
+        label = label,
+        description = description,
+        enabled = enabled,
+        modifier = modifier.toggleable(
+            value = checked,
+            enabled = enabled,
+            role = Role.Switch,
+            onValueChange = onCheckedChange,
+        ),
+    ) {
+        Spacer(modifier = Modifier.width(SettingsDimens.rowTrailingGap))
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+            // The row owns the gesture; the switch is the indicator.
+            onCheckedChange = null,
+            enabled = enabled,
+            colors = settingsSwitchColors(),
+        )
+    }
+}
+
+@Composable
+private fun settingsSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = SiloSurfaceContainer,
+    checkedTrackColor = SiloForeground,
+    checkedBorderColor = Color.Transparent,
+    uncheckedThumbColor = SiloMutedText,
+    uncheckedTrackColor = SiloSurfaceContainerHigh,
+    uncheckedBorderColor = SiloBorder,
+    disabledCheckedThumbColor = SiloSurfaceContainer,
+    disabledCheckedTrackColor = SiloForeground.copy(alpha = SettingsDimens.disabledAlpha),
+    disabledCheckedBorderColor = Color.Transparent,
+    disabledUncheckedThumbColor = SiloMutedText.copy(alpha = SettingsDimens.disabledAlpha),
+    disabledUncheckedTrackColor = SiloSurfaceContainerHigh.copy(alpha = SettingsDimens.disabledAlpha),
+    disabledUncheckedBorderColor = SiloBorder.copy(alpha = SettingsDimens.disabledAlpha),
+)
+
+/**
+ * Settings row for one option in a mutually exclusive set. Like the switch
+ * row, the whole row is the target.
+ */
+@Composable
+fun SettingsChoiceRow(
+    label: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+    description: String? = null,
+    enabled: Boolean = true,
+) {
+    SettingsRow(
+        label = label,
+        description = description,
+        enabled = enabled,
+        modifier = modifier.selectable(
+            selected = selected,
+            enabled = enabled,
+            role = Role.RadioButton,
+            onClick = onSelect,
+        ),
+    ) {
+        Spacer(modifier = Modifier.width(SettingsDimens.rowTrailingGap))
+        RadioButton(
+            selected = selected,
+            // The row owns the gesture; the button is the indicator.
+            onClick = null,
+            enabled = enabled,
+            colors = RadioButtonDefaults.colors(
+                selectedColor = SiloForeground,
+                unselectedColor = SiloMutedText,
+                disabledSelectedColor = SiloForeground.copy(alpha = SettingsDimens.disabledAlpha),
+                disabledUnselectedColor = SiloMutedText.copy(alpha = SettingsDimens.disabledAlpha),
             ),
         )
     }
 }
 
 /**
- * Clickable row with an icon and label, used for action items like "Sign Out".
+ * A settings row that opens a menu of options.
+ *
+ * Trailing value plus a chevron, so a picker reads as something you can open
+ * rather than as a read-only fact.
  */
 @Composable
-fun SettingsClickableRow(
-    icon: ImageVector,
+fun SettingsDropdownRow(
     label: String,
-    onClick: () -> Unit,
+    value: String,
+    options: List<String>,
+    onOptionSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
-    labelColor: Color = MaterialTheme.colorScheme.onSurface,
-    iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    description: String? = null,
     enabled: Boolean = true,
-    trailingText: String? = null,
 ) {
-    Row(
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = modifier) {
+        SettingsNavigationRow(
+            label = label,
+            description = description,
+            value = value,
+            enabled = enabled,
+            onClick = { expanded = true },
+        )
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onOptionSelected(option)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A prose block inside a card, for the notices that are explanation rather
+ * than setting. Carries the same divider rule as a row.
+ */
+@Composable
+fun SettingsProse(
+    body: String,
+    modifier: Modifier = Modifier,
+    title: String? = null,
+) {
+    val divider = !isFirstSettingsRow()
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .settingsRowTopDivider(divider)
+            .padding(
+                horizontal = SettingsDimens.proseHorizontalPadding,
+                vertical = SettingsDimens.proseVerticalPadding,
+            ),
+        verticalArrangement = Arrangement.spacedBy(SettingsDimens.rowLabelGap),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconTint.copy(alpha = if (enabled) 1f else 0.5f),
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = labelColor.copy(alpha = if (enabled) 1f else 0.5f),
-            modifier = Modifier.weight(1f),
-        )
-        if (trailingText != null) {
-            Spacer(modifier = Modifier.width(8.dp))
+        if (title != null) {
             Text(
-                text = trailingText,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                text = title,
+                style = SettingsTextStyles.rowLabel,
+                color = SiloForeground,
             )
         }
+        Text(
+            text = body,
+            style = SettingsTextStyles.rowDescription,
+            color = SiloMutedText,
+        )
     }
 }

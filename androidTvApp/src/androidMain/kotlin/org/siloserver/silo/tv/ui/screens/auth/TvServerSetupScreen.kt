@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
@@ -33,6 +34,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -50,15 +52,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -92,8 +91,11 @@ import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.auroraGlass
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
+import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.Spacing
 
@@ -123,8 +125,8 @@ fun TvServerSetupScreen(
     val state by viewModel.uiState.collectAsState()
     val pairingStatus by pairingReceiver.status.collectAsState()
     val focusRequester = remember { FocusRequester() }
-    var hostFieldHasFocus by remember { mutableStateOf(false) }
     val phoneSetupFocus = remember { FocusRequester() }
+    var phoneCardHasFocus by remember { mutableStateOf(false) }
     val formScrollState = rememberTvImeAwareFormScrollState()
     val isActivePairing = pairingStatus.isActivePairing
 
@@ -136,19 +138,31 @@ fun TvServerSetupScreen(
         pairingAdvertiser.start()
         onDispose { pairingAdvertiser.stop() }
     }
-    LaunchedEffect(isActivePairing) {
-        if (!isActivePairing) {
-            // Always land on the server-address field, matching tvOS
-            // (TVServerSetupView `.defaultFocus(.host)`). The user chooses "Set
-            // up with phone" by navigating to it — we don't pre-select it for
-            // them (Jim TV QA 2026-07-10). Returning users keep the pre-filled
-            // field focused too.
-            requestFocusUntilObserved(
+    // Snapshot-backed: re-keys the claim when the viewer switches between
+    // pointer and key input.
+    val inputMode = LocalInputModeManager.current.inputMode
+    LaunchedEffect(isActivePairing, inputMode) {
+        // Pointer users click what they want — and in touch mode the claim
+        // could not land anyway. Re-run on mode flip so the D-pad always has
+        // somewhere to start.
+        if (!isActivePairing && inputMode != InputMode.Touch) {
+            // Land on the phone-pairing card: companion setup is the
+            // recommended path, so it gets first focus (product call
+            // 2026-08-14, reversing the 2026-07-10 field-first default).
+            // Landing on the URL field also popped the IME over the form,
+            // and the IME resize scrolled the header chrome off-screen.
+            TvFocusLog.d { "serverSetup: claiming phone card (mode=$inputMode)" }
+            val result = requestFocusUntilObserved(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
-                requestFocus = focusRequester::requestFocus,
-                isFocused = { hostFieldHasFocus },
+                requestFocus = phoneSetupFocus::requestFocus,
+                isFocused = { phoneCardHasFocus },
             )
+            TvFocusLog.d { "serverSetup: claim result=$result" }
+        } else {
+            TvFocusLog.d {
+                "serverSetup: claim skipped (pairing=$isActivePairing, mode=$inputMode)"
+            }
         }
     }
     LaunchedEffect(pairingStatus) {
@@ -248,7 +262,7 @@ fun TvServerSetupScreen(
                     BrandHeader()
                     AuroraJourneyProgress(
                         currentStep = 1,
-                        modifier = Modifier.width(230.dp),
+                        modifier = Modifier.width(215.dp),
                     )
                 }
 
@@ -289,11 +303,28 @@ fun TvServerSetupScreen(
                         modifier = Modifier
                             .widthIn(max = 642.dp)
                             .fillMaxWidth()
-                            .heightIn(min = SERVER_SETUP_CHOOSER_HEIGHT),
+                            // Intrinsic-min, floored — not a bare heightIn and
+                            // not an exact height. Both of those fail, in
+                            // opposite directions:
+                            //  - a loose max makes the cards' fillMaxHeight a
+                            //    no-op, so the phone card collapses to its pill
+                            //    and the weight(1f) beacon box measures zero;
+                            //  - an exact height clips the taller card, which
+                            //    at 300dp squeezed "Connect to server" down to
+                            //    a blank pill (label measured 6px in a 96px
+                            //    button).
+                            // Resolving the intrinsic first hands the Row a
+                            // tight height, so fillMaxHeight still resolves,
+                            // while the floor keeps the chooser at a real card
+                            // height when content is short. tvOS pins 580pt;
+                            // here the content decides above that floor.
+                            .height(IntrinsicSize.Min)
+                            .heightIn(min = SERVER_SETUP_CHOOSER_MIN_HEIGHT),
                     ) {
                         PhoneSetupCard(
                             focusRequester = phoneSetupFocus,
                             modifier = Modifier
+                                .onFocusChanged { phoneCardHasFocus = it.hasFocus }
                                 .weight(1f)
                                 .fillMaxHeight(),
                         )
@@ -308,7 +339,6 @@ fun TvServerSetupScreen(
                             onConnectClick = viewModel::onConnectClick,
                             focusRequester = focusRequester,
                             modifier = Modifier
-                                .onFocusChanged { hostFieldHasFocus = it.hasFocus }
                                 .weight(1f)
                                 .fillMaxHeight(),
                         )
@@ -343,12 +373,12 @@ private fun PhoneSetupCard(
             )
             .padding(24.dp),
     ) {
+        // Top-leading pill, matching tvOS TVServerSetupView.phoneCard.
         Text(
             text = "RECOMMENDED · USE PHONE",
             style = TvServerSetupTextStyles.Pill,
             color = Color.White.copy(alpha = 0.70f),
             modifier = Modifier
-                .align(Alignment.CenterHorizontally)
                 .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(50))
                 .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(50))
                 .padding(horizontal = 14.dp, vertical = 7.dp),
@@ -367,36 +397,43 @@ private fun PhoneSetupCard(
 
 @Composable
 private fun PhoneSetupBody(modifier: Modifier = Modifier) {
+    // Beacon centered, copy left-aligned beneath it — mirrors tvOS
+    // TVServerSetupView.phoneCard (iPhone → phone).
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
         SearchingBeacon(
-            modifier = Modifier.size(PHONE_SETUP_BEACON_SIZE),
+            modifier = Modifier
+                .size(PHONE_SETUP_BEACON_SIZE)
+                .align(Alignment.CenterHorizontally),
         )
 
         Text(
-            text = "Looking for your phone…",
+            text = "Looking for a phone…",
             style = TvServerSetupTextStyles.Headline,
             color = Color.White,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            text = "Open Silo on your phone on this Wi-Fi to set up this TV without typing.",
+            text = "Open Silo on a phone connected to the same Wi-Fi. Accept the " +
+                "setup card and Silo will securely bring over the server and account.",
             style = TvServerSetupTextStyles.PairingDetail,
             color = Color.White.copy(alpha = 0.72f),
-            maxLines = 2,
+            maxLines = 4,
             overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
     }
 }
 
 private val PHONE_SETUP_BEACON_SIZE = 96.dp
-private val SERVER_SETUP_CHOOSER_HEIGHT = 300.dp
+
+/**
+ * Floor for the phone/manual chooser. The manual card's intrinsic height
+ * normally exceeds this; the floor only matters when it doesn't, keeping the
+ * phone card from collapsing to its pill.
+ */
+private val SERVER_SETUP_CHOOSER_MIN_HEIGHT = 300.dp
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -407,7 +444,6 @@ private fun ManualEntryCard(
     focusRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
-    val keyboardController = LocalSoftwareKeyboardController.current
     TvHideStockImeOnDispose()
     Column(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -422,7 +458,7 @@ private fun ManualEntryCard(
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
             Text(
-                text = "Enter it here",
+                text = "Enter the server address",
                 style = TvServerSetupTextStyles.Headline,
                 color = Color.White,
             )
@@ -438,7 +474,7 @@ private fun ManualEntryCard(
                 onValueChange = onServerUrlChanged,
                 placeholder = {
                     Text(
-                        text = "media.example.com",
+                        text = "silo.example.com",
                         style = TvServerSetupTextStyles.FieldText,
                     )
                 },
@@ -459,17 +495,8 @@ private fun ManualEntryCard(
                 enabled = !state.isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(60.dp)
-                    .onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyUp &&
-                            (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)
-                        ) {
-                            keyboardController?.show()
-                            true
-                        } else {
-                            false
-                        }
-                    }
+                    .height(TvAuthFormDefaults.FieldHeight)
+                    .tvShowImeOnSelect()
                     .focusRequester(focusRequester),
                 colors = tvOutlinedTextFieldColors(),
             )
@@ -495,11 +522,31 @@ private fun ManualEntryCard(
                 style = TvServerSetupTextStyles.Error,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        } else {
+            // Mirrors tvOS's lock.shield reassurance line. Truthful here too:
+            // bare hosts probe https:// first and fall to http:// only when
+            // the viewer typed it (probeTvServerSetupCandidates).
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.72f),
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = "Secure HTTPS is tried automatically.",
+                    style = TvServerSetupTextStyles.PairingDetail,
+                    color = Color.White.copy(alpha = 0.72f),
+                )
+            }
         }
 
         Box {
             AuroraPrimaryButton(
-                label = if (state.isLoading) "Connecting…" else "Connect",
+                label = if (state.isLoading) "Connecting…" else "Connect to server",
                 icon = null,
                 enabled = canSubmitTvServerUrl(state.serverUrl, state.isLoading),
                 onClick = {
@@ -509,7 +556,7 @@ private fun ManualEntryCard(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(58.dp),
+                    .height(TvAuthFormDefaults.PrimaryButtonHeight),
             )
         }
     }
@@ -554,11 +601,16 @@ private fun OrDivider(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.Center,
         modifier = modifier,
     ) {
+        // Hairlines fade toward the screen edges, matching tvOS orDivider.
         Box(
             modifier = Modifier
                 .width(1.dp)
                 .weight(1f)
-                .background(Color.White.copy(alpha = 0.16f)),
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.White.copy(alpha = 0.16f)),
+                    ),
+                ),
         )
         Text(
             text = "OR",
@@ -570,7 +622,11 @@ private fun OrDivider(modifier: Modifier = Modifier) {
             modifier = Modifier
                 .width(1.dp)
                 .weight(1f)
-                .background(Color.White.copy(alpha = 0.16f)),
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.White.copy(alpha = 0.16f), Color.Transparent),
+                    ),
+                ),
         )
     }
 }
@@ -924,10 +980,11 @@ private object TvServerSetupTextStyles {
         color = Color.White,
     )
 
+    /** tvOS continuumHeadline (36pt → 18dp at the 0.5x map, +2 readability). */
     val Headline = TextStyle(
         fontWeight = FontWeight.SemiBold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
+        fontSize = 20.sp,
+        lineHeight = 26.sp,
         letterSpacing = 0.sp,
     )
 

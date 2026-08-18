@@ -22,6 +22,11 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Mic
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -69,6 +74,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Button
@@ -82,6 +89,7 @@ import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.tv.ui.components.TvHideStockImeOnDispose
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvFilterChip
+import org.siloserver.silo.tv.ui.components.TvSectionHeader
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestCard
 import org.siloserver.silo.tv.ui.screens.requests.canOpenLibraryDetail
@@ -143,6 +151,7 @@ fun TvSearchScreen(
     var restoreRequestIndex by remember { mutableIntStateOf(-1) }
 
     var pendingSearchFocus by remember { mutableStateOf(false) }
+    var scrollHeaderIntoView by remember { mutableIntStateOf(0) }
 
 
     val recordReturn: (String, String, Int, Int) -> Unit = { sectionId, itemId, sectionIndex, itemIndex ->
@@ -213,15 +222,44 @@ fun TvSearchScreen(
             requestState.error != null ||
             requestState.hasSubmittedQuery)
     val requestSearchSettled = !canSearchRequests || !requestState.isLoading
+    // Same precedence as the post-search handoff below: results, then the
+    // error's "Try again", then the request row.
     val firstContentFocusRequester = when {
         state.items.isNotEmpty() -> firstResultFocusRequester
-        visibleRequestResults.isNotEmpty() -> firstRequestResultFocusRequester
         state.error != null -> feedbackActionFocusRequester
+        visibleRequestResults.isNotEmpty() -> firstRequestResultFocusRequester
         else -> firstFilterChipFocusRequester
     }
     val hasContentFocusTarget = state.items.isNotEmpty() ||
         visibleRequestResults.isNotEmpty() ||
         state.error != null
+
+    // A spoken query is a submitted query. It goes through exactly the path a
+    // typed one does — including handing focus to the results afterwards,
+    // which is the whole point of speaking: nobody dictates a title in order
+    // to then be left on the search field.
+    var voiceUnavailableMessage by remember { mutableStateOf<String?>(null) }
+    val voiceSearch = rememberTvVoiceSearch(
+        prompt = "Speak a title",
+        onResult = { spoken ->
+            // The same cap typing obeys. A noisy recognition can run long, and
+            // the field's own limit does not apply to text that never went
+            // through it.
+            val query = spoken.take(TV_SEARCH_QUERY_MAX_LENGTH)
+            voiceUnavailableMessage = null
+            viewModel.onQueryChanged(query)
+            pendingSearchFocus = true
+            if (requestsEnabled && query.length >= 2) {
+                requestSearchViewModel.onMediaTypeChanged(requestMediaType)
+                requestSearchViewModel.onQueryChanged(query)
+                requestSearchViewModel.search()
+            }
+            viewModel.submitSearch()
+        },
+        onUnavailable = {
+            voiceUnavailableMessage = "Voice search isn't available on this device."
+        },
+    )
 
     LaunchedEffect(requestsEnabled, state.query, requestMediaType) {
         val query = state.query.trim()
@@ -432,6 +470,9 @@ fun TvSearchScreen(
     // without dismissing it left the system IME floating over the next screen
     // (e.g. over the video when starting playback from a result).
     TvHideStockImeOnDispose()
+    LaunchedEffect(scrollHeaderIntoView) {
+        if (scrollHeaderIntoView > 0) searchGridState.animateScrollToItem(0)
+    }
     LaunchedEffect(backToSearchFieldRequest) {
         if (backToSearchFieldRequest <= 0) return@LaunchedEffect
         searchGridState.animateScrollToItem(0)
@@ -450,24 +491,33 @@ fun TvSearchScreen(
         state.items.size,
         visibleRequestResults.size,
     ) {
-        if (!pendingSearchFocus || state.isLoading || !requestSearchSettled) return@LaunchedEffect
+        if (!pendingSearchFocus || state.isLoading) return@LaunchedEffect
+        // Only wait on the request lookup when it is the thing focus would
+        // land on. Library results are the primary target and arrive first;
+        // holding them hostage to a slow TMDB round-trip left the user parked
+        // on the search field with results visibly sitting there.
+        if (state.items.isEmpty() && !requestSearchSettled) return@LaunchedEffect
         // A return outranks a stale submit. Submitting, walking down to a card
         // that the reset had not yet cleared, and opening it leaves this armed
         // on a retained composition — and on the way back both effects would
         // otherwise be eligible, one aiming at the restored card and the other
         // at the first result.
         if (returnPending) return@LaunchedEffect
-        pendingSearchFocus = false
+        // A failed library search lands on "Try again", even when the request
+        // row has something to show. Landing on a request card instead scrolled
+        // the field, chips and the error itself up under the top menu — the
+        // screen looked broken rather than merely failed, and the recovery
+        // action was the one thing not on screen.
         val postSearchTarget = when {
             state.items.isNotEmpty() -> firstResultFocusRequester
-            visibleRequestResults.isNotEmpty() -> firstRequestResultFocusRequester
             state.error != null -> feedbackActionFocusRequester
+            visibleRequestResults.isNotEmpty() -> firstRequestResultFocusRequester
             else -> firstFilterChipFocusRequester
         }
         val postSearchRegion = when {
             state.items.isNotEmpty() -> TvSearchFocusRegion.CatalogResults
-            visibleRequestResults.isNotEmpty() -> TvSearchFocusRegion.RequestResults
             state.error != null -> TvSearchFocusRegion.Feedback
+            visibleRequestResults.isNotEmpty() -> TvSearchFocusRegion.RequestResults
             else -> TvSearchFocusRegion.Chips
         }
         requestFocusUntilObserved(
@@ -476,6 +526,12 @@ fun TvSearchScreen(
             requestFocus = postSearchTarget::requestFocus,
             isFocused = { focusedRegion == postSearchRegion },
         )
+        // Consumed AFTER the attempt, not before. This effect is keyed on the
+        // flag, so clearing it first relaunched the effect and cancelled the
+        // request at its first frame await — the handoff never actually ran.
+        // While it is in flight a key change (a page landing) simply retries;
+        // recordReturn still clears it outright when a card is opened.
+        pendingSearchFocus = false
     }
     // Note: we deliberately do NOT auto-jump focus to the first result when
     // it appears. Doing so during the debounced as-you-type search yanks
@@ -584,6 +640,8 @@ fun TvSearchScreen(
                         viewModel.submitSearch()
                     },
                     onMediaTypeChanged = viewModel::onMediaTypeChanged,
+                    voiceSearch = voiceSearch,
+                    voiceUnavailableMessage = voiceUnavailableMessage,
                     isKeyboardOpen = isKeyboardOpen,
                     onKeyboardOpenChanged = { isKeyboardOpen = it },
                 )
@@ -623,8 +681,16 @@ fun TvSearchScreen(
                             index,
                         )
                     },
-                    firstItemCardModifier = Modifier.focusProperties {
-                        up = if (state.items.isNotEmpty()) firstResultFocusRequester else firstFilterChipFocusRequester
+                    // Same precedence as the handoff: UP from the request row
+                    // goes to the results, else the error's "Try again", else
+                    // the chips. Spatial search alone skipped the button and
+                    // landed on the chips or the field.
+                    cardModifier = Modifier.focusProperties {
+                        up = when {
+                            state.items.isNotEmpty() -> firstResultFocusRequester
+                            state.error != null -> feedbackActionFocusRequester
+                            else -> firstFilterChipFocusRequester
+                        }
                     },
                     onOpenRequestDetail = onOpenRequestDetail,
                     onOpenLibraryItem = onOpenLibraryItem,
@@ -634,7 +700,15 @@ fun TvSearchScreen(
                 when {
                     state.query.isBlank() -> SearchFeedbackMessage(
                         title = "Search your library",
-                        body = availableMediaDescription(state.availableMediaTypes),
+                        // The mic sits left of the field and is only reached by
+                        // pressing Left from it, so say so — nothing else on the
+                        // screen teaches that route.
+                        body = if (voiceSearch.isAvailable) {
+                            availableMediaDescription(state.availableMediaTypes) +
+                                " Press left from the search box to search by voice."
+                        } else {
+                            availableMediaDescription(state.availableMediaTypes)
+                        },
                     )
                     state.isLoading -> Box(modifier = Modifier.height(64.dp))
                     state.error != null -> SearchFeedbackMessage(
@@ -645,6 +719,11 @@ fun TvSearchScreen(
                         actionUpFocusRequester = firstFilterChipFocusRequester,
                         onActionFocusChanged = { focused ->
                             setFocusedRegion(TvSearchFocusRegion.Feedback, focused)
+                            // Coming back UP from the request row, the button
+                            // is only just on screen and the field, chips and
+                            // error title are still under the top menu. The
+                            // header is item zero; bring the whole thing back.
+                            if (focused) scrollHeaderIntoView++
                         },
                         onAction = viewModel::submitSearch,
                     )
@@ -668,7 +747,8 @@ private fun TvRequestSearchSection(
     results: List<RequestMediaResult>,
     shouldShow: Boolean,
     firstItemFocusRequester: FocusRequester,
-    firstItemCardModifier: Modifier,
+    /** Applied to every card, so UP is routed the same from any position in the row. */
+    cardModifier: Modifier,
     restoreItemIndex: Int = -1,
     restoreItemFocusRequester: FocusRequester? = null,
     onItemFocusChanged: (RequestMediaResult, Int, Boolean) -> Unit = { _, _, _ -> },
@@ -678,28 +758,36 @@ private fun TvRequestSearchSection(
 ) {
     if (!requestsEnabled || query.trim().length < 2 || !shouldShow) return
 
+    // This section is a full-span footer item inside TvCatalogGrid, so the
+    // grid's own contentPadding already supplies the safe-area gutter. Adding
+    // it again here is what pushed this header out of line with the result
+    // grid above it.
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(
-                start = Spacing.safeArea,
-                end = 24.dp,
-                top = 4.dp,
-                bottom = 12.dp,
-            ),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(top = Spacing.md, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            text = "Available to request",
-            style = MaterialTheme.typography.titleLarge,
-            color = Color.White,
-        )
+        TvSectionHeader(title = "Available to request")
         when {
             results.isNotEmpty() -> {
                 LazyRow(
-                    modifier = Modifier.focusGroup(),
+                    // A LazyRow clips along its scroll axis, so a focused card
+                    // scaling up at index zero lost its left edge against the
+                    // row's bounds. Let the row bleed into the grid gutter and
+                    // pad the content back by the same amount, the way the
+                    // home rails span the full width — the first card then has
+                    // room to grow without being cut off.
+                    modifier = Modifier
+                        .bleedStart(Spacing.safeArea)
+                        .focusGroup(),
                     horizontalArrangement = Arrangement.spacedBy(20.dp),
-                    contentPadding = PaddingValues(end = Spacing.safeArea),
+                    contentPadding = PaddingValues(
+                        start = Spacing.safeArea,
+                        end = Spacing.safeArea,
+                        top = 12.dp,
+                        bottom = 12.dp,
+                    ),
                 ) {
                     itemsIndexed(
                         results,
@@ -726,7 +814,7 @@ private fun TvRequestSearchSection(
                             } else {
                                 firstItemFocusRequester.takeIf { index == 0 }
                             },
-                            cardModifier = (if (index == 0) firstItemCardModifier else Modifier)
+                            cardModifier = cardModifier
                                 .onFocusChanged { onItemFocusChanged(item, index, it.hasFocus) },
                         )
                     }
@@ -736,6 +824,23 @@ private fun TvRequestSearchSection(
             error != null -> RequestSearchFeedbackRow(error)
             hasSubmittedQuery -> RequestSearchFeedbackRow("No requestable matches found.")
         }
+    }
+}
+
+/**
+ * Lets a scrolling row extend [amount] to the left of the slot it was given,
+ * so content padded back in by the same amount can overflow (scale, glow)
+ * into that space without being clipped by the row's own bounds.
+ */
+private fun Modifier.bleedStart(amount: Dp): Modifier = layout { measurable, constraints ->
+    val extra = amount.roundToPx()
+    val widened = constraints.copy(
+        minWidth = if (constraints.hasBoundedWidth) constraints.minWidth + extra else constraints.minWidth,
+        maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth + extra else constraints.maxWidth,
+    )
+    val placeable = measurable.measure(widened)
+    layout((placeable.width - extra).coerceAtLeast(0), placeable.height) {
+        placeable.place(-extra, 0)
     }
 }
 
@@ -787,19 +892,23 @@ private fun SearchStage(
     onQueryChanged: (String) -> Unit,
     onSearch: () -> Unit,
     onMediaTypeChanged: (TvSearchMediaType) -> Unit,
+    voiceSearch: TvVoiceSearchController,
+    voiceUnavailableMessage: String?,
     isKeyboardOpen: Boolean,
     onKeyboardOpenChanged: (Boolean) -> Unit,
 ) {
+    val voiceFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val mediaTypes = availableMediaTypes
     val fieldShape = RoundedCornerShape(14.dp)
 
+    // Rendered as the grid's header item, so the grid's contentPadding already
+    // provides the horizontal gutters. Insetting again here put the field and
+    // chips a full gutter to the right of the result cards beneath them.
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(
-                start = Spacing.safeArea,
-                end = 24.dp,
                 top = TvTopMenuLayout.contentTopInset - 12.dp,
                 bottom = Spacing.sm,
             ),
@@ -809,6 +918,22 @@ private fun SearchStage(
             horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+        // Hidden outright when nothing can service it, rather than shown and
+        // inert: a mic that does nothing when pressed is worse than no mic.
+        if (voiceSearch.isAvailable) {
+            TvVoiceSearchButton(
+                onClick = voiceSearch::start,
+                modifier = Modifier
+                    .focusRequester(voiceFocusRequester)
+                    // RIGHT is stated rather than left to geometry, because the
+                    // route INTO this button comes from below and the way back
+                    // out has to be certain.
+                    .focusProperties {
+                        right = searchFieldFocusRequester
+                        down = firstFilterChipFocusRequester
+                    },
+            )
+        }
         OutlinedTextField(
             value = query,
             onValueChange = { onQueryChanged(it.take(TV_SEARCH_QUERY_MAX_LENGTH)) },
@@ -841,7 +966,19 @@ private fun SearchStage(
                 keyboardType = KeyboardType.Text,
                 imeAction = ImeAction.Search,
             ),
-            keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+            keyboardActions = KeyboardActions(
+                onSearch = {
+                    // Submitting is the end of typing. Put the IME away here,
+                    // explicitly: focus later moving to a result does not
+                    // reliably dismiss it on TV, and a keyboard left standing
+                    // over the grid was the most-reported oddity of this
+                    // screen. Flip the open flag too so the field is read-only
+                    // again and Back/D-pad go to the screen, not the IME.
+                    onKeyboardOpenChanged(false)
+                    keyboardController?.hide()
+                    onSearch()
+                },
+            ),
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
             shape = fieldShape,
             modifier = Modifier
@@ -878,6 +1015,42 @@ private fun SearchStage(
                             keyboardController?.show()
                             true
                         }
+                        // LEFT has to be taken from the field as well. Keeping
+                        // the keyboard down was necessary but not sufficient:
+                        // the text field still consumes Left as caret movement,
+                        // even read-only and even with nowhere for the caret to
+                        // go, so the key never becomes a focus move.
+                        //
+                        // Only while the keyboard is closed. Once it is open the
+                        // IME owns the D-pad and this never runs — and Left
+                        // genuinely should walk the caret then.
+                        event.type == KeyEventType.KeyDown &&
+                            event.key == Key.DirectionLeft &&
+                            !isKeyboardOpen &&
+                            voiceSearch.isAvailable -> {
+                            // A key handler answers synchronously, so this is
+                            // the single-shot claim; a miss is reported rather
+                            // than swallowed.
+                            voiceFocusRequester.claimFocusOrReport(
+                                target = "search_voice",
+                                action = "field_left",
+                            )
+                        }
+                        // DOWN too. With the keyboard closed and a query in the
+                        // field, the read-only text field still swallows Down
+                        // (caret-to-end), so `focusProperties { down = … }`
+                        // never gets a chance and the user is stuck on the
+                        // field after a search — nothing below is reachable.
+                        // Taking it in the preview phase is the same fix as
+                        // Left; UP already belongs to the shell.
+                        event.type == KeyEventType.KeyDown &&
+                            event.key == Key.DirectionDown &&
+                            !isKeyboardOpen -> {
+                            firstFilterChipFocusRequester.claimFocusOrReport(
+                                target = "search_first_filter_chip",
+                                action = "field_down",
+                            )
+                        }
                         else -> false
                     }
                 }
@@ -889,6 +1062,14 @@ private fun SearchStage(
                 unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
             ),
         )
+        }
+
+        voiceUnavailableMessage?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.72f),
+            )
         }
 
         LazyRow(
@@ -1120,3 +1301,43 @@ private const val TvSearchReturnMaxStandDowns: Int = 4
 /** Focus must hold the card this long to count as arrived rather than passing. */
 private const val TvSearchReturnSettleMillis: Long = 120L
 
+/**
+ * The mic beside the search field.
+ *
+ * Deliberately a peer of the field rather than an icon inside it: a trailing
+ * icon in a text field is not focusable, and on a remote a control you cannot
+ * reach with the D-pad may as well not exist.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvVoiceSearchButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    Surface(
+        onClick = onClick,
+        interactionSource = interactionSource,
+        shape = ClickableSurfaceDefaults.shape(CircleShape),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.White.copy(alpha = 0.055f),
+            focusedContainerColor = Color.White,
+            contentColor = Color.White,
+            focusedContentColor = Color.Black,
+        ),
+        modifier = modifier.size(52.dp),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            M3Icon(
+                imageVector = Icons.Filled.Mic,
+                contentDescription = "Search by voice",
+                tint = if (isFocused) Color.Black else Color.White.copy(alpha = 0.82f),
+                modifier = Modifier.size(24.dp),
+            )
+        }
+    }
+}

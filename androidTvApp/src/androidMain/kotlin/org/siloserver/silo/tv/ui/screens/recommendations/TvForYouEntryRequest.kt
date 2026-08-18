@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.recommendations
 
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
+
 enum class SavedListSelection {
     Watchlist,
     Favorites,
@@ -14,6 +17,18 @@ data class TvForYouEntryRequest(
 
     fun nextForTopLevelForYou(): TvForYouEntryRequest = next(null)
 }
+
+/** Saver for the shell's entry-request slot; see the shell for why it is saved. */
+val TvForYouEntryRequestSaver: Saver<TvForYouEntryRequest, Any> = listSaver(
+    save = { listOf(it.sequence, it.selection?.name ?: "") },
+    restore = { saved ->
+        TvForYouEntryRequest(
+            sequence = saved[0] as Int,
+            selection = (saved[1] as String).takeIf { it.isNotEmpty() }
+                ?.let { SavedListSelection.valueOf(it) },
+        )
+    },
+)
 
 internal data class AppliedForYouSelection(
     val selection: SavedListSelection?,
@@ -39,18 +54,3 @@ internal fun applyForYouEntryRequest(
             appliedRequest = true,
         )
     }
-
-internal suspend fun requestForYouEntryFocus(
-    selection: SavedListSelection?,
-    awaitFrame: suspend () -> Unit,
-    requestForYou: () -> Boolean,
-    requestWatchlist: () -> Boolean,
-    requestFavorites: () -> Boolean,
-): Boolean {
-    awaitFrame()
-    return when (selection) {
-        null -> requestForYou()
-        SavedListSelection.Watchlist -> requestWatchlist()
-        SavedListSelection.Favorites -> requestFavorites()
-    }
-}

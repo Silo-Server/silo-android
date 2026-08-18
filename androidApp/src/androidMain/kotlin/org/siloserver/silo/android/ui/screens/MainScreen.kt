@@ -36,8 +36,11 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import org.siloserver.silo.android.ui.components.MainAppHeaderBodyHeight
 import org.siloserver.silo.android.ui.components.MainAppTopBar
+import org.siloserver.silo.android.ui.components.TabTopBarActions
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.navigation.SiloBottomNavBar
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.android.ui.navigation.Tab
 import org.siloserver.silo.android.ui.navigation.tabForRoute
@@ -55,7 +58,9 @@ import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesScreen
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesSelectorSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesViewModel
+import org.siloserver.silo.android.ui.screens.recommendations.ForYouList
 import org.siloserver.silo.android.ui.screens.recommendations.RecommendationsScreen
+import org.siloserver.silo.android.ui.screens.recommendations.headerTitle
 import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherMenuEntrySheet
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
@@ -275,6 +280,15 @@ fun MainScreen(
             null
         }
 
+    // Tab content registers as the blur source for the floating tab bar's
+    // glass; the pill blurs whatever scrolls beneath it.
+    val hazeState = rememberHazeState()
+    // For You's Watchlist / Favorites toggle lives here so the shared header
+    // can title itself after what the tab is showing.
+    var forYouList by rememberSaveable { mutableStateOf<ForYouList?>(null) }
+    // What For You is actually showing (the empty-feed fallback shows the
+    // Watchlist without making it an explicit selection); drives the title.
+    var forYouDisplayed by remember { mutableStateOf<ForYouList?>(null) }
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
@@ -307,6 +321,7 @@ fun MainScreen(
                         }
                     },
                     tabs = visibleTabs,
+                    hazeState = hazeState,
                 )
             }
         },
@@ -324,7 +339,17 @@ fun MainScreen(
             CompositionLocalProvider(
                 LocalBottomChromeInset provides padding.calculateBottomPadding(),
             ) {
-            Box(modifier = Modifier.fillMaxSize()) {
+            // The tab content is the blur source for both the floating pill and
+            // the shared top bar. Both effects sit outside this Box (bottomBar,
+            // and the sibling MainAppTopBar below) — an effect must never live
+            // inside the source it reads. The background is painted inside the
+            // source so the capture is opaque.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .hazeSource(hazeState)
+                    .background(MaterialTheme.colorScheme.background),
+            ) {
                 when (currentTab) {
                     Tab.Home -> {
                         val homeViewModel = koinViewModel<HomeViewModel>()
@@ -366,9 +391,6 @@ fun MainScreen(
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
                             },
-                            onPlayClick = { contentId, resumePositionSeconds ->
-                                playVideo(contentId, resumePositionSeconds = resumePositionSeconds)
-                            },
                             onCollectionClick = { collectionId, libraryId ->
                                 navController.navigate(Route.CollectionDetail(collectionId, libraryId).route)
                             },
@@ -393,17 +415,35 @@ fun MainScreen(
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
                             },
+                            savedListSelection = forYouList,
+                            onSavedListSelectionChange = { forYouList = it },
+                            onDisplayedListChange = { forYouDisplayed = it },
                             contentTopPadding = headerContentTop,
                         )
                     }
                     Tab.Calendar -> {
+                        // Calendar's floating week card is its own header (iOS):
+                        // the shared actions ride inside the card, no title row.
                         CalendarScreen(
-                            onBackClick = { navController.popBackStack() },
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
                             },
-                            showTopBar = false,
-                            contentTopPadding = headerContentTop,
+                            headerActions = {
+                                TabTopBarActions(
+                                    activeProfile = headerState.activeProfile,
+                                    onSearchClick = { navController.navigate(Route.Search().route) },
+                                    onRequestsClick = requestsMenuAction,
+                                    onWatchTogetherClick = watchTogetherMenuAction,
+                                    onSettingsClick = { navController.navigate(Route.Settings.route) },
+                                    onSwitchProfileClick = {
+                                        navController.navigate(Route.ProfileSelection.route)
+                                    },
+                                    onSwitchServerClick = {
+                                        navController.navigate(Route.ServerList.route)
+                                    },
+                                    onSignOutClick = ::signOutFromProfileMenu,
+                                )
+                            },
                         )
                     }
                     Tab.Downloads -> {
@@ -439,18 +479,19 @@ fun MainScreen(
                 }
             }
 
-            // Home and Libraries paint their own floating chrome. Calendar,
-            // Downloads, and For You use the shared iOS-style top chrome.
-            if (currentTab == Tab.Downloads || currentTab == Tab.ForYou || currentTab == Tab.Calendar) {
+            // Home, Libraries and Calendar paint their own floating chrome.
+            // Downloads and For You use the shared iOS-style top chrome.
+            if (currentTab == Tab.Downloads || currentTab == Tab.ForYou) {
                 val title = when (currentTab) {
-                    Tab.Calendar -> "Calendar"
                     Tab.Downloads -> "Downloads"
-                    Tab.ForYou -> "For You"
+                    // Names what For You is showing: the feed, or a saved list.
+                    Tab.ForYou -> forYouDisplayed.headerTitle()
                     else -> null
                 }
                 MainAppTopBar(
                     activeProfile = headerState.activeProfile,
                     isProfileLoading = headerState.isLoading,
+                    hazeState = hazeState,
                     onSearchClick = { navController.navigate(Route.Search().route) },
                     onRequestsClick = requestsMenuAction,
                     onWatchTogetherClick = watchTogetherMenuAction,

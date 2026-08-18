@@ -41,7 +41,7 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.tv.ui.theme.Spacing
-import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
+import org.siloserver.silo.tv.ui.theme.rememberTvGridBringIntoViewSpec
 import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 
 /**
@@ -204,7 +204,11 @@ fun TvCatalogGrid(
         uniqueItems.isNotEmpty() &&
         loadMoreRequestedSize == uniqueItems.size
 
-    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+    CompositionLocalProvider(
+        LocalBringIntoViewSpec provides rememberTvGridBringIntoViewSpec(
+            contentPadding.calculateTopPadding(),
+        ),
+    ) {
     LazyVerticalGrid(
         state = resolvedGridState,
         columns = fixedColumnCount?.let { GridCells.Fixed(it) }

@@ -18,6 +18,13 @@ data class EditProfileUiState(
     val profileId: String = "",
     val name: String = "",
     val selectedAvatar: String? = null,
+    /**
+     * Server-supplied URL for the avatar this profile was LOADED with, so an
+     * uploaded avatar renders in the editor preview instead of falling back to
+     * initials. Cleared the moment the user picks a different avatar, because
+     * the URL only describes the stored one.
+     */
+    val selectedAvatarUrl: String? = null,
     val isChild: Boolean = false,
     val maxContentRating: String? = null,
     val pinEnabled: Boolean = false,
@@ -70,6 +77,7 @@ class EditProfileViewModel(
                                 isLoading = false,
                                 name = profile.name,
                                 selectedAvatar = profile.avatar,
+                                selectedAvatarUrl = profile.avatarUrl,
                                 isChild = profile.isChild,
                                 maxContentRating = profile.maxContentRating,
                                 pinEnabled = profile.hasPin,
@@ -106,7 +114,9 @@ class EditProfileViewModel(
     }
 
     fun onAvatarSelected(avatarRef: String) {
-        _uiState.update { it.copy(selectedAvatar = avatarRef) }
+        // Drop the loaded avatar's URL: it points at the stored image, which is
+        // no longer what the preview should show.
+        _uiState.update { it.copy(selectedAvatar = avatarRef, selectedAvatarUrl = null) }
     }
 
     fun onChildToggled(checked: Boolean) {

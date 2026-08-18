@@ -3,14 +3,35 @@ package org.siloserver.silo.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.CatalogEffectiveSort
+import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+/**
+ * Sort + filter applied to a personal list.
+ *
+ * The default — no sort, no facet groups — is the server's stored list order
+ * (most recently saved first). Favorites and watchlist fetch through
+ * `/catalog?source=…`, the only route that accepts sort and facets.
+ */
+data class PersonalListQuery(
+    /** null = send no sort, i.e. keep the server's stored list order. */
+    val sort: String? = null,
+    val order: String? = null,
+    val queryGroups: List<CatalogQueryGroup> = emptyList(),
+    /** "all" | "any"; only meaningful when [queryGroups] is non-empty. */
+    val match: String? = null,
+) {
+    val isDefault: Boolean get() = sort == null && queryGroups.isEmpty()
+}
 
 /**
  * Shared UI state for paginated personal lists (favorites, watchlist, history).
@@ -23,6 +44,9 @@ data class PersonalListUiState(
     val error: String? = null,
     val hasMore: Boolean = false,
     val total: Int = 0,
+    val query: PersonalListQuery = PersonalListQuery(),
+    /** What the server says it sorted by, when it reports one. */
+    val effectiveSort: CatalogEffectiveSort? = null,
 )
 
 /**
@@ -47,9 +71,35 @@ abstract class PersonalListViewModel(
     var hasLoadedOnce: Boolean = false
         private set
 
-    protected abstract suspend fun fetchPage(offset: Int, limit: Int): ApiResult<CatalogResponse>
+    /**
+     * The sort/filter every fetch runs under. Mirrored into the UI state so
+     * screens can render the controls from one source of truth.
+     */
+    protected var query: PersonalListQuery = PersonalListQuery()
+        private set
+
+    protected abstract suspend fun fetchPage(
+        offset: Int,
+        limit: Int,
+        query: PersonalListQuery,
+    ): ApiResult<CatalogResponse>
 
     protected fun loadInitial() {
+        load(reset = true)
+    }
+
+    /**
+     * Swap the sort/filter and reload from zero. The reset bumps the content
+     * generation, so any page still in flight under the previous query is
+     * dropped when it lands rather than mixed into the new list.
+     */
+    fun applyQuery(newQuery: PersonalListQuery) {
+        if (newQuery == query) return
+        query = newQuery
+        // The old query's rows must not stand in for the new one — not while
+        // it loads, and not if it fails (the grid would silently keep showing
+        // cards that do not match the selected sort/filters).
+        _uiState.update { it.copy(query = newQuery, items = emptyList(), total = 0, hasMore = false) }
         load(reset = true)
     }
 
@@ -101,7 +151,7 @@ abstract class PersonalListViewModel(
         _uiState.update { it.copy(isRefreshing = true, error = null) }
         viewModelScope.launch {
             val offset = 0
-            val result = fetchPage(offset, pageSize)
+            val result = fetchPage(offset, pageSize, query)
             // A newer replacement started while this refresh was in flight.
             // Release isRefreshing unless a newer REFRESH has re-claimed it —
             // a superseding reset owns isLoading instead and would not clear
@@ -125,6 +175,7 @@ abstract class PersonalListViewModel(
                         items = r.data.items,
                         hasMore = r.data.hasMore,
                         total = r.data.total,
+                        effectiveSort = r.data.effectiveSort,
                         isRefreshing = false,
                         error = null,
                     )
@@ -154,8 +205,11 @@ abstract class PersonalListViewModel(
             if (reset) it.copy(isLoading = true, error = null)
             else it.copy(isLoadingMore = true)
         }
+        // Captured with the offset: a query swap mid-flight must not make this
+        // page's items describe a different list from the one it asked for.
+        val requestQuery = query
         viewModelScope.launch {
-            val result = fetchPage(offset, pageSize)
+            val result = fetchPage(offset, pageSize, requestQuery)
             // Superseded WHILE IN FLIGHT: something replaced the list, so this
             // page's offset no longer describes anything. Checked here rather
             // than before the fetch — before it, there is nothing to be stale
@@ -186,6 +240,7 @@ abstract class PersonalListViewModel(
                             items = if (reset) r.data.items else it.items + r.data.items,
                             hasMore = r.data.hasMore,
                             total = r.data.total,
+                            effectiveSort = r.data.effectiveSort ?: it.effectiveSort,
                             error = null,
                         )
                     }
@@ -217,14 +272,26 @@ abstract class PersonalListViewModel(
 
 class FavoritesViewModel(
     private val personalDataRepository: PersonalDataRepository,
+    private val catalogRepository: CatalogRepository,
 ) : PersonalListViewModel() {
 
     init {
         loadInitial()
     }
 
-    override suspend fun fetchPage(offset: Int, limit: Int) =
-        personalDataRepository.listFavorites(offset = offset, limit = limit)
+    // Always the catalog resolver, even for the default query: it returns the
+    // same stored list order as the legacy `/favorites` route but also reports
+    // `total`, so an item count is available before any sort is applied.
+    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
+        catalogRepository.browse(
+            source = "favorites",
+            sort = query.sort,
+            order = query.order,
+            offset = offset,
+            limit = limit,
+            queryGroups = query.queryGroups,
+            match = query.match,
+        )
 
     fun toggleFavorite(itemId: String) {
         viewModelScope.launch {
@@ -242,14 +309,26 @@ class FavoritesViewModel(
 
 class WatchlistViewModel(
     private val personalDataRepository: PersonalDataRepository,
+    private val catalogRepository: CatalogRepository,
 ) : PersonalListViewModel() {
 
     init {
         loadInitial()
     }
 
-    override suspend fun fetchPage(offset: Int, limit: Int) =
-        personalDataRepository.listWatchlist(offset = offset, limit = limit)
+    // Always the catalog resolver, even for the default query: it returns the
+    // same stored list order as the legacy `/watchlist` route but also reports
+    // `total`, so an item count is available before any sort is applied.
+    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
+        catalogRepository.browse(
+            source = "watchlist",
+            sort = query.sort,
+            order = query.order,
+            offset = offset,
+            limit = limit,
+            queryGroups = query.queryGroups,
+            match = query.match,
+        )
 
     fun removeFromWatchlist(itemId: String) {
         viewModelScope.launch {
@@ -272,6 +351,7 @@ class HistoryViewModel(
         loadInitial()
     }
 
-    override suspend fun fetchPage(offset: Int, limit: Int) =
+    // History has no sort/filter surface, so the query is always the default.
+    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
         personalDataRepository.listHistory(offset = offset, limit = limit)
 }

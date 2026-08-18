@@ -375,13 +375,17 @@ fun TvSkylineSectionFeed(
 
     var rowRelocationInFlight by remember { mutableStateOf(false) }
     val currentContentUpFallback = rememberUpdatedState<(Boolean) -> Boolean> { isRepeat ->
-        val currentRow = focusedRowIndex
+        val bandTopRow = rowBandState.firstVisibleItemIndex
+        // See tvSkylineEffectiveRow: the reported focused row can lag or be
+        // clamped; the band's top row is the ground truth it is checked against.
+        val currentRow = tvSkylineEffectiveRow(focusedRowIndex, bandTopRow, rows.size)
         when (
             tvSkylineUpAction(
-                currentRow = currentRow,
+                currentRow = focusedRowIndex,
                 rowCount = rows.size,
                 isRepeat = isRepeat,
                 relocationInFlight = rowRelocationInFlight,
+                bandTopRow = bandTopRow,
             )
         ) {
             TvSkylineUpAction.EnterMenu -> false
@@ -396,7 +400,20 @@ fun TvSkylineSectionFeed(
                 rowRelocationInFlight = true
                 rowBandScope.launch {
                     try {
-                        rowBandState.animateScrollToItem(currentRow - 1)
+                        val targetRow = (currentRow - 1).coerceAtLeast(0)
+                        rowBandState.animateScrollToItem(targetRow)
+                        // On a slow device the row's cards can take more than one
+                        // frame to lay out after the scroll settles; moving before
+                        // they exist finds nothing and strands focus. Wait for the
+                        // target row to be present (bounded), then move.
+                        var frames = 0
+                        while (
+                            frames < RelocationLayoutFrameBudget &&
+                            rowBandState.layoutInfo.visibleItemsInfo.none { it.index == targetRow }
+                        ) {
+                            withFrameNanos { }
+                            frames++
+                        }
                         withFrameNanos { }
                         focusManager.moveFocus(FocusDirection.Up)
                     } finally {
@@ -455,12 +472,16 @@ fun TvSkylineSectionFeed(
     // Home rows overlap — a title can sit in Continue Watching and Recently
     // Added at once, and following an id across rows would jump focus to a
     // copy the viewer never touched.
+    // The section map depends on the rows alone; the return target is re-armed
+    // on every focus move, so building the map inside the resolution remember
+    // copied every content id in the feed per keypress.
+    val returnSections = remember(rows) { rows.toTvReturnSections() }
     val returnResolution: TvReturnResolution =
-        remember(rows, returnTarget, detailReturnPending) {
+        remember(returnSections, returnTarget, detailReturnPending) {
             if (detailReturnPending) {
                 resolveTvReturnTarget(
                     target = returnTarget,
-                    sections = rows.toTvReturnSections(),
+                    sections = returnSections,
                     sectionsComplete = sectionsComplete,
                 )
             } else {
@@ -887,3 +908,6 @@ private val TvSkylineBringIntoViewSpec: BringIntoViewSpec = object : BringIntoVi
         }
     }
 }
+
+/** Frames to wait for a relocated row to lay out before moving focus into it. */
+private const val RelocationLayoutFrameBudget = 12

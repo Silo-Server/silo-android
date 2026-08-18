@@ -229,9 +229,16 @@ private fun requireDiagnostics(condition: Boolean, path: String, message: String
     if (!condition) throw DiagnosticsValidationException("$path: $message")
 }
 
-private enum class DiagnosticsAttributeKind { STRING, INTEGER }
+internal enum class DiagnosticsAttributeKind { STRING, INTEGER }
 
-private val REGISTERED_ATTRIBUTES = mapOf(
+/**
+ * Mirror of the canonical client-diagnostics v1 attribute registry.
+ *
+ * This map must stay byte-for-byte equivalent to the vendored
+ * `diagnostics/v1/attr-registry.json` contract fixture; the parity test in
+ * `DiagnosticsAttributeRegistryParityTest` is the gate that enforces it.
+ */
+internal val REGISTERED_ATTRIBUTES = mapOf(
     DiagnosticsLogCategory.PLAYBACK to mapOf(
         "sink" to DiagnosticsAttributeKind.STRING,
         "fmt" to DiagnosticsAttributeKind.STRING,
@@ -242,6 +249,10 @@ private val REGISTERED_ATTRIBUTES = mapOf(
         "bitrate_kbps" to DiagnosticsAttributeKind.INTEGER,
         "dropped_frames" to DiagnosticsAttributeKind.INTEGER,
         "audio_underruns" to DiagnosticsAttributeKind.INTEGER,
+        "session_id" to DiagnosticsAttributeKind.STRING,
+        "play_method" to DiagnosticsAttributeKind.STRING,
+        "reason" to DiagnosticsAttributeKind.STRING,
+        "position_ms" to DiagnosticsAttributeKind.INTEGER,
     ),
     DiagnosticsLogCategory.FOCUS to mapOf(
         "target" to DiagnosticsAttributeKind.STRING,
@@ -252,9 +263,17 @@ private val REGISTERED_ATTRIBUTES = mapOf(
         "path" to DiagnosticsAttributeKind.STRING,
         "status" to DiagnosticsAttributeKind.INTEGER,
         "duration_ms" to DiagnosticsAttributeKind.INTEGER,
+        "outcome" to DiagnosticsAttributeKind.STRING,
+        "error_code" to DiagnosticsAttributeKind.STRING,
+        "attempt" to DiagnosticsAttributeKind.INTEGER,
     ),
     DiagnosticsLogCategory.LIFECYCLE to mapOf(
         "state" to DiagnosticsAttributeKind.STRING,
+        "phase" to DiagnosticsAttributeKind.STRING,
+        "duration_ms" to DiagnosticsAttributeKind.INTEGER,
+        "outcome" to DiagnosticsAttributeKind.STRING,
+        "reason" to DiagnosticsAttributeKind.STRING,
+        "launch_type" to DiagnosticsAttributeKind.STRING,
     ),
     DiagnosticsLogCategory.CRASH to mapOf(
         "fingerprint" to DiagnosticsAttributeKind.STRING,

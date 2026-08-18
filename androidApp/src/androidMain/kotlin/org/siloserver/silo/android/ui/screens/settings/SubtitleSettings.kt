@@ -2,8 +2,6 @@ package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.SettingKeys
@@ -44,11 +42,10 @@ fun SubtitleSettings(
             runtimeValues = metadataLanguageSuggestions,
         )
     }
-    SettingsSectionCard(modifier = modifier) {
-        SettingsSectionHeader("Subtitles")
-
+    SettingsSection(title = "Subtitles", modifier = modifier) {
         SettingsDropdownRow(
-            label = "Subtitle Language",
+            label = "Subtitle language",
+            description = "Choose which subtitle language Silo should prefer first.",
             value = LanguageOptions.label(subtitleLanguage, SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE),
             options = subtitleLanguageOptions.map { it.second },
             onOptionSelected = { label ->
@@ -57,7 +54,8 @@ fun SubtitleSettings(
         )
 
         SettingsDropdownRow(
-            label = "Subtitle Mode",
+            label = "Subtitle behavior",
+            description = "When Silo should turn subtitles on.",
             value = subtitleMode.label,
             options = SubtitleMode.entries.map { it.label },
             onOptionSelected = { label ->
@@ -66,7 +64,8 @@ fun SubtitleSettings(
         )
 
         SettingsSwitchRow(
-            label = "Show Forced Subtitles",
+            label = "Show forced subtitles",
+            description = "Show subtitles for foreign-language dialogue even when subtitles are off.",
             checked = showForcedSubtitles,
             onCheckedChange = onForcedSubtitlesChanged,
         )
@@ -75,21 +74,23 @@ fun SubtitleSettings(
         // (appearance follows the OS captioning preferences) + the custom
         // appearance editor (the same sheet the player uses).
         SettingsSwitchRow(
-            label = "Match Device Settings",
+            label = "Match device caption settings",
+            description = "Use the operating system's caption style instead of Silo's.",
             checked = subtitleMatchesDevice,
             onCheckedChange = onSubtitleMatchesDeviceChanged,
         )
         if (!subtitleMatchesDevice) {
-            SettingsClickableRow(
-                icon = Icons.Filled.ClosedCaption,
-                label = "Subtitle Appearance",
+            SettingsNavigationRow(
+                label = "Subtitle appearance",
+                description = "How subtitles are drawn during playback.",
                 onClick = onOpenSubtitleAppearance,
             )
         }
 
         if (metadataLanguageEnabled) {
             SettingsDropdownRow(
-                label = "Metadata Language",
+                label = "Metadata language",
+                description = "Fallback language Silo prefers for titles, descriptions, and artwork.",
                 value = LanguageOptions.label(metadataLanguage, SettingKeys.CATALOG_METADATA_LANGUAGE),
                 options = metadataLanguageOptions.map { it.second },
                 onOptionSelected = { label ->

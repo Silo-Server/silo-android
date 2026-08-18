@@ -16,6 +16,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,6 +48,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -77,6 +81,7 @@ import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
+import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
 import org.siloserver.silo.common.player.video.mountedAudioTracks
@@ -221,6 +226,11 @@ fun PlayerScreen(
     var dvSanitizerReported by remember { mutableStateOf(false) }
     var pictureInPictureVideoWidth by remember { mutableStateOf(16) }
     var pictureInPictureVideoHeight by remember { mutableStateOf(9) }
+    // Display aspect of the decoded frame — coded size corrected for anamorphic
+    // pixels, which is what AspectRatioFrameLayout actually fits. Deliberately 0
+    // until the first video-size callback, so the letterbox probe measures
+    // against the real frame rather than the 16:9 placeholder above.
+    var codedVideoAspect by remember { mutableFloatStateOf(0f) }
     var pictureInPictureSourceRect by remember { mutableStateOf<Rect?>(null) }
     var playerRootBounds by remember { mutableStateOf<Rect?>(null) }
     var fastForwardHoldActive by remember { mutableStateOf(false) }
@@ -737,6 +747,17 @@ fun PlayerScreen(
         viewModel.onMediaMountApplied(uiState.mediaMountGeneration)
     }
 
+    // A new mount leaves the previous item's frame in the SurfaceView until the
+    // new stream decodes its own, and its geometry describes that stale frame.
+    // Forgetting it gates the letterbox probe off until Media3 re-reports a
+    // video size — which it does as the new stream produces its first output —
+    // so the outgoing episode's matte can never settle, or be cached, under the
+    // incoming one's key. The PiP dimensions above are deliberately kept: they
+    // size a window that must not collapse mid-transition.
+    LaunchedEffect(uiState.mediaMountGeneration) {
+        codedVideoAspect = 0f
+    }
+
     // Mid-playback subtitle refresh (downloaded / AI-generated tracks).
     // Subtitle configs are baked into the MediaItem at build time, so when
     // refreshSubtitles merges new tracks it bumps subtitleRefreshNonce and we
@@ -904,6 +925,8 @@ fun PlayerScreen(
                     if (size.width > 0 && size.height > 0) {
                         pictureInPictureVideoWidth = size.width
                         pictureInPictureVideoHeight = size.height
+                        val pixelAspect = size.pixelWidthHeightRatio.takeIf { it > 0f } ?: 1f
+                        codedVideoAspect = size.width.toFloat() / size.height * pixelAspect
                         // Pull frame rate off the selected video track; phone
                         // panels with multiple refresh rates switch to
                         // content-matching (seamless only — see ExoPlayer's
@@ -1219,12 +1242,76 @@ fun PlayerScreen(
         } else {
             val controller = mediaController
             val videoGravity by viewModel.videoGravity.collectAsState()
-            val resizeMode = when (videoGravity) {
-                "fill" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+            var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+            val letterboxExpansion by viewModel.letterboxExpansion.collectAsState()
+            // The camera only reaches the picture once expansion pushes it out
+            // to the edges — at FIT's 2560px the pillarbox already swallows it.
+            // Read the platform's resolved cutout rather than deriving it from
+            // rotation: it already knows which edge the camera is on in THIS
+            // rotation (they are opposite edges in the two landscapes), and it
+            // accounts for waterfall edges and multiple cutouts too.
+            val layoutDirection = LocalLayoutDirection.current
+            // Fill and Stretch are the user asking for the whole display, camera
+            // and all, exactly as they are excluded from expansion below — so
+            // they are not insetted either.
+            val explicitFullScreenGravity = videoGravity == "fill" || videoGravity == "stretch"
+            val cutoutSideInsetPx = if (
+                letterboxExpansion == LetterboxExpansion.ClearOfCamera && !explicitFullScreenGravity
+            ) {
+                val cutout = WindowInsets.displayCutout
+                cutoutSafeHorizontalInset(
+                    cutoutLeftPx = cutout.getLeft(density, layoutDirection),
+                    cutoutRightPx = cutout.getRight(density, layoutDirection),
+                )
+            } else {
+                0
+            }
+            // Scope films ship as a 2.39:1 image inside a 16:9 frame, and a
+            // 1.90:1 title ships the same way, so a plain fit fits the encoded
+            // black too. This measures that matte and reports the aspect of the
+            // picture hiding inside the frame — the coded aspect itself when
+            // there is nothing to discount. Off wherever the video is not what
+            // is on screen, and off for the gravities the user has already
+            // decided for themselves.
+            val letterboxContentAspect = rememberLetterboxContentAspect(
+                playerView = playerViewRef,
+                enabled = letterboxExpansion != LetterboxExpansion.Off &&
+                    !explicitFullScreenGravity &&
+                    !isInPictureInPictureMode &&
+                    !castState.isConnected &&
+                    !useTabletopPlayerLayout,
+                videoAspect = codedVideoAspect,
+                mediaKey = uiState.mediaMountGeneration,
+                cacheKey = letterboxMatteCacheKey(
+                    // Downloads carry no server URL by design, and content and
+                    // media-file ids are server-scoped, so keying them on the
+                    // rest of the tuple alone would let two servers' downloads
+                    // share an entry. The local URI names those stored bytes
+                    // exactly, and is stable across plays of the download.
+                    origin = uiState.serverUrl.ifBlank {
+                        uiState.streamUrl
+                            ?.takeIf { it.startsWith("file://") || it.startsWith("content://") }
+                            .orEmpty()
+                    },
+                    contentId = uiState.contentId,
+                    mediaFileId = uiState.mediaFileId,
+                    codedWidth = pictureInPictureVideoWidth,
+                    codedHeight = pictureInPictureVideoHeight,
+                ),
+            )
+            // Expanding means giving the surface the shape of the PICTURE rather
+            // than of the coded frame, and letting the frame overflow it. The
+            // surface box below is that shape; ZOOM then scales the frame to
+            // cover it, which lands the clip inside the encoded matte by
+            // construction rather than by a threshold.
+            val letterboxExpanding = codedVideoAspect > 0f &&
+                letterboxContentAspect > codedVideoAspect
+            val resizeMode = when {
+                videoGravity == "fill" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                videoGravity == "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                letterboxExpanding -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             }
-            var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
             val subtitleAppearance by viewModel.subtitleAppearance.collectAsState()
 
             // Re-apply user subtitle styling whenever the PlayerView mounts or the
@@ -1239,13 +1326,28 @@ fun PlayerScreen(
             val activeTabletopPaneLayout = tabletopPaneLayout.takeIf {
                 useTabletopPlayerLayout
             }
-            val videoSurfaceModifier = if (activeTabletopPaneLayout != null) {
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(with(density) { activeTabletopPaneLayout.videoHeightPx.toDp() })
-            } else {
-                Modifier.fillMaxSize()
+            val cutoutInsetDp = with(density) { cutoutSideInsetPx.toDp() }
+            val videoSurfaceModifier = when {
+                activeTabletopPaneLayout != null ->
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(with(density) { activeTabletopPaneLayout.videoHeightPx.toDp() })
+                // Expanding means giving the surface the shape of the PICTURE
+                // rather than of the coded frame. `aspectRatio` IS the fit: it
+                // takes the full width when the picture is wider than what is
+                // available and the full height when it is narrower, which is
+                // exactly the rule, both cases, no branch. It must NOT be
+                // preceded by fillMaxSize, which would pin the constraints and
+                // leave it nothing to choose between.
+                letterboxExpanding ->
+                    Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = cutoutInsetDp)
+                        .aspectRatio(letterboxContentAspect)
+                // Shrinking the available area is what keeps the camera off a
+                // picture that reaches the edges on its own.
+                else -> Modifier.fillMaxSize().padding(horizontal = cutoutInsetDp)
             }
 
             if (controller != null) {

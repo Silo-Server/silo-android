@@ -71,18 +71,3 @@ data class SignupRequest(
 data class SignupStatusResponse(
     val enabled: Boolean
 )
-
-@Serializable
-data class AuthSession(
-    val id: String,
-    @SerialName("device_name") val deviceName: String,
-    @SerialName("ip_address") val ipAddress: String,
-    @SerialName("created_at") val createdAt: String,
-    @SerialName("expires_at") val expiresAt: String,
-    @SerialName("revoked_at") val revokedAt: String? = null
-)
-
-@Serializable
-data class SessionsResponse(
-    val sessions: List<AuthSession>
-)

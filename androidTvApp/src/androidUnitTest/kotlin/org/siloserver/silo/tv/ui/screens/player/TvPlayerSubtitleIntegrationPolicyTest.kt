@@ -2,14 +2,22 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
+import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class TvPlayerSubtitleIntegrationPolicyTest {
     @Test
     fun `unresolved audio during subtitle persistence preserves the existing preference`() {
@@ -280,6 +288,384 @@ class TvPlayerSubtitleIntegrationPolicyTest {
             ),
         )
     }
+
+    // ---- Single-owner subtitle selection -----------------------------------
+    //
+    // Regression: TV had two independent subtitle authorities. The legacy
+    // ordinal auto path selected a text track straight at the player while the
+    // transaction adapter's committed identity never moved, so on an "English –
+    // Always" profile the PGS track rendered on screen and the HUD said "Off".
+    // Everything below pins the pieces of the single-owner flow.
+
+    @Test
+    fun `english always resolves an embedded PGS track to the same identity the HUD checks`() {
+        val row = embeddedPgsRow()
+        val track = embeddedPgsTrack()
+
+        val selection = resolveAutoSubtitleSelection(
+            audioTracks = listOf(
+                PlayerTrackEntry(
+                    index = 0,
+                    label = "English",
+                    language = "en",
+                    isSelected = true,
+                ),
+            ),
+            subtitleTracks = listOf(track),
+            preferredLanguage = "en",
+            subtitleMode = "always",
+            showForced = true,
+        )
+
+        // Bitmap tracks stay deprioritised-but-allowed: it is the only English
+        // candidate, so Always must still pick it.
+        val selected = assertIs<SubtitleAutoSelection.Select>(selection)
+        assertEquals(track.index, selected.index)
+
+        val identity = tvMountedSubtitleIdentity(track, listOf(track), listOf(row))
+        assertEquals(tvSubtitleIdentity(row), identity)
+        assertIs<SubtitleIdentity.Embedded>(identity)
+
+        // The identity the auto path commits is the identity the HUD ticks.
+        val presentation = buildTvSubtitleHudPresentation(
+            options = buildTvSubtitleHudOptions(
+                subtitleUrls = listOf(row),
+                subtitleTracks = listOf(track),
+            ),
+            committedIdentity = identity,
+            pendingIdentity = null,
+            hudOpen = true,
+            focusedStableId = null,
+        )
+        val checked = presentation.rows.single { it.checked }
+        assertEquals(identity, checked.identity)
+        assertEquals(1, presentation.rows.count { it.checked })
+    }
+
+    @Test
+    fun `an automatic pick does not write the durable subtitle preference`() {
+        val identity = tvSubtitleIdentity(embeddedPgsRow())
+
+        assertEquals(
+            TrackSelectionFingerprintUpdate.Preserve,
+            tvSubtitlePersistenceUpdate(
+                committedIdentity = identity,
+                automaticIdentity = identity,
+            ),
+        )
+    }
+
+    @Test
+    fun `a viewer pick writes the durable subtitle preference`() {
+        val automatic = tvSubtitleIdentity(embeddedPgsRow())
+        val chosen = SubtitleIdentity.Off
+
+        assertEquals(
+            TrackSelectionFingerprintUpdate.Set(encodeSubtitleIdentityPreference(chosen)),
+            // The viewer choosing clears the automatic marker in the ViewModel;
+            // a stale marker for a different identity must not suppress the write.
+            tvSubtitlePersistenceUpdate(committedIdentity = chosen, automaticIdentity = automatic),
+        )
+    }
+
+    @Test
+    fun `reconciliation adopts a text track selected outside the adapter`() {
+        val row = embeddedPgsRow()
+        val track = embeddedPgsTrack().copy(isSelected = true)
+
+        assertEquals(
+            tvSubtitleIdentity(row),
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(track),
+                subtitleRows = listOf(row),
+                committedIdentity = SubtitleIdentity.Off,
+                pendingIdentity = null,
+                selectionInFlight = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `reconciliation stands down when the adapter already agrees or is mid-flight`() {
+        val row = embeddedPgsRow()
+        val track = embeddedPgsTrack().copy(isSelected = true)
+        val identity = tvSubtitleIdentity(row)
+
+        assertEquals(
+            null,
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(track),
+                subtitleRows = listOf(row),
+                committedIdentity = identity,
+                pendingIdentity = null,
+                selectionInFlight = false,
+            ),
+        )
+        assertEquals(
+            null,
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(track),
+                subtitleRows = listOf(row),
+                committedIdentity = SubtitleIdentity.Off,
+                pendingIdentity = null,
+                selectionInFlight = true,
+            ),
+        )
+        assertEquals(
+            null,
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(track),
+                subtitleRows = listOf(row),
+                committedIdentity = SubtitleIdentity.Off,
+                pendingIdentity = identity,
+                selectionInFlight = false,
+            ),
+        )
+        // Nothing selected is nothing to reconcile — not an implicit "Off".
+        assertEquals(
+            null,
+            tvExternalSubtitleAdoption(
+                subtitleTracks = listOf(embeddedPgsTrack()),
+                subtitleRows = listOf(row),
+                committedIdentity = identity,
+                pendingIdentity = null,
+                selectionInFlight = false,
+            ),
+        )
+    }
+
+    // ---- Already-mounted picks must never replan ---------------------------
+    //
+    // Regression: protocol v3 types EVERY non-burn-in inventory row
+    // `delivery = sidecar`, including the row that merely describes a track
+    // muxed into a direct-play stream. The launch auto-pick of an embedded PGS
+    // track therefore resolved to a ServerSidecar identity, which the mount
+    // resolver matches by its authored `silo-subtitle:N` id alone — so the
+    // adapter was told the track on screen was not mounted and staged a server
+    // replan for it: new session, media-item swap, seconds of rebuffering, and
+    // a duplicate of the same PGS track re-extracted as a sidecar.
+
+    @Test
+    fun `a v3 row for a muxed track is a sidecar identity that still resolves in place`() {
+        val row = planEmbeddedPgsRow()
+        val track = embeddedPgsTrack()
+
+        // The identity is genuinely ServerSidecar — this is the shape the HUD,
+        // persistence and the adapter all carry, and it is not being changed.
+        val identity = assertIs<SubtitleIdentity.ServerSidecar>(tvSubtitleIdentity(row))
+        assertEquals(identity, tvMountedSubtitleIdentity(track, listOf(track), listOf(row)))
+
+        assertEquals(
+            track.index,
+            tvResolveMountedSubtitleTrack(
+                identity = identity,
+                subtitleRows = listOf(row),
+                mounted = listOf(track.toMountedTvSubtitleTrack()),
+            )?.index,
+        )
+    }
+
+    @Test
+    fun `a sidecar the player has not mounted still resolves to nothing`() {
+        val row = unmountedSidecarRow()
+
+        assertEquals(
+            null,
+            tvResolveMountedSubtitleTrack(
+                identity = tvSubtitleIdentity(row),
+                subtitleRows = listOf(planEmbeddedPgsRow(), row),
+                mounted = listOf(embeddedPgsTrack().toMountedTvSubtitleTrack()),
+            ),
+        )
+    }
+
+    @Test
+    fun `english always commits an already-mounted PGS track in place`() = runTest {
+        val row = planEmbeddedPgsRow()
+        val track = embeddedPgsTrack()
+        val identity = tvSubtitleIdentity(row)
+        val harness = harness(backgroundScope, rows = listOf(row), mounted = listOf(track))
+
+        harness.adapter.selectAuto(identity)
+        runCurrent()
+
+        assertTrue(
+            harness.staged.isEmpty(),
+            "an already-mounted track must not ask the server to replan",
+        )
+        assertEquals(identity, harness.adapter.snapshot.localMountIdentity)
+
+        // The mount the adapter armed resolves onto the muxed ordinal…
+        val remount = SubtitleRemountReselection()
+        remount.arm(identity, generation = 1L)
+        val event = assertIs<TvSubtitleRemountEvent.Select>(
+            remount.consume(
+                subtitleTracks = listOf(track),
+                subtitleRows = listOf(row),
+                snapshotKey = "mounted",
+                settled = true,
+            ),
+        )
+        assertEquals(track.index, event.trackIndex)
+
+        // …and acknowledging it commits the identity the HUD ticks.
+        harness.adapter.reportMountedSelection(
+            identity = identity,
+            selected = true,
+            snapshotKey = "mounted",
+            settled = true,
+        )
+        runCurrent()
+
+        assertEquals(identity, harness.adapter.snapshot.committedIdentity)
+        assertTrue(harness.staged.isEmpty())
+        val presentation = buildTvSubtitleHudPresentation(
+            options = buildTvSubtitleHudOptions(
+                subtitleUrls = listOf(row),
+                subtitleTracks = listOf(track),
+            ),
+            committedIdentity = harness.adapter.snapshot.committedIdentity,
+            pendingIdentity = harness.adapter.snapshot.pendingIdentity,
+            hudOpen = true,
+            focusedStableId = null,
+        )
+        assertEquals(identity, presentation.rows.single { it.checked }.identity)
+    }
+
+    @Test
+    fun `an unmounted server sidecar still stages a replan`() = runTest {
+        val mountedRow = planEmbeddedPgsRow()
+        val target = unmountedSidecarRow()
+        val harness = harness(
+            backgroundScope,
+            rows = listOf(mountedRow, target),
+            mounted = listOf(embeddedPgsTrack()),
+        )
+
+        harness.adapter.selectAuto(tvSubtitleIdentity(target))
+        runCurrent()
+
+        assertEquals(
+            listOf(target.index),
+            harness.staged.map { it.subtitleTrackIndex },
+            "a subtitle the player has not loaded must still reach the server",
+        )
+        assertEquals(null, harness.adapter.snapshot.localMountIdentity)
+    }
+
+    private class PolicyHarness(
+        val adapter: TvSubtitleTransactionAdapter,
+        val staged: List<TvSubtitleStageRequest>,
+    )
+
+    /**
+     * Wires the adapter to the PRODUCTION mountability rule — the same
+     * row-aware resolution `TvPlayerViewModel` installs — so these tests fail
+     * if that rule stops recognising a mounted track.
+     */
+    private fun harness(
+        scope: CoroutineScope,
+        rows: List<PlayerSubtitleInfo>,
+        mounted: List<PlayerTrackEntry>,
+    ): PolicyHarness {
+        val staged = mutableListOf<TvSubtitleStageRequest>()
+        val adapter = TvSubtitleTransactionAdapter(
+            scope = scope,
+            stagedPort = object : TvSubtitleStagedReplanPort {
+                override suspend fun stage(
+                    request: TvSubtitleStageRequest,
+                ): ApiResult<TvStagedSubtitleCandidate> {
+                    staged += request
+                    return ApiResult.Error(500, "unused", "Staging is not exercised here.")
+                }
+
+                override suspend fun commit(
+                    candidate: TvStagedSubtitleCandidate,
+                ): ApiResult<TvSubtitleCommittedPlayback> =
+                    error("The staged replan path must not commit in these tests.")
+
+                override suspend fun discard(candidate: TvStagedSubtitleCandidate) = Unit
+
+                override suspend fun abandonCommitted(playback: TvSubtitleCommittedPlayback) = Unit
+            },
+            persistencePort = object : TvSubtitlePersistencePort {
+                override suspend fun persist(
+                    committed: CommittedSubtitle,
+                    context: TvSubtitlePlaybackContext,
+                ): Boolean = true
+            },
+            durablePersistenceScope = scope,
+            settlementScope = scope,
+            hasMountableTracks = { mounted.isNotEmpty() },
+            isLocallyMountable = { identity ->
+                tvResolveMountedSubtitleTrack(
+                    identity = identity,
+                    subtitleRows = rows,
+                    mounted = mounted.map { it.toMountedTvSubtitleTrack() },
+                ) != null
+            },
+        )
+        adapter.resetContent(
+            context = TvSubtitlePlaybackContext(
+                contentId = "movie-1",
+                mediaFileId = 22,
+                versionId = "22:plan-1",
+                sessionId = "s1",
+                positionSeconds = 236.816,
+                audioTrackIndex = 0,
+                qualityPreference = "original",
+                subtitleTracks = rows,
+            ),
+            committedIdentity = SubtitleIdentity.Off,
+        )
+        return PolicyHarness(adapter, staged)
+    }
+
+    /** An embedded PGS track exactly as a v3 plan describes it: delivery `sidecar`. */
+    private fun planEmbeddedPgsRow() = embeddedPgsRow().copy(
+        url = "/stream/s1/subtitles/8.sup",
+        catalogLabel = "English (SDH)",
+        catalogSource = "embedded",
+        mediaTrackId = null,
+        serverTrackId = "file:22:subtitle:8",
+        serverDelivery = "sidecar",
+    )
+
+    private fun unmountedSidecarRow() = PlayerSubtitleInfo(
+        index = 9,
+        language = "nld",
+        codec = "subrip",
+        label = "Dutch",
+        source = "external",
+        forced = false,
+        url = "/stream/s1/subtitles/9.vtt",
+        catalogLabel = "Dutch",
+        catalogSource = "external",
+        serverTrackId = "file:22:subtitle:9",
+        serverDelivery = "sidecar",
+    )
+
+    private fun embeddedPgsRow() = PlayerSubtitleInfo(
+        index = 8,
+        language = "eng",
+        codec = "hdmv_pgs_subtitle",
+        label = "English (SDH)",
+        source = "embedded",
+        forced = false,
+        url = "",
+        mediaTrackId = "1:pgs:8",
+    )
+
+    private fun embeddedPgsTrack() = PlayerTrackEntry(
+        index = 3,
+        label = "English (SDH)",
+        language = "en",
+        isSelected = false,
+        displayLabel = "English (SDH)",
+        codecOrMime = "application/pgs",
+        isHearingImpaired = true,
+        trackId = "1:pgs:8",
+    )
 
     private fun downloadedRow(
         index: Int,

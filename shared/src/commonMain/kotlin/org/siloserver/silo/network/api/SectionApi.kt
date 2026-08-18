@@ -4,6 +4,7 @@ import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.http.*
+import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.section.*
 import org.siloserver.silo.network.ApiErrorBody
@@ -72,17 +73,30 @@ class SectionApi(private val client: HttpClient) {
      * `/library/{id}/collections/{id}/items` route serves full membership
      * in one response — a 10k-item language collection in a single body —
      * and is being phased out client-side so the server can bound it.
+     *
+     * A null [sort] omits both sort params, which is what makes the server
+     * fall back to the collection's own order (manual / MDBList / smart).
      */
     suspend fun getLibraryCollectionItems(
         collectionId: String,
         offset: Int = 0,
         limit: Int = 60,
+        sort: String? = null,
+        order: String? = null,
+        queryGroups: List<CatalogQueryGroup> = emptyList(),
+        match: String? = null,
     ): ApiResult<CatalogResponse> = safeApiCall {
         client.get("/api/v1/catalog") {
             parameter("source", "library_collection")
             parameter("collection_id", collectionId)
             parameter("offset", offset)
             parameter("limit", limit)
+            if (sort != null) {
+                parameter("sort", sort)
+                order?.let { parameter("order", it) }
+            }
+            match?.let { parameter("match", it) }
+            catalogQueryGroupParameters(queryGroups)
         }
     }
 

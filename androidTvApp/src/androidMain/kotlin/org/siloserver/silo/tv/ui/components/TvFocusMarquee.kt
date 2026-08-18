@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -29,6 +30,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -123,9 +125,12 @@ private fun TvMarqueeBlock(
         animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
         label = "marqueeLogoAlpha",
     )
+    // 6dp rows and an 84dp logo slot: the marquee viewport (screen minus the
+    // top-bar zone minus the row band) fits five text rows only if the block
+    // stays under ~206dp, and the format spec line is the fifth row.
     Column(
         modifier = Modifier.widthIn(max = MarqueeContentWidth),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // Keep the semantic text title visible until transparent logo artwork
         // has actually decoded. A bad/slow URL therefore never creates a blank
@@ -155,11 +160,16 @@ private fun TvMarqueeBlock(
                     thumbhash = null,
                     contentDescription = content.title,
                     contentScale = ContentScale.Fit,
+                    // Flush with the editorial text below it; the default
+                    // centre alignment floated wide logos toward the middle
+                    // of the block, away from the meta/synopsis left edge.
+                    alignment = Alignment.CenterStart,
                     transparent = true,
                     crossfadeMillis = 0,
                     onSuccess = { logoLoaded = true },
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxHeight()
+                        .widthIn(max = MarqueeLogoMaxWidth)
                         .alpha(logoAlpha),
                 )
             }
@@ -240,22 +250,40 @@ private fun TvMarqueeBlock(
                 }
             }
         }
+
+        // Format spec line: the resolution / dynamic-range / audio trio, kept
+        // as quiet text under the credits so the rating stays the only chip.
+        content.specLine?.let { spec ->
+            Text(
+                text = spec,
+                color = SiloOnSurface.copy(alpha = 0.55f),
+                fontSize = MarqueeSpecSize,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = MarqueeSpecSize * 0.04f,
+                lineHeight = MarqueeSpecSize * 1.2f,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.offset(y = (-6).dp),
+            )
+        }
     }
 }
 
 @Composable
 private fun MarqueeBadge(label: String) {
     val shape = RoundedCornerShape(5.dp)
+    // Solid, not outlined: the content rating is the one chip on the hero
+    // and has to read before the meta text next to it.
     Box(
         modifier = Modifier
             .clip(shape)
-            .background(Color.White.copy(alpha = 0.14f))
-            .border(1.dp, Color.White.copy(alpha = 0.24f), shape)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .background(Color.White.copy(alpha = 0.92f))
+            .padding(horizontal = 9.dp, vertical = 3.dp),
     ) {
         Text(
             text = label,
-            color = Color.White.copy(alpha = 0.92f),
+            color = Color.Black.copy(alpha = 0.92f),
             fontSize = MarqueeBadgeSize,
             lineHeight = MarqueeBadgeSize * 1.25f,
             letterSpacing = MarqueeBadgeSize * 0.08f,
@@ -270,10 +298,11 @@ private fun MarqueeBadge(label: String) {
 private val MarqueeContentWidth = 440.dp
 private val MarqueeSynopsisMaxWidth = 390.dp
 private val MarqueeLogoMaxWidth = 440.dp
-private val MarqueeLogoMaxHeight = 95.dp
+private val MarqueeLogoMaxHeight = 84.dp
 private val MarqueeDetailLineHeight = 20.dp
 private val MarqueeTitleSize = 44.sp
 private val MarqueeMetaSize = 14.sp
 private val MarqueeDetailSize = 14.sp
 private val MarqueeSynopsisSize = 16.sp
 private val MarqueeBadgeSize = 14.sp
+private val MarqueeSpecSize = 13.sp

@@ -39,7 +39,11 @@ import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.overlays.OverlayData
 
 object MediaGridDefaults {
-    val PosterGridMinWidth = 110.dp
+    // Same minimum as the Library grid's Normal density (CatalogViewDensity),
+    // so collections and saved lists break into the same column count as
+    // Library on every screen width — 110dp tipped them into one fewer column
+    // on scaled-up displays.
+    val PosterGridMinWidth = 104.dp
     val PosterGridHorizontalSpacing = 12.dp
     val PosterGridVerticalSpacing = 16.dp
 }

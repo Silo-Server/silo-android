@@ -79,7 +79,6 @@ import org.siloserver.silo.android.ui.screens.search.SearchScreen
 import org.siloserver.silo.android.ui.screens.search.SearchViewModel
 import org.siloserver.silo.android.ui.screens.servers.ServerListScreen
 import org.siloserver.silo.android.ui.screens.servers.ServerSwitchDestination
-import org.siloserver.silo.android.ui.screens.settings.CardOverlaySettingsScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsScreen
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsPromptDialog
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
@@ -654,6 +653,29 @@ fun AppNavigation(
                 }
             }
         }
+        // Same reasoning for the withdrawn admin dashboard, except that Settings
+        // is where its entry point used to live, so that is where it lands.
+        // Registered, never rendered — the admin surface stays deleted.
+        composable("admin") {
+            LaunchedEffect(Unit) {
+                navController.navigate(Route.Settings.route) {
+                    popUpTo("admin") { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
+        // The Card overlays editor was removed (overlays are edited on the web
+        // app); a saved back stack from an older build can still hold its
+        // route, so keep a hidden redirect to Settings rather than crash on
+        // restore. Registered, never rendered.
+        composable("settings/card_overlays") {
+            LaunchedEffect(Unit) {
+                navController.navigate(Route.Settings.route) {
+                    popUpTo("settings/card_overlays") { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
         composable(Route.Settings.route) {
             SettingsScreen(
                 onNavigateToServers = {
@@ -662,17 +684,11 @@ fun AppNavigation(
                 onPairDevice = {
                     navController.navigate(Route.PairDevice().route)
                 },
-                onNavigateToAdmin = {
-                    navController.navigate(Route.Admin.route)
-                },
                 onSwitchProfile = { navController.navigate(Route.ProfileSelection.route) },
                 onNavigateToWatchlist = { navController.navigate(Route.Watchlist.route) },
                 onNavigateToFavorites = { navController.navigate(Route.Favorites.route) },
                 onNavigateToHistory = { navController.navigate(Route.History.route) },
                 onNavigateToCollections = { navController.navigate(Route.Collections().route) },
-                onNavigateToCardOverlays = {
-                    navController.navigate(Route.CardOverlays.route)
-                },
                 onNavigateToDiagnostics = {
                     navController.navigate(Route.Diagnostics.route)
                 },
@@ -682,12 +698,6 @@ fun AppNavigation(
                     }
                 },
                 showTopBar = true,
-                onBackClick = { navController.popBackStack() },
-            )
-        }
-        composable(Route.CardOverlays.route) {
-            CardOverlaySettingsScreen(
-                store = overlayPrefsStore,
                 onBackClick = { navController.popBackStack() },
             )
         }
@@ -1064,16 +1074,6 @@ fun AppNavigation(
                     navController.navigate(Route.ItemDetail(contentId).route)
                 },
             )
-        }
-        composable(Route.Admin.route) {
-            // Gated at the destination as well as the entry: the route stays
-            // registered, so restored navigation reaches it directly and the
-            // stats screen calls the admin API the moment it composes.
-            org.siloserver.silo.android.ui.screens.admin.AdminRouteGate {
-                org.siloserver.silo.android.ui.screens.admin.AdminStatsScreen(
-                    onBackClick = { navController.popBackStack() },
-                )
-            }
         }
         composable(Route.Watchlist.route) {
             WatchlistScreen(

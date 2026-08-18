@@ -29,6 +29,8 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
+import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
+import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.Spacing
 
 /** Visual style of cards inside a [TvMediaRow]. */
@@ -186,6 +188,7 @@ fun TvMediaRow(
                 modifier = Modifier.padding(start = startPadding, end = endPadding),
             )
         }
+        TvRailScrollBehavior {
         LazyRow(
             state = rowState,
             // focusRestorer remembers the last-focused card inside this row.
@@ -281,7 +284,8 @@ fun TvMediaRow(
                     } else {
                         Modifier
                     },
-                ).then(
+                ).tvRailPinOnFocus(rowState, index, startPadding)
+                .then(
                     if (onItemFocused != null || onItemFocusedAtIndex != null) {
                         Modifier.onFocusChanged { st ->
                             if (st.isFocused) {
@@ -296,7 +300,20 @@ fun TvMediaRow(
                         Modifier
                     },
                 )
-                val itemActions = cardActions(item)
+                // Memoised per item: the producer builds a fresh action bundle
+                // (four fresh lambdas) on every call, and TvMediaCardActions is
+                // a data class comparing those lambdas by identity — so without
+                // this no visible card could ever skip recomposition once its
+                // row recomposed (which the feed does on every focus move).
+                //
+                // Keyed on the PRODUCER as well as the item: what the bundle
+                // contains depends on what the producer closes over, not only on
+                // the item — Home decides whether to expose "remove from continue
+                // watching" from the section it is building actions for. An
+                // item-only key would keep a stale bundle (and stale callback
+                // owners) after a refresh that reclassifies the section while
+                // leaving the item equal (Codex).
+                val itemActions = remember(item, cardActions) { cardActions(item) }
                 when (cardLayout) {
                     TvRowCardLayout.ReferenceShelf -> TvReferenceShelfCard(
                         title = rowItem.shelfTitle,
@@ -346,6 +363,7 @@ fun TvMediaRow(
                     }
                 }
             }
+        }
         }
     }
 }

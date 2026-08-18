@@ -41,7 +41,6 @@ import org.siloserver.silo.tv.ui.screens.player.TvPlayerLaunchArgs
 import org.siloserver.silo.tv.ui.screens.auth.TvLoginViewModel
 import org.siloserver.silo.tv.ui.screens.auth.TvServerSetupViewModel
 import org.siloserver.silo.tv.ui.screens.collections.TvCollectionDetailViewModel
-import org.siloserver.silo.viewmodel.AdminStatsViewModel
 import org.siloserver.silo.viewmodel.CalendarViewModel
 import org.siloserver.silo.viewmodel.CollectionsViewModel
 import org.siloserver.silo.tv.ui.screens.detail.TvItemDetailViewModel
@@ -53,6 +52,7 @@ import org.siloserver.silo.viewmodel.RequestsViewModel
 import org.siloserver.silo.tv.ui.screens.libraries.TvLibrariesViewModel
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryCollectionDetailViewModel
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryDetailViewModel
+import org.siloserver.silo.tv.ui.screens.personal.TvPersonalListControlsViewModel
 import org.siloserver.silo.viewmodel.FavoritesViewModel
 import org.siloserver.silo.viewmodel.HistoryViewModel
 import org.siloserver.silo.viewmodel.WatchlistViewModel
@@ -374,14 +374,6 @@ val androidTvModule = module {
     }
     viewModel { TvServerListViewModel(get(), get(), get()) }
 
-    // Admin ViewModels
-    viewModel { AdminStatsViewModel(get()) }
-    viewModel { org.siloserver.silo.viewmodel.AdminUsersViewModel(get()) }
-    viewModel { org.siloserver.silo.viewmodel.AdminUserEditViewModel(get()) }
-    viewModel { org.siloserver.silo.tv.ui.screens.admin.TvAdminSessionsViewModel(get()) }
-    viewModel { org.siloserver.silo.tv.ui.screens.admin.TvAdminScansViewModel(get(), get()) }
-    viewModel { org.siloserver.silo.tv.ui.screens.admin.TvAdminLogsViewModel(get()) }
-    viewModel { org.siloserver.silo.tv.ui.screens.settings.TvManageSessionsViewModel(get()) }
     viewModel { params ->
         org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get())
     }
@@ -435,6 +427,7 @@ val androidTvModule = module {
     viewModel { params ->
         TvLibraryCollectionDetailViewModel(
             sectionRepository = get(),
+            catalogRepository = get(),
             libraryId = params.get(),
             collectionId = params.get(),
             title = params.get(),
@@ -496,9 +489,16 @@ val androidTvModule = module {
     }
 
     // Personal data grids.
-    viewModel { FavoritesViewModel(get()) }
-    viewModel { WatchlistViewModel(get()) }
+    viewModel { FavoritesViewModel(get(), get()) }
+    viewModel { WatchlistViewModel(get(), get()) }
     viewModel { HistoryViewModel(get()) }
+    // Sort/filter state for the favorites and watchlist grids, keyed by source.
+    viewModel { params ->
+        TvPersonalListControlsViewModel(
+            catalogRepository = get(),
+            source = params.get(),
+        )
+    }
 
     // Collections.
     viewModel { CollectionsViewModel(get()) }

@@ -52,6 +52,7 @@ fun TvEditProfileScreen(
             subtitle = "Pick a look and update this profile.",
             name = state.name,
             selectedAvatar = state.selectedAvatar,
+            selectedAvatarUrl = state.selectedAvatarUrl,
             avatarStyleId = state.avatarStyleId,
             selectedAvatarSeed = state.selectedAvatarSeed,
             avatarBatch = state.avatarBatch,

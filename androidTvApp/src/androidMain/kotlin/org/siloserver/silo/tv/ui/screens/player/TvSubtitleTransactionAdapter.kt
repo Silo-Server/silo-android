@@ -626,6 +626,30 @@ internal class TvSubtitleTransactionAdapter(
     }
 
     /**
+     * Applies an APP-DERIVED automatic selection — the launch-time language /
+     * mode / forced heuristics — through the same commit path as [select], so
+     * the adapter stays the single owner of subtitle selection and the HUD's
+     * committed identity always describes what is actually mounted.
+     *
+     * Not [select] for two reasons: an automatic pick must not cancel an
+     * in-flight subtitle refresh (only an explicit intent bumps the refresh
+     * generation), and it is not the viewer choosing, so the caller keeps it
+     * out of the durable per-item preference (see
+     * `TvPlayerViewModel.autoSelectedSubtitleIdentity`).
+     *
+     * A no-op when the identity is already committed and nothing is in flight:
+     * re-selecting what is already on would arm a pointless remount.
+     */
+    fun selectAuto(identity: SubtitleIdentity) {
+        if (identity == transition.committed.identity && !hasActiveTransaction) {
+            SubDiag.log("ADAPTER selectAuto NOOP $identity")
+            return
+        }
+        SubDiag.log("ADAPTER selectAuto $identity")
+        mutate(SelectSubtitle(identity), explicit = false)
+    }
+
+    /**
      * Restores a saved fresh-load preference without declaring it committed
      * before both the server replan and the player backend have accepted it.
      */

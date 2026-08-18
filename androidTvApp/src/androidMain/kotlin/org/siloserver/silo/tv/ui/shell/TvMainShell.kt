@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.withFrameNanos
@@ -106,17 +107,16 @@ import androidx.tv.material3.Text
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import org.siloserver.silo.common.diagnostics.DiagnosticsFocusLogger
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.common.ui.components.isImageAvatar
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.network.ServerReachabilityStatus
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
+import org.siloserver.silo.common.ui.components.avatarRef
+import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
-import org.siloserver.silo.common.ui.components.resolveAvatarUrl
 import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.admin.shouldShowClientAdminSurface
-import org.siloserver.silo.model.auth.isActingAdmin
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.personal.UserLibrary
@@ -134,15 +134,9 @@ import org.siloserver.silo.tv.ui.components.TvForYouSelector
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
 import org.siloserver.silo.tv.ui.navigation.TvMainRoute
+import org.siloserver.silo.tv.ui.navigation.TvRemovedMainRoutes
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryDetailScreen
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryTab
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminHubScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminLogsScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminScansScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminSessionsScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminUserEditScreen
-import org.siloserver.silo.tv.ui.screens.admin.TvAdminUsersScreen
 import org.siloserver.silo.tv.ui.screens.browse.TvBrowseScreen
 import org.siloserver.silo.tv.ui.screens.calendar.TvCalendarScreen
 import org.siloserver.silo.tv.ui.screens.collections.TvCollectionsScreen
@@ -154,15 +148,11 @@ import org.siloserver.silo.tv.ui.screens.personal.TvWatchlistScreen
 import org.siloserver.silo.tv.ui.screens.recommendations.TvRecommendationsScreen
 import org.siloserver.silo.tv.ui.screens.recommendations.SavedListSelection
 import org.siloserver.silo.tv.ui.screens.recommendations.TvForYouEntryRequest
-import org.siloserver.silo.tv.ui.screens.recommendations.ForYouDetailReturnState
-import org.siloserver.silo.tv.ui.screens.recommendations.beginForYouDetailReturn
-import org.siloserver.silo.tv.ui.screens.recommendations.consumeForYouDetailReturn
-import org.siloserver.silo.tv.ui.screens.recommendations.resetForExplicitForYouSelection
+import org.siloserver.silo.tv.ui.screens.recommendations.TvForYouEntryRequestSaver
 import org.siloserver.silo.tv.ui.screens.requests.TvMyRequestsScreen
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestDetailScreen
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestsScreen
 import org.siloserver.silo.tv.ui.screens.search.TvSearchScreen
-import org.siloserver.silo.tv.ui.screens.settings.TvManageSessionsScreen
 import org.siloserver.silo.tv.ui.screens.settings.TvSettingsScreen
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvJoinCodeDialog
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherMenuEntryDialog
@@ -199,9 +189,14 @@ fun TvMainShell(
     returnToManageServers: Boolean = false,
     onManageServersReturnFocusConsumed: () -> Unit = {},
     onManageServers: () -> Unit,
-    onOpenDiagnostics: () -> Unit,
+    onOpenDiagnosticsReport: (reportId: String) -> Unit,
     onOpenItemDetail: (contentId: String) -> Unit,
-    onOpenLibraryCollectionDetail: (libraryId: Int, collectionId: String, title: String) -> Unit,
+    onOpenLibraryCollectionDetail: (
+        libraryId: Int,
+        collectionId: String,
+        title: String,
+        libraryType: String,
+    ) -> Unit,
     onOpenCollectionDetail: (collectionId: String, title: String) -> Unit,
     onSignedOut: () -> Unit,
     onSwitchProfile: () -> Unit,
@@ -288,7 +283,23 @@ fun TvMainShell(
     // also persisted via TvLibraryScopeStore; pill selections are session-only
     // (Stage 4 wires the cascade into these). Persistently composed.
     val scopeSelections: SnapshotStateMap<TvLibraryTabType, Int> = remember { mutableStateMapOf() }
-    val pillSelections: SnapshotStateMap<TvLibraryTabType, TvLibraryPill> = remember { mutableStateMapOf() }
+    // Saveable, not merely remembered: opening a collection (or any outer
+    // route) takes the whole shell out of composition, and the nested nav
+    // restores the Movies/Series tab on Back but a plain remember has lost the
+    // pill — so Collections landed back on Recommended, reading as "Back went
+    // Home". Scope selections survive via TvLibraryScopeStore already.
+    val pillSelections: SnapshotStateMap<TvLibraryTabType, TvLibraryPill> = rememberSaveable(
+        saver = listSaver(
+            save = { map -> map.entries.map { listOf(it.key.name, it.value.name) } },
+            restore = { saved ->
+                mutableStateMapOf<TvLibraryTabType, TvLibraryPill>().apply {
+                    saved.forEach { (type, pill) ->
+                        runCatching { put(TvLibraryTabType.valueOf(type), TvLibraryPill.valueOf(pill)) }
+                    }
+                }
+            },
+        ),
+    ) { mutableStateMapOf() }
     // Monotonic per-type "section request" nonce, bumped on every commitScope so
     // re-committing the same section pill still re-applies (see TvLibraryDetailScreen).
     val sectionRequestNonces: SnapshotStateMap<TvLibraryTabType, Int> = remember { mutableStateMapOf() }
@@ -314,12 +325,6 @@ fun TvMainShell(
     val activeLibrary: (TvLibraryTabType) -> UserLibrary? = { type -> resolvedLibraries[type] }
 
     val currentRoute = currentEntry?.destination?.route ?: firstTvRoute()
-    var forYouRequestsSolidTopBar by remember { mutableStateOf(false) }
-    val onForYouSolidTopBarChanged = remember {
-        { requested: Boolean -> forYouRequestsSolidTopBar = requested }
-    }
-    val useSolidForYouTopBar =
-        currentRoute == TvMainRoute.ForYou.route && forYouRequestsSolidTopBar
     var calendarFocusHandoffPending by remember(currentRoute) {
         mutableStateOf(currentRoute == TvMainRoute.Calendar.route)
     }
@@ -341,6 +346,10 @@ fun TvMainShell(
     val contentFocusRequester = remember { FocusRequester() }
     val homeFirstItemFocusRequester = remember { FocusRequester() }
     val homeFirstRowContainerFocusRequester = remember { FocusRequester() }
+    // For You renders the same Skyline feed as Home, so it needs its own pair:
+    // one feed's requesters cannot be attached in two compositions at once.
+    val forYouFirstItemFocusRequester = remember { FocusRequester() }
+    val forYouFirstRowContainerFocusRequester = remember { FocusRequester() }
     val searchInputFocusRequester = remember { FocusRequester() }
     var searchInputHasFocus by remember { mutableStateOf(false) }
     var searchBackToInputRequest by remember { mutableIntStateOf(0) }
@@ -363,11 +372,10 @@ fun TvMainShell(
     val restoreHomeContentAfterDetail = detailReturnRoot == TvMainRoute.Home.route
     val restoreForYouContentAfterDetail = detailReturnRoot == TvMainRoute.ForYou.route
     var suppressHomeRefreshAfterDetail by rememberSaveable { mutableStateOf(false) }
-    var homeDetailReturnFocusState by remember { mutableStateOf(HomeDetailReturnFocusState()) }
+    var homeDetailReturnFocusState by remember { mutableStateOf(TvDetailReturnFocusState()) }
+    var forYouDetailReturnFocusState by remember { mutableStateOf(TvDetailReturnFocusState()) }
     var detailReturnFocusRequest by remember { mutableIntStateOf(0) }
     var detailReturnNeedsRetry by remember { mutableStateOf(false) }
-    var forYouDetailReturnFocusRequest by rememberSaveable { mutableIntStateOf(0) }
-    var forYouDetailReturnFocusPending by rememberSaveable { mutableStateOf(false) }
     // Attached (by the Home feed) to the exact card a detail page was launched
     // from, while that return is pending. Used as the content restorer's enter
     // fallback during the return resume so the synchronous claim below lands
@@ -376,23 +384,18 @@ fun TvMainShell(
     // default enter could land a row below the launch card for a few frames.
     val homeDetailReturnCardFocusRequester = remember { FocusRequester() }
     val forYouDetailReturnCardFocusRequester = remember { FocusRequester() }
-    // Home ONLY. The Home feed arms its launch-card requester at click time
+    // Skyline feeds only. The feed arms its launch-card requester at click time
     // (`detailReturnPending` in TvSkylineSectionFeed), so the node is attached
     // for the whole round trip and is a valid restorer target during the
-    // synchronous resume claim below.
-    //
-    // For You deliberately stays on Default. It arms at RESUME, one composition
-    // later than the claim, so naming its requester here would hand the
-    // restorer a detached node — `requestFocus` throws, `runCatching` swallows
-    // it, and the claim silently degrades to the one-frame retry. Default enter
-    // lands inside content, which is all the claim owes; the screen's own
-    // bounded restore then walks focus to the exact card.
-    val detailReturnFallback =
-        if (restoreHomeContentAfterDetail || homeDetailReturnFocusState.fallbackPending) {
+    // synchronous resume claim below. Roots that render something else keep
+    // Default enter, which lands inside content — all the claim owes.
+    val detailReturnFallback = when {
+        restoreHomeContentAfterDetail || homeDetailReturnFocusState.fallbackPending ->
             homeDetailReturnCardFocusRequester
-        } else {
-            FocusRequester.Default
-        }
+        restoreForYouContentAfterDetail || forYouDetailReturnFocusState.fallbackPending ->
+            forYouDetailReturnCardFocusRequester
+        else -> FocusRequester.Default
+    }
     // Whether focus currently sits anywhere inside the content group. Gates
     // the detail-return resume claim below: the Home feed's early restore
     // ladder usually re-focuses the launch card during the pop transition, and
@@ -401,7 +404,6 @@ fun TvMainShell(
     var contentHasFocus by remember { mutableStateOf(false) }
     LifecycleResumeEffect(Unit) {
         if (restoreContentAfterDetail) {
-            val isHomeDetailReturn = restoreHomeContentAfterDetail
             // Claim the content group synchronously during ON_RESUME, before
             // Compose's default search can briefly settle on the Home tab —
             // but only when the feed hasn't already claimed it. Claim BEFORE
@@ -413,16 +415,16 @@ fun TvMainShell(
                 runCatching { !contentFocusRequester.requestFocus() }.getOrDefault(true)
             }
             detailReturnFocusRequest++
-            homeDetailReturnFocusState = beginHomeDetailReturnRetryIfHome(
+            homeDetailReturnFocusState = beginTvDetailReturnRetryIfRoot(
                 previousState = homeDetailReturnFocusState,
-                isHomeDetailReturn = isHomeDetailReturn,
+                isDetailReturnForRoot = restoreHomeContentAfterDetail,
                 needsRetry = detailReturnNeedsRetry,
             )
-            if (restoreForYouContentAfterDetail) {
-                val started = beginForYouDetailReturn(forYouDetailReturnFocusRequest)
-                forYouDetailReturnFocusRequest = started.requestId
-                forYouDetailReturnFocusPending = started.pending
-            }
+            forYouDetailReturnFocusState = beginTvDetailReturnRetryIfRoot(
+                previousState = forYouDetailReturnFocusState,
+                isDetailReturnForRoot = restoreForYouContentAfterDetail,
+                needsRetry = detailReturnNeedsRetry,
+            )
             restoreContentAfterDetail = false
             detailReturnRoot = null
         }
@@ -436,7 +438,8 @@ fun TvMainShell(
         if (detailReturnNeedsRetry) {
             runCatching { contentFocusRequester.requestFocus() }
         }
-        homeDetailReturnFocusState = completeHomeDetailReturnRetry(homeDetailReturnFocusState)
+        homeDetailReturnFocusState = completeTvDetailReturnRetry(homeDetailReturnFocusState)
+        forYouDetailReturnFocusState = completeTvDetailReturnRetry(forYouDetailReturnFocusState)
         // The detail-return ON_RESUME event has now passed and Home is stable;
         // future real resumes (playback/background) should refresh normally.
         suppressHomeRefreshAfterDetail = false
@@ -448,7 +451,6 @@ fun TvMainShell(
         onOpenItemDetail(contentId)
     }
     val openForYouItemDetail: (String) -> Unit = { contentId ->
-        forYouDetailReturnFocusPending = false
         restoreContentAfterDetail = true
         detailReturnRoot = TvMainRoute.ForYou.route
         onOpenItemDetail(contentId)
@@ -464,6 +466,20 @@ fun TvMainShell(
         // from an earlier return so the restorer does not reuse Home's.
         detailReturnRoot = null
         onOpenItemDetail(contentId)
+    }
+    // Collections open outer routes too, so they need the same hand-back:
+    // without it the return resume left focus to Compose's default search
+    // (the top bar), which then visibly hopped to the grid a beat later.
+    val openLibraryCollectionDetail: (Int, String, String, String) -> Unit =
+        { libraryId, collectionId, title, libraryType ->
+            restoreContentAfterDetail = true
+            detailReturnRoot = null
+            onOpenLibraryCollectionDetail(libraryId, collectionId, title, libraryType)
+        }
+    val openCollectionDetail: (String, String) -> Unit = { collectionId, title ->
+        restoreContentAfterDetail = true
+        detailReturnRoot = null
+        onOpenCollectionDetail(collectionId, title)
     }
     var contentUpFallback by remember { mutableStateOf<((Boolean) -> Boolean)?>(null) }
     // Feeds that registered the up-fallback slot, were superseded by a newer
@@ -510,7 +526,14 @@ fun TvMainShell(
     // top), while ordinary content re-entry keeps the focusRestorer()'s
     // last-focused card.
     var contentFocusRequest by remember { mutableIntStateOf(0) }
-    var forYouEntryRequest by remember { mutableStateOf(TvForYouEntryRequest()) }
+    // Saveable, because the For You screen guards against replaying an entry
+    // request with a SAVED "last applied sequence". A shell recreated with a
+    // plain remember restarted the counter at 0 while the screen still held
+    // the old high-water mark, so every dropdown pick after that (Watchlist,
+    // Favorites, Recommendations) was silently ignored as already applied.
+    var forYouEntryRequest by rememberSaveable(stateSaver = TvForYouEntryRequestSaver) {
+        mutableStateOf(TvForYouEntryRequest())
+    }
 
     // --- Skyline cascade panel host (Stage 4) ----------------------------------
     // Mirrors tvOS `TVMainTabView.persistentPanels`. The cascade overlays are
@@ -533,8 +556,8 @@ fun TvMainShell(
         val userResult = authRepository.getCurrentUser()
         if (userResult !is ApiResult.Success) {
             // Transient /me failure (offline blip, server restart): keep the
-            // previous snapshot instead of blanking it — otherwise the Admin
-            // row and account header flicker out on every hiccup.
+            // previous snapshot instead of blanking it — otherwise the account
+            // header flickers out on every hiccup.
             return@produceState
         }
         val user = userResult.data
@@ -549,35 +572,35 @@ fun TvMainShell(
         // owner's name, which conflates the two all over again. Profile name
         // and server is all a household profile needs to see.
         //
-        // Cosmetic in the sense that no permission hangs on it — the surface
-        // gate is isActingAdmin below — but it is the part that misleads.
+        // Nothing hangs on it — it is a caption, not a permission — but it is
+        // the part that misleads.
         val subtitle = if (activeProfile?.isPrimary == true) {
             user?.role?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
                 ?: user?.username.orEmpty()
         } else {
             ""
         }
-        val avatarUrl = activeProfile?.avatar
-            ?.takeIf(::isImageAvatar)
-            ?.let { resolveAvatarUrl(activeServerEntry?.url.orEmpty(), it) }
         value = TvAccountState(
             displayName = activeProfile?.name ?: user?.username ?: "Profile",
-            avatar = activeProfile?.avatar,
-            avatarUrl = avatarUrl,
+            // Ref + presigned URL travel together; the shell re-fetches this on
+            // every profile switch / server change, which is also what hands the
+            // avatar a freshly signed URL.
+            avatar = activeProfile?.avatarRef() ?: ProfileAvatarRef.None,
             subtitle = subtitle,
             serverName = activeServerEntry?.displayName.orEmpty(),
-            // Gate via the shared client-admin policy (same as the Settings
-            // admin entry), not raw isActingAdmin — so the Admin row honors
-            // CLIENT_ADMIN_SURFACE_ENABLED and stays consistent with the rest
-            // of the TV client.
-            isAdmin = shouldShowClientAdminSurface(isActingAdmin(user, activeProfile)),
         )
     }
 
     val selectedRoot by remember(currentRoute) {
         derivedStateOf { mapRouteToRoot(currentRoute) }
     }
-    val selectedMenuFocusTarget = selectedRoot?.let(TvTopMenuPanel::Root)
+    // Where an Up out of content lands on the bar. The selected root when there
+    // is one; For You's dropdown children (Watchlist / Favorites) map to the
+    // For You tab they were opened from — they are not tab roots (no highlight,
+    // Back still pops), but Up from them must land on their tab, not on
+    // whatever the geometric search picks (the Search icon, from the left edge).
+    val selectedMenuFocusTarget = (selectedRoot ?: menuFocusRootForRoute(currentRoute))
+        ?.let(TvTopMenuPanel::Root)
 
     // Which libraries actually HAVE collections — gates the cascade's
     // Collections pill so an empty library doesn't offer a dead-end section
@@ -596,10 +619,26 @@ fun TvMainShell(
 
     val navigateToRoute: (String) -> Unit = { route ->
         if (route != currentRoute) {
-            nestedNav.navigate(route) {
-                popUpTo(nestedNav.graph.startDestinationId) { saveState = true }
-                launchSingleTop = true
-                restoreState = true
+            val startRoute = nestedNav.graph.startDestinationRoute
+            if (route == startRoute && nestedNav.popBackStack(route, inclusive = false, saveState = true)) {
+                // Home is the graph root, so "go Home" is a pop, never a push.
+                // The bottom-nav idiom below (popUpTo(start){saveState} +
+                // restoreState) is unsafe for the root itself: NavController
+                // maps the state it just popped onto the popUpTo destination
+                // when that destination has no saved-state key yet, and the
+                // restoreState step then re-pushes exactly what was popped —
+                // Home from a dropdown-opened For You (navigateToSecondary,
+                // which never seeds Home's key) landed straight back on the
+                // saved list. Tab→Home only worked because the earlier
+                // navigate() to the tab had seeded Home's key with null.
+                // saveState stays on so the popped tab/secondary route keeps
+                // its scroll state for a later restoreState re-entry.
+            } else {
+                nestedNav.navigate(route) {
+                    popUpTo(nestedNav.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
             }
         }
     }
@@ -614,17 +653,6 @@ fun TvMainShell(
                 launchSingleTop = true
                 restoreState = true
             }
-        }
-    }
-
-    // Parameterized form routes (e.g. AdminUserEdit) must NOT restore a saved
-    // entry: all query variants share one destination id, so restoreState could
-    // resurrect a stale entry (and its idempotent-loaded ViewModel) with the
-    // wrong userId. Always start a fresh entry for these.
-    val navigateToForm: (String) -> Unit = { route ->
-        nestedNav.navigate(route) {
-            launchSingleTop = false
-            restoreState = false
         }
     }
 
@@ -706,6 +734,10 @@ fun TvMainShell(
         }
     }
     val openForYou: (SavedListSelection?) -> Unit = { selection ->
+        // A dropdown pick is an explicit selection just like the tab itself:
+        // end any detail-return protection, or its nonzero token makes the
+        // Skyline feed swallow the entry focus bump and focus falls to the bar.
+        forYouDetailReturnFocusState = resetTvDetailReturnFocus()
         forYouEntryRequest = forYouEntryRequest.next(selection)
         focusState.closePanel()
         navigateToSecondary(TvMainRoute.ForYou.route)
@@ -715,9 +747,10 @@ fun TvMainShell(
     val onSelectRoot: (TvRootDestination) -> Unit = { dest ->
         val route = dest.toRoute()
         if (dest == TvRootDestination.ForYou) {
-            val reset = resetForExplicitForYouSelection()
-            forYouDetailReturnFocusRequest = reset.requestId
-            forYouDetailReturnFocusPending = reset.pending
+            // Same reason as Home below: an explicit tab selection ends the
+            // detail-return protection instead of letting its nonzero token
+            // keep suppressing the feed's first-card focus request.
+            forYouDetailReturnFocusState = resetTvDetailReturnFocus()
             forYouEntryRequest = forYouEntryRequest.nextForTopLevelForYou()
         }
         if (dest == TvRootDestination.Home) {
@@ -726,7 +759,7 @@ fun TvMainShell(
             // explicitly selects Home from the bar. Otherwise its nonzero
             // token keeps suppressing Home's normal first-card focus request
             // for the rest of the shell session.
-            homeDetailReturnFocusState = resetHomeDetailReturnFocus()
+            homeDetailReturnFocusState = resetTvDetailReturnFocus()
         }
         if (dest == TvRootDestination.Calendar) {
             calendarFocusHandoffPending = true
@@ -1036,7 +1069,17 @@ fun TvMainShell(
                                 // fails (we're already on the top row), hand
                                 // focus to the menu bar.
                                 val moved = focusManager.moveFocus(FocusDirection.Up)
-                                if (shouldRequestMenuAfterContentUp(moved, isRepeat)) {
+                                // `exit = Cancel` above only guards the level of
+                                // the search that owns the focused row; from a
+                                // control that sits directly in the screen (e.g.
+                                // the Calendar day shelf) the 2D search still
+                                // escapes into the bar and lands on whatever is
+                                // geometrically nearest — the Search icon from
+                                // the left edge. A move that left content is
+                                // therefore treated exactly like a failed move:
+                                // route to the selected tab.
+                                val escapedContent = moved && !contentHasFocus
+                                if (shouldRequestMenuAfterContentUp(moved && !escapedContent, isRepeat)) {
                                     focusState.requestMenuFocusIfAvailable(
                                         selectedMenuFocusTarget,
                                         allowNullTarget = currentRoute == TvMainRoute.Search.route,
@@ -1135,17 +1178,17 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Audio.route) {
                     TvLibrariesScreen(
-                        onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onItemClick = openContentItemDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
                 shellComposable(TvMainRoute.Libraries.route) {
                     TvLibrariesScreen(
-                        onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onItemClick = openContentItemDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
@@ -1161,9 +1204,9 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Movies.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Movies] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Movies] ?: 0,
-                        onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onItemClick = openContentItemDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -1175,9 +1218,9 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Series.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Series] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Series] ?: 0,
-                        onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onItemClick = openContentItemDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -1189,9 +1232,9 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Music.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Music] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Music] ?: 0,
-                        onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onItemClick = openContentItemDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -1203,9 +1246,9 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Audiobooks.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Audiobooks] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Audiobooks] ?: 0,
-                        onItemClick = onOpenItemDetail,
-                        onLibraryCollectionClick = onOpenLibraryCollectionDetail,
-                        onUserCollectionClick = onOpenCollectionDetail,
+                        onItemClick = openContentItemDetail,
+                        onLibraryCollectionClick = openLibraryCollectionDetail,
+                        onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
                     )
@@ -1214,22 +1257,13 @@ fun TvMainShell(
                     TvRecommendationsScreen(
                         onSavedListItemClick = openContentItemDetail,
                         onRecommendationItemClick = openForYouItemDetail,
-                        detailReturnFocusRequest = forYouDetailReturnFocusRequest,
-                        detailReturnFocusPending = forYouDetailReturnFocusPending,
-                        detailReturnCardFocusRequester = forYouDetailReturnCardFocusRequester,
-                        onDetailReturnFocusConsumed = { completedRequestId ->
-                            val consumed = consumeForYouDetailReturn(
-                                state = ForYouDetailReturnState(
-                                    requestId = forYouDetailReturnFocusRequest,
-                                    pending = forYouDetailReturnFocusPending,
-                                ),
-                                completedRequestId = completedRequestId,
-                            )
-                            forYouDetailReturnFocusPending = consumed.pending
-                        },
-                        onSolidTopBarChanged = onForYouSolidTopBarChanged,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
+                        detailReturnFocusRequest = forYouDetailReturnFocusState.requestId,
+                        detailReturnCardFocusRequester = forYouDetailReturnCardFocusRequester,
+                        firstRowFocusRequester = forYouFirstItemFocusRequester,
+                        firstRowContainerFocusRequester = forYouFirstRowContainerFocusRequester,
+                        onContentUpFallbackChanged = onContentUpFallback,
                         entryRequest = forYouEntryRequest,
                     )
                 }
@@ -1267,39 +1301,32 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Collections.route) {
                     TvCollectionsScreen(
-                        onCollectionClick = onOpenCollectionDetail,
+                        onCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
                 shellComposable(TvMainRoute.Watchlist.route) {
                     TvWatchlistScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
                 shellComposable(TvMainRoute.Favorites.route) {
                     TvFavoritesScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
                 shellComposable(TvMainRoute.History.route) {
                     TvHistoryScreen(
-                        onItemClick = onOpenItemDetail,
+                        onItemClick = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
                 shellComposable(TvMainRoute.Settings.route) {
                     TvSettingsScreen(
-                        onNavigateToAdmin = {
-                            // Apple parity: the stats dashboard is the whole
-                            // admin surface. The hub (users/sessions/logs/
-                            // scans) stays compiled but unlinked.
-                            navigateToSecondary(TvMainRoute.AdminDashboard.route)
-                            moveFocusToContent(TvMainRoute.AdminDashboard.route)
-                        },
                         onManageServers = onManageServers,
-                        onNavigateToDiagnostics = onOpenDiagnostics,
+                        onOpenDiagnosticsReport = onOpenDiagnosticsReport,
                         initialManageServersFocus = returnToManageServers,
                         onManageServersReturnFocusConsumed = onManageServersReturnFocusConsumed,
                         onSignedOut = onSignedOut,
@@ -1309,9 +1336,6 @@ fun TvMainShell(
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
-                }
-                shellComposable(TvMainRoute.ManageSessions.route) {
-                    TvManageSessionsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
                 }
                 shellComposable(TvMainRoute.Calendar.route) {
                     TvCalendarScreen(
@@ -1331,57 +1355,38 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Browse.route) {
                     TvBrowseScreen(
-                        onOpenItemDetail = onOpenItemDetail,
+                        onOpenItemDetail = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
-                shellComposable(TvMainRoute.AdminHub.route) {
-                    TvAdminHubScreen(
-                        onOpenDashboard = { navigateToSecondary(TvMainRoute.AdminDashboard.route) },
-                        onOpenUsers = { navigateToSecondary(TvMainRoute.AdminUsers.route) },
-                        onOpenSessions = { navigateToSecondary(TvMainRoute.AdminSessions.route) },
-                        onOpenScans = { navigateToSecondary(TvMainRoute.AdminScans.route) },
-                        onOpenLogs = { navigateToSecondary(TvMainRoute.AdminLogs.route) },
-                        onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
-                    )
-                }
-                shellComposable(TvMainRoute.AdminDashboard.route) {
-                    TvAdminScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
-                }
-                shellComposable(TvMainRoute.AdminUsers.route) {
-                    TvAdminUsersScreen(
-                        onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
-                        onCreateUser = { navigateToForm(TvMainRoute.AdminUserEdit().route) },
-                        onEditUser = { id -> navigateToForm(TvMainRoute.AdminUserEdit(id).route) },
-                    )
-                }
-                shellComposable(
-                    route = TvMainRoute.AdminUserEdit.ROUTE,
-                    arguments = listOf(
-                        navArgument(TvMainRoute.AdminUserEdit.ARG_USER_ID) {
-                            type = NavType.StringType
-                            nullable = true
-                            defaultValue = null
+                // ---- Removed route aliases (defensive) ---- see
+                // [TvRemovedMainRoutes]. Registered, never rendered: each one
+                // redirects into Settings so a back stack saved by a build that
+                // still had the admin/session screens can be restored.
+                for (removedRoute in TvRemovedMainRoutes) {
+                    composable(
+                        route = removedRoute,
+                        // A pattern carrying a placeholder cannot be registered
+                        // without the matching argument declared.
+                        arguments = if ("{userId}" in removedRoute) {
+                            listOf(
+                                navArgument("userId") {
+                                    type = NavType.StringType
+                                    nullable = true
+                                    defaultValue = null
+                                },
+                            )
+                        } else {
+                            emptyList()
                         },
-                    ),
-                ) { entry ->
-                    val userId = entry.arguments
-                        ?.getString(TvMainRoute.AdminUserEdit.ARG_USER_ID)
-                        ?.toIntOrNull()
-                    TvAdminUserEditScreen(
-                        userId = userId,
-                        onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
-                        onSaved = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
-                    )
-                }
-                shellComposable(TvMainRoute.AdminSessions.route) {
-                    TvAdminSessionsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
-                }
-                shellComposable(TvMainRoute.AdminScans.route) {
-                    TvAdminScansScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
-                }
-                shellComposable(TvMainRoute.AdminLogs.route) {
-                    TvAdminLogsScreen(onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() })
+                    ) {
+                        LaunchedEffect(Unit) {
+                            nestedNav.navigate(TvMainRoute.Settings.route) {
+                                popUpTo(removedRoute) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1389,30 +1394,22 @@ fun TvMainShell(
         // The scrim TvTopMenuBar documents but the shell had stopped drawing.
         // The bar deliberately has no background band of its own ("the SHELL
         // draws a fixed top scrim behind the bar", QA 2026-07-08); without it
-        // the labels sat directly on whatever scrolled underneath, which on
-        // For You is a poster row and is unreadable. Recommendation rows ask
-        // for the opaque treatment; saved lists and every other route retain
-        // the gradient so content remains visible behind the bar.
+        // the labels sit directly on whatever scrolled underneath. The gradient
+        // keeps the hero visible behind the bar on every route.
         if (currentRoute != TvMainRoute.Settings.route) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(TvTopMenuLayout.contentTopInset)
                     .align(Alignment.TopCenter)
-                    .then(
-                        if (useSolidForYouTopBar) {
-                            Modifier.background(MaterialTheme.colorScheme.background)
-                        } else {
-                            Modifier.background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
-                                        MaterialTheme.colorScheme.background.copy(alpha = 0.72f),
-                                        MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                                    ),
-                                ),
-                            )
-                        }
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.72f),
+                                MaterialTheme.colorScheme.background.copy(alpha = 0f),
+                            ),
+                        ),
                     ),
             )
         }
@@ -1682,7 +1679,12 @@ private fun TvLibraryTypeContent(
     selectedPill: TvLibraryPill,
     sectionRequestNonce: Int,
     onItemClick: (contentId: String) -> Unit,
-    onLibraryCollectionClick: (libraryId: Int, collectionId: String, title: String) -> Unit,
+    onLibraryCollectionClick: (
+        libraryId: Int,
+        collectionId: String,
+        title: String,
+        libraryType: String,
+    ) -> Unit,
     onUserCollectionClick: (collectionId: String, title: String) -> Unit,
     onInitialContentFocus: () -> Unit,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
@@ -1722,7 +1724,7 @@ private fun TvLibraryTypeContent(
                 if (isUserCollection) {
                     onUserCollectionClick(collectionId, title)
                 } else {
-                    onLibraryCollectionClick(library.id, collectionId, title)
+                    onLibraryCollectionClick(library.id, collectionId, title, library.type)
                 }
             },
             onInitialContentFocus = onInitialContentFocus,
@@ -1768,6 +1770,13 @@ private fun mapRouteToRoot(route: String): TvRootDestination? = when (route) {
     TvMainRoute.ForYou.route -> TvRootDestination.ForYou
     // Search maps to null so no top tab is highlighted (trailing icon).
     // Requests/MyRequests/Settings/Audio/Libraries are likewise non-tab.
+    else -> null
+}
+
+/** Bar tab that owns a non-root route for content→bar Up (see selectedMenuFocusTarget). */
+private fun menuFocusRootForRoute(route: String): TvRootDestination? = when (route) {
+    TvMainRoute.Watchlist.route,
+    TvMainRoute.Favorites.route -> TvRootDestination.ForYou
     else -> null
 }
 
@@ -1929,6 +1938,7 @@ private fun ProfileDropdownHeader(accountState: TvAccountState) {
     val avatarText = remember(accountState.avatar, accountState.displayName) {
         profileAvatarDisplayText(accountState.avatar, accountState.displayName)
     }
+    val avatarImage = rememberProfileAvatarImage(accountState.avatar)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1946,14 +1956,16 @@ private fun ProfileDropdownHeader(accountState: TvAccountState) {
                 .background(Color.White.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center,
         ) {
-            if (accountState.avatarUrl != null) {
+            if (avatarImage != null) {
                 ThumbhashImage(
-                    url = accountState.avatarUrl,
+                    url = avatarImage.url,
                     thumbhash = null,
                     contentDescription = accountState.displayName,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                     transparent = true,
+                    cacheKey = avatarImage.cacheKey,
+                    onError = avatarImage.onLoadFailed,
                 )
             } else {
                 Text(

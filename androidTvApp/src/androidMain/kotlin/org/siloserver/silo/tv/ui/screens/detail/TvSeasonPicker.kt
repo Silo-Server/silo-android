@@ -39,6 +39,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -60,6 +61,7 @@ fun TvSeasonPicker(
     selectedSeason: Int?,
     onSeasonSelected: (Season) -> Unit,
     modifier: Modifier = Modifier,
+    horizontalContentPadding: Dp = 0.dp,
     onDirectionUp: (() -> Boolean)? = null,
 ) {
     if (seasons.isEmpty()) return
@@ -103,7 +105,10 @@ fun TvSeasonPicker(
             .focusGroup(),
         state = listState,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
-        contentPadding = PaddingValues(vertical = 6.dp),
+        // Horizontal inset lives inside the scroll viewport (contentPadding),
+        // not on the row, so the leftmost chip's focus scale isn't clipped
+        // at the row's left edge.
+        contentPadding = PaddingValues(horizontal = horizontalContentPadding, vertical = 6.dp),
     ) {
         items(
             seasons,

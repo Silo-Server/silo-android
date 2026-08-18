@@ -29,7 +29,6 @@ import androidx.media3.datasource.RawResourceDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import org.siloserver.silo.common.R
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -57,13 +56,17 @@ fun StartupSplashVideo(
     val playbackStarted = remember { AtomicBoolean(false) }
     var playbackFinished by remember { mutableStateOf(false) }
     var playbackVisibleStartedAt by remember { mutableStateOf(0L) }
-    val player = remember(context) {
+    // Tier the asset to what this device's decoder actually sustains — a 4K60
+    // splash decoded into garbled half-frames on an onn 4K stick. See
+    // [startupSplashRes].
+    val splashRes = remember { startupSplashRes() }
+    val player = remember(context, splashRes) {
         ExoPlayer.Builder(context).build().apply {
             repeatMode = Player.REPEAT_MODE_OFF
             volume = 0f
             setMediaItem(
                 MediaItem.fromUri(
-                    RawResourceDataSource.buildRawResourceUri(R.raw.startup_splash),
+                    RawResourceDataSource.buildRawResourceUri(splashRes),
                 ),
             )
             prepare()

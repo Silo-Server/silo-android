@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.personal
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import org.siloserver.silo.android.ui.components.SiloTopBar
 
 /**
@@ -24,9 +25,13 @@ fun WatchlistScreen(
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
+        val controls = rememberPersonalListControls(PersonalListSource.Watchlist)
+        val query by controls.queryState()
         WatchlistGridContent(
             onItemClick = onItemClick,
             contentPadding = padding,
+            query = query,
+            header = { state -> PersonalListControlsRow(controls = controls, total = state.total) },
         )
     }
 }

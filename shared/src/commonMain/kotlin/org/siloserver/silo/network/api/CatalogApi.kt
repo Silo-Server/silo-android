@@ -42,20 +42,7 @@ class CatalogApi(private val client: HttpClient) {
             yearMax?.let { parameter("year_max", it) }
             snapshotAt?.let { parameter("snapshot", it) }
             match?.let { parameter("match", it) }
-            queryGroups.forEachIndexed { groupIndex, group ->
-                parameter("groups[$groupIndex][match]", group.match)
-                group.rules.forEachIndexed { ruleIndex, rule ->
-                    parameter("groups[$groupIndex][rules][$ruleIndex][field]", rule.field)
-                    parameter("groups[$groupIndex][rules][$ruleIndex][op]", rule.op)
-                    if (rule.values.isNotEmpty()) {
-                        rule.values.forEachIndexed { valueIndex, value ->
-                            parameter("groups[$groupIndex][rules][$ruleIndex][value][$valueIndex]", value)
-                        }
-                    } else {
-                        parameter("groups[$groupIndex][rules][$ruleIndex][value]", rule.value)
-                    }
-                }
-            }
+            catalogQueryGroupParameters(queryGroups)
         }
     }
 
@@ -79,13 +66,22 @@ class CatalogApi(private val client: HttpClient) {
         }
     }
 
+    /**
+     * Facet vocabularies. [source]/[collectionId] scope the options to one
+     * catalog source (e.g. `source=library_collection`) so a collection's
+     * filter panel only offers values its own members actually have.
+     */
     suspend fun getFilters(
         libraryId: Int? = null,
         includeTechnical: Boolean = false,
+        source: String? = null,
+        collectionId: String? = null,
     ): ApiResult<CatalogFiltersResponse> = safeApiCall {
         client.get("/api/v1/catalog/filters") {
             libraryId?.let { parameter("library_id", it) }
             if (includeTechnical) parameter("include_technical", "true")
+            source?.let { parameter("source", it) }
+            collectionId?.let { parameter("collection_id", it) }
         }
     }
 
@@ -151,6 +147,28 @@ class CatalogApi(private val client: HttpClient) {
             offset?.let { parameter("offset", it) }
             limit?.let { parameter("limit", it) }
             snapshotAt?.let { parameter("snapshot", it) }
+        }
+    }
+}
+
+/**
+ * Encodes structured catalog filter groups as the server's bracketed query
+ * params (`groups[g][rules][r][field]`, …). Range ops carry indexed values.
+ * Shared by every `/api/v1/catalog` caller so the encoding has one definition.
+ */
+internal fun HttpRequestBuilder.catalogQueryGroupParameters(groups: List<CatalogQueryGroup>) {
+    groups.forEachIndexed { groupIndex, group ->
+        parameter("groups[$groupIndex][match]", group.match)
+        group.rules.forEachIndexed { ruleIndex, rule ->
+            parameter("groups[$groupIndex][rules][$ruleIndex][field]", rule.field)
+            parameter("groups[$groupIndex][rules][$ruleIndex][op]", rule.op)
+            if (rule.values.isNotEmpty()) {
+                rule.values.forEachIndexed { valueIndex, value ->
+                    parameter("groups[$groupIndex][rules][$ruleIndex][value][$valueIndex]", value)
+                }
+            } else {
+                parameter("groups[$groupIndex][rules][$ruleIndex][value]", rule.value)
+            }
         }
     }
 }

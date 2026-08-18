@@ -13,33 +13,57 @@ class WatchTogetherMenuEntrySourceTest {
     }
 
     private val topBar = source("org/siloserver/silo/android/ui/components/MainAppTopBar.kt")
+    private val topBarActions = source("org/siloserver/silo/android/ui/components/TopBarActions.kt")
     private val home = source("org/siloserver/silo/android/ui/screens/home/HomeScreen.kt")
     private val libraries = source("org/siloserver/silo/android/ui/screens/libraries/LibrariesScreen.kt")
     private val main = source("org/siloserver/silo/android/ui/screens/MainScreen.kt")
+    private val profileMenu = source("org/siloserver/silo/android/ui/components/ProfileMenu.kt")
     private val menuSheet = source(
         "org/siloserver/silo/android/ui/screens/watchtogether/WatchTogetherMenuEntrySheet.kt",
     )
 
+    /**
+     * The three anchors — the floating top bar, Home's own chrome, Libraries'
+     * own chrome — used to carry a hand-rolled copy of this menu each, which
+     * is what this test originally had to check three times over. They now
+     * all delegate to the one shared trailing cluster ([TabTopBarActions]),
+     * which owns the single [ProfileMenu] anchor, so the ordering is asserted
+     * once and the delegation is asserted here, which is what stops a fourth
+     * copy drifting back in.
+     */
     @Test
     fun everyPhoneProfileMenuPlacesWatchTogetherAfterRequestsAndBeforeSettings() {
         listOf(topBar, home, libraries).forEach { text ->
-            val watch = text.indexOf("Text(\"Watch Together\")")
-            val requests = text.indexOf("Text(\"Requests\")")
-            val settings = text.indexOf("Text(\"Settings\")")
-            assertTrue(watch >= 0)
-            assertTrue(requests < 0 || requests < watch)
-            assertTrue(watch < settings)
-            if (requests >= 0) {
-                val watchMenuItem = text.lastIndexOf("DropdownMenuItem(", watch)
-                assertTrue(watchMenuItem > requests)
-                assertFalse(
-                    text.substring(
-                        startIndex = requests + "Text(\"Requests\")".length,
-                        endIndex = watchMenuItem,
-                    ).contains("DropdownMenuItem("),
-                )
-            }
+            assertTrue(text.contains("TabTopBarActions("))
         }
+        assertTrue(topBarActions.contains("ProfileMenu("))
+        listOf(topBar, topBarActions, home, libraries).forEach { text ->
+            assertFalse(text.contains("\"Watch Together\""))
+            assertFalse(text.contains("\"Watch together\""))
+            assertFalse(text.contains("\"Switch Profile\""))
+            assertFalse(text.contains("\"Switch profile\""))
+        }
+
+        val watch = profileMenu.indexOf("label = \"Watch together\"")
+        val requests = profileMenu.indexOf("label = \"Requests\"")
+        val settings = profileMenu.indexOf("label = \"Settings\"")
+        assertTrue(watch >= 0)
+        assertTrue(requests in 0 until watch)
+        assertTrue(watch < settings)
+
+        val watchMenuItem = profileMenu.lastIndexOf("SiloMenuItem(", watch)
+        assertTrue(watchMenuItem > requests)
+        assertFalse(
+            profileMenu.substring(
+                startIndex = requests + "label = \"Requests\"".length,
+                endIndex = watchMenuItem,
+            ).contains("SiloMenuItem("),
+        )
+
+        // Both entries stay behind their gate: `requests_enabled` on the
+        // server for one, the client-side surface flag for the other.
+        assertTrue(profileMenu.contains("if (onRequestsClick != null)"))
+        assertTrue(profileMenu.contains("if (onWatchTogetherClick != null)"))
     }
 
     @Test

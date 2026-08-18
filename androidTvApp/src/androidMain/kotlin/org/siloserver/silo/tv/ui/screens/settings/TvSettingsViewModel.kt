@@ -6,9 +6,8 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
-import org.siloserver.silo.model.admin.shouldShowClientAdminSurface
 import org.siloserver.silo.model.auth.User
-import org.siloserver.silo.model.auth.isActingAdmin
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -96,7 +95,7 @@ class TvSettingsViewModel(
         val effectiveSubtitleAppearance: SubtitleAppearance = SubtitleAppearance.DEFAULT,
         val subtitleUsesDeviceOverride: Boolean = false,
         val autoPlayNext: Boolean = true,
-        val autoSkipIntro: Boolean = false,
+        val introSkipMode: IntroSkipMode = IntroSkipMode.Default,
         val matchContentFrameRate: Boolean = false,
         val dolbyVisionEnabled: Boolean = true,
         val showAudiobooksTab: Boolean = false,
@@ -110,8 +109,6 @@ class TvSettingsViewModel(
         // Seconds before the end of an episode to surface the Up-Next prompt
         // (0 = at the very end). Mirrors tvOS `nextUpPromptSeconds`.
         val nextUpPromptSeconds: Int = 10,
-        // Client admin is hidden for now even when the server would accept acting-admin.
-        val adminVisible: Boolean = false,
         val navAction: NavAction? = null,
     )
 
@@ -125,12 +122,12 @@ class TvSettingsViewModel(
     }
 
     /**
-     * Loads the current user (and derives [UiState.adminVisible]). A transient
-     * failure here would silently drop the Admin dashboard entry for an acting
-     * admin — the fetch is what gates admin visibility — so retry a few times
-     * with a short backoff before surfacing [UiState.userError]. Only the final
-     * attempt's failure is reported; a flaky load recovers and keeps the Admin
-     * entry. Exposed publicly so a screen-level retry can also call it.
+     * Loads the current user, and the active profile that supplies the account
+     * header's name and avatar. A transient failure would blank that header, so
+     * retry a few times with a short backoff before surfacing
+     * [UiState.userError]. Only the final attempt's failure is reported; a
+     * flaky load recovers. Exposed publicly so a screen-level retry can also
+     * call it.
      */
     fun loadUser() {
         viewModelScope.launch {
@@ -139,14 +136,12 @@ class TvSettingsViewModel(
                 val isLastAttempt = attempt == UserLoadMaxAttempts - 1
                 when (val r = authRepository.getCurrentUser()) {
                     is ApiResult.Success -> {
-                        // Retried alongside /me. The admin gate fails closed on
-                        // an unresolved profile, and getActiveProfile collapses
+                        // Retried alongside /me. getActiveProfile collapses
                         // "network failed", "no active id" and "not found" into
-                        // null — so without this a transient failure hid the
-                        // Admin row from a genuine owner for the life of this
-                        // ViewModel. Bounded by the same attempt budget: not
-                        // being an admin is by far the commonest reason for no
-                        // row, and that must not retry forever.
+                        // null, so without this a transient failure left the
+                        // account header without a name or avatar for the life
+                        // of this ViewModel. Bounded by the same attempt budget
+                        // so it cannot become a poll.
                         var profile = profileRepository.getActiveProfile()
                         var profileAttempt = 1
                         while (profile == null && profileAttempt < UserLoadMaxAttempts) {
@@ -161,7 +156,6 @@ class TvSettingsViewModel(
                                 userError = null,
                                 profileName = profile?.name,
                                 profileAvatar = profile?.avatar,
-                                adminVisible = shouldShowClientAdminSurface(isActingAdmin(r.data, profile)),
                             )
                         }
                         return@launch
@@ -294,7 +288,7 @@ class TvSettingsViewModel(
                 playerSettingsStore.preferredQualityFlow,
                 playerSettingsStore.maxBitrateKbpsFlow,
                 playerSettingsStore.autoPlayNextFlow,
-                playerSettingsStore.autoSkipIntroFlow,
+                playerSettingsStore.introSkipModeFlow,
                 playerSettingsStore.autoSkipCreditsFlow,
                 playerSettingsStore.savedCustomSubtitleAppearanceFlow,
                 playerSettingsStore.audioLanguageFlow,
@@ -307,7 +301,7 @@ class TvSettingsViewModel(
                 @Suppress("UNCHECKED_CAST")
                 val autoPlay = values[2] as Boolean
                 @Suppress("UNCHECKED_CAST")
-                val skipIntro = values[3] as Boolean
+                val skipIntro = values[3] as IntroSkipMode
                 @Suppress("UNCHECKED_CAST")
                 val skipCredits = values[4] as Boolean
                 @Suppress("UNCHECKED_CAST")
@@ -326,7 +320,7 @@ class TvSettingsViewModel(
                         qualityResolution = snap.quality,
                         maxBitrateKbps = snap.maxBitrateKbps,
                         autoPlayNext = snap.autoPlay,
-                        autoSkipIntro = snap.skipIntro,
+                        introSkipMode = snap.skipIntro,
                         autoSkipCredits = snap.skipCredits,
                         subtitleSize = snap.appearance.fontSize.toTvSubtitleSize(),
                         subtitleAppearance = snap.appearance,
@@ -574,8 +568,8 @@ class TvSettingsViewModel(
         viewModelScope.launch { playerSettingsStore.setDvProfile7HDR10Fallback(value) }
     }
 
-    fun onAutoSkipIntroChanged(value: Boolean) {
-        viewModelScope.launch { playerSettingsStore.setAutoSkipIntro(value) }
+    fun onIntroSkipModeChanged(value: IntroSkipMode) {
+        viewModelScope.launch { playerSettingsStore.setIntroSkipMode(value) }
     }
 
     fun onAutoSkipCreditsChanged(value: Boolean) {
@@ -653,7 +647,7 @@ class TvSettingsViewModel(
         val quality: String,
         val maxBitrateKbps: Int?,
         val autoPlay: Boolean,
-        val skipIntro: Boolean,
+        val skipIntro: IntroSkipMode,
         val skipCredits: Boolean,
         val appearance: SubtitleAppearance,
         val audioLanguage: String,
@@ -663,10 +657,10 @@ class TvSettingsViewModel(
 
     private companion object {
         // Retry the user load a few times before surfacing an error, so a
-        // flaky fetch doesn't silently strip the Admin entry from an admin.
+        // flaky fetch doesn't blank the account header.
         const val UserLoadMaxAttempts = 3
 
-        /** Gap between profile lookups while the admin gate is unresolved. */
+        /** Gap between profile lookups while the profile is unresolved. */
         const val ProfileResolveRetryMs = 400L
         const val UserLoadRetryDelayMs = 400L
     }

@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 
 /**
  * Reusable top app bar for Silo screens.
@@ -18,6 +19,9 @@ import androidx.compose.runtime.Composable
  * @param title Screen title displayed in the top bar.
  * @param onBackClick When non-null, a back arrow is shown as the navigation icon.
  * @param actions Composable slot for trailing action icons.
+ * @param containerColor Bar background. Defaults to the app's `surface`; the
+ *   grouped-settings screens pass their own lifted page ground so the bar and
+ *   the list below it are one continuous surface instead of two tones.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -25,6 +29,7 @@ fun SiloTopBar(
     title: String,
     onBackClick: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
+    containerColor: Color = MaterialTheme.colorScheme.surface,
 ) {
     TopAppBar(
         title = {
@@ -45,7 +50,7 @@ fun SiloTopBar(
         },
         actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = containerColor,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
             actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,

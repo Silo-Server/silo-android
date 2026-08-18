@@ -1,27 +1,30 @@
 package org.siloserver.silo.tv.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MenuDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,6 +37,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
@@ -46,13 +58,13 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 
 // ---------------------------------------------------------------------------
@@ -194,7 +206,16 @@ fun TvAnchoredSelectorMenu(
             onClick = { if (interactive) expansionRequested = true },
             modifier = Modifier,
             focusRequester = triggerFr,
-            enabled = interactive,
+            // Deliberately NOT `enabled = interactive`. A single-choice pill is
+            // not a disabled control — it is Apple's `TVSelectorValue`, a value
+            // display that stays focusable and simply does nothing on Select.
+            // `SquaredPillSurface` routes `enabled` into `Modifier.clickable`,
+            // and a disabled clickable is also unfocusable, so handing it
+            // `interactive` would drop the pill out of D-pad traversal. Most
+            // titles have one version and one audio track, so that would strand
+            // the row: three pills drawn, none reachable, and Down from the
+            // action row skipping the whole cluster. The chevron below is
+            // hidden instead, which is what tells the viewer it will not open.
             // Secondary .compact pill body padding, tvOS 40×22pt → 20×11dp,
             // +2/+1 per design review.
             contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
@@ -249,10 +270,12 @@ fun TvAnchoredSelectorMenu(
             }
         }
 
-        // Known limitation: this still uses the phone Material3 DropdownMenu
-        // rather than a TV-native popup. Rows provide explicit TV focus colors
-        // and borders below, while a fully TV-native anchored popup (including
-        // scale behavior) would require a bespoke Popup.
+        // The Material3 DropdownMenu is kept only as the anchored popup host
+        // (positioning under the trigger, focus capture, dismiss-on-Back); its
+        // own surface is made transparent and the content draws the same
+        // Skyline glass panel, dim uppercase header, inverted-capsule rows and
+        // hint footer as the top-bar cascade / For You selector, so every
+        // dropdown in the app reads as one component.
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = {
@@ -261,10 +284,11 @@ fun TvAnchoredSelectorMenu(
                 // reloaded on selection) — requesting focus then throws.
                 runCatching { triggerFr.requestFocus() }
             },
-            scrollState = menuScrollState,
-            containerColor = DarkSurfaceElevated,
+            offset = DpOffset(0.dp, SelectorMenuGap),
+            containerColor = Color.Transparent,
             tonalElevation = 0.dp,
-            shadowElevation = 18.dp,
+            shadowElevation = 0.dp,
+            shape = RectangleShape,
         ) {
             // Own both halves of the walk: which row takes focus, and where the
             // list has to scroll for it to be visible. Compose's own focus
@@ -289,101 +313,213 @@ fun TvAnchoredSelectorMenu(
                 // it the handler below is never called and the d-pad falls
                 // straight through to Compose's own focus search.
                 modifier = Modifier
+                    .widthIn(min = CascadeLibraryColumnWidth, max = TvCascadeSelectorMaxPanelWidth)
+                    .tvSkylinePanelChrome()
+                    .padding(CascadePanelPadding)
                     .focusGroup()
                     .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    val forward = when (event.key) {
-                        Key.DirectionDown -> true
-                        Key.DirectionUp -> false
-                        else -> return@onPreviewKeyEvent false
-                    }
-                    val next = nextSelectorMenuIndex(options, focusedIndex, forward)
-                    if (next != null) {
-                        rowFocusRequesters.getOrNull(next)?.let { requester ->
-                            runCatching { requester.requestFocus() }
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        val forward = when (event.key) {
+                            Key.DirectionDown -> true
+                            Key.DirectionUp -> false
+                            else -> return@onPreviewKeyEvent false
                         }
-                    }
-                    // Consume at the boundary too: a d-pad press that runs off
-                    // the end must stay put rather than leak to the screen the
-                    // menu is covering.
-                    true
-                },
+                        val next = nextSelectorMenuIndex(options, focusedIndex, forward)
+                        if (next != null) {
+                            rowFocusRequesters.getOrNull(next)?.let { requester ->
+                                runCatching { requester.requestFocus() }
+                            }
+                        }
+                        // Consume at the boundary too: a d-pad press that runs off
+                        // the end must stay put rather than leak to the screen the
+                        // menu is covering.
+                        true
+                    },
             ) {
-                options.forEachIndexed { index, option ->
-                    val interactionSource = remember(option.key) { MutableInteractionSource() }
-                    val focused by interactionSource.collectIsFocusedAsState()
-                    LaunchedEffect(focused, rowTops[index], rowHeights[index]) {
-                        if (!focused) return@LaunchedEffect
-                        focusedIndex = index
-                        val target = selectorMenuScrollTarget(
-                            scroll = menuScrollState.value,
-                            rowTop = rowTops[index] ?: return@LaunchedEffect,
-                            rowHeight = rowHeights[index] ?: return@LaunchedEffect,
-                            viewport = menuScrollState.viewportSize,
-                            maxValue = menuScrollState.maxValue,
+                CascadePanelHeader(label.uppercase())
+                // The rows scroll inside a capped list while the header and
+                // footer stay pinned — a long subtitle list would otherwise
+                // grow the panel past the bottom of the screen.
+                Box {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = SelectorMenuMaxListHeight)
+                        .selectorMenuEdgeFade(
+                            fadeTop = menuScrollState.canScrollBackward,
+                            fadeBottom = menuScrollState.canScrollForward,
                         )
-                        if (target != menuScrollState.value) menuScrollState.animateScrollTo(target)
-                    }
-                    val visual = tvSelectorRowVisualState(focused, option.selected, option.enabled)
-                    val labelText = if (option.detail.isBlank()) {
-                        option.title
-                    } else {
-                        "${option.title} — ${option.detail}"
-                    }
-                    DropdownMenuItem(
-                        interactionSource = interactionSource,
-                        modifier = Modifier
-                            .focusRequester(rowFocusRequesters[index])
-                            .onGloballyPositioned { coords ->
-                                // positionInParent is content-space: it does not
-                                // move when the menu scrolls, so it is a stable
-                                // scroll target.
-                                rowTops[index] = coords.positionInParent().y.toInt()
-                                rowHeights[index] = coords.size.height
-                            }
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(visual.container)
-                            .border(1.dp, visual.border, RoundedCornerShape(8.dp))
-                            .semantics { this.selected = option.selected },
-                        enabled = option.enabled,
-                        text = {
-                            androidx.compose.material3.Text(
-                                text = labelText,
-                                style = androidx.compose.material3.MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = 14.sp,
-                                    lineHeight = 18.sp,
-                                    fontWeight = FontWeight.Medium,
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                        .verticalScroll(menuScrollState),
+                ) {
+                    options.forEachIndexed { index, option ->
+                        val interactionSource = remember(option.key) { MutableInteractionSource() }
+                        val focused by interactionSource.collectIsFocusedAsState()
+                        LaunchedEffect(focused, rowTops[index], rowHeights[index]) {
+                            if (!focused) return@LaunchedEffect
+                            focusedIndex = index
+                            val target = selectorMenuScrollTarget(
+                                scroll = menuScrollState.value,
+                                rowTop = rowTops[index] ?: return@LaunchedEffect,
+                                rowHeight = rowHeights[index] ?: return@LaunchedEffect,
+                                viewport = menuScrollState.viewportSize,
+                                maxValue = menuScrollState.maxValue,
                             )
-                        },
-                        leadingIcon = if (option.selected) {
-                            {
-                                androidx.compose.material3.Icon(
-                                    imageVector = Icons.Filled.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
-                        } else {
-                            null
-                        },
-                        colors = MenuDefaults.itemColors(
-                            textColor = visual.content,
-                            leadingIconColor = visual.content,
-                            disabledTextColor = visual.content,
-                            disabledLeadingIconColor = visual.content,
-                        ),
-                        onClick = {
-                            option.onSelect()
-                            expansionRequested = false
-                            runCatching { triggerFr.requestFocus() }
-                        },
+                            if (target != menuScrollState.value) menuScrollState.animateScrollTo(target)
+                        }
+                        SelectorMenuRow(
+                            option = option,
+                            focused = focused,
+                            interactionSource = interactionSource,
+                            modifier = Modifier
+                                .focusRequester(rowFocusRequesters[index])
+                                .onGloballyPositioned { coords ->
+                                    // positionInParent is content-space: it does not
+                                    // move when the menu scrolls, so it is a stable
+                                    // scroll target.
+                                    rowTops[index] = coords.positionInParent().y.toInt()
+                                    rowHeights[index] = coords.size.height
+                                },
+                            onClick = {
+                                option.onSelect()
+                                expansionRequested = false
+                                runCatching { triggerFr.requestFocus() }
+                            },
+                        )
+                    }
+                }
+                    // Make the overflow obvious: a fade plus chevron on whichever
+                    // edge still has rows beyond it.
+                    SelectorMenuScrollEdge(
+                        visible = menuScrollState.canScrollBackward,
+                        top = true,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
+                    SelectorMenuScrollEdge(
+                        visible = menuScrollState.canScrollForward,
+                        top = false,
+                        modifier = Modifier.align(Alignment.BottomCenter),
                     )
                 }
+                CascadePanelFooter(caption = "Press selects · Back closes")
             }
+        }
+    }
+}
+
+private val SelectorMenuGap = 6.dp
+
+/** Six rows of options; anything longer scrolls within the panel. */
+private val SelectorMenuMaxListHeight = 230.dp
+private val SelectorMenuScrollEdgeHeight = 26.dp
+
+/**
+ * Fades the rows out toward whichever edge still has more of them, by masking
+ * the list's own pixels (DstIn) rather than painting a colour over it — a
+ * painted fade can never quite match the panel's translucent gradient and
+ * shows up as a band.
+ */
+private fun Modifier.selectorMenuEdgeFade(fadeTop: Boolean, fadeBottom: Boolean): Modifier {
+    if (!fadeTop && !fadeBottom) return this
+    return this
+        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            val fade = SelectorMenuScrollEdgeHeight.toPx()
+            if (fadeTop) {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black),
+                        startY = 0f,
+                        endY = fade,
+                    ),
+                    size = Size(size.width, fade),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+            if (fadeBottom) {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(Color.Black, Color.Transparent),
+                        startY = size.height - fade,
+                        endY = size.height,
+                    ),
+                    topLeft = Offset(0f, size.height - fade),
+                    size = Size(size.width, fade),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+        }
+}
+
+/** Chevron over the list edge that still has rows beyond it. */
+@Composable
+private fun SelectorMenuScrollEdge(visible: Boolean, top: Boolean, modifier: Modifier = Modifier) {
+    if (!visible) return
+    Icon(
+        imageVector = if (top) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+        contentDescription = null,
+        tint = SiloOnSurface.copy(alpha = 0.7f),
+        modifier = modifier.size(14.dp),
+    )
+}
+
+/**
+ * One option row, drawn with the cascade's row chrome (see `CascadeRowChrome`):
+ * a leading check slot (kept even when unselected so titles stay aligned, the
+ * way the cascade's leading icon does), the title in semibold and the detail
+ * dimmed, inverting to a solid [SiloOnSurface] capsule on focus. Disabled rows
+ * are dimmed and skipped by focus.
+ */
+@Composable
+private fun SelectorMenuRow(
+    option: TvSelectorOption,
+    focused: Boolean,
+    interactionSource: MutableInteractionSource,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val visual = tvSelectorRowVisualState(focused, option.selected, option.enabled)
+    val shape = RoundedCornerShape(CascadeRowCornerRadius)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clip(shape)
+            .background(visual.container)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = option.enabled,
+                onClick = onClick,
+            )
+            .semantics { this.selected = option.selected }
+            .padding(horizontal = CascadeRowPaddingHorizontal, vertical = CascadeRowPaddingVertical),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Check,
+            contentDescription = null,
+            tint = if (option.selected) visual.content else Color.Transparent,
+            modifier = Modifier.size(CascadeRowIconSize),
+        )
+        Text(
+            text = option.title,
+            color = visual.content,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = CascadeRowTextSize,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (option.detail.isNotBlank()) {
+            Text(
+                text = option.detail,
+                color = visual.content.copy(alpha = 0.6f),
+                fontWeight = FontWeight.Medium,
+                fontSize = CascadeRowTextSize,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
         }
     }
 }

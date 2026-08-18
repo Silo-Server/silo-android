@@ -4,7 +4,18 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
+
+/**
+ * Canonical control metrics for the TV auth/onboarding forms (server setup,
+ * sign-in, sign-up, first-run setup). Every text field and primary action in
+ * that flow sizes from here so the steps read as one surface.
+ */
+object TvAuthFormDefaults {
+    val FieldHeight = 56.dp
+    val PrimaryButtonHeight = 60.dp
+}
 
 @Composable
 fun tvOutlinedTextFieldColors(

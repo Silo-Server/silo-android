@@ -1,5 +1,6 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.section.HomeLayoutResponse
 import org.siloserver.silo.model.section.HomeSectionItemsResponse
@@ -133,6 +134,18 @@ class SectionRepository(
         collectionId: String,
         offset: Int = 0,
         limit: Int = 60,
+        sort: String? = null,
+        order: String? = null,
+        queryGroups: List<CatalogQueryGroup> = emptyList(),
+        match: String? = null,
     ): ApiResult<CatalogResponse> =
-        sectionApi.getLibraryCollectionItems(collectionId, offset, limit)
+        sectionApi.getLibraryCollectionItems(
+            collectionId = collectionId,
+            offset = offset,
+            limit = limit,
+            sort = sort,
+            order = order,
+            queryGroups = queryGroups,
+            match = match,
+        )
 }

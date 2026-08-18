@@ -81,7 +81,20 @@ data class CatalogResponse(
     val items: List<BrowseItem> = emptyList(),
     val source: String? = null,
     val title: String? = null,
-    val snapshot: String? = null
+    val snapshot: String? = null,
+    /**
+     * What the server actually sorted by. Sources with an intrinsic order
+     * (library collections keep their manual / MDBList / smart order when no
+     * `sort` is sent) echo the resolved field here, so a client that sent
+     * nothing can still say what it is looking at.
+     */
+    @SerialName("effective_sort") val effectiveSort: CatalogEffectiveSort? = null
+)
+
+@Serializable
+data class CatalogEffectiveSort(
+    val field: String? = null,
+    val order: String? = null,
 )
 
 data class CatalogQueryRule(

@@ -17,7 +17,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,22 +29,27 @@ import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.TvAuroraBackdrop
 import org.siloserver.silo.tv.ui.components.TvAuroraVariant
-import org.siloserver.silo.tv.ui.components.TvHeroActionPill
-import org.siloserver.silo.tv.ui.components.TvPillVariant
+import org.siloserver.silo.tv.ui.components.AuroraGhostButton
+import org.siloserver.silo.tv.ui.components.AuroraPrimaryButton
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
+import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
+import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.koin.compose.viewmodel.koinViewModel
@@ -79,9 +83,15 @@ fun TvSignupScreen(
     }
     // A text field on a first-run screen: if this claim is dropped the
     // remote has nothing to act on and no touch fallback exists.
+    // Snapshot-backed input mode drives the claim: null contentKey while the
+    // viewer is in touch mode (a programmatic claim on a text field pops the
+    // IME; pointer users click the field themselves), and the key change on
+    // flipping back to key input re-runs the claim so the D-pad always has
+    // somewhere to land.
+    val inputMode = LocalInputModeManager.current.inputMode
     val usernameFocusModifier = rememberTvContentInitialFocus(
         target = usernameFocus,
-        contentKey = Unit,
+        contentKey = if (inputMode == InputMode.Touch) null else inputMode,
     )
 
     Box(
@@ -116,78 +126,130 @@ fun TvSignupScreen(
                 color = Color.White.copy(alpha = 0.72f),
             )
 
-            OutlinedTextField(
-                value = state.username,
-                onValueChange = viewModel::onUsernameChanged,
-                label = { Text("Username", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Next,
-                ),
-                enabled = !state.isLoading,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .tvImeAwareFieldContext()
-                    .focusRequester(usernameFocus),
-                colors = tvOutlinedTextFieldColors(),
-            )
-
-            OutlinedTextField(
-                value = state.email,
-                onValueChange = viewModel::onEmailChanged,
-                label = { Text("Email", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Email,
-                    imeAction = ImeAction.Next,
-                ),
-                enabled = !state.isLoading,
+            Column(
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 modifier = Modifier
                     .fillMaxWidth()
                     .tvImeAwareFieldContext(),
-                colors = tvOutlinedTextFieldColors(),
-            )
+            ) {
+                Text(
+                    text = "USERNAME",
+                    style = TvAuthFormTextStyles.InputLabel,
+                    color = Color.White.copy(alpha = 0.52f),
+                )
+                OutlinedTextField(
+                    value = state.username,
+                    onValueChange = viewModel::onUsernameChanged,
+                    singleLine = true,
+                    textStyle = TvAuthFormTextStyles.FieldText,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Next,
+                        showKeyboardOnFocus = false,
+                    ),
+                    enabled = !state.isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(TvAuthFormDefaults.FieldHeight)
+                        .tvShowImeOnSelect()
+                        .focusRequester(usernameFocus),
+                    colors = tvOutlinedTextFieldColors(),
+                )
+            }
 
-            OutlinedTextField(
-                value = state.password,
-                onValueChange = viewModel::onPasswordChanged,
-                label = { Text("Password", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Next,
-                ),
-                enabled = !state.isLoading,
+            Column(
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 modifier = Modifier
                     .fillMaxWidth()
                     .tvImeAwareFieldContext(),
-                colors = tvOutlinedTextFieldColors(),
-            )
+            ) {
+                Text(
+                    text = "EMAIL",
+                    style = TvAuthFormTextStyles.InputLabel,
+                    color = Color.White.copy(alpha = 0.52f),
+                )
+                OutlinedTextField(
+                    value = state.email,
+                    onValueChange = viewModel::onEmailChanged,
+                    singleLine = true,
+                    textStyle = TvAuthFormTextStyles.FieldText,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Next,
+                        showKeyboardOnFocus = false,
+                    ),
+                    enabled = !state.isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(TvAuthFormDefaults.FieldHeight)
+                        .tvShowImeOnSelect(),
+                    colors = tvOutlinedTextFieldColors(),
+                )
+            }
 
-            OutlinedTextField(
-                value = state.inviteCode,
-                onValueChange = viewModel::onInviteCodeChanged,
-                label = { Text("Invite Code", style = TvAuthFormTextStyles.FieldLabel, color = Color.White) },
-                singleLine = true,
-                textStyle = TvAuthFormTextStyles.FieldText,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = { if (!state.isLoading) viewModel.onSignupClick() },
-                ),
-                enabled = !state.isLoading,
+            Column(
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 modifier = Modifier
                     .fillMaxWidth()
                     .tvImeAwareFieldContext(),
-                colors = tvOutlinedTextFieldColors(),
-            )
+            ) {
+                Text(
+                    text = "PASSWORD",
+                    style = TvAuthFormTextStyles.InputLabel,
+                    color = Color.White.copy(alpha = 0.52f),
+                )
+                OutlinedTextField(
+                    value = state.password,
+                    onValueChange = viewModel::onPasswordChanged,
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    textStyle = TvAuthFormTextStyles.FieldText,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Next,
+                        showKeyboardOnFocus = false,
+                    ),
+                    enabled = !state.isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(TvAuthFormDefaults.FieldHeight)
+                        .tvShowImeOnSelect(),
+                    colors = tvOutlinedTextFieldColors(),
+                )
+            }
+
+            Column(
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .tvImeAwareFieldContext(),
+            ) {
+                Text(
+                    text = "INVITE CODE",
+                    style = TvAuthFormTextStyles.InputLabel,
+                    color = Color.White.copy(alpha = 0.52f),
+                )
+                OutlinedTextField(
+                    value = state.inviteCode,
+                    onValueChange = viewModel::onInviteCodeChanged,
+                    singleLine = true,
+                    textStyle = TvAuthFormTextStyles.FieldText,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Done,
+                        showKeyboardOnFocus = false,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { if (!state.isLoading) viewModel.onSignupClick() },
+                    ),
+                    enabled = !state.isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(TvAuthFormDefaults.FieldHeight)
+                        .tvShowImeOnSelect(),
+                    colors = tvOutlinedTextFieldColors(),
+                )
+            }
 
             if (state.error != null) {
                 Text(
@@ -197,33 +259,25 @@ fun TvSignupScreen(
                 )
             }
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Box {
-                    TvHeroActionPill(
-                        label = if (state.isLoading) "Signing up…" else "Sign Up",
-                        icon = Icons.AutoMirrored.Filled.ArrowForward,
-                        variant = TvPillVariant.Filled,
-                        heightOverride = 32.dp,
-                        horizontalPaddingOverride = 19.dp,
-                        labelStyle = TvAuthFormTextStyles.Button,
-                        enabled = !state.isLoading,
-                        onClick = viewModel::onSignupClick,
-                    )
-                }
-                TvHeroActionPill(
-                    label = "Sign In Instead",
-                    icon = Icons.AutoMirrored.Filled.Login,
-                    variant = TvPillVariant.Hollow,
-                    heightOverride = 32.dp,
-                    horizontalPaddingOverride = 19.dp,
-                    labelStyle = TvAuthFormTextStyles.Button,
-                    onClick = onBackToLogin,
+            Box {
+                AuroraPrimaryButton(
+                    label = if (state.isLoading) "Signing up…" else "Sign Up",
+                    icon = Icons.AutoMirrored.Filled.ArrowForward,
+                    enabled = !state.isLoading,
+                    onClick = viewModel::onSignupClick,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(TvAuthFormDefaults.PrimaryButtonHeight),
                 )
             }
+            AuroraGhostButton(
+                label = "Sign In Instead",
+                onClick = onBackToLogin,
+                fontSize = 18.sp,
+                horizontalPadding = 18.dp,
+                verticalPadding = 8.dp,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
 
     }

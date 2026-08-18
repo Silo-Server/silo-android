@@ -36,6 +36,7 @@ import org.siloserver.silo.android.ui.screens.auth.AuthColors
 import org.siloserver.silo.android.ui.screens.auth.AuthErrorBanner
 import org.siloserver.silo.android.ui.screens.auth.SiloButton
 import org.siloserver.silo.android.ui.screens.auth.SiloTextField
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.model.profile.displayProfileQualityPreference
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -115,7 +116,7 @@ fun EditProfileScreen(
                 SectionHeader("Avatar")
 
                 ProfileAvatar(
-                    avatar = state.selectedAvatar,
+                    avatar = ProfileAvatarRef(state.selectedAvatar, state.selectedAvatarUrl),
                     name = state.name.ifBlank { "?" },
                     size = 80.dp,
                     modifier = Modifier.align(Alignment.CenterHorizontally),

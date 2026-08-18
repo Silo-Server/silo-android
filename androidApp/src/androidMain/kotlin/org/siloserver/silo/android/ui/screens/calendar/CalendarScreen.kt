@@ -1,20 +1,27 @@
 package org.siloserver.silo.android.ui.screens.calendar
 
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -26,55 +33,61 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.outlined.Bedtime
+import androidx.compose.material.icons.outlined.EventBusy
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.siloserver.silo.android.ui.components.SiloTopBar
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
+import org.siloserver.silo.android.ui.components.ErrorView
+import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.common.calendar.localDisplayAirTime
+import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.calendar.CalendarBadge
 import org.siloserver.silo.model.calendar.CalendarFilter
 import org.siloserver.silo.model.calendar.CalendarItem
-import org.siloserver.silo.model.personal.UserLibrary
-import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.repository.PersonalDataRepository
+import org.siloserver.silo.viewmodel.CalendarUiState
 import org.siloserver.silo.viewmodel.CalendarViewModel
-import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
-import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-// iOS phone token mirror (SiloTheme.swift, !os(tvOS) branch):
-//   cornerRadius = 8, smallCornerRadius = 6
-//   spacing = 12, padding = 16, smallPadding = 8, largePadding = 24, safePadding = 16
-//   posterCardWidth = 120, posterCardHeight = 198
+// iOS SiloTheme tokens (phone).
 private val CornerRadius = 8.dp
 private val Spacing = 12.dp
 private val Padding = 16.dp
@@ -84,178 +97,261 @@ private val SafePadding = 16.dp
 private val PosterCardWidth = 120.dp
 private val PosterCardHeight = 198.dp
 
+// Header card (iOS CalendarView.phoneWeekStrip).
+private val CardCornerRadius = 26.dp
+private val CardHorizontalPadding = 14.dp
+private val CardVerticalPadding = 12.dp
+private val CardInnerSpacing = 12.dp
+
+private val CalendarSpring = spring<Dp>(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
+
 /**
- * Calendar / upcoming screen. Phone-for-phone parity with the silo-apple
- * iOS CalendarView: a header row, a pinned filter + week-strip header, and
- * a vertical list of per-day shelves (one row per day, even empty days),
- * each a horizontal scroller of poster cards. Tapping a day chip selects it
- * and scrolls its shelf to the top.
+ * Phone Calendar tab. Mirrors iOS `CalendarView` (phone):
+ *
+ * - One floating glass card is the only pinned element — month label, a
+ *   "Today" pill when off the current week, the shared search/profile
+ *   actions ([headerActions]), and the week strip. There is no separate
+ *   title row; the card *is* the header.
+ * - Everything else scrolls under the card: the Following / Trending / All
+ *   filter bar first, then one shelf per day of the week (empty days too).
+ * - Day taps and "Today" scroll that day's shelf up to the card; opening the
+ *   tab does not auto-scroll.
+ * - Pull to refresh.
  */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalendarScreen(
-    onBackClick: () -> Unit,
     onItemClick: (String) -> Unit,
+    headerActions: @Composable RowScope.() -> Unit = {},
     viewModel: CalendarViewModel = koinViewModel(),
-    showTopBar: Boolean = true,
-    contentTopPadding: Dp = 0.dp,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
 
-    // Library list for the dropdown — same source MainScreen uses for
-    // media-mode capabilities (PersonalDataRepository.listUserLibraries).
-    val personalDataRepository: PersonalDataRepository = koinInject()
-    val libraries by produceState(initialValue = emptyList<UserLibrary>()) {
-        value = when (val result = personalDataRepository.listUserLibraries()) {
-            is ApiResult.Success -> result.data
-            else -> emptyList()
+    // The card floats over the agenda; its measured height is the top inset
+    // the list scrolls under. Local blur source so the card can be glass.
+    val haze = rememberHazeState()
+    var cardHeightPx by remember { mutableIntStateOf(0) }
+    val cardHeight = with(density) { cardHeightPx.toDp() }
+
+    // Explicit scroll requests only (day tap / Today), never on first
+    // composition — iOS opens at the top of the week. Keyed on weekDates and
+    // on whether the shelves exist yet, so a request made while the week is
+    // still loading is honoured once its content arrives.
+    var scrollTarget by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(scrollTarget, state.weekDates, state.hasAnyItems) {
+        val target = scrollTarget ?: return@LaunchedEffect
+        val index = state.weekDates.indexOf(target)
+        if (index >= 0 && state.hasAnyItems) {
+            // Item 0 is the filter bar; the top content padding keeps the
+            // shelf below the card.
+            listState.animateScrollToItem(index + 1)
+            scrollTarget = null
         }
     }
 
-    Scaffold(
-        topBar = {
-            if (showTopBar) {
-                SiloTopBar(
-                    title = "Calendar",
-                    onBackClick = onBackClick,
-                    actions = {
-                        if (libraries.size > 1) {
-                            LibraryDropdown(
-                                libraries = libraries,
-                                selectedLibraryId = state.libraryId,
-                                onSelect = viewModel::setLibrary,
-                            )
-                        }
-                    },
-                )
-            }
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-        // Embedded in the tab shell (showTopBar = false) the shared floating
-        // header already accounts for the status bar via contentTopPadding;
-        // letting Scaffold add its own status-bar inset doubles the top gap.
-        contentWindowInsets = if (showTopBar) ScaffoldDefaults.contentWindowInsets else WindowInsets(0),
-    ) { padding ->
-        val listState = rememberLazyListState()
-
-        // iOS scrolls the selected day's shelf to the top via ScrollViewReader.
-        // Mirror with a keyed scroll-to-index against the day-header item keys.
-        LaunchedEffect(state.selectedDay, state.weekStart) {
-            if (state.selectedDay.isBlank()) return@LaunchedEffect
-            val index = state.weekDates.indexOf(state.selectedDay)
-            if (index >= 0) {
-                // Header item index: each day owns one header item plus its shelf.
-                listState.animateScrollToItem(if (index == 0) 0 else index + 1)
-            }
-        }
-
-        Column(
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        val pullState = rememberPullToRefreshState()
+        PullToRefreshBox(
+            isRefreshing = state.isRefreshing,
+            onRefresh = viewModel::refresh,
+            state = pullState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .padding(top = contentTopPadding),
+                .hazeSource(haze)
+                .background(MaterialTheme.colorScheme.background),
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = pullState,
+                    isRefreshing = state.isRefreshing,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = cardHeight),
+                )
+            },
         ) {
-            when {
-                state.isLoading -> {
-                    PinnedHeader(state, viewModel)
-                    Box(Modifier.fillMaxSize())
-                }
-
-                state.error != null -> {
-                    PinnedHeader(state, viewModel)
-                    ErrorRow(
-                        message = state.error ?: "Something went wrong",
-                        onRetry = viewModel::load,
-                    )
-                }
-
-                else -> LazyColumn(
+            if (cardHeightPx > 0) {
+                LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = LargePadding + LocalBottomChromeInset.current),
+                    contentPadding = PaddingValues(
+                        top = cardHeight,
+                        bottom = LargePadding + LocalBottomChromeInset.current,
+                    ),
                 ) {
-                    // iOS pins this header (LazyVStack pinnedViews:[.sectionHeaders]).
-                    stickyHeader(key = "calendar-header") {
-                        PinnedHeader(state, viewModel)
+                    // iOS: filter bar scrolls with the content, above the shelves.
+                    item(key = "filter") {
+                        CalendarFilterBar(
+                            selected = state.filter,
+                            onSelect = viewModel::setFilter,
+                            modifier = Modifier.padding(
+                                start = SafePadding,
+                                end = SafePadding,
+                                top = SmallPadding,
+                                bottom = Padding,
+                            ),
+                        )
                     }
-
-                    if (!state.hasAnyItems) {
-                        item(key = "empty") {
-                            EmptyState(filter = state.filter)
+                    when {
+                        state.error != null && !state.hasAnyItems -> item(key = "error") {
+                            ErrorView(
+                                message = state.error ?: "Something went wrong",
+                                onRetry = viewModel::load,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = LargePadding),
+                            )
                         }
-                    } else {
-                        state.weekDates.forEach { date ->
-                            val dayItems = state.itemsFor(date)
-                            item(key = "header-$date") {
-                                DayShelf(
-                                    heading = sectionHeading(date, today = state.today),
-                                    items = dayItems,
-                                    onItemClick = onItemClick,
-                                )
-                            }
+                        state.isLoading && !state.hasAnyItems -> item(key = "loading") {
+                            // iOS: deliberately blank while loading, no spinner.
+                            Spacer(modifier = Modifier.height(320.dp))
+                        }
+                        !state.hasAnyItems -> item(key = "empty") {
+                            EmptyState(
+                                filter = state.filter,
+                                onShowEverything = { viewModel.setFilter(CalendarFilter.Everything) },
+                            )
+                        }
+                        else -> items(state.weekDates, key = { "day-$it" }) { date ->
+                            DayShelf(
+                                heading = sectionHeading(date, today = state.today),
+                                items = state.itemsFor(date),
+                                onItemClick = onItemClick,
+                            )
                         }
                     }
                 }
             }
         }
-    }
-}
 
-/** Pinned filter bar + week strip block. iOS: smallPadding vertical, background fill. */
-@Composable
-private fun PinnedHeader(
-    state: org.siloserver.silo.viewmodel.CalendarUiState,
-    viewModel: CalendarViewModel,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
-            // Only bottom padding: the floating top bar already provides the top
-            // breathing room, so a top gap here just stacked whitespace above the
-            // filter capsule in portrait (Jim QA 2026-07-09).
-            .padding(bottom = SmallPadding),
-        verticalArrangement = Arrangement.spacedBy(SmallPadding),
-    ) {
-        CalendarFilterBar(
-            selected = state.filter,
-            onSelect = viewModel::setFilter,
-            modifier = Modifier.padding(horizontal = SafePadding),
-        )
-        // Left-aligned month/year header line above the day strip, matching iOS
-        // CalendarView (CalendarView.swift:105-113). Previously this lived inside
-        // the week-strip Row where portrait squeezed it to a vertical stack.
-        Text(
-            text = monthLabel(state.weekDates),
-            fontSize = 17.sp, // iOS monthLabel = 17 semibold
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = SafePadding),
-        )
-        CalendarWeekStrip(
-            weekDates = state.weekDates,
-            today = state.today,
-            selectedDay = state.selectedDay,
-            isCurrentWeek = state.isCurrentWeek,
-            hasEvents = { state.itemsFor(it).isNotEmpty() },
-            onSelectDay = viewModel::selectDay,
+        CalendarHeaderCard(
+            state = state,
+            hazeModifier = Modifier.hazeEffect(state = haze) {
+                blurRadius = 20.dp
+                noiseFactor = 0f
+                // iOS Glass.regular on a dark canvas reads as a lifted grey;
+                // a light wash over the blur gives the same lift here.
+                tints = listOf(HazeTint(Color.White.copy(alpha = 0.06f)))
+                fallbackTint = HazeTint(Color(0xFF161616).copy(alpha = 0.96f))
+            },
+            headerActions = headerActions,
+            onSelectDay = { day ->
+                viewModel.selectDay(day)
+                scrollTarget = day
+            },
             onPrevWeek = viewModel::prevWeek,
             onNextWeek = viewModel::nextWeek,
-            onToday = viewModel::goToToday,
+            onToday = {
+                viewModel.goToToday()
+                scrollTarget = state.today
+            },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .onSizeChanged { cardHeightPx = it.height },
         )
     }
 }
 
-// MARK: - Filter bar (segmented capsule control)
+// MARK: - Header card
 
 /**
- * Following / Trending / All capsule segmented control. Mirrors
- * CalendarFilterBar.swift (iOS phone): a translucent capsule container with
- * a hairline white stroke, each segment a capsule that fills near-opaque
- * onSurface when selected with inverted (background-colored) text.
+ * The floating glass card: month label · Today · actions on the first row,
+ * the week strip on the second. iOS: `siloGlass(in: RoundedRectangle(26))`
+ * with a `white 0.08` hairline, h14/v12 inner padding, 12 spacing, and 16/8
+ * outer margins under the status bar.
+ */
+@Composable
+private fun CalendarHeaderCard(
+    state: CalendarUiState,
+    hazeModifier: Modifier,
+    headerActions: @Composable RowScope.() -> Unit,
+    onSelectDay: (String) -> Unit,
+    onPrevWeek: () -> Unit,
+    onNextWeek: () -> Unit,
+    onToday: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = SafePadding, vertical = SmallPadding),
+    ) {
+        val shape = RoundedCornerShape(CardCornerRadius)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .then(hazeModifier)
+                .border(1.dp, Color.White.copy(alpha = 0.08f), shape)
+                .padding(horizontal = CardHorizontalPadding, vertical = CardVerticalPadding),
+            verticalArrangement = Arrangement.spacedBy(CardInnerSpacing),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = monthLabel(state.weekDates),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!state.isCurrentWeek) {
+                    TodayPill(onClick = onToday)
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                headerActions()
+            }
+            CalendarWeekStrip(
+                weekDates = state.weekDates,
+                today = state.today,
+                selectedDay = state.selectedDay,
+                eventCount = { state.itemsFor(it).size },
+                onSelectDay = onSelectDay,
+                onPrevWeek = onPrevWeek,
+                onNextWeek = onNextWeek,
+            )
+        }
+    }
+}
+
+/** iOS: 13 semibold, height 30, h-pad 12, glass capsule; a11y "Jump to today". */
+@Composable
+private fun TodayPill(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(30.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.10f))
+            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "Today",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+// MARK: - Filter bar
+
+/**
+ * Following / Trending / All contained segmented control. iOS
+ * `CalendarFilterBar` (phone): capsule container `white 0.07` + `white 0.10`
+ * stroke, padding 4, spacing 4; segments 13 semibold, height 30, h-pad 16;
+ * the selected capsule (`onSurface`, inverted text) slides between segments
+ * with a spring.
  */
 @Composable
 private fun CalendarFilterBar(
@@ -268,38 +364,69 @@ private fun CalendarFilterBar(
         CalendarFilter.Trending to "Trending",
         CalendarFilter.Everything to "All",
     )
-    Row(
+    val selectedIndex = presets.indexOfFirst { (value, _) ->
+        value == selected ||
+            (value == CalendarFilter.Everything &&
+                (selected == CalendarFilter.All || selected == CalendarFilter.Everything))
+    }.coerceAtLeast(0)
+
+    // Segment geometry, measured so the pill can slide to the selected one.
+    val density = LocalDensity.current
+    val segmentX = remember { mutableStateOf(List(presets.size) { 0.dp }) }
+    val segmentW = remember { mutableStateOf(List(presets.size) { 0.dp }) }
+    val pillX by animateDpAsState(segmentX.value[selectedIndex], CalendarSpring, label = "filterPillX")
+    val pillW by animateDpAsState(segmentW.value[selectedIndex], CalendarSpring, label = "filterPillW")
+
+    Box(
         modifier = modifier
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.06f))
+            .background(Color.White.copy(alpha = 0.07f))
             .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
-            .padding(3.dp), // iOS containerPadding (phone) = 3
-        horizontalArrangement = Arrangement.spacedBy(2.dp), // iOS segmentSpacing = 2
+            .padding(4.dp),
     ) {
-        presets.forEach { (value, label) ->
-            val isSelected = value == selected ||
-                (value == CalendarFilter.Everything &&
-                    (selected == CalendarFilter.All || selected == CalendarFilter.Everything))
+        if (pillW > 0.dp) {
             Box(
                 modifier = Modifier
-                    .height(28.dp) // iOS segmentHeight = 28
+                    .offset(x = pillX)
+                    .width(pillW)
+                    .height(30.dp)
                     .clip(CircleShape)
-                    .background(
-                        if (isSelected) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f)
-                        else Color.Transparent,
+                    .background(MaterialTheme.colorScheme.onSurface),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            presets.forEachIndexed { index, (value, label) ->
+                val isSelected = index == selectedIndex
+                Box(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(CircleShape)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { onSelect(value) }
+                        .onGloballyPositioned { coords ->
+                            val x = with(density) { coords.positionInParent().x.toDp() }
+                            val w = with(density) { coords.size.width.toDp() }
+                            if (segmentX.value[index] != x) {
+                                segmentX.value = segmentX.value.toMutableList().also { it[index] = x }
+                            }
+                            if (segmentW.value[index] != w) {
+                                segmentW.value = segmentW.value.toMutableList().also { it[index] = w }
+                            }
+                        }
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        color = if (isSelected) MaterialTheme.colorScheme.background
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )
-                    .clickable { onSelect(value) }
-                    .padding(horizontal = 14.dp), // iOS segmentHorizontalPadding = 14
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = label,
-                    fontSize = 13.sp, // iOS segmentFont = 13 semibold
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    color = if (isSelected) MaterialTheme.colorScheme.background
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                )
+                }
             }
         }
     }
@@ -308,77 +435,47 @@ private fun CalendarFilterBar(
 // MARK: - Week strip
 
 /**
- * Prev/next chevrons around seven day buttons, a Today shortcut when off the
- * current week, and a right-aligned month label. Mirrors CalendarWeekStrip.swift
- * (iOS phone metrics).
+ * Prev/next chevrons around seven equal-width day cells that fill the card.
+ * iOS `CalendarWeekStrip` (phone): HStack spacing 6, 30pt bordered chevron
+ * discs, `CalendarRichDayCell`s with no background.
  */
 @Composable
 private fun CalendarWeekStrip(
     weekDates: List<String>,
     today: String,
     selectedDay: String,
-    isCurrentWeek: Boolean,
-    hasEvents: (String) -> Boolean,
+    eventCount: (String) -> Int,
     onSelectDay: (String) -> Unit,
     onPrevWeek: () -> Unit,
     onNextWeek: () -> Unit,
-    onToday: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = SafePadding),
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp), // iOS stripSpacing = 8
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ChevronButton(
             icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
             contentDescription = "Previous week",
             onClick = onPrevWeek,
         )
-
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { // iOS dayButtonSpacing = 4
+        Row(modifier = Modifier.weight(1f)) {
             weekDates.forEach { date ->
-                DayButton(
+                DayCell(
                     date = date,
                     isSelected = date == selectedDay,
                     isToday = date == today,
-                    hasEvents = hasEvents(date),
+                    eventCount = eventCount(date),
                     onClick = { onSelectDay(date) },
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
-
         ChevronButton(
             icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = "Next week",
             onClick = onNextWeek,
         )
-        // Month label intentionally NOT here — it lives as a left-aligned
-        // header line above the strip (see PinnedHeader), matching iOS
-        // CalendarView. Kept in this Row it was squeezed to ~0 width in
-        // portrait (chevrons + 7 day cells overflow) and stacked vertically.
-
-        if (!isCurrentWeek) {
-            Box(
-                modifier = Modifier
-                    .height(32.dp) // iOS chevronHeight = 32
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
-                    .clickable(onClick = onToday)
-                    .padding(horizontal = 12.dp), // iOS todayHorizontalPadding = 12
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "Today",
-                    fontSize = 13.sp, // iOS todayFont = 13 semibold
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-
     }
 }
 
@@ -390,87 +487,106 @@ private fun ChevronButton(
 ) {
     Box(
         modifier = Modifier
-            .size(32.dp) // iOS chevronWidth/Height = 32
+            .size(30.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.08f))
+            .background(Color.White.copy(alpha = 0.07f))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
             modifier = Modifier.size(18.dp),
         )
     }
 }
 
+/**
+ * iOS `CalendarRichDayCell`: weekday (11 semibold, secondary) over the day
+ * number (15 bold) in a 34pt radius-11 box — filled `onSurface` when
+ * selected, ringed `onSurface 0.45` @ 1.5 when today — over an event-count
+ * capsule (10 bold, `white 0.10`) or a matching blank so rows stay aligned.
+ */
 @Composable
-private fun DayButton(
+private fun DayCell(
     date: String,
     isSelected: Boolean,
     isToday: Boolean,
-    hasEvents: Boolean,
+    eventCount: Int,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val localDate = remember(date) { LocalDate.parse(date) }
-    // iOS CalendarDayButton: inverted == selected (focus is tvOS-only).
-    val inverted = isSelected
-    val backgroundFill = when {
-        isSelected -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f)
-        else -> Color.White.copy(alpha = 0.05f)
-    }
-    val primaryColor =
-        if (inverted) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurface
-    val secondaryColor =
-        if (inverted) MaterialTheme.colorScheme.background.copy(alpha = 0.7f)
-        else MaterialTheme.colorScheme.onSurfaceVariant
-    val dotColor =
-        if (inverted) MaterialTheme.colorScheme.background
-        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-    val showTodayStroke = isToday && !isSelected
-
+    val numberShape = RoundedCornerShape(11.dp)
     Column(
-        modifier = Modifier
-            .width(42.dp) // iOS buttonWidth = 42
-            .height(56.dp) // iOS buttonHeight = 56
-            .clip(RoundedCornerShape(CornerRadius)) // iOS cornerRadius = 8
-            .background(backgroundFill)
-            .then(
-                if (showTodayStroke) {
-                    Modifier.border(
-                        1.dp,
-                        Color.White.copy(alpha = 0.35f),
-                        RoundedCornerShape(CornerRadius),
-                    )
-                } else {
-                    Modifier
-                },
+        modifier = modifier
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
             )
-            .clickable(onClick = onClick),
+            .padding(vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Text(
             text = localDate.format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault())),
-            fontSize = 12.sp, // iOS weekdayFont = 10 semibold; 12sp phone readability floor
+            fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
-            color = secondaryColor,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(3.dp)) // iOS labelSpacing = 3
-        Text(
-            text = localDate.dayOfMonth.toString(),
-            fontSize = 15.sp, // iOS numberFont = 15 bold
-            fontWeight = FontWeight.Bold,
-            color = primaryColor,
-        )
-        Spacer(Modifier.height(3.dp))
         Box(
             modifier = Modifier
-                .size(4.dp) // iOS dotSize = 4
+                .size(34.dp)
+                .clip(numberShape)
+                .background(if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent)
+                .then(
+                    if (isToday && !isSelected) {
+                        Modifier.border(1.5.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f), numberShape)
+                    } else {
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = localDate.dayOfMonth.toString(),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isSelected) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .height(16.dp)
                 .clip(CircleShape)
-                .background(if (hasEvents) dotColor else Color.Transparent),
-        )
+                .background(if (eventCount > 0) Color.White.copy(alpha = 0.10f) else Color.Transparent)
+                .padding(horizontal = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (eventCount > 0) {
+                Text(
+                    text = eventCount.toString(),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                    maxLines = 1,
+                    // Android's default font padding drops the glyph below the
+                    // optical centre of a 16dp capsule; trim it so the digit
+                    // sits centred like the iOS text.
+                    style = LocalTextStyle.current.copy(
+                        lineHeight = 10.sp,
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both,
+                        ),
+                    ),
+                )
+            }
+        }
     }
 }
 
@@ -511,7 +627,7 @@ private fun DayShelf(
             ) {
                 // iOS uses SF Symbol "moon.stars"; nearest Material equivalent.
                 Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Filled.Star,
+                    imageVector = Icons.Outlined.Bedtime,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.size(14.dp),
@@ -664,8 +780,14 @@ private fun BadgePill(label: String) {
 
 // MARK: - Empty state
 
+/**
+ * iOS empty state: 44pt calendar glyph at `onSurface 0.3`, subheadline title,
+ * caption body, and a 220pt "Show Everything" primary button whenever the
+ * filter is narrower than Everything.
+ */
 @Composable
-private fun EmptyState(filter: String) {
+private fun EmptyState(filter: String, onShowEverything: () -> Unit) {
+    val isEverything = filter == CalendarFilter.Everything || filter == CalendarFilter.All
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -675,7 +797,7 @@ private fun EmptyState(filter: String) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(
-            imageVector = androidx.compose.material.icons.Icons.Filled.DateRange,
+            imageVector = Icons.Outlined.EventBusy,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
             modifier = Modifier.size(44.dp),
@@ -686,77 +808,32 @@ private fun EmptyState(filter: String) {
             } else {
                 "Nothing scheduled this week"
             },
-            fontSize = 14.sp, // iOS siloSubheadline
+            fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
             text = emptySubtitle(filter),
-            fontSize = 12.sp, // iOS siloCaption
+            fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth(),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            textAlign = TextAlign.Center,
         )
-    }
-}
-
-@Composable
-private fun ErrorRow(message: String, onRetry: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(LargePadding),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(
-            text = message,
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-        )
-        TextButton(onClick = onRetry) { Text("Retry") }
-    }
-}
-
-// MARK: - Library dropdown
-
-@Composable
-private fun LibraryDropdown(
-    libraries: List<UserLibrary>,
-    selectedLibraryId: Int?,
-    onSelect: (Int?) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        TextButton(onClick = { expanded = true }) {
-            Text(libraries.firstOrNull { it.id == selectedLibraryId }?.name ?: "All libraries")
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            DropdownMenuItem(
-                text = { Text("All libraries") },
-                onClick = {
-                    expanded = false
-                    onSelect(null)
-                },
-            )
-            libraries.forEach { library ->
-                DropdownMenuItem(
-                    text = { Text(library.name) },
-                    onClick = {
-                        expanded = false
-                        onSelect(library.id)
-                    },
-                )
+        if (!isEverything) {
+            Button(
+                onClick = onShowEverything,
+                modifier = Modifier.width(220.dp),
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.onSurface,
+                    contentColor = MaterialTheme.colorScheme.background,
+                ),
+            ) {
+                Text("Show Everything", fontWeight = FontWeight.SemiBold)
             }
         }
     }
 }
-
-// MARK: - Helpers
 
 private fun badgeLabel(badge: String): String? = when (badge) {
     // iOS CalendarBadge labels (uppercased editorial).

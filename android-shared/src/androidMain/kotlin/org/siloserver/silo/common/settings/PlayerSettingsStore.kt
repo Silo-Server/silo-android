@@ -1,13 +1,59 @@
 package org.siloserver.silo.common.settings
 
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import org.siloserver.silo.player.DolbyVisionPolicy
 
+/**
+ * How far the phone player may expand a picture whose letterbox is encoded into
+ * the video (see the player's `LetterboxMatte`). Expansion never crops picture —
+ * it only eats black the file itself carries — so the question a user actually
+ * has is what to do about the camera cutout once the image reaches the edges.
+ */
+object LetterboxExpansion {
+    /** Expand, but keep the image clear of the display cutout. */
+    const val ClearOfCamera = "clear_of_camera"
+
+    /** Expand to the full display width; the camera overlaps the picture. */
+    const val FullWidth = "full_width"
+
+    /** Never expand — the coded frame is fitted whole, bars and all. */
+    const val Off = "off"
+
+    /**
+     * Biggest picture that is neither cropped nor covered. Expansion itself is
+     * free (the clip lands in encoded black), so it is on; stopping at the
+     * cutout costs width but is what keeps the whole image visible.
+     */
+    const val Default = ClearOfCamera
+
+    val Valid = setOf(ClearOfCamera, FullWidth, Off)
+}
+
 interface PlayerSettingsStore {
+    /**
+     * What the player does when an intro starts — `playback.intro_skip_mode`,
+     * contract revision 7. See the server's
+     * `docs/design/2026-08-16-intro-skip-mode.md`.
+     */
+    val introSkipModeFlow: Flow<IntroSkipMode>
+
     // Booleans
+    /**
+     * The deprecated boolean, projected from [introSkipModeFlow] rather than
+     * read separately so the two cannot disagree — `always` is the only mode
+     * the boolean's `true` ever meant, and `never` degrades to the same `false`
+     * an old client would have shown as "ask".
+     *
+     * Nothing in the app should read this: it exists for the compatibility
+     * window while the server still mirrors the two keys.
+     */
     val autoSkipIntroFlow: Flow<Boolean>
+        get() = introSkipModeFlow.map { it == IntroSkipMode.ALWAYS }
     val autoSkipCreditsFlow: Flow<Boolean>
     val autoPlayNextFlow: Flow<Boolean>
     val hdrEnabledFlow: Flow<Boolean>
@@ -15,6 +61,17 @@ interface PlayerSettingsStore {
     val dolbyVisionEnabledFlow: Flow<Boolean>
     val matchContentFrameRateFlow: Flow<Boolean>
     val pictureInPictureEnabledFlow: Flow<Boolean>
+
+    /**
+     * How far to expand video whose black bars are encoded into the picture
+     * (a 2.39:1 film inside a 16:9 frame) — see [LetterboxExpansion].
+     *
+     * Defaulted here rather than declared abstract so the existing fakes in the
+     * player tests keep compiling; the real store overrides it.
+     */
+    val letterboxExpansionFlow: Flow<String>
+        get() = flowOf(LetterboxExpansion.Default)
+
     /** Per-profile preference for restricting downloads to unmetered (Wi-Fi)
      *  networks. Default true. Consumed by [DownloadEnqueuer] at enqueue
      *  time to set the WorkManager NetworkType constraint. */
@@ -70,7 +127,15 @@ interface PlayerSettingsStore {
     val effectiveSubtitleAppearanceFlow: Flow<org.siloserver.silo.model.settings.SubtitleAppearance>
 
     // Setters
-    suspend fun setAutoSkipIntro(value: Boolean)
+    suspend fun setIntroSkipMode(value: IntroSkipMode)
+
+    /**
+     * Deprecated shim for the boolean. Routes to [setIntroSkipMode] so a caller
+     * that has not moved yet still writes the canonical key; the server mirrors
+     * the boolean back at the same identity.
+     */
+    suspend fun setAutoSkipIntro(value: Boolean) =
+        setIntroSkipMode(IntroSkipMode.fromLegacyBoolean(value))
     suspend fun setAutoSkipCredits(value: Boolean)
     suspend fun setAutoPlayNext(value: Boolean)
     suspend fun setHdrEnabled(value: Boolean)
@@ -78,6 +143,7 @@ interface PlayerSettingsStore {
     suspend fun setDolbyVisionEnabled(value: Boolean)
     suspend fun setMatchContentFrameRate(value: Boolean)
     suspend fun setPictureInPictureEnabled(value: Boolean)
+    suspend fun setLetterboxExpansion(value: String) = Unit
     suspend fun setDownloadsWifiOnly(value: Boolean)
     suspend fun setKeepWatchedDownloads(value: Boolean)
     suspend fun setDefaultDownloadQuality(value: String)
@@ -150,9 +216,11 @@ interface PlayerSettingsStore {
     suspend fun resetDeviceSetting(key: String)
 
     /**
-     * Clear every server-side device override. Mirrors iOS
-     * `PlayerSettings.resetAllDeviceSettings()` — the user's "Reset
-     * Playback Overrides" action.
+     * Return this device's playback settings to their defaults — the user's
+     * "Reset playback settings" action. Clears every server-side device
+     * override (as iOS `PlayerSettings.resetAllDeviceSettings()` does) and the
+     * local-only playback keys that have no server row to clear, since those
+     * would otherwise survive an action whose whole promise is the defaults.
      */
     suspend fun resetAllDeviceSettings()
 

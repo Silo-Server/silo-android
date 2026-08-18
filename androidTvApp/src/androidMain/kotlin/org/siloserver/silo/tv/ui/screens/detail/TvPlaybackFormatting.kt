@@ -3,8 +3,13 @@ package org.siloserver.silo.tv.ui.screens.detail
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.playback.AutoSubtitleContext
+import org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates
 import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
+import org.siloserver.silo.model.playback.resolveAutoSubtitle
+import org.siloserver.silo.model.playback.selectedCandidate
 import org.siloserver.silo.player.DolbyVisionDetection
+import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import java.util.Locale
 
@@ -84,15 +89,23 @@ object TvPlaybackFormatting {
         return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
     }
 
-    /** "4K · HDR" / "1080P" / "Auto" (null or no usable tokens → "Auto"). */
+    /**
+     * "4K · HEVC · DV · TrueHD" / "1080P · H.264 · AAC" / "Auto" (null or no
+     * usable tokens → "Auto"). Same token set as tvOS's
+     * `DetailPlaybackFormatting.versionShortLabel` (resolution · video codec ·
+     * dynamic range · audio codec) so the Version pill tells the user which
+     * audio the file carries, not just its resolution.
+     */
     fun versionShortLabel(version: FileVersion?): String {
         if (version == null) return "Auto"
         val tokens = buildList {
             displayResolution(version.resolution)?.let { add(it) }
+            resolvedVideoCodec(version)?.let { add(it) }
             when {
                 isDolbyVision(version) -> add("DV")
                 isHdr(version) -> add("HDR")
             }
+            resolvedAudioCodec(version)?.let { add(it) }
         }
         return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
     }
@@ -100,17 +113,17 @@ object TvPlaybackFormatting {
     /**
      * Picker labels for a whole version list, disambiguated against each other.
      *
-     * [versionShortLabel] is built from resolution + HDR/DV alone, so a title
-     * holding two 4K Dolby Vision files renders two identical "4K · DV" rows
-     * and the user cannot tell them apart. Selection still works (the option id
-     * is the unique fileId) — the list is just unreadable.
+     * [versionShortLabel] is built from resolution / codecs / HDR-DV alone, so a
+     * title holding two 4K HEVC Dolby Vision TrueHD files (a remux and an
+     * encode, say) renders two identical rows and the user cannot tell them
+     * apart. Selection still works (the option id is the unique fileId) — the
+     * list is just unreadable.
      *
      * Only colliding labels get a suffix, so the common single-version-per-tier
      * case is untouched. Attributes are accumulated until the group's labels
-     * are actually distinct: no single attribute need be unique on its own, so
-     * e.g. {20GB HEVC, 20GB AV1, 40GB HEVC, 40GB AV1} separates on codec+size.
-     * Codec leads because it is a real playback/compatibility difference; size
-     * usually does the work when a remux and an encode share a codec.
+     * are actually distinct: no single attribute need be unique on its own.
+     * Size usually does the work when a remux and an encode share a codec;
+     * container is the last resort.
      */
     fun versionPickerLabels(versions: List<FileVersion>): List<String> {
         val base = versions.map { versionShortLabel(it) }
@@ -129,10 +142,9 @@ object TvPlaybackFormatting {
                         .joinToString(" · ")
                 }
                 val distinct = attempt.values.toSet().size
-                // Only keep a tuple that actually separates something. Now that
-                // the codec can be resolved from the video track, two identical
-                // versions would otherwise both gain the same suffix — a
-                // fabricated difference that distinguishes nothing.
+                // Only keep a tuple that actually separates something; two
+                // identical versions would otherwise both gain the same suffix
+                // — a fabricated difference that distinguishes nothing.
                 if (distinct > 1) indexes.forEach { suffixes[it] = attempt.getValue(it) }
                 if (distinct == indexes.size) break
             }
@@ -143,13 +155,11 @@ object TvPlaybackFormatting {
         }
     }
 
-    /** Attributes tried, in order, when version labels collide. */
+    /**
+     * Attributes tried, in order, when version labels collide. Codecs are
+     * already part of [versionShortLabel], so they never need to be appended.
+     */
     private val VERSION_DISCRIMINATORS: List<(FileVersion) -> String?> = listOf(
-        // Through resolvedVideoCodec, so a version whose codec lives only on its
-        // video track can still discriminate. Consulting codecVideo alone left
-        // two colliding versions sharing a label when the metadata to tell them
-        // apart was right there.
-        { v -> resolvedVideoCodec(v)?.uppercase(Locale.ROOT) },
         { v -> formatFileSize(v.fileSize) },
         { v -> v.container?.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT) },
     )
@@ -528,121 +538,73 @@ object TvPlaybackFormatting {
         context: SubtitleAutoContext,
     ): Pair<SubtitleTrack, Int>? {
         val tracks = version?.subtitleTracks ?: return null
-        if (tracks.isEmpty()) return null
-
-        val mode = context.mode?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: "auto"
-        if (mode == "off") return null
-
-        val preferred = context.preferredLanguage
-        if (preferred != null && preferred.isBlank()) return null
-
-        val targetLanguage = autoSubtitleLanguageKey(preferred)
-        if (targetLanguage == null) {
-            return if (mode == "always") {
-                bestAutoSubtitleTrack(tracks, targetLanguage = null, preferForced = context.showForced)
-            } else {
-                null
-            }
-        }
-
-        val audioLanguage = autoSubtitleLanguageKey(context.audioLanguage)
-        if (mode == "auto" && audioLanguage != null && audioLanguage == targetLanguage) {
-            if (context.showForced) {
-                bestForcedAutoSubtitleTrack(tracks, targetLanguage)?.let { return it }
-            }
-            return null
-        }
-
-        return bestAutoSubtitleTrack(tracks, targetLanguage, preferForced = context.showForced)
-            ?: if (context.showForced) {
-                tracks.withIndex().firstOrNull { it.value.forced }?.let { it.value to it.index }
-            } else {
-                null
-            }
-    }
-
-    /** Mirrors `TvPlayerViewModel.bestAutoSubtitleTrack` over catalog tracks. */
-    private fun bestAutoSubtitleTrack(
-        tracks: List<SubtitleTrack>,
-        targetLanguage: String?,
-        preferForced: Boolean,
-    ): Pair<SubtitleTrack, Int>? {
-        val pool = tracks.withIndex().filter { (_, t) ->
-            targetLanguage == null || autoSubtitleLanguageKey(t.language) == targetLanguage
-        }
-        if (pool.isEmpty()) return null
-        if (preferForced) {
-            pool.firstOrNull { (_, t) -> t.forced && !isHearingImpairedSubtitle(t) && !isBitmapSubtitle(t.codec) }
-                ?.let { return it.value to it.index }
-        }
-        pool.firstOrNull { (_, t) -> !t.forced && !isHearingImpairedSubtitle(t) && !isBitmapSubtitle(t.codec) }
-            ?.let { return it.value to it.index }
-        pool.firstOrNull { (_, t) -> !t.forced && !isBitmapSubtitle(t.codec) }
-            ?.let { return it.value to it.index }
-        pool.firstOrNull { (_, t) -> !isBitmapSubtitle(t.codec) }
-            ?.let { return it.value to it.index }
-        return pool.first().let { it.value to it.index }
-    }
-
-    /** Mirrors `TvPlayerViewModel.bestForcedAutoSubtitleTrack` over catalog tracks. */
-    private fun bestForcedAutoSubtitleTrack(
-        tracks: List<SubtitleTrack>,
-        targetLanguage: String?,
-    ): Pair<SubtitleTrack, Int>? {
-        val pool = tracks.withIndex().filter { (_, t) ->
-            (targetLanguage == null || autoSubtitleLanguageKey(t.language) == targetLanguage) && t.forced
-        }
-        if (pool.isEmpty()) return null
-        pool.firstOrNull { (_, t) -> !isHearingImpairedSubtitle(t) && !isBitmapSubtitle(t.codec) }
-            ?.let { return it.value to it.index }
-        pool.firstOrNull { (_, t) -> !isHearingImpairedSubtitle(t) }
-            ?.let { return it.value to it.index }
-        return pool.first().let { it.value to it.index }
+        val ordinal = autoResolvedSubtitleOrdinal(tracks, context) ?: return null
+        return tracks[ordinal] to ordinal
     }
 
     /**
-     * ISO-639 folding used by the RESOLVER (`TvPlayerViewModel.normalizedSubtitleLanguage`)
-     * — deliberately its own smaller alias table (not [languageDisplayName]'s),
-     * dropping `und`, so the preview matches the player's language comparison
-     * exactly rather than the row's display grouping.
+     * The catalog ordinal Auto resolves to, or null for "no subtitle".
+     *
+     * Ranking lives in the shared [resolveAutoSubtitle]; this only translates
+     * between catalog ordinals (what the pill renders) and the combined
+     * selection space the resolver addresses.
      */
-    private fun autoSubtitleLanguageKey(language: String?): String? {
-        val primary = language
-            ?.trim()
-            ?.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
-            ?.lowercase(Locale.US)
-            ?.replace('_', '-')
-            ?.substringBefore('-')
-            ?: return null
-        return when (primary) {
-            "eng" -> "en"
-            "spa" -> "es"
-            "fre", "fra" -> "fr"
-            "ger", "deu" -> "de"
-            "dut", "nld" -> "nl"
-            "jpn" -> "ja"
-            "dan" -> "da"
-            else -> primary
+    internal fun autoResolvedSubtitleOrdinal(
+        tracks: List<SubtitleTrack>,
+        context: SubtitleAutoContext,
+    ): Int? {
+        if (tracks.isEmpty()) return null
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(
+                preferredLanguage = context.preferredLanguage,
+                mode = context.mode,
+                showForced = context.showForced,
+                audioLanguage = context.audioLanguage,
+            ),
+        ).selectedCandidate() ?: return null
+        return combinedSubtitleSelectionIndexes(tracks)
+            .indexOf(selected.selectionIndex)
+            .takeIf { it >= 0 }
+    }
+
+    /**
+     * The subtitle decision the selector row is DISPLAYING, in combined
+     * selection space, ready to hand to playback.
+     *
+     * Auto used to hand over nothing at all, so the start request carried no
+     * `subtitle_track_index`, the initial plan mounted no sidecar, and the
+     * player re-derived Auto over Media3's mounted tracks — where an external
+     * SRT does not exist yet. The row's own answer travels instead, tagged
+     * [TvSubtitleLaunchSelection.autoResolved] so the player can apply it
+     * without recording it as a choice the viewer made.
+     *
+     * Null only when the row itself cannot say (no auto context): the player
+     * then falls back to its own resolution, as before.
+     */
+    fun subtitleLaunchSelection(
+        version: FileVersion?,
+        selectedSubtitleTrackIndex: Int?,
+        autoContext: SubtitleAutoContext?,
+    ): TvSubtitleLaunchSelection? {
+        if (selectedSubtitleTrackIndex != null) {
+            return TvSubtitleLaunchSelection(selectedSubtitleTrackIndex, autoResolved = false)
         }
+        val context = autoContext ?: return null
+        val tracks = version?.subtitleTracks.orEmpty()
+        val ordinal = autoResolvedSubtitleOrdinal(tracks, context)
+            // "Auto - None" is a decision too: start explicitly Off rather than
+            // letting the player re-derive something the row never showed.
+            ?: return TvSubtitleLaunchSelection(-1, autoResolved = true)
+        return TvSubtitleLaunchSelection(
+            selectionIndex = combinedSubtitleSelectionIndexes(tracks)[ordinal],
+            autoResolved = true,
+        )
     }
 
     /** Title-based CC/SDH detection shared with player identity and auto-selection. */
     private fun isHearingImpairedSubtitle(track: SubtitleTrack): Boolean {
         return subtitleLabelIndicatesHearingImpaired(track.title)
-    }
-
-    /**
-     * Mirrors `isBitmapSubtitleCodecFamily` (PGS / VobSub / DVB / HDMV).
-     * Normalization strips ALL non-alphanumerics so ffprobe names
-     * ("dvb_subtitle", "hdmv_pgs_subtitle"), short names ("dvbsub"/"dvbsubs")
-     * and Media3 mimes classify identically — Apple parity with
-     * `ApplePlaybackRoutePlanner`'s bitmap token set.
-     */
-    private fun isBitmapSubtitle(codec: String?): Boolean {
-        val n = codec?.filter { it.isLetterOrDigit() }?.lowercase(Locale.US)
-            ?.takeIf { it.isNotEmpty() } ?: return false
-        return n.contains("pgs") || n.contains("hdmv") || n.contains("dvd") ||
-            n.contains("dvbsub") || n.contains("vobsub")
     }
 
     /** Menu-row title. Mirrors tvOS `subtitleTitle`: language → meaningful

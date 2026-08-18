@@ -14,6 +14,8 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -143,6 +145,7 @@ import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.watchtogether.shouldNavigateToLocalNext
@@ -160,12 +163,7 @@ private const val SKIP_BACK_MS = 10_000L
 private const val SKIP_FEEDBACK_HIDE_MS = 1_200L
 private const val SKIP_FORWARD_MS = 30_000L
 private const val CLEAN_SEEK_HOLD_THRESHOLD_MS = 300L
-private const val CLEAN_SEEK_TICK_MS = 100L
-private const val CLEAN_SEEK_RAMP_INTERVAL_MS = 1_200L
-private const val CLEAN_SEEK_BASE_STEP_SECONDS = 2.0
 private const val CLEAN_QUICK_SKIP_CAPTURE_MS = 200L
-
-private val CLEAN_PLAYBACK_SEEK_RATES = listOf(-32, -16, -8, -4, -2, -1, 1, 2, 4, 8, 16, 32)
 
 private enum class TvIdleOverlayFocusTarget {
     Scrubber,
@@ -177,14 +175,40 @@ private data class TvIdleOverlayFocusRequest(
     val nonce: Int = 0,
 )
 
-internal fun adjustedCleanPlaybackSeekRate(currentRate: Int, adjustment: Int): Int {
+/**
+ * Manual rate step for a hidden-controls hold-seek.
+ *
+ * Delegates to [TvSeekRateLadder] so this control and the focused scrubber's
+ * hold-seek walk one ladder. They previously kept separate ones, and the
+ * hidden path's was both dishonest about its multiples (see
+ * [advanceCleanPlaybackSeekPreview]) and flipped direction when stepped below
+ * 1× — so "slower" eventually meant "backwards".
+ */
+internal fun adjustedCleanPlaybackSeekRate(
+    currentRate: Int,
+    adjustment: Int,
+    durationSec: Double,
+): Int {
     if (adjustment == 0) return currentRate
-    val currentIndex = CLEAN_PLAYBACK_SEEK_RATES.indexOf(currentRate)
-    if (currentIndex < 0) return currentRate
-    val step = if (adjustment < 0) -1 else 1
-    return CLEAN_PLAYBACK_SEEK_RATES[
-        (currentIndex + step).coerceIn(0, CLEAN_PLAYBACK_SEEK_RATES.lastIndex)
-    ]
+    return TvSeekRateLadder.bumped(currentRate, adjustment, durationSec)
+}
+
+/**
+ * The HUD tab a Down press from clean playback should land on.
+ *
+ * Mirrors tvOS `preferredPlaybackHUDTab`: that press is nearly always reaching
+ * for an audio or subtitle track, so route straight there rather than making
+ * the viewer traverse from Info every time. Falls back to Video, which — like
+ * Info and Subtitles — is always present in [visibleHudTabs], so this can
+ * never name a tab the HUD would reject.
+ */
+internal fun preferredPlaybackHudTab(
+    hasAudioTracks: Boolean,
+    hasSubtitleTracks: Boolean,
+): HudTab = when {
+    hasAudioTracks -> HudTab.Audio
+    hasSubtitleTracks -> HudTab.Subtitles
+    else -> HudTab.Video
 }
 
 internal fun shouldEnterCleanPlaybackSeekHold(
@@ -197,13 +221,23 @@ internal fun isCleanPlaybackSeekAdjustmentTap(
     pressDurationMs: Long,
 ): Boolean = !repeated && pressDurationMs < CLEAN_SEEK_HOLD_THRESHOLD_MS
 
+/**
+ * One hold-seek tick for the hidden-controls scan.
+ *
+ * Advances by [TvSeekRateLadder.tickSeconds], which is what makes the rate
+ * chip mean what it says: rate × tick seconds per tick is exactly rate × real
+ * time. This previously advanced a flat 2s per 100ms tick at 1×, so every
+ * multiple on screen was a twentieth of the truth — a chip reading "8×" moved
+ * at 160×, and the same gesture ran 20× faster with the chrome hidden than the
+ * focused scrubber's hold-seek, which had already been corrected.
+ */
 internal fun advanceCleanPlaybackSeekPreview(
     previewSec: Double,
     durationSec: Double,
     rate: Int,
 ): Double {
     val safePreview = previewSec.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
-    val next = (safePreview + CLEAN_SEEK_BASE_STEP_SECONDS * rate).coerceAtLeast(0.0)
+    val next = (safePreview + TvSeekRateLadder.tickSeconds(rate)).coerceAtLeast(0.0)
     return if (durationSec.isFinite() && durationSec > 0.0) {
         next.coerceAtMost(durationSec)
     } else {
@@ -239,6 +273,9 @@ fun TvPlayerScreen(
     initialAudioTrackIndex: Int? = null,
     initialAudioPickedThisSession: Boolean = false,
     initialSubtitleTrackIndex: Int? = null,
+    // True when the carried subtitle index is the detail row's Auto preview
+    // rather than the viewer's own pick (it still decides what starts).
+    initialSubtitleAutoResolved: Boolean = false,
     // Consecutive auto-advance count (pass-out protection); 0 = manual start.
     autoAdvanceCount: Int = 0,
     episodeSelectionHandoff: org.siloserver.silo.common.player.video.EpisodeSelectionHandoff? = null,
@@ -265,6 +302,7 @@ fun TvPlayerScreen(
                     initialAudioTrackIndex = initialAudioTrackIndex,
                     initialAudioPickedThisSession = initialAudioPickedThisSession,
                     initialSubtitleTrackIndex = initialSubtitleTrackIndex,
+                    initialSubtitleAutoResolved = initialSubtitleAutoResolved,
                     autoAdvanceCount = autoAdvanceCount,
                     episodeSelectionHandoff = episodeSelectionHandoff,
                 ),
@@ -300,15 +338,18 @@ fun TvPlayerScreen(
     }
     val sessionState by viewModel.sessionState.collectAsState()
     val introSkipState by viewModel.introSkipState.collectAsState()
+    val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
+    val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
     val subtitleAppearance by viewModel.subtitleAppearance.collectAsState()
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
     val sleepTimerState by viewModel.sleepTimerState.collectAsState()
-    val autoSkipIntroEnabled by viewModel.autoSkipIntroEnabled.collectAsState()
+    val introSkipMode by viewModel.introSkipMode.collectAsState()
     val autoPlayNextEnabled by viewModel.autoPlayNextEnabled.collectAsState()
     val audioDelayMs by viewModel.audioDelayMs.collectAsState()
     val subtitleDelayMs by viewModel.subtitleDelayMs.collectAsState()
     val hdrEnabled by viewModel.hdrEnabled.collectAsState()
     val dolbyVisionEnabled by viewModel.dolbyVisionEnabled.collectAsState()
+    val dolbyVisionSwitchInFlight by viewModel.dolbyVisionSwitchInFlight.collectAsState()
     val subtitleSearch by viewModel.subtitleSearch.collectAsState()
     val aiTranslate by viewModel.aiTranslate.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -589,17 +630,28 @@ fun TvPlayerScreen(
         )
     }
 
-    fun handleSkipIntroNow(): Boolean {
-        val target = viewModel.uiState.value.intro?.end ?: return false
+    fun handleIntroPromptSelect(): Boolean {
+        val playerState = viewModel.uiState.value
+        if (!latestIntroSkipState.isVisible) return false
+        // The controller decides where Select goes — the intro's end for the
+        // `ask` offer, its start for `always`'s undo — and resolves the intro.
+        // In a room the gate is checked BEFORE asking, so a guest's refused
+        // press leaves the pill (and the intro) exactly as it was.
         if (roomController != null) {
             if (tvRoomTransportGate(latestRoomSnapshot, TvTransportIntent.Seek) != TransportGate.Send) {
                 return true
             }
-            viewModel.onSkipIntroNow() ?: return false
+            val target = viewModel.onSelectIntroPrompt() ?: return false
             roomController.onUserSeek(target)
         } else {
-            val soloTarget = viewModel.onSkipIntroNow() ?: return false
+            val soloTarget = viewModel.onSelectIntroPrompt() ?: return false
             viewModel.seekImmediate(soloTarget)
+        }
+        // The pill unmounts with the intro state, taking its focus with it, so
+        // aim at the scrubber (where Down from the pill goes). Only with the
+        // controls up: otherwise the overlay owning the scrubber isn't composed.
+        if (playerState.showControls) {
+            requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
         }
         return true
     }
@@ -652,15 +704,21 @@ fun TvPlayerScreen(
                 requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
             }
             viewModel.setControlsVisible(true)
-        } else {
-            // Silent seek: surface the transient skip indicator instead.
-            skipSeekFeedback = SkipSeekFeedback(
-                deltaSeconds = (deltaMs / 1000).toInt(),
-                targetSec = targetSec,
-                durationSec = duration.coerceAtLeast(0.0),
-                nonce = (skipSeekFeedback?.nonce ?: 0) + 1,
-            )
         }
+        // The chip runs on BOTH paths. Revealing the transport shows where the
+        // playhead landed but not that it moved, nor by how much — a solitary
+        // press reads as the bar twitching. Room seeks commit per press with no
+        // accumulator, so there the per-press delta IS the total.
+        val burstDeltaSec = viewModel.quickSkipBurstOriginSec
+            ?.takeIf { roomController == null }
+            ?.let { targetSec - it }
+            ?: (deltaMs / 1000.0)
+        skipSeekFeedback = SkipSeekFeedback(
+            deltaSeconds = burstDeltaSec.roundToInt(),
+            targetSec = targetSec,
+            durationSec = duration.coerceAtLeast(0.0),
+            nonce = (skipSeekFeedback?.nonce ?: 0) + 1,
+        )
         if (captureQuickSkipBurst && roomController == null) {
             armQuickSkipCapture()
         }
@@ -700,7 +758,8 @@ fun TvPlayerScreen(
         quickSkipCaptureJob = null
         quickSkipCaptureActive = false
         cleanSeekPreviewSec = viewModel.uiState.value.position.coerceAtLeast(0.0)
-        cleanSeekRate = if (direction < 0) -1 else 1
+        val sign = if (direction < 0) -1 else 1
+        cleanSeekRate = TvSeekRateLadder.BASE_RATE * sign
 
         cleanSeekTickJob?.cancel()
         cleanSeekTickJob = cleanPlaybackSeekScope.launch {
@@ -710,17 +769,29 @@ fun TvPlayerScreen(
                     durationSec = viewModel.uiState.value.duration,
                     rate = cleanSeekRate,
                 )
-                delay(CLEAN_SEEK_TICK_MS)
+                delay(TvSeekRateLadder.TICK_MILLIS)
             }
         }
 
+        // Ramp on the shared ladder rather than a fixed 2→4→8. Now that a tick
+        // covers rate × real time, a fixed ceiling cannot serve both ends: 8×
+        // would take over twenty minutes to cross a film. The ladder derives
+        // its top from the runtime so "hold until it arrives" costs about the
+        // same whatever you're watching.
         cleanSeekRampJob?.cancel()
         cleanSeekRampJob = cleanPlaybackSeekScope.launch {
-            for (magnitude in listOf(2, 4, 8)) {
-                delay(CLEAN_SEEK_RAMP_INTERVAL_MS)
-                val currentRate = cleanSeekRate
-                if (currentRate == 0) return@launch
-                cleanSeekRate = if (currentRate < 0) -magnitude else magnitude
+            val durationSec = viewModel.uiState.value.duration
+            var previous = TvSeekRateLadder.BASE_RATE * sign
+            repeat(TvSeekRateLadder.rampSteps(durationSec)) { step ->
+                delay(TvSeekRateLadder.RAMP_STEP_MILLIS)
+                // Only continue while the viewer is still holding at the rate
+                // the previous step left, so a release and a fresh press the
+                // other way isn't overwritten by this hold's timer.
+                if (cleanSeekRate != previous) return@launch
+                val next = TvSeekRateLadder.sustainedRate(step, sign, durationSec)
+                if (next == previous) return@launch
+                cleanSeekRate = next
+                previous = next
             }
         }
     }
@@ -782,7 +853,11 @@ fun TvPlayerScreen(
     fun adjustCleanPlaybackSeek(adjustment: Int) {
         cleanSeekRampJob?.cancel()
         cleanSeekRampJob = null
-        cleanSeekRate = adjustedCleanPlaybackSeekRate(cleanSeekRate, adjustment)
+        cleanSeekRate = adjustedCleanPlaybackSeekRate(
+            currentRate = cleanSeekRate,
+            adjustment = adjustment,
+            durationSec = viewModel.uiState.value.duration,
+        )
     }
 
     fun commitCleanPlaybackSeek(snapshot: RoomSnapshot?) {
@@ -838,9 +913,21 @@ fun TvPlayerScreen(
     // remaining player-state ladder on Android 16, where KEYCODE_BACK is no
     // longer dispatched to apps targeting API 36.
     BackHandler {
+        TvFocusLog.d {
+            "player BackHandler hudOpen=${state.hudOpen} showControls=${state.showControls} " +
+                "scrubbing=${state.isScrubbing} quickSubs=$showQuickSubtitlePicker " +
+                "cleanSeek=$cleanSeekRate paused=${state.isPaused}"
+        }
         when {
             cleanSeekRate != 0 -> stopCleanPlaybackSeek()
             state.isScrubbing -> viewModel.cancelScrub()
+            // Below the seek/scrub entries deliberately: a Back during a scrub
+            // belongs to the scrub. Above the overlays because the countdown is
+            // the most transient thing on screen. Handled HERE and not only in
+            // the legacy key bridge — on API 36 Back never reaches
+            // dispatchKeyEvent, so a countdown Back would otherwise fall
+            // through to hiding the controls or exiting the player.
+            latestIntroSkipState.isVisible -> viewModel.onDismissIntroPrompt()
             showQuickSubtitlePicker -> showQuickSubtitlePicker = false
             state.showSubtitleStyleDialog -> viewModel.closeSubtitleStyleDialog()
             state.showSubtitleMenu -> viewModel.closeSubtitleMenu()
@@ -871,6 +958,13 @@ fun TvPlayerScreen(
     DisposableEffect(viewModel, roomController) {
         val handler: (KeyEvent) -> Boolean = handler@{ event ->
             val playerState = viewModel.uiState.value
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                TvFocusLog.d {
+                    "player bridge BACK action=${event.action} hudOpen=${playerState.hudOpen} " +
+                        "showControls=${playerState.showControls} paused=${playerState.isPaused} " +
+                        "quickSubs=$latestShowQuickSubtitlePicker cleanSeek=$cleanSeekRate"
+                }
+            }
             if (playerState.streamUrl == null || playerState.isLoading || playerState.error != null) {
                 return@handler false
             }
@@ -976,6 +1070,10 @@ fun TvPlayerScreen(
                 // With the transport overlay or Up Next on screen, Left/Right
                 // belong to Compose focus navigation, not seeking.
                 dpadHorizontalSeek = !playerState.showControls && !playerState.showNextUp,
+                // Same condition, different job: Down opens the HUD only from
+                // clean playback. The HUD-open and modal cases never reach the
+                // dispatch below — the guard beneath this call returns first.
+                dpadDownOpensHud = !playerState.showControls && !playerState.showNextUp,
             )
             // Apple parity (TVPlayerControls.rearmAutoHideOnFocusMove): any key
             // activity while the overlay is up re-arms the 5s auto-hide so the
@@ -1007,6 +1105,29 @@ fun TvPlayerScreen(
                 return@handler false
             }
 
+            // Back takes the pill down and resolves the intro. Consumed so the
+            // press cannot also exit playback; afterwards no pill is showing,
+            // so a second Back behaves normally. Mirrors the BackHandler
+            // ladder's priority: a scrub or clean seek owns Back first, so the
+            // pill must not swallow it here on older Android and leave the
+            // scrub running.
+            if (latestIntroSkipState.isVisible &&
+                event.keyCode == KeyEvent.KEYCODE_BACK &&
+                cleanSeekRate == 0 &&
+                !state.isScrubbing
+            ) {
+                // Both phases are consumed: a leaked ACTION_UP would reach the
+                // activity's back dispatcher.
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    viewModel.onDismissIntroPrompt()
+                }
+                return@handler true
+            }
+
+            // D-pad directions deliberately do NOT touch the pill: the contract
+            // says focus moves as normal and the timer keeps running, so the
+            // viewer can look at the transport without losing the offer.
+
             if (!playerState.showControls && !playerState.showNextUp && horizontalDirection != 0) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     beginCleanSeekPress(direction = horizontalDirection, allowsHold = true)
@@ -1016,7 +1137,7 @@ fun TvPlayerScreen(
 
             if (event.action == KeyEvent.ACTION_DOWN &&
                 event.repeatCount == 0 &&
-                latestIntroSkipState is IntroAutoSkipState.ShowingButton &&
+                latestIntroSkipState.isVisible &&
                 // Only while the transport overlay is hidden: with controls up
                 // a focused button owns Select — hijacking it here made every
                 // OK press skip the intro for the whole intro window.
@@ -1027,7 +1148,7 @@ fun TvPlayerScreen(
                     KeyEvent.KEYCODE_NUMPAD_ENTER,
                 )
             ) {
-                return@handler handleSkipIntroNow()
+                return@handler handleIntroPromptSelect()
             }
 
             // Back while PLAYING with the transport overlay up: hide the
@@ -1085,8 +1206,16 @@ fun TvPlayerScreen(
                     performRelativeSeek(-SKIP_BACK_MS, latestRoomSnapshot, revealControls = true)
                 TvPlayerRemoteKeyAction.SkipForward ->
                     performRelativeSeek(SKIP_FORWARD_MS, latestRoomSnapshot, revealControls = true)
-                TvPlayerRemoteKeyAction.OpenHud -> {
-                    requestedHudTab = HudTab.Info
+                TvPlayerRemoteKeyAction.OpenSettingsHud -> {
+                    requestedHudTab = HudTab.Video
+                    viewModel.openHUD()
+                    true
+                }
+                TvPlayerRemoteKeyAction.OpenPlaybackHud -> {
+                    requestedHudTab = preferredPlaybackHudTab(
+                        hasAudioTracks = playerState.audioTracks.isNotEmpty(),
+                        hasSubtitleTracks = playerState.subtitleTracks.isNotEmpty(),
+                    )
                     viewModel.openHUD()
                     true
                 }
@@ -1578,6 +1707,7 @@ fun TvPlayerScreen(
                 playbackPlan = plan,
                 subtitleIdentity = state.pendingSubtitleIdentity
                     ?: state.committedSubtitleIdentity,
+                preferMuxedTracks = true,
             ),
             title = state.title.ifBlank { null },
             artworkUrl = state.artworkUrl,
@@ -1644,6 +1774,7 @@ fun TvPlayerScreen(
                 playbackPlan = plan,
                 subtitleIdentity = state.pendingSubtitleIdentity
                     ?: state.committedSubtitleIdentity,
+                preferMuxedTracks = true,
             ),
             title = state.title.ifBlank { null },
             artworkUrl = state.artworkUrl,
@@ -1668,27 +1799,27 @@ fun TvPlayerScreen(
         backend.refresh(mediaSpec)
     }
 
-    // Auto-select a freshly downloaded/translated subtitle track once the
-    // rebuilt item's tracks land (the VM matches by label in onTracksChanged
-    // and emits the ordinal text-group index). Mirrors the seekRequests idiom.
+    // The single path from the subtitle transaction adapter to the player.
+    // Every request carries the owner that armed it, so the acknowledgement can
+    // never be dropped for want of one. Mirrors the seekRequests idiom.
     LaunchedEffect(videoBackend) {
         val backend = videoBackend ?: return@LaunchedEffect
-        viewModel.subtitleSelectRequests.collect { idx ->
-            if (idx == -1) {
+        viewModel.subtitleMountRequests.collect { request ->
+            if (request.trackIndex == -1) {
                 if (backend.selectSubtitle(null)) {
-                    viewModel.onSubtitleSelectionApplied(idx)
+                    viewModel.onSubtitleSelectionApplied(request)
                 } else {
-                    viewModel.onSubtitleSelectionFailed(idx)
+                    viewModel.onSubtitleSelectionFailed(request)
                 }
                 return@collect
             }
             val selectedTrack = viewModel.uiState.value.subtitleTracks
-                .firstOrNull { it.index == idx }
+                .firstOrNull { it.index == request.trackIndex }
                 ?.toVideoTrackEntry()
             if (selectedTrack != null && backend.selectSubtitle(selectedTrack)) {
-                viewModel.onSubtitleSelectionApplied(idx)
+                viewModel.onSubtitleSelectionApplied(request)
             } else {
-                viewModel.onSubtitleSelectionFailed(idx)
+                viewModel.onSubtitleSelectionFailed(request)
             }
         }
     }
@@ -1994,8 +2125,10 @@ fun TvPlayerScreen(
                             }
                             viewModel.setControlsVisible(true)
                         },
+                        // The Tune button IS the cog: same settings entry point
+                        // as the remote's Menu/Settings key, so same landing tab.
                         onOpenHUD = {
-                            requestedHudTab = HudTab.Info
+                            requestedHudTab = HudTab.Video
                             viewModel.openHUD()
                         },
                         onOpenQuickSubtitles = {
@@ -2066,8 +2199,8 @@ fun TvPlayerScreen(
                             sleepTimerState = sleepTimerState,
                             onStartSleepTimer = viewModel::onStartSleepTimer,
                             onCancelSleepTimer = viewModel::onCancelSleepTimer,
-                            autoSkipIntro = autoSkipIntroEnabled,
-                            onAutoSkipIntroChanged = viewModel::onSetAutoSkipIntro,
+                            introSkipMode = introSkipMode,
+                            onIntroSkipModeChanged = viewModel::onSetIntroSkipMode,
                             autoPlayNext = autoPlayNextEnabled,
                             onAutoPlayNextChanged = viewModel::onSetAutoPlayNext,
                             audioDelayMs = audioDelayMs,
@@ -2103,6 +2236,7 @@ fun TvPlayerScreen(
                             onHdrEnabledChanged = viewModel::onSetHdrEnabled,
                             dolbyVisionEnabled = dolbyVisionEnabled,
                             onDolbyVisionEnabledChanged = viewModel::onSetDolbyVisionEnabled,
+                            dolbyVisionSwitchInFlight = dolbyVisionSwitchInFlight,
                             chapters = state.chapters,
                             onSelectChapter = { idx ->
                                 viewModel.onSeekToChapter(idx)?.let { sec ->
@@ -2147,26 +2281,46 @@ fun TvPlayerScreen(
                     }
                 }
 
-                // Transient skip feedback for hidden-controls D-pad seeks.
-                // Suppressed while the transport, HUD, or Up Next own the
-                // screen (they provide their own position feedback) and in PiP.
-                if (!isInPictureInPictureMode && cleanSeekRate == 0 && !state.showControls &&
+                // Transient skip feedback, for both the hidden-controls D-pad
+                // skip and the transport/remote skip that reveals the overlay.
+                // Suppressed while the HUD or Up Next own the screen (they
+                // provide their own position feedback) and in PiP.
+                //
+                // ONE render site across both cases on purpose: a reveal-path
+                // skip sets the chip and flips showControls in the same handler,
+                // and splitting these would tear down one AnimatedVisibility and
+                // fade in another mid-transition.
+                if (!isInPictureInPictureMode && cleanSeekRate == 0 &&
                     !state.hudOpen && !state.showNextUp
                 ) {
-                    // Align the transient line with the REAL scrubber track's
-                    // position inside the idle overlay, which stacks (bottom-up):
-                    // 40dp overlay padding + 33dp transport cluster + 16dp gap +
-                    // 8dp spacer + 16dp gap = 113dp to the scrubber COLUMN's
-                    // bottom — plus ~6dp because the 3.5dp track is centered in
-                    // the column's lower box (41dp minus label row), not flush
-                    // with its bottom. Horizontal 80dp matches the track width.
+                    // Controls hidden: align the transient line with the REAL
+                    // scrubber track's position inside the idle overlay, which
+                    // stacks (bottom-up): 40dp overlay padding + 33dp transport
+                    // cluster + 16dp gap + 8dp spacer + 16dp gap = 113dp to the
+                    // scrubber COLUMN's bottom — plus ~6dp because the 3.5dp
+                    // track is centered in the column's lower box (41dp minus
+                    // label row), not flush with its bottom.
+                    //
+                    // Controls visible: the live scrubber already reports
+                    // position, so the chip drops its own track and rises into
+                    // the 42dp gap between that column's top (113 + 41) and the
+                    // title block at 196dp. Centred, so it clears the
+                    // left-aligned title at any title width.
+                    // Horizontal 80dp matches the track width in both cases.
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(start = 80.dp, end = 80.dp, bottom = 119.dp),
+                            .padding(
+                                start = 80.dp,
+                                end = 80.dp,
+                                bottom = if (state.showControls) 154.dp else 119.dp,
+                            ),
                         contentAlignment = Alignment.BottomCenter,
                     ) {
-                        TvSkipSeekIndicator(feedback = skipSeekFeedback)
+                        TvSkipSeekIndicator(
+                            feedback = skipSeekFeedback,
+                            showTrack = !state.showControls,
+                        )
                     }
                 }
 
@@ -2235,6 +2389,12 @@ fun TvPlayerScreen(
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
             autoPlayNextEnabled = autoPlayNextEnabled,
             introSkipState = introSkipState,
+            introSkipCountdownRun = introSkipCountdownRun,
+            introSkipTimerRunning = introSkipTimerRunning,
+            introSkipTotalSeconds = viewModel.introSkipTotalSeconds,
+            // The scrubber commits its seek on focus loss, so the prompt must
+            // not take focus out from under an active scrub.
+            introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0,
             videoActive = videoActive,
             isBuffering = state.isBuffering,
             sleepTimerState = sleepTimerState,
@@ -2253,8 +2413,7 @@ fun TvPlayerScreen(
             onKeepWatching = viewModel::dismissNextUp,
             onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
             onExitPlayback = { stopPlaybackAndExit() },
-            onSkipIntroNow = { handleSkipIntroNow() },
-            onCancelIntroAutoSkip = viewModel::onCancelIntroAutoSkip,
+            onIntroPromptSelect = { handleIntroPromptSelect() },
         )
     }
 }
@@ -2371,7 +2530,13 @@ private fun TvPlayerIdleOverlay(
                         onSkipForward()
                         true
                     }
-                    TvPlayerRemoteKeyAction.OpenHud -> {
+                    // OpenPlaybackHud can't originate here — this surface leaves
+                    // dpadDownOpensHud off, because with the overlay up Down is
+                    // how focus reaches the transport row. Handled so the branch
+                    // stays exhaustive if that ever changes.
+                    TvPlayerRemoteKeyAction.OpenSettingsHud,
+                    TvPlayerRemoteKeyAction.OpenPlaybackHud,
+                    -> {
                         onOpenHUD()
                         true
                     }
@@ -3322,6 +3487,13 @@ private fun TvPlayerOverlays(
     nextUpCountdownTotalSeconds: Int,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
+    /** Bumps when the pill's timer (re)starts, so its fill re-anchors. */
+    introSkipCountdownRun: Int,
+    /** False while the pill is up but its timer is frozen by a pause. */
+    introSkipTimerRunning: Boolean,
+    introSkipTotalSeconds: Int,
+    /** False while a scrub owns focus — see TvIntroAutoSkipBanner.mayTakeFocus. */
+    introBannerMayTakeFocus: Boolean,
     /** True only while the video branch is composed — not loading, not errored. */
     videoActive: Boolean,
     isBuffering: Boolean,
@@ -3333,8 +3505,7 @@ private fun TvPlayerOverlays(
     onKeepWatching: () -> Unit,
     onToggleAutoPlayNext: () -> Unit,
     onExitPlayback: () -> Unit,
-    onSkipIntroNow: () -> Unit,
-    onCancelIntroAutoSkip: () -> Unit,
+    onIntroPromptSelect: () -> Unit,
 ) {
         // Lifecycle-driven notice toast (top-start). Slides in for outage
         // recovery, fades out when the lifecycle clears the notice.
@@ -3517,23 +3688,36 @@ private fun TvPlayerOverlays(
             }
         }
 
-        // Intro auto-skip banner (bottom-end, above the transport cluster).
+        // Intro skip pill (bottom-end, above the transport cluster).
         // It must remain visible even when transport controls auto-hide; D-pad
-        // Center routes directly to [onSkipIntroNow] while the manual prompt
-        // is active, so the viewer does not need a first click just to reveal UI.
+        // Center routes straight to the pill's Select while it is showing, so
+        // the viewer does not need a first click just to reveal UI.
         // Bottom inset (200dp) clears the transport cluster + scrubber column.
         if (!isInPictureInPictureMode) {
             if (!hudOpen && !showNextUp) {
+                // Sits above the transport cluster while controls are up and
+                // drops toward the corner when they hide.
+                val introSkipBottomInset by animateDpAsState(
+                    targetValue = if (showControls) 200.dp else 56.dp,
+                    animationSpec = tween(durationMillis = 220),
+                    label = "introSkipBottomInset",
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(bottom = 200.dp, end = 32.dp),
+                        .padding(bottom = introSkipBottomInset, end = 32.dp),
                     contentAlignment = Alignment.BottomEnd,
                 ) {
                     TvIntroAutoSkipBanner(
                         state = introSkipState,
-                        onSkipNow = onSkipIntroNow,
-                        onCancelCountdown = onCancelIntroAutoSkip,
+                        onSelect = onIntroPromptSelect,
+                        totalSeconds = introSkipTotalSeconds,
+                        countdownRun = introSkipCountdownRun,
+                        timerRunning = introSkipTimerRunning,
+                        // Not while the viewer is working the timeline: the
+                        // scrubber commits its seek on focus loss, so taking
+                        // focus here would land a seek they never confirmed.
+                        mayTakeFocus = introBannerMayTakeFocus,
                     )
                 }
             }

@@ -91,12 +91,19 @@ internal fun rememberTvContentInitialFocus(
     // should suppress content anchoring underneath it, which is knowledge this
     // adapter cannot have on its own.
     LaunchedEffect(target, contentKey) {
-        if (!shouldRequestTvContentInitialFocus(contentKey, contentHasFocus)) return@LaunchedEffect
+        if (!shouldRequestTvContentInitialFocus(contentKey, contentHasFocus)) {
+            TvFocusLog.d {
+                "contentInitialFocus: skipped (key=$contentKey, alreadyFocused=$contentHasFocus)"
+            }
+            return@LaunchedEffect
+        }
+        TvFocusLog.d { "contentInitialFocus: claiming (key=$contentKey)" }
         val result = requestTvContentInitialFocus(
             awaitAttempt = { delay(TvContentInitialFocusRetryDelayMillis) },
             isContentFocused = { contentHasFocus },
             requestFocus = target::requestFocus,
         )
+        TvFocusLog.d { "contentInitialFocus: result=$result (key=$contentKey)" }
         if (result == TvObservedFocusResult.Focused) onAcquired()
     }
 

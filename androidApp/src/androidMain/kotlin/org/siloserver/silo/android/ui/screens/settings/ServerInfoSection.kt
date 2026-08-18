@@ -1,8 +1,5 @@
 package org.siloserver.silo.android.ui.screens.settings
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.android.BuildConfig
@@ -21,18 +18,15 @@ fun ServerInfoSection(
     modifier: Modifier = Modifier,
 ) {
     SettingsSectionCard(modifier = modifier) {
-        SettingsRowLabel(
-            title = "Server",
-            icon = Icons.Default.Dns,
-            badgeColor = SettingsBadgeTeal,
+        SettingsNavigationRow(
+            label = "Server",
+            description = "The Silo server this device is signed in to.",
             value = serverUrl.ifBlank { "Not connected" },
             onClick = onManageServersClick,
-            showChevron = true,
         )
-        SettingsRowLabel(
-            title = "Version",
-            icon = Icons.Default.Info,
-            badgeColor = SettingsBadgeGray,
+        SettingsNavigationRow(
+            label = "Version",
+            description = "The app build running on this device.",
             // Includes the build number so a support report and the server's
             // admin Activity page name the exact same build, in the "1.0.0 (5)"
             // form Play, TestFlight and the server's own diagnostics page all

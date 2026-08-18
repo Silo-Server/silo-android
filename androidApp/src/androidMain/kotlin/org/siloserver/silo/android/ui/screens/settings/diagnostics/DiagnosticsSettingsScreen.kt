@@ -1,13 +1,11 @@
 package org.siloserver.silo.android.ui.screens.settings.diagnostics
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -20,9 +18,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,20 +27,28 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.text.DateFormat
 import java.util.Date
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.android.ui.screens.settings.SettingsChoiceRow
+import org.siloserver.silo.android.ui.screens.settings.SettingsNavigationRow
+import org.siloserver.silo.android.ui.screens.settings.SettingsProse
 import org.siloserver.silo.android.ui.screens.settings.SettingsRow
+import org.siloserver.silo.android.ui.screens.settings.SettingsSection
 import org.siloserver.silo.android.ui.screens.settings.SettingsSectionCard
-import org.siloserver.silo.android.ui.screens.settings.SettingsSectionHeader
+import org.siloserver.silo.android.ui.screens.settings.SettingsSwitchRow
+import org.siloserver.silo.android.ui.theme.SettingsDimens
+import org.siloserver.silo.android.ui.theme.SettingsTextStyles
+import org.siloserver.silo.android.ui.theme.SiloForeground
+import org.siloserver.silo.android.ui.theme.SiloMutedText
+import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
+import org.siloserver.silo.android.ui.theme.Spacing
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode
 import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
@@ -100,35 +104,35 @@ internal fun DiagnosticsSettingsContent(
         state.consent
     }
     Scaffold(
-        topBar = { SiloTopBar(title = "Diagnostics", onBackClick = onBackClick) },
-        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            SiloTopBar(
+                title = "Diagnostics",
+                onBackClick = onBackClick,
+                containerColor = SiloSettingsBackground,
+            )
+        },
+        containerColor = SiloSettingsBackground,
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            contentPadding = PaddingValues(SettingsDimens.pageGutter),
+            verticalArrangement = Arrangement.spacedBy(SettingsDimens.sectionGap),
         ) {
             item {
-                SettingsSectionCard {
-                    SettingsSectionHeader("Send reports to")
+                SettingsSection(title = "Send reports to") {
                     DiagnosticsDestinationKind.entries.forEach { destination ->
                         val label = when (destination) {
                             DiagnosticsDestinationKind.HOSTED -> "Silo Diagnostics"
                             DiagnosticsDestinationKind.SELF_HOSTED -> "This Silo server"
                         }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onDestinationChanged(destination) }
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = state.destinationKind == destination, onClick = null)
-                            Text(label, style = MaterialTheme.typography.bodyLarge)
-                        }
+                        SettingsChoiceRow(
+                            label = label,
+                            selected = state.destinationKind == destination,
+                            onSelect = { onDestinationChanged(destination) },
+                        )
                     }
-                    Text(
-                        if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                    SettingsProse(
+                        body = if (state.destinationKind == DiagnosticsDestinationKind.HOSTED) {
                             "Reports include the Silo app version and build, Android version, device model, " +
                                 "crash details, and diagnostic logs you review. A pseudonymous installation " +
                                 "credential is not linked to an account on your self-hosted server. Username, " +
@@ -138,90 +142,90 @@ internal fun DiagnosticsSettingsContent(
                         } else {
                             "Compatibility mode sends reports to the diagnostics endpoint on your active server."
                         },
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
                     )
-                    TextButton(onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }) {
+                    TextButton(
+                        onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) },
+                        modifier = Modifier.padding(
+                            start = SettingsDimens.rowHorizontalPadding - 12.dp,
+                            bottom = SettingsDimens.rowVerticalPadding,
+                        ),
+                    ) {
                         Text("Privacy Policy")
                     }
                 }
             }
             item { DiagnosticsStatusCard(state) }
             item {
-                SettingsSectionCard {
-                    SettingsSectionHeader("Crash reports")
+                SettingsSection(title = "Crash reports") {
                     DiagnosticsConsentMode.entries
                         .filter { it != DiagnosticsConsentMode.ALWAYS || state.allowsAutomaticUpload }
                         .forEach { mode ->
-                        val label = when (mode) {
-                            DiagnosticsConsentMode.ASK -> "Ask before sending"
-                            DiagnosticsConsentMode.ALWAYS -> "Always send"
-                            DiagnosticsConsentMode.NEVER -> "Never send"
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
+                            val label = when (mode) {
+                                DiagnosticsConsentMode.ASK -> "Ask before sending"
+                                DiagnosticsConsentMode.ALWAYS -> "Always send"
+                                DiagnosticsConsentMode.NEVER -> "Never send"
+                            }
+                            SettingsChoiceRow(
+                                label = label,
+                                selected = effectiveConsent == mode,
+                                onSelect = {
                                     if (consentActionModel(state.consent, mode).requiresConfirmation) {
                                         confirmAlways = true
                                     } else {
                                         onConsentChanged(mode)
                                     }
-                                }
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(
-                                selected = effectiveConsent == mode,
-                                onClick = null,
+                                },
                             )
-                            Text(label, style = MaterialTheme.typography.bodyLarge)
                         }
-                    }
-                    SettingsRow(
+                    // The shared switch row now carries `enabled`, so this no
+                    // longer needs its own hand-rolled copy of it.
+                    SettingsSwitchRow(
                         label = "Debug logging",
-                        trailing = {
-                            Switch(
-                                checked = state.debugLogging,
-                                enabled = state.consent != DiagnosticsConsentMode.NEVER,
-                                onCheckedChange = onDebugLoggingChanged,
-                            )
-                        },
+                        description = "Record extra detail so a report can explain what went wrong.",
+                        checked = state.debugLogging,
+                        enabled = state.consent != DiagnosticsConsentMode.NEVER,
+                        onCheckedChange = onDebugLoggingChanged,
                     )
                 }
             }
             item {
-                SettingsSectionCard {
-                    SettingsSectionHeader("Capture")
+                SettingsSection(title = "Capture") {
+                    val paneModifier = Modifier.padding(
+                        horizontal = SettingsDimens.proseHorizontalPadding,
+                        vertical = SettingsDimens.proseVerticalPadding,
+                    )
                     if (state.timedCapture.status == TimedCaptureStatus.ACTIVE) {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            Text("Diagnostic capture is running", fontWeight = FontWeight.SemiBold)
+                        Column(paneModifier) {
+                            Text(
+                                "Diagnostic capture is running",
+                                style = SettingsTextStyles.rowLabel,
+                                color = SiloForeground,
+                            )
                             Text(
                                 "Reproduce the issue, then stop to review exactly what will be sent.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodyMedium,
+                                color = SiloMutedText,
+                                style = SettingsTextStyles.rowDescription,
                             )
-                            Spacer(Modifier.height(12.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Spacer(Modifier.height(Spacing.md))
+                            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                                 Button(onClick = onStopCapture) { Text("Stop & review") }
                                 OutlinedButton(onClick = onCancelCapture) { Text("Cancel") }
                             }
                         }
                     } else {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Column(paneModifier) {
                             Button(onClick = onSendNow, enabled = model.canCapture) {
                                 Text("Send diagnostics now")
                             }
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(Spacing.sm))
                             OutlinedButton(onClick = onStartCapture, enabled = model.canCapture) {
                                 Text("Start diagnostic capture")
                             }
                             Text(
                                 "A one-time report uses the recent in-memory log. Timed capture records more detail until you stop it.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(top = 10.dp),
+                                color = SiloMutedText,
+                                style = SettingsTextStyles.rowDescription,
+                                modifier = Modifier.padding(top = Spacing.sm),
                             )
                         }
                     }
@@ -229,22 +233,13 @@ internal fun DiagnosticsSettingsContent(
             }
             if (model.showPending) {
                 item {
-                    SettingsSectionCard {
-                        SettingsSectionHeader("Pending reports")
+                    SettingsSection(title = "Pending reports") {
                         state.pending.forEach { report ->
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onReportSelected(report.id) }
-                                    .padding(horizontal = 16.dp, vertical = 11.dp),
-                            ) {
-                                Text(report.type.displayName(), fontWeight = FontWeight.Medium)
-                                Text(
-                                    "${report.capturedAt} · ${formatDiagnosticBytes(report.evidenceBytes)}",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
+                            SettingsNavigationRow(
+                                label = report.type.displayName(),
+                                description = "${report.capturedAt} · ${formatDiagnosticBytes(report.evidenceBytes)}",
+                                onClick = { onReportSelected(report.id) },
+                            )
                         }
                     }
                 }
@@ -253,26 +248,22 @@ internal fun DiagnosticsSettingsContent(
                 item {
                     val clipboard = LocalClipboardManager.current
                     Column {
-                        SettingsSectionCard {
-                            SettingsSectionHeader("Recently sent")
+                        SettingsSection(title = "Recently sent") {
                             state.sentHistory.forEach { sent ->
-                                SettingsRow(label = sent.shortId) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            "${sent.state.replace('_', ' ')} · ${formatDiagnosticDate(sent.sentAtEpochMs)}",
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.bodySmall,
+                                SettingsRow(
+                                    label = sent.shortId,
+                                    description = "${sent.state.replace('_', ' ')} · " +
+                                        formatDiagnosticDate(sent.sentAtEpochMs),
+                                ) {
+                                    IconButton(
+                                        onClick = { clipboard.setText(AnnotatedString(sent.shortId)) },
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.ContentCopy,
+                                            contentDescription = "Copy reference ID",
+                                            tint = SiloMutedText,
+                                            modifier = Modifier.size(18.dp),
                                         )
-                                        IconButton(
-                                            onClick = { clipboard.setText(AnnotatedString(sent.shortId)) },
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Outlined.ContentCopy,
-                                                contentDescription = "Copy reference ID",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        }
                                     }
                                 }
                             }
@@ -280,14 +271,18 @@ internal fun DiagnosticsSettingsContent(
                         Text(
                             "Sent reports are removed from this device once the selected destination has a copy. " +
                                 "Use the reference ID when asking for help.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp),
+                            color = SiloMutedText,
+                            style = SettingsTextStyles.rowDescription,
+                            modifier = Modifier.padding(
+                                start = SettingsDimens.headerStartInset,
+                                end = SettingsDimens.headerStartInset,
+                                top = Spacing.sm,
+                            ),
                         )
                     }
                 }
             }
-            item { Spacer(Modifier.height(24.dp)) }
+            item { Spacer(Modifier.height(SettingsDimens.pageBottomSpacer)) }
         }
     }
 
@@ -316,11 +311,21 @@ private const val PRIVACY_POLICY_URL = "https://siloserver.org/privacy"
 @Composable
 private fun DiagnosticsUnavailableScreen(onBackClick: () -> Unit) {
     Scaffold(
-        topBar = { SiloTopBar(title = "Diagnostics", onBackClick = onBackClick) },
-        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            SiloTopBar(
+                title = "Diagnostics",
+                onBackClick = onBackClick,
+                containerColor = SiloSettingsBackground,
+            )
+        },
+        containerColor = SiloSettingsBackground,
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(24.dp)) {
-            Text("Diagnostics aren't available for this profile.", style = MaterialTheme.typography.titleMedium)
+        Column(Modifier.fillMaxSize().padding(padding).padding(Spacing.xxl)) {
+            Text(
+                "Diagnostics aren't available for this profile.",
+                style = MaterialTheme.typography.titleMedium,
+                color = SiloForeground,
+            )
         }
     }
 }
@@ -336,10 +341,7 @@ private fun DiagnosticsStatusCard(state: DiagnosticsUiState) {
         DiagnosticsAvailabilityUi.INELIGIBLE -> "Unavailable" to "Diagnostics are not available for this profile."
     }
     SettingsSectionCard {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        }
+        SettingsProse(title = title, body = detail)
     }
 }
 

@@ -89,7 +89,6 @@ sealed class Route(val route: String) {
         }
     }
     data object Settings : Route("settings")
-    data object CardOverlays : Route("settings/card_overlays")
     data object Diagnostics : Route("settings/diagnostics")
     data class DiagnosticsReport(val reportId: String) :
         Route("settings/diagnostics/report/${Uri.encode(reportId)}") {
@@ -254,9 +253,6 @@ sealed class Route(val route: String) {
     // --- Personal data ---
     data object Favorites : Route("favorites")
     data object Watchlist : Route("watchlist")
-
-    /** Admin stats dashboard (Apple-parity surface; role-gated entry in Settings). */
-    data object Admin : Route("admin")
     data object History : Route("history")
     data object PersonalLists : Route("personal_lists")
     data class Collections(val libraryId: Int? = null) : Route(

@@ -1,6 +1,5 @@
 package org.siloserver.silo.tv.ui.screens.recommendations
 
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -71,47 +70,5 @@ class TvForYouEntryRequestTest {
         assertEquals(SavedListSelection.Watchlist, applied.selection)
         assertEquals(4, applied.lastAppliedSequence)
         assertTrue(applied.appliedRequest)
-    }
-
-    @Test
-    fun sameRouteCrossSelectionFocusesNewRequestedPillAfterComposition() = runTest {
-        val events = mutableListOf<String>()
-
-        val focused = requestForYouEntryFocus(
-            selection = SavedListSelection.Favorites,
-            awaitFrame = { events += "frame" },
-            requestForYou = { events += "for-you"; true },
-            requestWatchlist = { events += "watchlist"; true },
-            requestFavorites = { events += "favorites"; true },
-        )
-
-        assertTrue(focused)
-        assertEquals(listOf("frame", "favorites"), events)
-    }
-
-    @Test
-    fun repeatedSameRouteSelectionStillRefocusesRequestedPill() = runTest {
-        val request = TvForYouEntryRequest(
-            sequence = 8,
-            selection = SavedListSelection.Watchlist,
-        ).next(SavedListSelection.Watchlist)
-        val applied = applyForYouEntryRequest(
-            currentSelection = SavedListSelection.Watchlist,
-            lastAppliedSequence = 8,
-            request = request,
-        )
-        val events = mutableListOf<String>()
-
-        if (applied.appliedRequest) {
-            requestForYouEntryFocus(
-                selection = applied.selection,
-                awaitFrame = { events += "frame" },
-                requestForYou = { events += "for-you"; true },
-                requestWatchlist = { events += "watchlist"; true },
-                requestFavorites = { events += "favorites"; true },
-            )
-        }
-
-        assertEquals(listOf("frame", "watchlist"), events)
     }
 }

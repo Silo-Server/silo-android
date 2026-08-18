@@ -49,10 +49,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.common.ui.components.isImageAvatar
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
-import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
-import org.siloserver.silo.common.ui.components.resolveAvatarUrl
+import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.tv.ui.focus.TvControlState
 import org.siloserver.silo.tv.ui.focus.tvControlSemantics
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
@@ -66,7 +65,7 @@ private const val PIN_LENGTH = 4
 @Composable
 fun TvPinEntryDialog(
     profileName: String,
-    profileAvatar: String? = null,
+    profileAvatar: ProfileAvatarRef = ProfileAvatarRef.None,
     onPinEntered: (String) -> Unit,
     onDismiss: () -> Unit,
     errorMessage: String? = null,
@@ -190,11 +189,8 @@ fun TvPinEntryDialog(
 }
 
 @Composable
-private fun ProfilePinAvatar(profileName: String, profileAvatar: String?) {
-    val serverUrl = rememberProfileServerUrl()
-    val avatarUrl = profileAvatar
-        ?.takeIf(::isImageAvatar)
-        ?.let { resolveAvatarUrl(serverUrl, it) }
+private fun ProfilePinAvatar(profileName: String, profileAvatar: ProfileAvatarRef) {
+    val avatarImage = rememberProfileAvatarImage(profileAvatar)
     Box(
         modifier = Modifier
             .size(42.dp)
@@ -202,13 +198,15 @@ private fun ProfilePinAvatar(profileName: String, profileAvatar: String?) {
             .background(Color.White.copy(alpha = 0.10f)),
         contentAlignment = Alignment.Center,
     ) {
-        if (avatarUrl != null) {
+        if (avatarImage != null) {
             ThumbhashImage(
-                url = avatarUrl,
+                url = avatarImage.url,
                 thumbhash = null,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
+                cacheKey = avatarImage.cacheKey,
+                onError = avatarImage.onLoadFailed,
             )
         } else {
             Text(

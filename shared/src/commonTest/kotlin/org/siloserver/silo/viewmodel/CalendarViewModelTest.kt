@@ -38,10 +38,15 @@ class CalendarViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(api: FakeCalendarApi, today: String = "2026-06-12") = CalendarViewModel(
+    private fun viewModel(
+        api: FakeCalendarApi,
+        today: String = "2026-06-12",
+        filterStore: CalendarFilterStore = CalendarFilterStore.InMemory(),
+    ) = CalendarViewModel(
         repository = CalendarRepository(api),
         timezoneId = "Europe/Amsterdam",
         todayProvider = { today },
+        filterStore = filterStore,
     )
 
     @Test
@@ -185,6 +190,105 @@ class CalendarViewModelTest {
         assertEquals(listOf(weekBItem), vm.uiState.value.days)
         assertEquals("2026-06-15", vm.uiState.value.weekStart)
     }
+    @Test
+    fun `filter is read from the store on init and written on change`() = runTest(dispatcher) {
+        val store = CalendarFilterStore.InMemory(CalendarFilter.Trending)
+        val api = FakeCalendarApi(ApiResult.Success(CalendarResponse()))
+        val vm = viewModel(api, filterStore = store)
+
+        assertEquals(CalendarFilter.Trending, vm.uiState.value.filter)
+        assertEquals(CalendarFilter.Trending, api.calls.single().filter)
+
+        vm.setFilter(CalendarFilter.Everything)
+        assertEquals(CalendarFilter.Everything, store.read())
+    }
+
+    @Test
+    fun `a previously loaded week renders from cache without a loading blank`() = runTest(dispatcher) {
+        val weekA = CalendarResponse(events = listOf(CalendarDay(date = "2026-06-09", items = listOf(stubItem("a")))))
+        val weekB = CalendarResponse(events = listOf(CalendarDay(date = "2026-06-16", items = listOf(stubItem("b")))))
+        val api = FakeCalendarApi(weekA.let { ApiResult.Success(it) })
+        val vm = viewModel(api)
+        assertEquals("a", vm.uiState.value.days.single().items.single().contentId)
+
+        api.result = ApiResult.Success(weekB)
+        vm.nextWeek()
+        assertEquals("b", vm.uiState.value.days.single().items.single().contentId)
+
+        // Back to week A: the API now answers something else, but the cached
+        // rows show immediately and the request still goes out to revalidate.
+        val gate = CompletableDeferred<Unit>()
+        api.beforeAnswer = { gate.await() }
+        vm.prevWeek()
+        assertFalse(vm.uiState.value.isLoading)
+        assertEquals("a", vm.uiState.value.days.single().items.single().contentId)
+        assertEquals(3, api.calls.size)
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun `an unseen week clears the previous rows while it loads`() = runTest(dispatcher) {
+        val weekA = CalendarResponse(events = listOf(CalendarDay(date = "2026-06-09", items = listOf(stubItem("a")))))
+        val api = FakeCalendarApi(ApiResult.Success(weekA))
+        val vm = viewModel(api)
+
+        val gate = CompletableDeferred<Unit>()
+        api.beforeAnswer = { gate.await() }
+        vm.nextWeek()
+        assertTrue(vm.uiState.value.isLoading)
+        assertTrue(vm.uiState.value.days.isEmpty())
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun `a failed revalidation keeps cached rows and does not surface an error`() = runTest(dispatcher) {
+        val weekA = CalendarResponse(events = listOf(CalendarDay(date = "2026-06-09", items = listOf(stubItem("a")))))
+        val api = FakeCalendarApi(ApiResult.Success(weekA))
+        val vm = viewModel(api)
+
+        api.result = ApiResult.NetworkError(RuntimeException("offline"))
+        vm.load()
+
+        assertEquals("a", vm.uiState.value.days.single().items.single().contentId)
+        assertNull(vm.uiState.value.error)
+    }
+
+    @Test
+    fun `a week change during a refresh clears the refreshing flag`() = runTest(dispatcher) {
+        val api = FakeCalendarApi(ApiResult.Success(CalendarResponse()))
+        val vm = viewModel(api)
+
+        val gate = CompletableDeferred<Unit>()
+        api.beforeAnswer = { gate.await() }
+        vm.refresh()
+        assertTrue(vm.uiState.value.isRefreshing)
+
+        api.beforeAnswer = {}
+        vm.nextWeek()
+        assertFalse(vm.uiState.value.isRefreshing)
+        gate.complete(Unit)
+        assertFalse(vm.uiState.value.isRefreshing)
+    }
+
+    @Test
+    fun `refresh evicts the cache so a failure shows the error`() = runTest(dispatcher) {
+        val weekA = CalendarResponse(events = listOf(CalendarDay(date = "2026-06-09", items = listOf(stubItem("a")))))
+        val api = FakeCalendarApi(ApiResult.Success(weekA))
+        val vm = viewModel(api)
+
+        api.result = ApiResult.NetworkError(RuntimeException("offline"))
+        vm.refresh()
+
+        // The stale rows are still on screen (they were not cleared), but the
+        // cache entry is gone: a later load of the same week starts blank.
+        assertFalse(vm.uiState.value.isRefreshing)
+        val gate = CompletableDeferred<Unit>()
+        api.beforeAnswer = { gate.await() }
+        vm.load()
+        assertTrue(vm.uiState.value.isLoading)
+        assertTrue(vm.uiState.value.days.isEmpty())
+        gate.complete(Unit)
+    }
 }
 
 private data class CalendarCall(
@@ -201,6 +305,9 @@ private class FakeCalendarApi(
 
     val calls = mutableListOf<CalendarCall>()
 
+    /** Optional suspension point before answering, to hold a request in flight. */
+    var beforeAnswer: suspend () -> Unit = {}
+
     override suspend fun getCalendar(
         start: String,
         end: String,
@@ -209,6 +316,7 @@ private class FakeCalendarApi(
         timezone: String?,
     ): ApiResult<CalendarResponse> {
         calls += CalendarCall(start, end, filter, libraryId, timezone)
+        beforeAnswer()
         return result
     }
 }

@@ -5,6 +5,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -43,7 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
-import org.siloserver.silo.android.ui.components.LoadingIndicator
+import org.siloserver.silo.android.ui.components.PosterGridSkeleton
+import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.MediaCardContextMenu
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.WatchedBadge
@@ -52,6 +57,7 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.viewmodel.FavoritesViewModel
 import org.siloserver.silo.viewmodel.HistoryViewModel
+import org.siloserver.silo.viewmodel.PersonalListQuery
 import org.siloserver.silo.viewmodel.PersonalListUiState
 import org.siloserver.silo.viewmodel.WatchlistViewModel
 import org.koin.compose.viewmodel.koinViewModel
@@ -61,14 +67,21 @@ fun FavoritesGridContent(
     onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    header: (@Composable (PersonalListUiState) -> Unit)? = null,
+    /** Sort/filter to fetch with; null keeps whatever the ViewModel has. */
+    query: PersonalListQuery? = null,
     viewModel: FavoritesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    if (query != null) {
+        LaunchedEffect(query) { viewModel.applyQuery(query) }
+    }
 
     PersonalMediaGridContent(
         state = state,
         modifier = modifier,
         contentPadding = contentPadding,
+        header = header,
         emptyTitle = "No favorites",
         emptySubtitle = "Tap the heart icon on any item to add it here",
         emptyIcon = Icons.Outlined.FavoriteBorder,
@@ -91,14 +104,21 @@ fun WatchlistGridContent(
     onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    header: (@Composable (PersonalListUiState) -> Unit)? = null,
+    /** Sort/filter to fetch with; null keeps whatever the ViewModel has. */
+    query: PersonalListQuery? = null,
     viewModel: WatchlistViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    if (query != null) {
+        LaunchedEffect(query) { viewModel.applyQuery(query) }
+    }
 
     PersonalMediaGridContent(
         state = state,
         modifier = modifier,
         contentPadding = contentPadding,
+        header = header,
         emptyTitle = "Watchlist is empty",
         emptySubtitle = "Tap the bookmark icon on any item to add it here",
         emptyIcon = Icons.Outlined.BookmarkBorder,
@@ -121,6 +141,7 @@ fun HistoryGridContent(
     onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    header: (@Composable (PersonalListUiState) -> Unit)? = null,
     viewModel: HistoryViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -129,6 +150,7 @@ fun HistoryGridContent(
         state = state,
         modifier = modifier,
         contentPadding = contentPadding,
+        header = header,
         emptyTitle = "No watch history",
         emptySubtitle = "Items you watch will appear here",
         emptyIcon = Icons.Outlined.History,
@@ -157,8 +179,14 @@ private fun PersonalMediaGridContent(
     itemContent: @Composable (BrowseItem) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    // Optional full-width row that scrolls with the grid (For You's saved-list
+    // pills, the sort/filter controls). It also renders above the loading /
+    // empty / error views so the controls stay reachable when the list has
+    // nothing to show. Receives the state so it can show the item count.
+    header: (@Composable (PersonalListUiState) -> Unit)? = null,
 ) {
     val gridState = rememberLazyGridState()
+    val layoutDirection = LocalLayoutDirection.current
 
     val shouldLoadMore by remember {
         derivedStateOf {
@@ -176,38 +204,65 @@ private fun PersonalMediaGridContent(
 
     when {
         state.isLoading -> {
-            LoadingIndicator(modifier = modifier.padding(contentPadding))
+            // Poster-grid skeleton (not a spinner) so the list keeps its shape
+            // while it loads; the header's controls stay reachable above it.
+            Column(modifier = modifier.padding(contentPadding)) {
+                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
+                PosterGridSkeleton(
+                    progress = rememberShimmerProgress(),
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
         state.error != null && state.items.isEmpty() -> {
-            ErrorView(
-                message = state.error ?: "Unknown error",
-                onRetry = onRetry,
-                modifier = modifier.padding(contentPadding),
-            )
+            Column(modifier = modifier.padding(contentPadding)) {
+                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
+                ErrorView(
+                    message = state.error ?: "Unknown error",
+                    onRetry = onRetry,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
         state.items.isEmpty() -> {
-            EmptyStateView(
-                title = emptyTitle,
-                subtitle = emptySubtitle,
-                icon = emptyIcon,
-                modifier = modifier.padding(contentPadding),
-            )
+            Column(modifier = modifier.padding(contentPadding)) {
+                header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
+                // A narrowed query with no hits is not an empty list — say so,
+                // and keep the header's controls reachable to widen it (TV parity).
+                val filtered = !state.query.isDefault
+                EmptyStateView(
+                    title = if (filtered) "No matches" else emptyTitle,
+                    subtitle = if (filtered) "No titles match the current filters." else emptySubtitle,
+                    icon = emptyIcon,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
         else -> {
             PullToRefreshBox(
                 isRefreshing = state.isRefreshing,
                 onRefresh = onRefresh,
-                modifier = modifier
-                    .fillMaxSize()
-                    .padding(contentPadding),
+                modifier = modifier.fillMaxSize(),
             ) {
+                // contentPadding goes inside the grid so items scroll edge to
+                // edge under any chrome the caller reserved space for.
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
                     state = gridState,
-                    contentPadding = PaddingValues(16.dp),
+                    contentPadding = PaddingValues(
+                        start = 16.dp + contentPadding.calculateStartPadding(layoutDirection),
+                        top = 16.dp + contentPadding.calculateTopPadding(),
+                        end = 16.dp + contentPadding.calculateEndPadding(layoutDirection),
+                        bottom = 16.dp + contentPadding.calculateBottomPadding(),
+                    ),
                     horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
                     verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
                 ) {
+                    if (header != null) {
+                        item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
+                            header(state)
+                        }
+                    }
                     items(
                         items = state.items,
                         key = { it.contentId },

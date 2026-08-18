@@ -132,7 +132,7 @@ fun TvForYouSelector(
 
     LaunchedEffect(entersPanel, focusEntryToken) {
         if (entersPanel && focusEntryToken > 0) {
-            runCatching { watchlistFocus.requestFocus() }
+            runCatching { recommendationsFocus.requestFocus() }
         }
     }
 
@@ -144,12 +144,14 @@ fun TvForYouSelector(
             .focusGroup(),
     ) {
         CascadePanelHeader("FOR YOU")
+        // Recommendations first: it is the tab's landing content, so entry
+        // focus sits on what the viewer is already looking at.
         CascadeActionRow(
-            title = "Watchlist",
-            icon = Icons.Filled.Bookmark,
+            title = "Recommendations",
+            icon = Icons.Filled.AutoAwesome,
             entersPanel = entersPanel,
-            focusRequester = watchlistFocus,
-            onSelect = onWatchlist,
+            focusRequester = recommendationsFocus,
+            onSelect = onRecommendations,
         )
         CascadeActionRow(
             title = "Favorites",
@@ -159,11 +161,11 @@ fun TvForYouSelector(
             onSelect = onFavorites,
         )
         CascadeActionRow(
-            title = "Recommendations",
-            icon = Icons.Filled.AutoAwesome,
+            title = "Watchlist",
+            icon = Icons.Filled.Bookmark,
             entersPanel = entersPanel,
-            focusRequester = recommendationsFocus,
-            onSelect = onRecommendations,
+            focusRequester = watchlistFocus,
+            onSelect = onWatchlist,
         )
         CascadePanelFooter(isSingleLibrary = true)
     }
@@ -492,7 +494,7 @@ fun TvCascadeSelector(
 }
 
 @Composable
-private fun CascadePanelHeader(text: String) {
+internal fun CascadePanelHeader(text: String) {
     Text(
         text = text,
         color = SiloOnSurface.copy(alpha = 0.38f),
@@ -527,11 +529,18 @@ private fun CascadeFlyoutHeader(text: String) {
 
 @Composable
 private fun CascadePanelFooter(isSingleLibrary: Boolean) {
-    val caption = if (isSingleLibrary) {
-        "Press opens the section · Menu closes"
-    } else {
-        "Press opens the library · → jumps to a section · Menu closes"
-    }
+    CascadePanelFooter(
+        caption = if (isSingleLibrary) {
+            "Press opens the section · Menu closes"
+        } else {
+            "Press opens the library · → jumps to a section · Menu closes"
+        },
+    )
+}
+
+/** Hairline + hint caption closing a Skyline panel; shared with the anchored selector menu. */
+@Composable
+internal fun CascadePanelFooter(caption: String) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier

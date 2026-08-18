@@ -38,8 +38,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.android.ui.screens.settings.SettingsSection
 import org.siloserver.silo.android.ui.screens.settings.SettingsSectionCard
-import org.siloserver.silo.android.ui.screens.settings.SettingsSectionHeader
+import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadDecision
@@ -59,8 +60,14 @@ fun DiagnosticsReportScreen(
     var uploadNotice by remember { mutableStateOf<String?>(null) }
     var uploadNoticeIsError by remember { mutableStateOf(true) }
     Scaffold(
-        topBar = { SiloTopBar(title = "Report details", onBackClick = onBackClick) },
-        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            SiloTopBar(
+                title = "Report details",
+                onBackClick = onBackClick,
+                containerColor = SiloSettingsBackground,
+            )
+        },
+        containerColor = SiloSettingsBackground,
     ) { padding ->
         val shortId = sentShortId
         when {
@@ -116,8 +123,7 @@ fun DiagnosticsReportScreen(
                     }
                 }
                 item {
-                    SettingsSectionCard {
-                        SettingsSectionHeader("Archive entries")
+                    SettingsSection(title = "Archive entries") {
                         report.archiveEntries.forEach { entry ->
                             Text(
                                 entry,

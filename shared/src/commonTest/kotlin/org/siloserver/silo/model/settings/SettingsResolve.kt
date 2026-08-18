@@ -34,6 +34,14 @@ object SettingSource {
     const val DEFAULT = "default"
     const val ACCOUNT = "account"
     const val PROFILE = "profile"
+
+    /**
+     * One profile's value shared by every like client — a television menu that
+     * applies to tvOS and Android TV but not to a phone. The family is explicit
+     * resolution context (the server takes it from `X-Silo-Client-Family`),
+     * never inferred from device metadata.
+     */
+    const val PROFILE_CLIENT = "profile_client"
     const val PROFILE_DEVICE = "profile_device"
     const val PROFILE_LIBRARY = "profile_library"
     const val PROFILE_SERIES = "profile_series"
@@ -44,6 +52,7 @@ data class StoredSettingRow(
     val key: String,
     val scope: String,
     val profileId: String? = null,
+    val clientFamily: String? = null,
     val deviceId: String? = null,
     val libraryId: Int? = null,
     val seriesId: String? = null,
@@ -53,6 +62,8 @@ data class StoredSettingRow(
 /** The identity a resolution happens against. Absent fields drop their scopes. */
 data class SettingResolutionContext(
     val profileId: String? = null,
+    /** The caller's client family (`tv`, `mobile`, …); absent drops [SettingSource.PROFILE_CLIENT]. */
+    val clientFamily: String? = null,
     val deviceId: String? = null,
     val libraryIds: List<Int> = emptyList(),
     val seriesIds: List<String> = emptyList(),
@@ -134,7 +145,10 @@ private fun resolveOne(
  * The device case checks the context's device id is non-empty as well as equal.
  * Without that, a caller with no device identity — the anonymous jellycompat
  * seed — matches every row whose own device id is also empty, and one device's
- * settings leak to every client.
+ * settings leak to every client. `profile_client` carries the same guard for
+ * the same reason (`rc.ClientFamily.Valid()` in the Go resolver): a caller that
+ * sent no `X-Silo-Client-Family` must not inherit the family rows of every
+ * other caller that also sent none.
  *
  * That non-empty guard is currently unpinned by the fixture, in every language:
  * `missing_device_identity_drops_device_scope` supplies no device id in the
@@ -152,12 +166,17 @@ private fun pickForScope(
     context: SettingResolutionContext,
 ): StoredSettingRow? {
     val profileId = context.profileId.orEmpty()
+    val clientFamily = context.clientFamily.orEmpty()
     val deviceId = context.deviceId.orEmpty()
     val matches = candidates.filter { row ->
         if (row.scope != scope) return@filter false
         when (scope) {
             SettingSource.ACCOUNT -> true
             SettingSource.PROFILE -> row.profileId.orEmpty() == profileId
+            SettingSource.PROFILE_CLIENT ->
+                row.profileId.orEmpty() == profileId &&
+                    row.clientFamily.orEmpty() == clientFamily &&
+                    clientFamily.isNotEmpty()
             SettingSource.PROFILE_DEVICE ->
                 row.profileId.orEmpty() == profileId &&
                     row.deviceId.orEmpty() == deviceId &&

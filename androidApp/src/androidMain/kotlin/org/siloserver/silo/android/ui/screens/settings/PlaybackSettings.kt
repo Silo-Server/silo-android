@@ -1,20 +1,12 @@
 package org.siloserver.silo.android.ui.screens.settings
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.android.R
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SettingKeys
@@ -49,7 +41,7 @@ fun PlaybackSettings(
     maxBitrateKbps: Int?,
     audioLanguage: String,
     audioLanguageSuggestions: List<String> = emptyList(),
-    autoSkipIntro: Boolean,
+    introSkipMode: IntroSkipMode,
     autoSkipCredits: Boolean,
     pictureInPictureEnabled: Boolean,
     dolbyVisionEnabled: Boolean,
@@ -61,7 +53,7 @@ fun PlaybackSettings(
     /** Receives a [QualityPresets] preset id. */
     onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
-    onAutoSkipIntroChanged: (Boolean) -> Unit,
+    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
     onPictureInPictureEnabledChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
@@ -80,14 +72,14 @@ fun PlaybackSettings(
             runtimeValues = audioLanguageSuggestions,
         )
     }
-    SettingsSectionCard(modifier = modifier) {
-        SettingsSectionHeader("Playback")
-
+    val introSkipOptions = IntroSkipMode.entries.map { it to stringResource(introSkipModeLabel(it)) }
+    SettingsSection(title = "Playback", modifier = modifier) {
         // A pair no preset covers (set through the API, or left by a legacy
         // compound value) still gets a truthful label rather than a picker
         // silently showing the wrong entry.
         SettingsDropdownRow(
-            label = "Default Quality",
+            label = "Preferred quality",
+            description = "The quality Silo requests when playback starts.",
             value = QualityPresets.describe(qualityResolution, maxBitrateKbps),
             options = QualityPresets.ALL.map { it.label },
             onOptionSelected = { label ->
@@ -97,7 +89,8 @@ fun PlaybackSettings(
         )
 
         SettingsDropdownRow(
-            label = "Audio Language",
+            label = "Audio language",
+            description = "Choose which spoken language Silo should prefer first.",
             value = LanguageOptions.label(audioLanguage, SettingKeys.PLAYBACK_AUDIO_LANGUAGE),
             options = audioLanguageOptions.map { it.second },
             onOptionSelected = { label ->
@@ -105,14 +98,22 @@ fun PlaybackSettings(
             },
         )
 
-        SettingsSwitchRow(
-            label = "Auto-Skip Intros",
-            checked = autoSkipIntro,
-            onCheckedChange = onAutoSkipIntroChanged,
+        // Three-way, not a switch: the boolean this replaced could not say
+        // "never". Labels and semantics are fixed by the contract.
+        SettingsDropdownRow(
+            label = stringResource(R.string.settings_intro_skip_title),
+            description = "What happens when a detected intro starts: leave it alone, " +
+                "offer a Skip Intro button, or skip it and offer an undo.",
+            value = stringResource(introSkipModeLabel(introSkipMode)),
+            options = introSkipOptions.map { it.second },
+            onOptionSelected = { label ->
+                introSkipOptions.firstOrNull { it.second == label }?.let { onIntroSkipModeChanged(it.first) }
+            },
         )
 
         SettingsSwitchRow(
-            label = "Auto-Skip Credits",
+            label = "Auto-skip credits",
+            description = "Move through end credits automatically when a skip is available.",
             checked = autoSkipCredits,
             onCheckedChange = onAutoSkipCreditsChanged,
         )
@@ -122,31 +123,36 @@ fun PlaybackSettings(
         // only shows while Dolby Vision is on.
         SettingsSwitchRow(
             label = "Dolby Vision",
+            description = "Allow Dolby Vision output on this device.",
             checked = dolbyVisionEnabled,
             onCheckedChange = onDolbyVisionEnabledChanged,
         )
         if (dolbyVisionEnabled) {
             SettingsSwitchRow(
-                label = "Profile 7 HDR10 Fallback",
+                label = "Profile 7 HDR10 fallback",
+                description = "Play Profile 7 sources as HDR10 when this device cannot decode them natively.",
                 checked = dvProfile7HDR10Fallback,
                 onCheckedChange = onDvProfile7HDR10FallbackChanged,
             )
         }
 
         SettingsSwitchRow(
-            label = "Picture-in-Picture",
+            label = "Picture-in-picture",
+            description = "Keep playing in a floating window when you leave the player.",
             checked = pictureInPictureEnabled,
             onCheckedChange = onPictureInPictureEnabledChanged,
         )
 
         SettingsSwitchRow(
-            label = "Auto-Play Next Episode",
+            label = "Auto-play next episode",
+            description = "Continue to the next episode automatically.",
             checked = autoPlayNext,
             onCheckedChange = onAutoPlayNextChanged,
         )
 
         SettingsDropdownRow(
-            label = "Show Next Up",
+            label = "Next up prompt",
+            description = "How long before the end of an episode the next-up prompt appears.",
             value = nextUpPromptLabel(nextUpPromptSeconds),
             options = nextUpPromptOptions.map(::nextUpPromptLabel),
             onOptionSelected = { label ->
@@ -155,7 +161,8 @@ fun PlaybackSettings(
         )
 
         SettingsDropdownRow(
-            label = "Resume Skip-Back",
+            label = "Rewind on resume",
+            description = "Skip back this far when resuming a partly watched item.",
             value = resumeRewindLabel(resumeRewindSeconds),
             options = resumeRewindOptions.map(::resumeRewindLabel),
             onOptionSelected = { label ->
@@ -164,7 +171,8 @@ fun PlaybackSettings(
         )
 
         SettingsDropdownRow(
-            label = "Still-Watching Prompt After",
+            label = "Still watching prompt",
+            description = "How many episodes auto-play before Silo asks whether you are still watching.",
             value = passOutThresholdLabel(passOutThreshold),
             options = passOutThresholdOptions.map(::passOutThresholdLabel),
             onOptionSelected = { label ->
@@ -172,73 +180,18 @@ fun PlaybackSettings(
             },
         )
 
-        SettingsActionRow(
-            label = "Reset Playback Overrides",
+        SettingsDestructiveRow(
+            label = "Reset playback settings",
+            description = "Return this device's playback settings to their defaults.",
             onClick = onResetPlaybackOverrides,
         )
     }
 }
 
-@Composable
-private fun SettingsActionRow(
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    // iOS renders this as a destructive (red) button row.
-    androidx.compose.foundation.layout.Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 11.dp),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.error,
-        )
-    }
-}
-
-/**
- * A settings row with a dropdown menu for selecting from a list of options.
- */
-@Composable
-fun SettingsDropdownRow(
-    label: String,
-    value: String,
-    options: List<String>,
-    onOptionSelected: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box(modifier = modifier) {
-        SettingsRow(
-            label = label,
-            modifier = Modifier.clickable { expanded = true },
-        ) {
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option) },
-                    onClick = {
-                        onOptionSelected(option)
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
+/** The label each intro-skip mode is offered under; the copy is contract-fixed. */
+@StringRes
+private fun introSkipModeLabel(mode: IntroSkipMode): Int = when (mode) {
+    IntroSkipMode.NEVER -> R.string.settings_intro_skip_never
+    IntroSkipMode.ASK -> R.string.settings_intro_skip_ask
+    IntroSkipMode.ALWAYS -> R.string.settings_intro_skip_always
 }

@@ -630,6 +630,62 @@ class SubtitleMountResolverTest {
         assertEquals("silo-subtitle:42", subtitleArtifactTrackId(42))
     }
 
+    // Shield repro (Supergirl): a disc with three English SubRip streams —
+    // "Forced", an untitled one the catalog labels with the placeholder
+    // "SUBRIP", and "SDH". The v3 row for the untitled one is typed sidecar
+    // (url present) but the direct-play stream carries the track, so it must
+    // resolve onto the untitled Media3 track — not to nothing.
+    @Test
+    fun untitledPlaceholderLabelledRowResolvesToTheUntitledSiblingNotSdhOrForced() {
+        val tracks = listOf(
+            track(index = 0, trackId = "2", label = "Forced", language = "en", codec = "application/x-subrip", forced = true, hearingImpaired = false),
+            // The TV synthesises "EN" for a track Media3 exposes without a label.
+            track(index = 1, trackId = "3", label = "EN", language = "en", codec = "application/x-subrip", forced = false, hearingImpaired = false),
+            track(index = 2, trackId = "4", label = "SDH", language = "en", codec = "application/x-subrip", forced = false, hearingImpaired = true),
+        )
+        val row = PlayerSubtitleInfo(
+            index = 8,
+            language = "en",
+            codec = "subrip",
+            label = "SUBRIP",
+            source = "embedded",
+            catalogSource = "embedded",
+            serverTrackId = "file:22069955:subtitle:8",
+            serverDelivery = "sidecar",
+            url = "/stream/s/subtitles/8.srt",
+        )
+
+        assertEquals(1, resolveMountedSubtitle(row, tracks)?.track?.index)
+    }
+
+    @Test
+    fun placeholderLabelIsNotUsedAsATitle() {
+        val tracks = listOf(
+            track(index = 0, trackId = "3", label = null, language = "en", codec = "application/x-subrip"),
+        )
+        assertEquals(
+            0,
+            resolveMountedSubtitle(
+                SubtitleIdentity.LocalMedia3(media(label = "PGS", language = "en", codecFamily = "subrip")),
+                tracks,
+            )?.track?.index,
+        )
+    }
+
+    @Test
+    fun untitledRowStaysAmbiguousBetweenTwoUntitledSiblings() {
+        val tracks = listOf(
+            track(index = 0, trackId = "3", label = null, language = "en", codec = "application/x-subrip"),
+            track(index = 1, trackId = "4", label = null, language = "en", codec = "application/x-subrip"),
+        )
+        assertNull(
+            resolveMountedSubtitle(
+                SubtitleIdentity.LocalMedia3(media(label = "SUBRIP", language = "en", codecFamily = "subrip")),
+                tracks,
+            ),
+        )
+    }
+
     private fun track(
         index: Int,
         trackId: String?,

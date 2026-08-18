@@ -93,11 +93,25 @@ fun resolveMountedSubtitle(
     } else {
         typedMatches.filter { normalizedLabel(it.label) == targetLabel }
     }
-    return when {
-        labelMatches.size == 1 -> MountedSubtitleMatch(labelMatches.single())
-        typedMatches.size == 1 -> MountedSubtitleMatch(typedMatches.single())
-        else -> null
+    if (labelMatches.size == 1) return MountedSubtitleMatch(labelMatches.single())
+    if (typedMatches.size == 1) return MountedSubtitleMatch(typedMatches.single())
+    if (targetLabel != null) return null
+
+    // An UNTITLED row among several same-language, same-family tracks. The
+    // catalog writes a codec-name placeholder ("SUBRIP", "PGS") for a stream
+    // that carries no title, and Media3 exposes that same stream with no label
+    // at all — so "untitled ↔ untitled" is the identity here, not a coincidence.
+    // A titled sibling ("Forced", "SDH") is a different track by definition,
+    // and when the row itself carries no SDH signal a track flagged SDH is
+    // not it either. Seen on a Shield: the plain English SubRip of a disc with
+    // Forced + plain + SDH resolved to nothing and the pick failed to apply.
+    val untitled = typedMatches.filter { it.isUntitled() }
+    val narrowed = if (media.hearingImpaired == true) {
+        untitled
+    } else {
+        untitled.filterNot { it.hearingImpaired == true }
     }
+    return narrowed.singleOrNull()?.let(::MountedSubtitleMatch)
 }
 
 /**
@@ -249,8 +263,31 @@ internal fun PlayerSubtitleInfo.isDownloadedSubtitleArtifact(): Boolean =
 private fun PlayerSubtitleInfo.effectiveSubtitleSource(): String? =
     source.normalizedValue() ?: catalogSource.normalizedValue()
 
+/**
+ * A label that is only the stream's codec name is the catalog's placeholder
+ * for "no title" — it identifies nothing and must not be compared as a title.
+ */
+private val PLACEHOLDER_SUBTITLE_LABELS = setOf(
+    "subrip", "srt", "subtitle", "subtitles", "text", "utf8", "utf-8", "mov_text",
+    "ass", "ssa", "webvtt", "vtt", "pgs", "hdmv_pgs_subtitle", "pgssub",
+    "dvdsub", "dvd_subtitle", "vobsub", "dvbsub", "dvb_subtitle",
+)
+
+/**
+ * A mounted track with no title of its own. Media3 leaves such a track's
+ * label empty, but the clients synthesise one from the language for display
+ * ("EN"), so a label that is only the language — code or canonical — is no
+ * title either.
+ */
+private fun MountedSubtitleTrack.isUntitled(): Boolean {
+    val label = normalizedLabel(this.label) ?: return true
+    val language = this.language.normalizedValue()?.lowercase() ?: return false
+    return label == language ||
+        canonicalSubtitleLanguage(label) == canonicalSubtitleLanguage(language)
+}
+
 private fun normalizedLabel(label: String?): String? =
-    label.normalizedValue()?.lowercase()
+    label.normalizedValue()?.lowercase()?.takeUnless { it in PLACEHOLDER_SUBTITLE_LABELS }
 
 fun normalizedSubtitleCodecFamily(codecOrMime: String?): String? {
     return canonicalSubtitleCodecFamily(codecOrMime)

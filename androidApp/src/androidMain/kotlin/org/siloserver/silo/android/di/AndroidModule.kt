@@ -50,16 +50,9 @@ import org.siloserver.silo.android.push.AndroidPushTokenProvider
 import org.siloserver.silo.android.push.FirebaseAndroidPushTokenProvider
 import org.siloserver.silo.android.push.PushMessageHandler
 import org.siloserver.silo.android.push.PushNotificationPresenter
-import org.siloserver.silo.android.ui.screens.admin.AdminEntryViewModel
-import org.siloserver.silo.android.ui.screens.admin.AdminLogsViewModel
-import org.siloserver.silo.android.ui.screens.admin.AdminScansViewModel
-import org.siloserver.silo.android.ui.screens.admin.AdminSessionsViewModel
 import org.siloserver.silo.android.ui.screens.browse.BrowseViewModel
 import org.siloserver.silo.android.ui.screens.collections.CollectionDetailViewModel
 import org.siloserver.silo.android.ui.screens.collections.LibraryCollectionsViewModel
-import org.siloserver.silo.viewmodel.AdminStatsViewModel
-import org.siloserver.silo.viewmodel.AdminUserEditViewModel
-import org.siloserver.silo.viewmodel.AdminUsersViewModel
 import org.siloserver.silo.viewmodel.CalendarViewModel
 import org.siloserver.silo.viewmodel.CollectionsViewModel
 import org.siloserver.silo.android.ui.screens.detail.ItemDetailViewModel
@@ -405,8 +398,16 @@ val androidModule = module {
     }
     viewModel { params -> PersonDetailViewModel(get(), params.get()) }
     viewModel { params -> LibraryCollectionsViewModel(get(), params.get()) }
-    viewModel { FavoritesViewModel(get()) }
-    viewModel { WatchlistViewModel(get()) }
+    viewModel { FavoritesViewModel(get(), get()) }
+    viewModel { WatchlistViewModel(get(), get()) }
+    // Sort/filter for one saved list; callers scope it to the Activity keyed
+    // by source so the For You grid and the standalone screens share it.
+    viewModel { params ->
+        org.siloserver.silo.android.ui.screens.personal.PersonalListControlsViewModel(
+            source = params.get(),
+            catalogRepository = get(),
+        )
+    }
     viewModel { HistoryViewModel(get()) }
     viewModel { CollectionsViewModel(get()) }
     viewModel { params -> CollectionDetailViewModel(get(), get(), params.get()) }
@@ -420,6 +421,7 @@ val androidModule = module {
             repository = get(),
             timezoneId = java.util.TimeZone.getDefault().id,
             todayProvider = { java.time.LocalDate.now().toString() },
+            filterStore = org.siloserver.silo.android.ui.screens.calendar.CalendarPrefsStore(androidContext()),
         )
     }
     viewModel { params ->
@@ -430,15 +432,8 @@ val androidModule = module {
             tmdbId = args.second,
         )
     }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
-    viewModel { AdminEntryViewModel(get(), get()) }
-    viewModel { AdminStatsViewModel(get()) }
-    viewModel { AdminUsersViewModel(get()) }
-    viewModel { AdminUserEditViewModel(get()) }
-    viewModel { AdminSessionsViewModel(get()) }
-    viewModel { AdminLogsViewModel(get()) }
-    viewModel { AdminScansViewModel(get(), get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get()) }
     viewModel { ServerSetupViewModel(get(), get()) }

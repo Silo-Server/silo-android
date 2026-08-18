@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.LanguageOptions
@@ -221,10 +222,30 @@ class AndroidPlayerSettingsStore(
             }
         }
 
-    // ---- Booleans ------------------------------------------------------
-    override val autoSkipIntroFlow: Flow<Boolean> =
-        profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.AutoSkipIntro, false) }
+    /**
+     * The stored enum, falling back to the deprecated boolean when there is no
+     * enum to read.
+     *
+     * That fallback IS the "server contract revision < 7" case the spec asks
+     * for, without a second copy of the revision to keep in step:
+     * [applyEffectiveLocally] only writes keys the effective-values response
+     * actually answered, and a server older than revision 7 does not know
+     * `playback.intro_skip_mode` — so the slot stays empty and the boolean the
+     * same response *did* answer decides. A revision-7 server answers both and
+     * the enum wins, which is what the write mirror keeps consistent.
+     *
+     * [autoSkipIntroFlow] is not overridden: the interface projects it from
+     * here so the two can never disagree locally.
+     */
+    override val introSkipModeFlow: Flow<IntroSkipMode> =
+        profileScopedFlow(IntroSkipMode.Default) { p, s ->
+            IntroSkipMode.fromWire(p.stringFor(s, PlaybackSettingsKeys.IntroSkipMode, ""))
+                ?: IntroSkipMode.fromLegacyBoolean(
+                    p.boolFor(s, PlaybackSettingsKeys.AutoSkipIntro, false),
+                )
+        }
 
+    // ---- Booleans ------------------------------------------------------
     override val autoSkipCreditsFlow: Flow<Boolean> =
         profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.AutoSkipCredits, false) }
 
@@ -248,6 +269,13 @@ class AndroidPlayerSettingsStore(
 
     override val pictureInPictureEnabledFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.PictureInPictureEnabled, true) }
+
+    override val letterboxExpansionFlow: Flow<String> =
+        profileScopedFlow(LetterboxExpansion.Default) { p, s ->
+            p.stringFor(s, PlaybackSettingsKeys.LetterboxExpansion, LetterboxExpansion.Default)
+                .takeIf { it in LetterboxExpansion.Valid }
+                ?: LetterboxExpansion.Default
+        }
 
     override val downloadsWifiOnlyFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.DownloadsWifiOnly, true) }
@@ -370,8 +398,18 @@ class AndroidPlayerSettingsStore(
         writeBoolLocal(PlaybackSettingsKeys.NavShowAudiobooks, enabled)
 
     // ---- Setters (write to scoped key + enqueue server flush) ---------
-    override suspend fun setAutoSkipIntro(value: Boolean) =
-        writeBool(PlaybackSettingsKeys.AutoSkipIntro, value)
+    /**
+     * Writes only the enum, never the boolean beside it.
+     *
+     * The server mirrors the pair at write time, and its boolean -> enum
+     * direction is lossy (`false` means `ask`). Enqueueing both would let the
+     * boolean's mirror land second and rewrite a `never` the viewer just chose
+     * back to `ask`. On a server older than revision 7 this write is rejected
+     * per key — the flusher drops that one op rather than poisoning the rest —
+     * and the local value still stands.
+     */
+    override suspend fun setIntroSkipMode(value: IntroSkipMode) =
+        writeString(PlaybackSettingsKeys.IntroSkipMode, value.wireValue)
 
     override suspend fun setAutoSkipCredits(value: Boolean) =
         writeBool(PlaybackSettingsKeys.AutoSkipCredits, value)
@@ -393,6 +431,11 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun setPictureInPictureEnabled(value: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.PictureInPictureEnabled, value)
+
+    override suspend fun setLetterboxExpansion(value: String) {
+        val safe = if (value in LetterboxExpansion.Valid) value else LetterboxExpansion.Default
+        writeStringLocal(PlaybackSettingsKeys.LetterboxExpansion, safe)
+    }
 
     override suspend fun setDownloadsWifiOnly(value: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.DownloadsWifiOnly, value)
@@ -529,12 +572,32 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun refreshFromServer() {
         val repo = settingsRepository ?: return
+        // Push before pull. Local writes sit in the flusher's debounce for
+        // ~750ms; a refresh inside that window read the server's OLD value and
+        // wrote it back over the change the user had just made. The player
+        // refreshes at every load, so toggling Dolby Vision in the HUD and
+        // restarting the session in place reverted the toggle every time.
+        // Draining first makes the pull observe the write. Offline, both
+        // fail and the local value stands.
+        runCatching { serverSettingsFlusher.flushNow() }
         withScope { scope, store ->
             // Batched canonical resolution: one request answers every
             // device-relevant key, each with the scope it resolved from.
             val result = repo.getEffectiveValues(RemoteDeviceSettings)
             if (result !is ApiResult.Success) return@withScope
-            applyEffectiveLocally(scope, store, result.data)
+            // Draining is not the same as landing: a write that failed
+            // transiently stays queued for retry and flushNow still returns
+            // normally, so this response was answered from the value the write
+            // has not reached yet. Applying it for those keys is the same
+            // clobber the push-first order exists to prevent — it put the
+            // server's old Dolby Vision value back and restarted the session on
+            // it. Every other key still hydrates from the canonical answer.
+            applyEffectiveLocally(
+                scope = scope,
+                store = store,
+                effective = result.data,
+                unlandedKeys = serverSettingsFlusher.pendingKeys(scope.profileId),
+            )
         }
     }
 
@@ -597,6 +660,15 @@ class AndroidPlayerSettingsStore(
             }
             store.edit {
                 it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
+                // The local-only playback keys have no server row to delete, so
+                // the refresh below can never restore their defaults. Removing
+                // the slot IS the reset: every reader falls back to the default
+                // it declares. Without this, the action would leave exactly the
+                // settings the user most associates with this device untouched.
+                it.remove(booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PictureInPictureEnabled))
+                it.remove(stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.LetterboxExpansion))
+                it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.ResumeRewindSeconds))
+                it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PassOutThreshold))
             }
             serverSettingsFlusher.flushNow()
             refreshFromServer()
@@ -611,9 +683,14 @@ class AndroidPlayerSettingsStore(
         scope: Scope,
         store: DataStore<Preferences>,
         effective: Map<String, EffectiveSettingValue>,
+        // Keys whose local edit is still queued for the server: the response
+        // cannot describe them yet, so the local value stays authoritative
+        // until the queued write lands.
+        unlandedKeys: Set<String> = emptySet(),
     ) {
         store.edit { prefs ->
             for (key in RemoteDeviceSettings) {
+                if (key in unlandedKeys) continue
                 // The canonical endpoint answers every known key, including
                 // ones with nothing stored anywhere — those come back with
                 // source "default" and the contract default as the value, so
@@ -625,6 +702,10 @@ class AndroidPlayerSettingsStore(
                 val entry = effective[key] ?: continue
                 writeJsonValue(prefs, scope, key, entry.value)
             }
+            // An appearance whose write has not landed leaves the flag and the
+            // granular overlay alone too: they describe where the composite
+            // resolved from, and the response predates the queued edit.
+            if (PlaybackSettingsKeys.SubtitleAppearance in unlandedKeys) return@edit
             // The override flag mirrors where the subtitle appearance
             // actually resolved from. Clearing it when the value no longer
             // comes from this device keeps a previous session's flag from

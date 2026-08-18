@@ -43,8 +43,10 @@ import org.siloserver.silo.tv.ui.focus.rememberTvFlatReturnRestoration
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -73,8 +75,13 @@ import org.siloserver.silo.tv.ui.components.TvSkylineSectionFeed
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.SubtleSurface
-import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
-import org.siloserver.silo.tv.ui.theme.monoGroupHeader
+import org.siloserver.silo.tv.ui.theme.rememberTvGridBringIntoViewSpec
+import org.siloserver.silo.tv.ui.theme.siloCardDefaults
+import org.siloserver.silo.tv.ui.components.TvSectionHeader
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.sp
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
@@ -434,7 +441,7 @@ private fun LibraryTab(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun LibraryGrid(
     state: TvLibraryDetailViewModel.UiState,
@@ -490,18 +497,33 @@ private fun LibraryGrid(
     }
 
 
-    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+    val browseTopInset = if (showBrowseControls) LibraryBrowseContentTopInset else TvTopMenuLayout.contentTopInset
+    CompositionLocalProvider(
+        LocalBringIntoViewSpec provides rememberTvGridBringIntoViewSpec(browseTopInset),
+    ) {
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(LibraryBrowseGridColumns),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                // Entry lands on the return-target card while its requester is
+                // attached (the grid state restores the scroll, so the card the
+                // viewer opened is composed on the way back). Without this the
+                // shell's return-resume claim entered at the first focusable —
+                // the Sort button — and the restoration then visibly walked
+                // focus down to the card.
+                .focusProperties {
+                    enter = {
+                        if (attachedRestoreItemId != null) restoredItemFocusRequester else FocusRequester.Default
+                    }
+                },
             horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
             verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
             contentPadding = PaddingValues(
                 start = Spacing.safeArea,
                 // The control-row embed uses the taller tvOS library inset
                 // (`ContinuumTheme.Skyline.libraryContentTopInset`, 216pt → 108dp).
-                top = if (showBrowseControls) LibraryBrowseContentTopInset else TvTopMenuLayout.contentTopInset,
+                top = browseTopInset,
                 end = Spacing.md,
                 bottom = Spacing.xxxl,
             ),
@@ -684,7 +706,9 @@ private fun AudiobookGroupsTab(
         initialFocusRequested = true
     }
 
-    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+    CompositionLocalProvider(
+        LocalBringIntoViewSpec provides rememberTvGridBringIntoViewSpec(TvTopMenuLayout.contentTopInset),
+    ) {
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(LibraryGridColumns),
@@ -890,7 +914,7 @@ private fun GenreChipCloud(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun CollectionsTab(
     state: TvLibraryDetailViewModel.UiState,
@@ -898,34 +922,88 @@ private fun CollectionsTab(
     onRetry: () -> Unit,
     onInitialContentFocus: () -> Unit,
 ) {
-    val firstCollectionFocusRequester = remember { FocusRequester() }
+    val entryFocusRequester = remember { FocusRequester() }
     var collectionGridHasFocus by remember { mutableStateOf(false) }
     var initialFocusRequested by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
 
-    // First collection of the first non-empty group claims initial focus.
-    val firstCollectionId = state.collectionSections
-        .firstOrNull { it.collections.isNotEmpty() }
-        ?.collections?.firstOrNull()?.id
+    // The card focus should come back to. Saveable: opening a collection is an
+    // outer route that takes the shell (and this tab) out of composition, so a
+    // plain remember forgot the card and re-entry landed on the first one.
+    var lastFocusedCollectionId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(firstCollectionId) {
-        if (initialFocusRequested || firstCollectionId == null) return@LaunchedEffect
+    // Entry target: the remembered card when it still exists, else the first
+    // collection of the first non-empty group.
+    val allCollectionIds = remember(state.collectionSections) {
+        state.collectionSections.flatMap { section -> section.collections.map { it.id } }
+    }
+    val firstCollectionId = allCollectionIds.firstOrNull()
+    val entryCollectionId = lastFocusedCollectionId?.takeIf { it in allCollectionIds } ?: firstCollectionId
+
+    // Flat grid index of each collection (group headers occupy a slot each), so
+    // a remembered card deep in the grid can be scrolled into composition
+    // before its requester is asked to take focus.
+    val gridIndexById = remember(state.collectionSections) {
+        buildMap {
+            var index = 0
+            state.collectionSections.forEach { section ->
+                if (section.collections.isEmpty()) return@forEach
+                if (section.name.isNotEmpty()) index++
+                section.collections.forEach { put(it.id, index++) }
+            }
+        }
+    }
+
+    LaunchedEffect(entryCollectionId) {
+        if (initialFocusRequested || entryCollectionId == null) return@LaunchedEffect
+        // Only when nothing has focus yet: the shell's return-resume claim may
+        // already have entered the grid via focusProperties.enter below.
+        if (collectionGridHasFocus) {
+            initialFocusRequested = true
+            return@LaunchedEffect
+        }
         kotlinx.coroutines.delay(120)
+        if (collectionGridHasFocus) {
+            initialFocusRequested = true
+            return@LaunchedEffect
+        }
+        gridIndexById[entryCollectionId]?.let { index ->
+            if (gridState.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+                gridState.scrollToItem(index)
+                withFrameNanos { }
+            }
+        }
         val landed = requestFocusUntilObserved(
             maxAttempts = TvContentInitialFocusMaxAttempts,
             awaitAttempt = { withFrameNanos { } },
-            requestFocus = firstCollectionFocusRequester::requestFocus,
+            requestFocus = entryFocusRequester::requestFocus,
             isFocused = { collectionGridHasFocus },
         )
         if (landed == TvObservedFocusResult.Focused) onInitialContentFocus()
         initialFocusRequested = true
     }
 
-    CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+    CompositionLocalProvider(
+        LocalBringIntoViewSpec provides rememberTvGridBringIntoViewSpec(TvTopMenuLayout.contentTopInset),
+    ) {
         LazyVerticalGrid(
+            state = gridState,
             columns = GridCells.Fixed(LibraryGridColumns),
             modifier = Modifier
                 .fillMaxSize()
-                .onFocusChanged { collectionGridHasFocus = it.hasFocus },
+                .onFocusChanged { collectionGridHasFocus = it.hasFocus }
+                // Any entry into the grid (the shell's content claim on a
+                // return, D-pad down from the bar) lands on the remembered
+                // card rather than the first one. With no collection to land on
+                // — loading, empty, or the initial-load error — nothing holds
+                // that requester, so entry has to fall back to an ordinary
+                // focus search or the error state's Retry button is unreachable
+                // (Codex).
+                .focusProperties {
+                    enter = {
+                        if (entryCollectionId != null) entryFocusRequester else FocusRequester.Default
+                    }
+                },
             horizontalArrangement = Arrangement.spacedBy(LibraryGridColumnSpacing),
             verticalArrangement = Arrangement.spacedBy(LibraryGridRowSpacing),
             contentPadding = PaddingValues(
@@ -951,10 +1029,10 @@ private fun CollectionsTab(
                         TvCatalogEmptyState(message = "No collections in this library.")
                     }
                 }
-                // Grouped collections (tvOS `TVLibraryCollectionsView`): a mono
-                // uppercase group header, then a grid of 2:3 poster cards. A
-                // section with an empty name (flat / ungrouped bucket) renders no
-                // header.
+                // Grouped collections (tvOS `TVLibraryCollectionsView`): the
+                // shared row-style section header, then a grid of 2:3 poster
+                // cards. A section with an empty name (flat / ungrouped bucket)
+                // renders no header.
                 else -> state.collectionSections.forEachIndexed { sectionIndex, section ->
                     if (section.collections.isEmpty()) return@forEachIndexed
                     if (section.name.isNotEmpty()) {
@@ -973,14 +1051,18 @@ private fun CollectionsTab(
                         TvCollectionCard(
                             collection = collection,
                             onClick = {
+                                lastFocusedCollectionId = collection.id
                                 onCollectionClick(
                                     collection.id,
                                     collection.name,
                                     section.kind == "user_collections",
                                 )
                             },
-                            focusRequester = firstCollectionFocusRequester
-                                .takeIf { collection.id == firstCollectionId },
+                            focusRequester = entryFocusRequester
+                                .takeIf { collection.id == entryCollectionId },
+                            modifier = Modifier.onFocusChanged {
+                                if (it.isFocused) lastFocusedCollectionId = collection.id
+                            },
                         )
                     }
                 }
@@ -989,15 +1071,19 @@ private fun CollectionsTab(
     }
 }
 
-/** Mono uppercase group header for the grouped collections grid (tvOS §6.3). */
+/**
+ * Group header for the grouped collections grid — the same header the Home /
+ * Recommended rows use, so the page reads like the rest of the app. The grid's
+ * row gap ([LibraryGridRowSpacing]) sits both above and below a header slot,
+ * which reads loose between a header and its own cards; nudging the header
+ * down (draw offset only, no layout change) tucks it against its group and
+ * widens the gap to the previous group's captions instead.
+ */
 @Composable
 private fun CollectionsGroupHeader(name: String) {
-    Text(
-        text = name.uppercase(),
-        style = monoGroupHeader,
-        color = Color.White.copy(alpha = 0.38f),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+    TvSectionHeader(
+        title = name,
+        modifier = Modifier.offset(y = CollectionsGroupHeaderNudge),
     )
 }
 
@@ -1011,12 +1097,24 @@ private fun TvCollectionCard(
     collection: LibraryCollection,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    modifier: Modifier = Modifier,
 ) {
+    // Same focus treatment (scale + accent border + glow) and caption metrics
+    // as `TvMediaCard`, so collection posters sit alongside Browse posters
+    // without reading as a different card family.
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val cardFocus = siloCardDefaults(shape = TvCollectionCardShape)
+
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
             onClick = onClick,
-            shape = CardDefaults.shape(shape = RoundedCornerShape(8.dp)),
-            modifier = Modifier
+            interactionSource = interactionSource,
+            shape = CardDefaults.shape(shape = TvCollectionCardShape),
+            scale = cardFocus.scale,
+            border = cardFocus.border,
+            glow = cardFocus.glow,
+            modifier = modifier
                 .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f),
@@ -1045,46 +1143,27 @@ private fun TvCollectionCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(11.dp))
 
-        // Centered caption with a caps count noun ("12 MOVIES"), matching
-        // tvOS `TVCollectionPosterCard`.
+        // Title-only caption, start-aligned like every other poster caption in
+        // the app. The item count was dropped: it doubled the caption height
+        // and made the rows read differently from Browse.
         Text(
             text = collection.name,
-            style = MaterialTheme.typography.titleSmall,
-            color = Color.White.copy(alpha = 0.92f),
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontSize = 15.5.sp,
+                lineHeight = 18.5.sp,
+            ),
+            color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
-        collectionCountText(collection)?.let { countText ->
-            Text(
-                text = countText,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.7f),
-                maxLines = 1,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
     }
 }
 
-/** `12 MOVIES`-style caps count, deriving the noun from the collection type. */
-private fun collectionCountText(collection: LibraryCollection): String? {
-    val count = collection.itemCount ?: return null
-    if (count <= 0) return null
-    val plural = count != 1
-    val noun = when (collection.collectionType?.lowercase()) {
-        "movie", "movies" -> if (plural) "movies" else "movie"
-        "series", "show", "shows", "tvshows" -> if (plural) "shows" else "show"
-        "album", "albums" -> if (plural) "albums" else "album"
-        "audiobook", "audiobooks", "book", "books" -> if (plural) "books" else "book"
-        else -> if (plural) "items" else "item"
-    }
-    return "$count $noun".uppercase()
-}
+private val TvCollectionCardShape = RoundedCornerShape(8.dp)
+private val CollectionsGroupHeaderNudge = 10.dp
 
 private fun audiobookGroupSubtitle(group: AudiobookGroup): String? {
     val parts = mutableListOf<String>()

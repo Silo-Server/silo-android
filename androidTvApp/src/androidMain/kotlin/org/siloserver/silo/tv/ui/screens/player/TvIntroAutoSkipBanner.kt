@@ -1,58 +1,56 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
+import org.siloserver.silo.tv.R
+import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 
 /**
- * TV variant of the phone's `IntroAutoSkipBanner`. Larger touch targets (TV
- * scale), focus-driven instead of touch-driven, and a focus ring on the
- * actionable controls.
+ * TV variant of the phone's `IntroAutoSkipBanner` — the single intro-skip pill.
  *
- * The Cancel button auto-focuses the moment we enter [IntroAutoSkipState.CountingDown]
- * so the user can press D-pad Select to cancel without first navigating to the
- * banner. While Cancel is focused, scrubber / transport focus is unaffected
- * because the banner participates in the same focus tree as the rest of the
- * idle overlay — pressing arrow keys away will move focus back to scrubber /
- * play-pause.
+ * Two copies, one treatment: "Skip Intro" while the `ask` offer is up, and a
+ * small "Intro skipped" caption over a "Watch Intro" button while `always`'s
+ * undo is — the confirmation and the action are separate lines so neither
+ * has to read as the other. The fill tracks the
+ * time left and lands full exactly as the timer ends. Select, Back and D-pad
+ * are handled by the player screen's root key handler, not here, because the
+ * pill is not reliably in the focus tree.
  *
  * The component itself never positions itself; the parent should anchor it
  * (typically bottom-end above the transport cluster).
@@ -60,33 +58,97 @@ import org.siloserver.silo.domain.player.IntroAutoSkipState
 @Composable
 fun TvIntroAutoSkipBanner(
     state: IntroAutoSkipState,
-    onSkipNow: () -> Unit,
-    onCancelCountdown: () -> Unit,
+    onSelect: () -> Unit,
     modifier: Modifier = Modifier,
-    totalSeconds: Int = 5,
+    totalSeconds: Int = IntroAutoSkipController.DEFAULT_COUNTDOWN_SECONDS,
+    /**
+     * Bumped by the controller whenever the timer (re)starts — a fresh offer,
+     * or a resume after a pause froze it. The fill re-anchors its frame clock
+     * on it, since [state] alone cannot tell a tick from a restart.
+     */
+    countdownRun: Int = 0,
+    /**
+     * False while the pill is up but the timer is frozen by a pause. The fill
+     * holds where it is rather than continuing to creep — it is a promise about
+     * when something happens, and while paused nothing is going to.
+     */
+    timerRunning: Boolean = true,
+    /**
+     * False while something else owns focus for a reason the viewer would not
+     * want interrupted — a timeline scrub in particular.
+     *
+     * The scrubber treats losing focus as COMMIT, not cancel, so a prompt that
+     * appears mid-scrub and claims focus commits a seek the viewer never
+     * confirmed. The pill still appears and is still reachable; it simply
+     * does not take focus out from under them.
+     */
+    mayTakeFocus: Boolean = true,
 ) {
+    // Keyed on the state kind so the per-second ticks recompose this slot rather
+    // than recreating the subtree, which would restart the fill.
+    val slot = when (state) {
+        IntroAutoSkipState.Hidden -> 0
+        is IntroAutoSkipState.Asking -> 1
+        is IntroAutoSkipState.Skipped -> 2
+    }
+    // The fill shows time remaining, so it runs off the frame clock: Compose
+    // scales AnimationSpec durations by the device animation setting, which would
+    // let the bar disagree with the timer. Transitions below still honor it.
+    val fill = remember { mutableFloatStateOf(0f) }
+    val secondsRemaining = state.secondsRemainingOrNull
+    // Deliberately not keyed on `secondsRemaining`: a plain tick must not
+    // restart the sweep. `countdownRun` is what says the clock moved.
+    LaunchedEffect(countdownRun, timerRunning, totalSeconds, secondsRemaining == null) {
+        if (secondsRemaining == null || totalSeconds <= 0) {
+            fill.floatValue = 0f
+            return@LaunchedEffect
+        }
+        val remaining = secondsRemaining.coerceAtLeast(1)
+        val from = (1f - remaining.toFloat() / totalSeconds.toFloat()).coerceIn(0f, 1f)
+        fill.floatValue = from
+        // Frozen: the bar sits at the fraction the frozen number describes.
+        if (!timerRunning) return@LaunchedEffect
+        val durationMs = remaining * 1000f
+        val startedAt = withFrameMillis { it }
+        var progressed = 0f
+        while (progressed < 1f) {
+            val frameMs = withFrameMillis { it }
+            progressed = ((frameMs - startedAt) / durationMs).coerceIn(0f, 1f)
+            fill.floatValue = from + (1f - from) * progressed
+        }
+    }
+
     AnimatedContent(
-        targetState = state,
+        targetState = slot,
         transitionSpec = {
+            // Instant exit, no SizeTransform: the default shrink reads as the
+            // button minimizing away after a skip press.
             fadeIn(animationSpec = tween(durationMillis = 200)) togetherWith
-                fadeOut(animationSpec = tween(durationMillis = 200))
+                ExitTransition.None using null
         },
         label = "tvIntroAutoSkipBanner",
         modifier = modifier,
-    ) { current ->
-        when (current) {
-            IntroAutoSkipState.Hidden -> {
+    ) { currentSlot ->
+        when (currentSlot) {
+            0 -> {
                 // Render nothing but stay in the layout slot so AnimatedContent can fade in/out.
                 Spacer(Modifier.size(0.dp))
             }
-            IntroAutoSkipState.ShowingButton -> {
-                TvSkipIntroButton(onClick = onSkipNow)
+            1 -> {
+                TvIntroPromptPill(
+                    label = stringResource(R.string.intro_skip_pill_skip),
+                    progress = fill.floatValue,
+                    onSelect = onSelect,
+                    autoFocus = mayTakeFocus,
+                )
             }
-            is IntroAutoSkipState.CountingDown -> {
-                TvCountingDownPanel(
-                    secondsRemaining = current.secondsRemaining,
-                    totalSeconds = totalSeconds,
-                    onCancel = onCancelCountdown,
+            else -> {
+                TvIntroPromptPill(
+                    label = stringResource(R.string.intro_skip_pill_undo),
+                    caption = stringResource(R.string.intro_skip_pill_undo_caption),
+                    progress = fill.floatValue,
+                    onSelect = onSelect,
+                    autoFocus = mayTakeFocus,
                 )
             }
         }
@@ -94,153 +156,79 @@ fun TvIntroAutoSkipBanner(
 }
 
 /**
- * The "Skip Intro" pill — focusable, white background, black text. Focus ring:
- * 2dp white border + 8% white scrim wash to read clearly against the dimmed
- * gradient scrim of the player overlay.
+ * The pill both copies share: black capsule, white focus ring, and a fill that
+ * creeps left-to-right as the timer runs out. [progress] is driven by the
+ * banner so it tracks the live timer even if this pill composes late. Dimmed
+ * when unfocused, lit when focused. An optional [caption] sits above the
+ * capsule, end-aligned and outside the focusable, so it never competes with
+ * the action for the viewer's read.
+ *
+ * Select and Back live in the player screen's root key handler, because this
+ * pill is not reliably in the focus tree.
  */
 @Composable
-private fun TvSkipIntroButton(onClick: () -> Unit) {
+private fun TvIntroPromptPill(
+    label: String,
+    progress: Float,
+    onSelect: () -> Unit,
+    autoFocus: Boolean,
+    caption: String? = null,
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-
-    val shape = RoundedCornerShape(28.dp)
-    val borderColor = if (isFocused) Color.White else Color.Transparent
-    val containerScrim = if (isFocused) Color.White.copy(alpha = 0.08f) else Color.Transparent
-    Box(
-        modifier = Modifier
-            .clip(shape)
-            .background(Color.White, shape)
-            .border(BorderStroke(2.dp, borderColor), shape)
-            .background(containerScrim, shape)
-            .focusable(enabled = true, interactionSource = interactionSource)
-            .clickable(interactionSource = interactionSource, indication = null) { onClick() }
-            .padding(horizontal = 28.dp, vertical = 14.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "Skip Intro",
-            color = Color.Black,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-/**
- * Countdown panel — countdown ring + label + focusable Cancel. Cancel auto-focuses
- * on first emission so D-pad Select cancels immediately. Cancel uses a transparent
- * background with a white border for contrast against the dimmed gradient scrim.
- */
-@Composable
-private fun TvCountingDownPanel(
-    secondsRemaining: Int,
-    totalSeconds: Int,
-    onCancel: () -> Unit,
-) {
-    val cancelFocus = remember { FocusRequester() }
-
-    // Auto-focus Cancel on the first frame this state is shown, so a D-pad
-    // Select press cancels without user navigation. Re-fires whenever the
-    // banner re-enters CountingDown after a cancel (the AnimatedContent
-    // recomposes with a fresh subtree on every state transition — exactly when
-    // the tree is least settled, which is why acquisition must be OBSERVED
-    // rather than inferred from requestFocus() not throwing).
-    val cancelFocusModifier = rememberTvContentInitialFocus(
-        target = cancelFocus,
-        contentKey = Unit,
+    val focusRequester = remember { FocusRequester() }
+    // Captured once: a later recomposition must not re-claim focus the viewer
+    // has since moved elsewhere.
+    val shouldFocus = remember { autoFocus }
+    val initialFocusModifier = rememberTvContentInitialFocus(
+        target = focusRequester,
+        contentKey = if (shouldFocus) Unit else null,
     )
 
-    Surface(
-        color = Color.Black.copy(alpha = 0.65f),
-        shape = RoundedCornerShape(28.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .then(cancelFocusModifier)
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            TvCountdownRing(
-                secondsRemaining = secondsRemaining,
-                totalSeconds = totalSeconds,
-            )
+    val shape = RoundedCornerShape(28.dp)
+    val borderColor = if (isFocused) Color.White else Color.White.copy(alpha = 0.25f)
+    Column(horizontalAlignment = Alignment.End) {
+        if (caption != null) {
             Text(
-                text = "Skipping intro",
-                color = Color.White,
-                fontSize = 16.sp,
-            )
-            TvCancelButton(
-                focusRequester = cancelFocus,
-                onClick = onCancel,
+                text = caption,
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(end = 12.dp, bottom = 6.dp),
             )
         }
-    }
-}
-
-@Composable
-private fun TvCancelButton(
-    focusRequester: FocusRequester,
-    onClick: () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-
-    val shape = RoundedCornerShape(20.dp)
-    val borderColor = if (isFocused) Color.White else Color.White.copy(alpha = 0.6f)
-    val containerScrim = if (isFocused) Color.White.copy(alpha = 0.10f) else Color.Transparent
-    Box(
-        modifier = Modifier
-            .clip(shape)
-            .background(containerScrim, shape)
-            .border(BorderStroke(2.dp, borderColor), shape)
-            .focusRequester(focusRequester)
-            .focusable(enabled = true, interactionSource = interactionSource)
-            .clickable(interactionSource = interactionSource, indication = null) { onClick() }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "Cancel",
-            color = Color.White,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-/**
- * 32dp circular countdown ring with the remaining digit centered. Drawn from
- * 0° (top) sweeping clockwise so the ring shrinks as the countdown progresses.
- */
-@Composable
-private fun TvCountdownRing(
-    secondsRemaining: Int,
-    totalSeconds: Int,
-) {
-    Box(
-        modifier = Modifier.size(32.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(modifier = Modifier.size(32.dp)) {
-            val strokeWidth = 3.dp.toPx()
-            val sweep = if (totalSeconds <= 0) 0f
-            else (secondsRemaining.coerceAtLeast(0).toFloat() / totalSeconds.toFloat()) * 360f
-            val inset = strokeWidth / 2f
-            drawArc(
-                color = Color.White,
-                startAngle = -90f,
-                sweepAngle = sweep,
-                useCenter = false,
-                topLeft = Offset(inset, inset),
-                size = Size(size.width - strokeWidth, size.height - strokeWidth),
-                style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+        Box(
+            modifier = Modifier
+                .then(initialFocusModifier)
+                .clip(shape)
+                .background(Color.Black.copy(alpha = 0.65f), shape)
+                .border(BorderStroke(2.dp, borderColor), shape)
+                .focusRequester(focusRequester)
+                .clickable(interactionSource = interactionSource, indication = null) { onSelect() },
+        ) {
+            // Sized to the pill via matchParentSize; plain fillMaxWidth/Height would
+            // take the screen's constraints instead.
+            Box(Modifier.matchParentSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress.coerceIn(0f, 1f))
+                        .fillMaxHeight()
+                        .background(
+                            if (isFocused) {
+                                Color.White.copy(alpha = 0.40f)
+                            } else {
+                                Color.White.copy(alpha = 0.14f)
+                            },
+                        ),
+                )
+            }
+            Text(
+                text = label,
+                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.55f),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 32.dp, vertical = 18.dp),
             )
         }
-        Text(
-            text = secondsRemaining.coerceAtLeast(0).toString(),
-            color = Color.White,
-            fontSize = 16.sp,
-        )
     }
 }

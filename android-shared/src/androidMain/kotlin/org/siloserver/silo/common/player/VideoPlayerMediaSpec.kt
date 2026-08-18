@@ -9,6 +9,8 @@ import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.playback.canonicalSubtitleCodecFamily
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
+import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
+import org.siloserver.silo.playback.isClientMountableBitmapCodecFamily
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
 /**
@@ -24,11 +26,21 @@ import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
  *
  * A missing plan is the legacy/offline path, where the supplied list remains
  * the media-mount contract.
+ *
+ * [preferMuxedTracks]: protocol v3 types EVERY non-burn-in inventory row
+ * `delivery = sidecar`, including a row that merely describes a track muxed
+ * into the direct-play stream. Attaching the server-extracted artifact for such
+ * a row makes Media3 fetch and parse a whole SUP/SRT the stream already carries
+ * — the player stalls in BUFFERING while the sidecar loads and the cue backlog
+ * paints past the resume point. A caller whose selection path can resolve a
+ * server-row identity onto the muxed Media3 track (the TV mount latch does)
+ * passes true so that row mounts nothing and the in-stream track is used.
  */
 fun subtitlesForVideoMediaMount(
     subtitles: List<PlayerSubtitleInfo>,
     playbackPlan: PlaybackExecutionPlan?,
     subtitleIdentity: SubtitleIdentity,
+    preferMuxedTracks: Boolean = false,
 ): List<PlayerSubtitleInfo> {
     if (playbackPlan == null) return subtitles
 
@@ -40,6 +52,9 @@ fun subtitlesForVideoMediaMount(
                     subtitles.singleOrNull { subtitle ->
                         subtitle.index == serverIndex && !subtitle.isLocalDownloadedSubtitle()
                     }
+                }
+                ?.takeUnless { row ->
+                    preferMuxedTracks && row.isMuxedInDirectPlayStream(playbackPlan)
                 }
         }
         is SubtitleIdentity.Downloaded -> subtitles.singleOrNull { subtitle ->
@@ -55,6 +70,25 @@ fun subtitlesForVideoMediaMount(
         -> null
     }
     return listOfNotNull(selected)
+}
+
+/**
+ * True when this inventory row describes a track that is muxed into the
+ * stream Media3 is playing AND the client can render that track from the
+ * stream itself, so no server artifact needs attaching for it.
+ *
+ * Only the untouched original carries the file's own tracks; every remux /
+ * transcode delivery drops or rewrites them, and there the sidecar is the only
+ * way to get the subtitle. Bitmap families the client cannot decode in-stream
+ * are excluded too — for those the artifact (or burn-in) is the real path.
+ */
+internal fun PlayerSubtitleInfo.isMuxedInDirectPlayStream(plan: PlaybackExecutionPlan): Boolean {
+    if (plan.delivery != PlaybackDelivery.ORIGINAL_HTTP) return false
+    val embedded = catalogSource?.trim()?.equals("embedded", ignoreCase = true) == true ||
+        (catalogSource == null && source?.trim()?.equals("embedded", ignoreCase = true) == true)
+    if (!embedded) return false
+    val family = canonicalSubtitleCodecFamily(codec ?: subtitleCodecFromUrl(url))
+    return !isBitmapSubtitleCodecFamily(family) || isClientMountableBitmapCodecFamily(family)
 }
 
 private fun List<PlayerSubtitleInfo>.selectLocalMedia3Subtitle(

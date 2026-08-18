@@ -43,12 +43,9 @@ import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -68,7 +65,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -81,11 +77,20 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
-import org.siloserver.silo.android.ui.components.HeroBackdropImage
-import org.siloserver.silo.android.ui.components.HeroTintBackground
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
+import org.siloserver.silo.android.ui.components.TabTopBarActions
+import org.siloserver.silo.android.ui.components.SortFilterControlsRow
+import org.siloserver.silo.android.ui.components.SortMenuOption
+import org.siloserver.silo.android.ui.components.topBarGlass
+import dev.chrisbanes.haze.rememberHazeState
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.HazeState
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.mutableIntStateOf
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.FilterList
@@ -102,14 +107,13 @@ import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
 import org.siloserver.silo.catalog.filter.CatalogFacet
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.isAudiobookItemType
-import org.siloserver.silo.android.ui.screens.home.FeaturedCarousel
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.util.formatCardDate
-import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.MediaItemUserState
@@ -117,7 +121,6 @@ import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.ResolvedSection
-import org.siloserver.silo.model.section.splitFeatured
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
@@ -729,7 +732,6 @@ private const val ChromeFadeDistanceDp = 80f
 @Composable
 fun LibrariesScreen(
     onItemClick: (String) -> Unit,
-    onPlayClick: (String, Double?) -> Unit,
     onCollectionClick: (String, Int) -> Unit,
     viewModel: LibrariesViewModel,
     activeProfile: Profile?,
@@ -746,24 +748,8 @@ fun LibrariesScreen(
     val state by viewModel.uiState.collectAsState()
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
 
-    // Hero backdrop sampled from the active featured carousel page. Mirrors
-    // iOS `LibraryRecommendedView` — the parent owns the URL so the page-level
-    // tint + blur extend past the carousel.
-    var heroBackdropUrl by rememberSaveable(state.selectedLibraryId) {
-        mutableStateOf<String?>(null)
-    }
-    var heroBackdropThumbhash by rememberSaveable(state.selectedLibraryId) {
-        mutableStateOf<String?>(null)
-    }
-
-    val heroTint by rememberDominantColor(
-        imageUrl = heroBackdropUrl,
-        fallback = MaterialTheme.colorScheme.background,
-    )
-
     // Recommended tab scroll state — drives the chrome scrim opacity so the
-    // header reads as part of the artwork while the hero is at rest, then
-    // resolves to a solid scrim once the user scrolls past.
+    // header fades in its scrim once the user scrolls the rows underneath it.
     val recommendedListState = rememberLazyListState()
     val density = LocalDensity.current
     val chromeFadePx = remember(density) {
@@ -784,48 +770,35 @@ fun LibrariesScreen(
         1f
     }
 
-    val showHero = state.selectedTab == LibrariesSubtab.Recommended &&
-        state.sections.any { it.featured } &&
-        heroBackdropUrl != null
+    // The chrome floats over the content, which scrolls up beneath its
+    // feathered glass edge. Its height is measured (the selector wraps to two
+    // lines) and handed to each subtab as the inset its own top must clear.
+    val chromeHaze = rememberHazeState()
+    var chromeHeightPx by remember { mutableIntStateOf(0) }
+    val chromeHeight = with(density) { chromeHeightPx.toDp() }
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        if (showHero) {
-            HeroTintBackground(tint = heroTint)
-            HeroBackdropImage(
-                url = heroBackdropUrl,
-                thumbhash = heroBackdropThumbhash,
-            )
-        }
-
-        Column(modifier = Modifier.fillMaxSize()) {
-            LibrariesFloatingChrome(
-                scrimProgress = chromeScrimProgress,
-                selectedLibrary = selectedLibrary,
-                canSwitch = state.libraries.size > 1,
-                activeProfile = activeProfile,
-                selectedTab = state.selectedTab,
-                onLibrarySelectorClick = onLibrarySelectorClick,
-                onTabSelected = viewModel::selectTab,
-                onSearchClick = onSearchClick,
-                onRequestsClick = onRequestsClick,
-                onWatchTogetherClick = onWatchTogetherClick,
-                onSettingsClick = onSettingsClick,
-                onSwitchProfileClick = onSwitchProfileClick,
-                onSwitchServerClick = onSwitchServerClick,
-                onSignOutClick = onSignOutClick,
-            )
-
-            LibraryContentViewport(
-                modifier = Modifier.weight(1f).clipToBounds(),
-            ) {
+        LibraryContentViewport(
+            modifier = Modifier
+                .fillMaxSize()
+                // Background inside the source so the glass captures an
+                // opaque scene rather than compositing over the sharp content.
+                .hazeSource(chromeHaze)
+                .background(MaterialTheme.colorScheme.background)
+                .clipToBounds(),
+        ) {
+            // Hold content until the chrome has been measured once so the
+            // first frame does not lay rows out under the header and jump.
+            if (chromeHeightPx > 0) {
+                val topInset = chromeHeight
                 when {
                     state.isLoadingLibraries && state.libraries.isEmpty() -> {
                         Box(
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().padding(top = topInset),
                             contentAlignment = Alignment.Center,
                         ) {
                             CircularProgressIndicator()
@@ -835,7 +808,7 @@ fun LibrariesScreen(
                         ErrorView(
                             message = state.librariesError ?: "Failed to load libraries",
                             onRetry = viewModel::refresh,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().padding(top = topInset),
                         )
                     }
                     selectedLibrary == null -> {
@@ -843,25 +816,22 @@ fun LibrariesScreen(
                             title = "No libraries available",
                             subtitle = "Libraries visible to this profile will show up here",
                             icon = Icons.Default.VideoLibrary,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().padding(top = topInset),
                         )
                     }
                     state.selectedTab == LibrariesSubtab.Recommended -> {
                         RecommendedTabContent(
                             state = state,
                             listState = recommendedListState,
+                            topInset = topInset,
                             onItemClick = onItemClick,
-                            onPlayClick = onPlayClick,
                             onRetry = viewModel::retryCurrentTab,
-                            onActiveBackdropChange = { url, thumbhash ->
-                                heroBackdropUrl = url
-                                heroBackdropThumbhash = thumbhash
-                            },
                         )
                     }
                     state.selectedTab == LibrariesSubtab.Browse -> {
                         BrowseTabContent(
                             state = state,
+                            topInset = topInset,
                             onItemClick = onItemClick,
                             onRetry = viewModel::retryCurrentTab,
                             onLoadMore = viewModel::loadMoreCatalog,
@@ -875,6 +845,7 @@ fun LibrariesScreen(
                     else -> {
                         CollectionsTabContent(
                             state = state,
+                            topInset = topInset,
                             onCollectionClick = { collectionId ->
                                 state.selectedLibraryId?.let { libraryId ->
                                     onCollectionClick(collectionId, libraryId)
@@ -886,6 +857,25 @@ fun LibrariesScreen(
                 }
             }
         }
+
+        LibrariesFloatingChrome(
+            scrimProgress = chromeScrimProgress,
+            hazeState = chromeHaze,
+            selectedLibrary = selectedLibrary,
+            canSwitch = state.libraries.size > 1,
+            activeProfile = activeProfile,
+            selectedTab = state.selectedTab,
+            onLibrarySelectorClick = onLibrarySelectorClick,
+            onTabSelected = viewModel::selectTab,
+            onSearchClick = onSearchClick,
+            onRequestsClick = onRequestsClick,
+            onWatchTogetherClick = onWatchTogetherClick,
+            onSettingsClick = onSettingsClick,
+            onSwitchProfileClick = onSwitchProfileClick,
+            onSwitchServerClick = onSwitchServerClick,
+            onSignOutClick = onSignOutClick,
+            modifier = Modifier.onSizeChanged { chromeHeightPx = it.height },
+        )
     }
 }
 
@@ -904,22 +894,21 @@ private fun LibraryContentViewport(
 private fun RecommendedTabContent(
     state: LibrariesUiState,
     listState: androidx.compose.foundation.lazy.LazyListState,
+    topInset: Dp,
     onItemClick: (String) -> Unit,
-    onPlayClick: (String, Double?) -> Unit,
     onRetry: () -> Unit,
-    onActiveBackdropChange: (url: String?, thumbhash: String?) -> Unit,
 ) {
     when {
         state.isLoadingSections && state.sections.isEmpty() -> {
             MediaRowsSkeleton(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.sectionsError != null && state.sections.isEmpty() -> {
             ErrorView(
                 message = state.sectionsError ?: "Failed to load recommendations",
                 onRetry = onRetry,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.sections.isEmpty() -> {
@@ -927,38 +916,24 @@ private fun RecommendedTabContent(
                 title = "No recommendations yet",
                 subtitle = "Try switching libraries or browsing the full catalog",
                 icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         else -> {
-            val (featuredSection, regularSections) = remember(state.sections) {
-                state.sections.splitFeatured().let { it.featured to it.rest }
-            }
-
+            // No hero carousel (matches iOS): a `featured` section is just
+            // another row, kept in the order the server configured it.
             // iOS `LibraryRecommendedView`: LazyVStack(spacing: largePadding = 24)
             // between section rows.
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
+                // Rows start below the floating chrome and scroll up under it.
+                contentPadding = PaddingValues(top = topInset + 16.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
-                if (featuredSection != null && featuredSection.items.isNotEmpty()) {
-                    item(key = "library-featured") {
-                        FeaturedCarousel(
-                            items = featuredSection.items,
-                            onPlayClick = onPlayClick,
-                            onInfoClick = onItemClick,
-                            onActiveBackdropChange = onActiveBackdropChange,
-                        )
-                    }
-                } else {
-                    item(key = "no-featured") {
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-                }
 
                 items(
-                    items = regularSections,
+                    items = state.sections,
                     key = { section -> section.id },
                 ) { section ->
                     // No "See All" — iOS has no such affordance (H3, Jim
@@ -980,6 +955,7 @@ private fun RecommendedTabContent(
 @Composable
 private fun BrowseTabContent(
     state: LibrariesUiState,
+    topInset: Dp,
     onItemClick: (String) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
@@ -990,100 +966,83 @@ private fun BrowseTabContent(
     onSetPreserve: (Boolean) -> Unit,
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
-    Column(
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        // Sort chips + a Filter button that opens the shared FilterSheet. Genre
-        // is now a Categories facet inside the sheet (no inline genre rail, L3),
-        // and view-density moved into the sheet's "View" section (L4).
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                LibraryBrowseSort.entries.forEach { sort ->
-                    FilterChip(
-                        selected = state.browseSort == sort,
-                        onClick = { onSortChanged(sort) },
-                        label = { Text(sort.label) },
-                        colors = libraryChipColors(state.browseSort == sort),
-                    )
-                }
-            }
-            BadgedBox(
-                badge = {
-                    if (state.filterState.activeFacetCount > 0) {
-                        Badge { Text("${state.filterState.activeFacetCount}") }
-                    }
+    val isCustomised = state.browseSort != LibraryBrowseSort.RecentlyAdded ||
+        state.filterState.hasActiveFilters ||
+        state.selectedNamePrefix != null
+
+    // Sort ▾ / Filter (n) / Reset — the same control row as the saved lists —
+    // plus removable chips for active facets. Rendered as the grid's header
+    // so it scrolls with the content under the chrome's glass.
+    val controlsHeader: @Composable () -> Unit = {
+        Column(modifier = Modifier.padding(bottom = 4.dp)) {
+            SortFilterControlsRow(
+                sortLabel = state.browseSort.label,
+                sortActive = state.browseSort != LibraryBrowseSort.RecentlyAdded,
+                sortOptions = LibraryBrowseSort.entries.map { SortMenuOption(id = it.name, label = it.label) },
+                selectedSortId = state.browseSort.name,
+                onSelectSort = { id -> onSortChanged(LibraryBrowseSort.valueOf(id)) },
+                filterCount = state.filterState.activeFacetCount,
+                onOpenFilters = { showFilterSheet = true },
+                showReset = isCustomised,
+                onReset = {
+                    onSortChanged(LibraryBrowseSort.RecentlyAdded)
+                    onApplyFilter(state.filterState.resetFilters())
+                    onNamePrefixChanged(null)
                 },
-            ) {
-                IconButton(onClick = { showFilterSheet = true }) {
-                    Icon(
-                        imageVector = Icons.Default.FilterList,
-                        contentDescription = "Filters",
-                    )
-                }
-            }
-        }
-
-        // Active filter chips — removable capsules, one per selected facet value.
-        if (state.filterState.hasActiveFilters) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
-                    .padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                CatalogFacet.available(state.browseMediaType).forEach { facet ->
-                    state.filterState.valuesFor(facet).sorted().forEach { value ->
-                        LibraryActiveFilterChip(
-                            label = facetValueLabel(facet, value),
-                            onRemove = { onApplyFilter(state.filterState.toggle(facet, value)) },
-                        )
+            )
+            if (state.filterState.hasActiveFilters) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CatalogFacet.available(state.browseMediaType).forEach { facet ->
+                        state.filterState.valuesFor(facet).sorted().forEach { value ->
+                            LibraryActiveFilterChip(
+                                label = facetValueLabel(facet, value),
+                                onRemove = { onApplyFilter(state.filterState.toggle(facet, value)) },
+                            )
+                        }
                     }
                 }
             }
         }
+    }
 
+    Box(modifier = Modifier.fillMaxSize()) {
         when {
             state.isLoadingCatalog && state.catalogItems.isEmpty() -> {
                 PosterGridSkeleton(
                     progress = rememberShimmerProgress(),
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().padding(top = topInset),
                 )
             }
             state.catalogError != null && state.catalogItems.isEmpty() -> {
-                ErrorView(
-                    message = state.catalogError ?: "Failed to load catalog",
-                    onRetry = onRetry,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                // Controls stay mounted so a rejected sort/filter/letter can be
+                // changed from here rather than only retried.
+                Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
+                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
+                    ErrorView(
+                        message = state.catalogError ?: "Failed to load catalog",
+                        onRetry = onRetry,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
             state.catalogItems.isEmpty() -> {
-                EmptyStateView(
-                    title = "No items found",
-                    subtitle = "Try adjusting the sort or switching libraries",
-                    icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
-                    modifier = Modifier.fillMaxSize(),
-                )
+                Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
+                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { controlsHeader() }
+                    EmptyStateView(
+                        title = if (isCustomised) "No matches" else "No items found",
+                        subtitle = if (isCustomised) "No titles match the current sort or filters." else "Try switching libraries",
+                        icon = libraryIcon(state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.type.orEmpty()),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
             else -> {
-                Text(
-                    text = "${state.catalogTotal} items",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
                 CatalogGrid(
                     items = state.catalogItems,
                     isLoadingMore = state.isLoadingMoreCatalog,
@@ -1101,6 +1060,8 @@ private fun BrowseTabContent(
                     onNamePrefixSelected = onNamePrefixChanged,
                     viewDensity = state.catalogDensity,
                     bottomContentInset = LocalBottomChromeInset.current,
+                    topContentInset = topInset,
+                    header = controlsHeader,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1159,6 +1120,7 @@ private fun LibraryActiveFilterChip(
 @Composable
 private fun CollectionsTabContent(
     state: LibrariesUiState,
+    topInset: Dp,
     onCollectionClick: (String) -> Unit,
     onRetry: () -> Unit,
 ) {
@@ -1166,14 +1128,14 @@ private fun CollectionsTabContent(
         state.isLoadingCollections && state.collections.isEmpty() -> {
             PosterGridSkeleton(
                 progress = rememberShimmerProgress(),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.collectionsError != null && state.collections.isEmpty() -> {
             ErrorView(
                 message = state.collectionsError ?: "Failed to load collections",
                 onRetry = onRetry,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         state.collections.isEmpty() -> {
@@ -1181,21 +1143,22 @@ private fun CollectionsTabContent(
                 title = "No collections found",
                 subtitle = "This library does not have any collections yet",
                 icon = Icons.Default.VideoLibrary,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = topInset),
             )
         }
         else -> {
-            // iOS `LibraryCollectionsView`: adaptive 110pt poster grid with
-            // shared column/row spacing and 16pt padding insets.
+            // iOS `LibraryCollectionsView`: adaptive poster grid with shared
+            // column/row spacing and 16pt padding insets. Follows the Library
+            // grid's view density so both tabs show the same column count.
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+                columns = GridCells.Adaptive(state.catalogDensity.minCardWidth),
                 horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
                 verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
-                    top = 16.dp,
+                    top = topInset + 16.dp,
                     bottom = 24.dp + LocalBottomChromeInset.current,
                 ),
             ) {
@@ -1273,6 +1236,7 @@ private fun InlineLibraryCollectionCard(
 @Composable
 private fun LibrariesFloatingChrome(
     scrimProgress: Float,
+    hazeState: HazeState,
     selectedLibrary: UserLibrary?,
     canSwitch: Boolean,
     activeProfile: Profile?,
@@ -1286,6 +1250,7 @@ private fun LibrariesFloatingChrome(
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
     onSignOutClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
     val animatedFill by animateFloatAsState(
@@ -1293,22 +1258,21 @@ private fun LibrariesFloatingChrome(
         label = "librariesChromeFill",
     )
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                // iOS chrome scrim: LinearGradient(black@0.55 → black@0.25 →
-                // clear) faded in by the scroll-driven opacity.
-                Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.background.copy(alpha = 0.55f * animatedFill),
-                        MaterialTheme.colorScheme.background.copy(alpha = 0.25f * animatedFill),
-                        MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                    ),
-                ),
-            )
-            .padding(top = statusBarPadding.calculateTopPadding() + 8.dp),
-    ) {
+    Box(modifier = modifier.fillMaxWidth()) {
+        // Progressive glass, faded in by the scroll-driven opacity on the
+        // Recommended tab and always on for Browse / Collections. Its bottom
+        // edge feathers to clear so rows dissolve into the chrome.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = animatedFill }
+                .topBarGlass(hazeState, progressive = true),
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = statusBarPadding.calculateTopPadding() + 8.dp),
+        ) {
         // Top row: library selector on the left, action icons on the right.
         Row(
             modifier = Modifier
@@ -1323,28 +1287,16 @@ private fun LibrariesFloatingChrome(
                 modifier = Modifier.weight(1f),
             )
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ChromeIconButton(onClick = onSearchClick) {
-                    Icon(
-                        imageVector = Icons.Outlined.Search,
-                        contentDescription = "Search",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                ChromeProfileMenu(
-                    activeProfile = activeProfile,
-                    onRequestsClick = onRequestsClick,
-                    onWatchTogetherClick = onWatchTogetherClick,
-                    onSettingsClick = onSettingsClick,
-                    onSwitchProfileClick = onSwitchProfileClick,
-                    onSwitchServerClick = onSwitchServerClick,
-                    onSignOutClick = onSignOutClick,
-                )
-            }
+            TabTopBarActions(
+                activeProfile = activeProfile,
+                onSearchClick = onSearchClick,
+                onRequestsClick = onRequestsClick,
+                onWatchTogetherClick = onWatchTogetherClick,
+                onSettingsClick = onSettingsClick,
+                onSwitchProfileClick = onSwitchProfileClick,
+                onSwitchServerClick = onSwitchServerClick,
+                onSignOutClick = onSignOutClick,
+            )
         }
 
         // iOS: top bar bottom inset = smallPadding (8).
@@ -1358,8 +1310,9 @@ private fun LibrariesFloatingChrome(
             modifier = Modifier.padding(horizontal = 16.dp),
         )
 
-        // iOS: tab selector bottom inset = padding (16).
-        Spacer(modifier = Modifier.height(16.dp))
+            // iOS: tab selector bottom inset = padding (16).
+            Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 }
 
@@ -1412,118 +1365,6 @@ private fun LibrarySelectorButton(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-@Composable
-private fun ChromeIconButton(
-    onClick: () -> Unit,
-    content: @Composable BoxScope.() -> Unit,
-) {
-    // iOS `TopBarIconButton`/`ProfileAvatarMenu`: plain 40pt hit target with
-    // no surface fill or border — just the icon/avatar over the chrome scrim.
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-        content = content,
-    )
-}
-
-@Composable
-private fun ChromeProfileMenu(
-    activeProfile: Profile?,
-    onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
-    onSettingsClick: () -> Unit,
-    onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
-) {
-    var menuExpanded by rememberSaveable { mutableStateOf(false) }
-    Box {
-        ChromeIconButton(onClick = { menuExpanded = true }) {
-            if (activeProfile != null) {
-                ProfileAvatar(
-                    avatar = activeProfile.avatar,
-                    name = activeProfile.name,
-                    size = 36.dp,
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Person,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        DropdownMenu(
-            expanded = menuExpanded,
-            onDismissRequest = { menuExpanded = false },
-        ) {
-            if (onRequestsClick != null) {
-                DropdownMenuItem(
-                    text = { Text("Requests") },
-                    onClick = {
-                        menuExpanded = false
-                        onRequestsClick()
-                    },
-                )
-            }
-            if (onWatchTogetherClick != null) {
-                DropdownMenuItem(
-                    text = { Text("Watch Together") },
-                    onClick = {
-                        menuExpanded = false
-                        onWatchTogetherClick()
-                    },
-                )
-            }
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("Settings") },
-                onClick = {
-                    menuExpanded = false
-                    onSettingsClick()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Switch Profile") },
-                onClick = {
-                    menuExpanded = false
-                    onSwitchProfileClick()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Switch Server") },
-                onClick = {
-                    menuExpanded = false
-                    onSwitchServerClick()
-                },
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        text = "Sign Out",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                },
-                onClick = {
-                    menuExpanded = false
-                    onSignOutClick()
-                },
-            )
-        }
     }
 }
 

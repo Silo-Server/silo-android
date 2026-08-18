@@ -106,15 +106,6 @@ class AuthApi(private val client: HttpClient) {
         client.post("/api/v1/auth/logout")
     }
 
-    suspend fun getSessions(): ApiResult<SessionsResponse> = safeApiCall {
-        client.get("/api/v1/auth/sessions")
-    }
-
-    suspend fun revokeSession(id: String): ApiResult<Unit> = safeApiCall {
-        client.delete("/api/v1/auth/sessions/$id")
-    }
-
-    suspend fun deleteSession(id: String): ApiResult<Unit> = revokeSession(id)
 }
 
 /**

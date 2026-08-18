@@ -24,16 +24,22 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 2
+    const val REVISION = 7
 
     /** Metadata language */
     const val CATALOG_METADATA_LANGUAGE = "catalog.metadata_language"
+    /** Metadata language exceptions */
+    const val CATALOG_METADATA_LANGUAGE_OVERRIDES = "catalog.metadata_language_overrides"
     /** Download quality */
     const val DOWNLOADS_DEFAULT_QUALITY = "downloads.default_quality"
     /** Keep watched downloads */
     const val DOWNLOADS_KEEP_WATCHED = "downloads.keep_watched"
     /** Download over Wi-Fi only */
     const val DOWNLOADS_WIFI_ONLY = "downloads.wifi_only"
+    /** Primary menu */
+    const val NAV_PRIMARY_MENU = "nav.primary_menu"
+    /** Navigation shortcuts */
+    const val NAV_SHORTCUTS = "nav.shortcuts"
     /** Show audiobooks */
     const val NAV_SHOW_AUDIOBOOKS = "nav.show_audiobooks"
     /** Preferred audio language */
@@ -48,6 +54,8 @@ object SettingKeys {
     const val PLAYBACK_AUTO_SKIP_INTRO = "playback.auto_skip_intro"
     /** Auto-skip recaps */
     const val PLAYBACK_AUTO_SKIP_RECAP = "playback.auto_skip_recap"
+    /** Skip intros */
+    const val PLAYBACK_INTRO_SKIP_MODE = "playback.intro_skip_mode"
     /** Maximum bitrate */
     const val PLAYBACK_MAX_BITRATE_KBPS = "playback.max_bitrate_kbps"
     /** Next up prompt */
@@ -96,6 +104,8 @@ object SettingKeys {
     const val SUBTITLE_MATCHES_DEVICE = "subtitle.matches_device"
     /** Poster badges */
     const val UI_CARD_OVERLAYS = "ui.card_overlays"
+    /** Media cards */
+    const val UI_CARD_PRESENTATION = "ui.card_presentation"
     /** Custom CSS */
     const val UI_CUSTOM_CSS = "ui.custom_css"
     /** Custom theme variables */
@@ -128,12 +138,16 @@ object SettingKeys {
     /** Every key the server stores. Safe to flush. */
     val REMOTE: List<String> = listOf(
         CATALOG_METADATA_LANGUAGE,
+        CATALOG_METADATA_LANGUAGE_OVERRIDES,
+        NAV_PRIMARY_MENU,
+        NAV_SHORTCUTS,
         PLAYBACK_AUDIO_LANGUAGE,
         PLAYBACK_AUTO_PLAY_NEXT,
         PLAYBACK_AUTO_PLAY_NEXT_PREVIEW,
         PLAYBACK_AUTO_SKIP_CREDITS,
         PLAYBACK_AUTO_SKIP_INTRO,
         PLAYBACK_AUTO_SKIP_RECAP,
+        PLAYBACK_INTRO_SKIP_MODE,
         PLAYBACK_MAX_BITRATE_KBPS,
         PLAYBACK_NEXT_UP_PROMPT_SECONDS,
         PLAYBACK_PREFERRED_QUALITY,
@@ -154,6 +168,7 @@ object SettingKeys {
         PLAYER_VIDEO_GRAVITY,
         SEARCH_MEDIA_SCOPE,
         UI_CARD_OVERLAYS,
+        UI_CARD_PRESENTATION,
         UI_CUSTOM_CSS,
         UI_CUSTOM_THEME_VARS,
         UI_DATE_FORMAT,

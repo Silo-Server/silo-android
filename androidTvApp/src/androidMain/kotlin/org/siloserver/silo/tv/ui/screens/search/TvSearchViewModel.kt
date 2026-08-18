@@ -7,6 +7,7 @@ import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
 import org.siloserver.silo.model.navigation.tvMediaModeCapabilities
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
@@ -294,7 +295,10 @@ class TvSearchViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
-                            error = "Network error: ${result.exception.message ?: "unknown"}",
+                            // Never the raw exception: it carries the full
+                            // request URL and read like a stack trace on a
+                            // ten-foot screen.
+                            error = result.errorMessage("Search failed"),
                         )
                     }
                     return

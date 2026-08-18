@@ -15,6 +15,16 @@
     <string name="action_sign_in">Sign In</string>
     <string name="action_play">Play</string>
 
+    <!-- Intro skip (playback.intro_skip_mode; see the server's
+         docs/design/2026-08-16-intro-skip-mode.md — the copy is contract-fixed) -->
+    <string name="intro_skip_pill_skip">Skip Intro</string>
+    <string name="intro_skip_pill_undo">Watch Intro</string>
+    <string name="intro_skip_pill_undo_caption">Intro skipped</string>
+    <string name="settings_intro_skip_title">Skip intros</string>
+    <string name="settings_intro_skip_never">Never</string>
+    <string name="settings_intro_skip_ask">Ask to skip</string>
+    <string name="settings_intro_skip_always">Skip automatically</string>
+
     <!-- Common states -->
     <string name="loading">Loading…</string>
     <string name="error_generic">Something went wrong</string>

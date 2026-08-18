@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import org.siloserver.silo.common.settings.AndroidServerSettingsCache
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.EffectiveSetting
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.QualityPresets
@@ -111,7 +112,7 @@ class LegacyTvPrefsMigrationTest {
         // select`.
         assertEquals(6000, fakePlayerStore.maxBitrateKbpsFlow.value)
         assertEquals(false, fakePlayerStore.autoPlayNextFlow.value)
-        assertEquals(true, fakePlayerStore.autoSkipIntroFlow.value)
+        assertEquals(IntroSkipMode.ALWAYS, fakePlayerStore.introSkipModeFlow.value)
         assertEquals(true, fakePlayerStore.autoSkipCreditsFlow.value)
         assertEquals(
             SubtitleFontSizePreset.Large,
@@ -147,7 +148,7 @@ class LegacyTvPrefsMigrationTest {
         assertFalse(fakePlayerStore.setterCalls.contains("setQuality"))
         assertEquals("auto", fakePlayerStore.preferredQualityFlow.value)
         // Keys without a server override still import.
-        assertEquals(true, fakePlayerStore.autoSkipIntroFlow.value)
+        assertEquals(IntroSkipMode.ALWAYS, fakePlayerStore.introSkipModeFlow.value)
     }
 
     @Test
@@ -176,7 +177,7 @@ class LegacyTvPrefsMigrationTest {
             "a server-side bitrate override must not be overwritten by the legacy preset",
         )
         // Keys without an override still import.
-        assertEquals(true, fakePlayerStore.autoSkipIntroFlow.value)
+        assertEquals(IntroSkipMode.ALWAYS, fakePlayerStore.introSkipModeFlow.value)
     }
 
     @Test

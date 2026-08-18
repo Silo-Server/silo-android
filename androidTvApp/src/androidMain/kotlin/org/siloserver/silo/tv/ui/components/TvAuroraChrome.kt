@@ -131,18 +131,19 @@ fun AuroraJourneyProgress(
     }
 }
 
-/** Gold-hairline + mono-caps step label, e.g. "STEP 01 — CONNECT". */
+/**
+ * Gold-hairline + mono-caps step label, e.g. "STEP 01 — CONNECT".
+ *
+ * The hairline is mirrored on both sides so the label sits on the row's centre
+ * line. Every eyebrow in the auth flow is laid out in a `CenterHorizontally`
+ * column under a centered title; with a leading rule only, the row centres but
+ * the *text* does not, and the eyebrow visibly hangs right of the title beneath
+ * it. Keep the pair symmetric if you restyle this.
+ */
 @Composable
 fun AuroraEyebrow(text: String, modifier: Modifier = Modifier) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .width(46.dp)
-                .height(1.dp)
-                .background(
-                    Brush.horizontalGradient(listOf(AuroraAccent, AuroraAccent.copy(alpha = 0f))),
-                ),
-        )
+        AuroraEyebrowRule(fadesTowardText = true)
         Spacer(Modifier.width(16.dp))
         Text(
             text = text.uppercase(),
@@ -152,7 +153,29 @@ fun AuroraEyebrow(text: String, modifier: Modifier = Modifier) {
             letterSpacing = 3.5.sp,
             color = AuroraAccent,
         )
+        Spacer(Modifier.width(16.dp))
+        AuroraEyebrowRule(fadesTowardText = false)
     }
+}
+
+/**
+ * One 46dp hairline of the eyebrow. [fadesTowardText] runs the gradient solid
+ * at the outer edge and transparent at the inner one, so a mirrored pair reads
+ * as a single rule interrupted by the label.
+ */
+@Composable
+private fun AuroraEyebrowRule(fadesTowardText: Boolean) {
+    val stops = if (fadesTowardText) {
+        listOf(AuroraAccent, AuroraAccent.copy(alpha = 0f))
+    } else {
+        listOf(AuroraAccent.copy(alpha = 0f), AuroraAccent)
+    }
+    Box(
+        modifier = Modifier
+            .width(46.dp)
+            .height(1.dp)
+            .background(Brush.horizontalGradient(stops)),
+    )
 }
 
 /**

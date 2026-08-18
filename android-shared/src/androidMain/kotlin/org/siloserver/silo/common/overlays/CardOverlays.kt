@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
@@ -62,7 +63,7 @@ fun CardOverlays(
     scale: Float = 1f,
     forceOpaqueBackground: Boolean = false,
 ) {
-    val preset = OverlayPresetStyles.style(prefs.preset).scaled(scale)
+    val preset = remember(prefs.preset, scale) { OverlayPresetStyles.style(prefs.preset).scaled(scale) }
     Box(modifier = modifier.fillMaxSize()) {
         for (position in OverlayPosition.entries) {
             CornerStack(
@@ -88,8 +89,12 @@ private fun androidx.compose.foundation.layout.BoxScope.CornerStack(
     scale: Float,
     forceOpaqueBackground: Boolean,
 ) {
-    val badges = OverlayRegistry.enabled(position, prefs)
-        .mapNotNull { OverlayBadgeRenderState.resolve(it, data, prefs, preset) }
+    // Resolved once per (item, prefs, preset): this runs for four corners of
+    // every card on every card composition, and rails recompose a lot.
+    val badges = remember(position, data, prefs, preset) {
+        OverlayRegistry.enabled(position, prefs)
+            .mapNotNull { OverlayBadgeRenderState.resolve(it, data, prefs, preset) }
+    }
     if (badges.isEmpty()) return
 
     Column(

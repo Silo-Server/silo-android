@@ -39,6 +39,7 @@ import org.siloserver.silo.common.startup.warmProfileSelectionStartup
 import org.siloserver.silo.common.ui.components.StartupSplashVideo
 import org.siloserver.silo.common.ui.components.StartupSplashResizeMode
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.requiresApproval
 import org.siloserver.silo.repository.AuthRepository
@@ -78,6 +79,14 @@ class MainTvActivity : ComponentActivity() {
         const val DEEP_LINK_TAG = "SiloDeepLink"
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // "Keys do nothing" with no other SiloTvFocus lines afterwards means
+        // input is going to whichever window took focus (typically the Google
+        // TV launcher), not to this app — an OS/emulator condition, not ours.
+        TvFocusLog.d { "window focus ${if (hasFocus) "GAINED" else "LOST"}" }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -113,6 +122,9 @@ class MainTvActivity : ComponentActivity() {
                             // overlay is up: no input-dispatch-timeout ANR, and
                             // no keys leak into the app pre-rendering below —
                             // even after its content grabs focus.
+                            if (splashVisible) {
+                                TvFocusLog.d { "key swallowed by splash gate" }
+                            }
                             splashVisible
                         },
                 ) {

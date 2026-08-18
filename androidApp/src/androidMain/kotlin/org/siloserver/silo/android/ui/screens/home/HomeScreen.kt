@@ -46,15 +46,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.SiloWordmark
+import org.siloserver.silo.android.ui.components.TabTopBarActions
+import org.siloserver.silo.android.ui.components.TopBarIconButton
+import org.siloserver.silo.android.ui.components.topBarGlass
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.MediaRowSkeleton
+import org.siloserver.silo.android.ui.components.ProfileMenu
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel
 import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingBottomOverlay
@@ -62,9 +68,9 @@ import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.pairing.CompanionPairingStatus
 import org.siloserver.silo.common.pairing.CompanionPairingTarget
 import org.siloserver.silo.common.ui.components.LocalImagePresentationDeferral
+import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.profile.Profile
-import org.siloserver.silo.model.section.splitFeatured
 import org.siloserver.silo.viewmodel.HomeViewModel
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
@@ -75,8 +81,8 @@ private const val ChromeFadeDistanceDp = 72f
  * Phone Home screen.
  *
  * Mirrors iOS `HomeView.swift` (phone) 1:1: a flat OLED background (no hero —
- * iOS deliberately excludes `featured` sections from Home so the configured
- * Home rows render without a separate hero surface), a runway spacer that
+ * a `featured` section renders as an ordinary row in its server order; the
+ * phone apps have no hero surface at all), a runway spacer that
  * reserves room under the floating chrome, the resume-first section rows, and
  * a floating top chrome (wordmark + search + profile menu) that fades in a
  * subtle glass surface as content scrolls underneath it. The screen owns its
@@ -112,10 +118,10 @@ fun HomeScreen(
     var presentedPairingTarget by remember { mutableStateOf<CompanionPairingTarget?>(null) }
     var dismissedPairingSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val sections = state.sections
-    // iOS Home excludes `featured` sections entirely (HomeViewModel.regularSections)
-    // — Home renders only the configured rows, never a hero billboard.
+    // No hero billboard on phone (matches iOS): a `featured` section is just
+    // another row, rendered in the order the server configured it.
     val regularSections = remember(sections) {
-        sections.splitFeatured().rest.filter { it.items.isNotEmpty() }
+        sections.filter { it.items.isNotEmpty() }
     }
 
     val listState = rememberLazyListState()
@@ -159,6 +165,12 @@ fun HomeScreen(
         }
     }
 
+    // Home's own blur source: the floating chrome blurs the rows scrolling
+    // beneath it. Local rather than the shell's tab-wide source because the
+    // chrome sits inside that source and an effect must not read a source
+    // that contains it.
+    val chromeHaze = rememberHazeState()
+
     // Home can show the same item in several rows at once. Each poster placement
     // now carries a unique hero key (see MediaCard) so duplicates never collide
     // in the shared-transition layout — no per-screen claim registry needed.
@@ -180,7 +192,13 @@ fun HomeScreen(
             else -> PullToRefreshBox(
                 isRefreshing = state.isRefreshing,
                 onRefresh = { viewModel.refresh() },
-                modifier = Modifier.fillMaxSize(),
+                // Background sits inside the source so the glass captures an
+                // opaque scene; a transparent capture composites the blur over
+                // the sharp content beneath instead of replacing it.
+                modifier = Modifier
+                    .fillMaxSize()
+                    .hazeSource(chromeHaze)
+                    .background(MaterialTheme.colorScheme.background),
             ) {
                 CompositionLocalProvider(
                     LocalImagePresentationDeferral provides deferNewArtworkPresentation,
@@ -248,6 +266,7 @@ fun HomeScreen(
         // Floating top chrome — fades in a glass surface as content scrolls under.
         HomeFloatingChrome(
             scrollProgress = scrollProgress,
+            hazeState = chromeHaze,
             activeProfile = activeProfile,
             onSearchClick = onSearchClick,
             onRemoteControlClick = onRemoteControlClick,
@@ -306,6 +325,7 @@ private fun HomeLoadingSkeleton() {
 @Composable
 private fun HomeFloatingChrome(
     scrollProgress: State<Float>,
+    hazeState: HazeState,
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
     onRemoteControlClick: () -> Unit,
@@ -320,25 +340,26 @@ private fun HomeFloatingChrome(
     onSignOutClick: () -> Unit,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
-    // iOS chrome: translucent glass fill plus a bottom hairline that strengthens
-    // as it fades in (white 0.06 → 0.10, 0.75pt). headerTopReclaim(16) pulls the
-    // row up beside the status-bar glyphs; horizontal = SiloTheme.padding(16),
-    // bottom = SiloTheme.smallPadding(8).
-    val chromeSurfaceColor = MaterialTheme.colorScheme.surface
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .drawBehind {
-                drawRect(
-                    color = chromeSurfaceColor,
-                    alpha = 0.32f * scrollProgress.value,
-                )
-            },
-    ) {
+    // iOS chrome: progressive glass that fades in as rows scroll under and
+    // feathers out along its bottom edge (same recipe as Libraries), so rows
+    // dissolve into the header rather than meeting a hard line. The glass
+    // extends past the action row so the feather has room on a short bar.
+    // headerTopReclaim(16) pulls the row up beside the status-bar glyphs;
+    // horizontal = SiloTheme.padding(16), bottom = SiloTheme.smallPadding(8).
+    Box(modifier = Modifier.fillMaxWidth()) {
+        // Glass fades in with scroll; alpha lives on a graphics layer so the
+        // buttons above stay fully visible at rest. It matches the whole
+        // chrome, i.e. the action row plus the feather runway below it.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = scrollProgress.value }
+                .topBarGlass(hazeState, progressive = true),
+        )
         Box(
             modifier = Modifier
                 .padding(top = statusBarPadding.calculateTopPadding())
-                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp + HomeChromeFeatherExtension)
                 .fillMaxWidth(),
         ) {
             // Leading: Silo wordmark (iOS SiloWordmarkView width: 72).
@@ -348,216 +369,77 @@ private fun HomeFloatingChrome(
                 width = 72.dp,
             )
 
-            // Trailing: search + profile menu cluster.
-            androidx.compose.foundation.layout.Row(
+            // Trailing: remote-control + search + profile menu cluster.
+            TabTopBarActions(
                 modifier = Modifier.align(Alignment.CenterEnd),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Mirrors Apple's SiloControlModeButton: chrome-free at rest,
-                // filled disc while controlling a TV; the active state opens a
-                // menu instead of jumping straight to the remote.
-                Box {
-                    var remoteMenuExpanded by remember { mutableStateOf(false) }
-                    HomeChromeButton(
-                        onClick = {
-                            if (isRemoteControlActive) {
-                                remoteMenuExpanded = true
-                            } else {
-                                onRemoteControlClick()
-                            }
-                        },
-                        isActive = isRemoteControlActive,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.SettingsRemote,
-                            contentDescription = "Remote Control",
-                        )
+                activeProfile = activeProfile,
+                onSearchClick = onSearchClick,
+                onRequestsClick = onRequestsClick,
+                onWatchTogetherClick = onWatchTogetherClick,
+                onSettingsClick = onSettingsClick,
+                onSwitchProfileClick = onSwitchProfileClick,
+                onSwitchServerClick = onSwitchServerClick,
+                onSignOutClick = onSignOutClick,
+                leadingActions = {
+                    // Mirrors Apple's SiloControlModeButton: chrome-free at rest,
+                    // filled disc while controlling a TV; the active state opens a
+                    // menu instead of jumping straight to the remote.
+                    Box {
+                        var remoteMenuExpanded by remember { mutableStateOf(false) }
+                        TopBarIconButton(
+                            onClick = {
+                                if (isRemoteControlActive) {
+                                    remoteMenuExpanded = true
+                                } else {
+                                    onRemoteControlClick()
+                                }
+                            },
+                            isActive = isRemoteControlActive,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.SettingsRemote,
+                                contentDescription = "Remote Control",
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = remoteMenuExpanded,
+                            onDismissRequest = { remoteMenuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Remote Control") },
+                                onClick = {
+                                    remoteMenuExpanded = false
+                                    onRemoteControlClick()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Choose TV") },
+                                onClick = {
+                                    remoteMenuExpanded = false
+                                    onRemoteChooseTvClick()
+                                },
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "Turn Off Control Mode",
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                },
+                                onClick = {
+                                    remoteMenuExpanded = false
+                                    onRemoteDisconnectClick()
+                                },
+                            )
+                        }
                     }
-                    DropdownMenu(
-                        expanded = remoteMenuExpanded,
-                        onDismissRequest = { remoteMenuExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Remote Control") },
-                            onClick = {
-                                remoteMenuExpanded = false
-                                onRemoteControlClick()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Choose TV") },
-                            onClick = {
-                                remoteMenuExpanded = false
-                                onRemoteChooseTvClick()
-                            },
-                        )
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    "Turn Off Control Mode",
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            },
-                            onClick = {
-                                remoteMenuExpanded = false
-                                onRemoteDisconnectClick()
-                            },
-                        )
-                    }
-                }
-
-                HomeChromeButton(onClick = onSearchClick) {
-                    Icon(
-                        imageVector = Icons.Outlined.Search,
-                        contentDescription = "Search",
-                    )
-                }
-
-                HomeProfileMenu(
-                    activeProfile = activeProfile,
-                    onRequestsClick = onRequestsClick,
-                    onWatchTogetherClick = onWatchTogetherClick,
-                    onSettingsClick = onSettingsClick,
-                    onSwitchProfileClick = onSwitchProfileClick,
-                    onSwitchServerClick = onSwitchServerClick,
-                    onSignOutClick = onSignOutClick,
-                )
-            }
-        }
-
-        // Bottom hairline border (iOS 0.75pt, white 0.06–0.10).
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(0.75.dp)
-                .drawBehind {
-                    drawRect(
-                        color = Color.White,
-                        alpha = 0.06f + 0.04f * scrollProgress.value,
-                    )
-                }
-        )
-    }
-}
-
-@Composable
-private fun HomeChromeButton(
-    onClick: () -> Unit,
-    isActive: Boolean = false,
-    content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
-) {
-    // iOS top-bar icon buttons are bare 40x40 tap targets (no chip background).
-    Surface(
-        onClick = onClick,
-        color = if (isActive) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-        contentColor = if (isActive) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurface,
-        shape = CircleShape,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-    ) {
-        Box(
-            modifier = Modifier.size(40.dp),
-            contentAlignment = Alignment.Center,
-            content = content,
-        )
-    }
-}
-
-@Composable
-private fun HomeProfileMenu(
-    activeProfile: Profile?,
-    onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
-    onSettingsClick: () -> Unit,
-    onSwitchProfileClick: () -> Unit,
-    onSwitchServerClick: () -> Unit,
-    onSignOutClick: () -> Unit,
-) {
-    var menuExpanded by rememberSaveable { mutableStateOf(false) }
-    Box {
-        HomeChromeButton(onClick = { menuExpanded = true }) {
-            if (activeProfile != null) {
-                // iOS ProfileAvatarView size: 36.
-                ProfileAvatar(
-                    avatar = activeProfile.avatar,
-                    name = activeProfile.name,
-                    size = 36.dp,
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Person,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        DropdownMenu(
-            expanded = menuExpanded,
-            onDismissRequest = { menuExpanded = false },
-        ) {
-            if (onRequestsClick != null) {
-                DropdownMenuItem(
-                    text = { Text("Requests") },
-                    onClick = {
-                        menuExpanded = false
-                        onRequestsClick()
-                    },
-                )
-            }
-            if (onWatchTogetherClick != null) {
-                DropdownMenuItem(
-                    text = { Text("Watch Together") },
-                    onClick = {
-                        menuExpanded = false
-                        onWatchTogetherClick()
-                    },
-                )
-            }
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("Settings") },
-                onClick = {
-                    menuExpanded = false
-                    onSettingsClick()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Switch Profile") },
-                onClick = {
-                    menuExpanded = false
-                    onSwitchProfileClick()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Switch Server") },
-                onClick = {
-                    menuExpanded = false
-                    onSwitchServerClick()
-                },
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        text = "Sign Out",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                },
-                onClick = {
-                    menuExpanded = false
-                    onSignOutClick()
                 },
             )
         }
     }
 }
+
+/** How far the Home chrome's glass runs past its action row to feather out. */
+private val HomeChromeFeatherExtension = 40.dp
+

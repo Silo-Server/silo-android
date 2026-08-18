@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -141,6 +142,13 @@ fun PlayerOverlay(
     val context = LocalContext.current
 
     val introSkipState by viewModel.introSkipState.collectAsState()
+    val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
+    val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
+    // Back while the pill is up dismisses it and is consumed; a second Back
+    // behaves normally, because by then no pill is showing and this handler is
+    // disabled. The player has no other BackHandler of its own — sheets live in
+    // their own dialog windows, so an open sheet's Back never reaches here.
+    BackHandler(enabled = introSkipState.isVisible) { viewModel.onDismissIntroPrompt() }
     val sleepTimerState by viewModel.sleepTimerState.collectAsState()
     val sleepTimerDefault by viewModel.sleepTimerDefaultMinutes.collectAsState()
     val videoGravity by viewModel.videoGravity.collectAsState()
@@ -381,7 +389,7 @@ fun PlayerOverlay(
             .padding(bottom = 120.dp, end = 24.dp)
             .zIndex(2f)
 
-        // Intro auto-skip banner (Hidden / ShowingButton / CountingDown).
+        // Intro skip pill (Hidden / Asking / Skipped).
         // Shares the bottom-end slot with the Up Next card; intro and credits
         // never overlap in practice, but the card wins the slot if both could show.
         if (!state.showUpNext) {
@@ -391,8 +399,10 @@ fun PlayerOverlay(
             ) {
                 IntroAutoSkipBanner(
                     state = introSkipState,
-                    onSkipNow = viewModel::onSkipIntroNow,
-                    onCancelCountdown = viewModel::onCancelIntroAutoSkip,
+                    onSelect = viewModel::onSelectIntroPrompt,
+                    totalSeconds = viewModel.introSkipTotalSeconds,
+                    countdownRun = introSkipCountdownRun,
+                    timerRunning = introSkipTimerRunning,
                 )
             }
         }
@@ -575,8 +585,10 @@ fun PlayerOverlay(
         onSetPlaybackSpeed = viewModel::onSetPlaybackSpeed,
         videoGravity = videoGravity,
         onSetVideoGravity = viewModel::onSetVideoGravity,
-        autoSkipIntroEnabled = viewModel.autoSkipIntroEnabled.collectAsState().value,
-        onSetAutoSkipIntro = viewModel::onSetAutoSkipIntro,
+        letterboxExpansion = viewModel.letterboxExpansion.collectAsState().value,
+        onSetLetterboxExpansion = viewModel::onSetLetterboxExpansion,
+        introSkipMode = viewModel.introSkipMode.collectAsState().value,
+        onSetIntroSkipMode = viewModel::onSetIntroSkipMode,
         autoPlayNextEnabled = viewModel.autoPlayNextEnabled.collectAsState().value,
         onSetAutoPlayNext = viewModel::onSetAutoPlayNext,
         hdrEnabled = viewModel.hdrEnabled.collectAsState().value,

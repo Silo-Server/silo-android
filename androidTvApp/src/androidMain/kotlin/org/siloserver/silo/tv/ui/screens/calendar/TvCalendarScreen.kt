@@ -1001,6 +1001,16 @@ private fun CalendarList(
         if (!isReturningToControls) {
             isReturningToControls = true
             snapScope.launch {
+                // The controls row is list item zero, and focusing a shelf
+                // snaps that shelf to the top — which scrolls item zero out of
+                // the composed window. A requester on an un-composed row is
+                // not attached, so every claim below was refused and Up from
+                // the first shelf looked dead. Bring it back first; the date's
+                // on-focus scroll then finds nothing left to move.
+                if (listState.layoutInfo.visibleItemsInfo.none { it.index == 0 }) {
+                    listState.animateScrollToItem(0)
+                    withFrameNanos { }
+                }
                 // Claim the date; its on-focus callback owns the sole vertical
                 // animation. Keeping one scroll authority avoids the small
                 // hitch caused by focus bring-into-view and two list animations
@@ -1086,9 +1096,6 @@ private fun CalendarList(
         modifier = Modifier
             .fillMaxSize()
             .padding(top = TvTopMenuLayout.contentTopInset)
-            // The day claim above lands on a row inside this list, so "focus is
-            // in the list" is the arrival it is waiting on.
-            .onFocusChanged { selectedDayHasFocus = it.hasFocus }
             .focusGroup(),
         contentPadding = PaddingValues(
             top = Spacing.sm,
@@ -1097,7 +1104,14 @@ private fun CalendarList(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item(key = "calendar-controls") {
-            controls(onCalendarControlFocused)
+            // Arrival for the shelf→controls Up hand-off is "the CONTROLS row
+            // holds focus". This used to be observed on the whole list, which
+            // is already true while a shelf card is focused — so the claim
+            // returned "focused" without ever requesting, and Up from the first
+            // shelf was a silent no-op that re-armed 80ms later.
+            Box(modifier = Modifier.onFocusChanged { selectedDayHasFocus = it.hasFocus }) {
+                controls(onCalendarControlFocused)
+            }
         }
 
         // Keep the control item in this same LazyColumn for every data state.

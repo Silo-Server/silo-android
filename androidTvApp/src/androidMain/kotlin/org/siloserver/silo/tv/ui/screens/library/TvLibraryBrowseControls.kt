@@ -94,6 +94,11 @@ fun TvBrowseControlRow(
     onFilter: () -> Unit,
     onClearFilters: () -> Unit = {},
     modifier: Modifier = Modifier,
+    /**
+     * Lets a caller point its page-entry focus claim at the Sort pill when the
+     * grid below has no card to give it to (an empty or fully-filtered list).
+     */
+    sortPillFocusRequester: FocusRequester? = null,
 ) {
     // Clearing removes the Clear pill from composition; focus must hop to the
     // Filter pill first or it would snap away to the nearest surviving scope.
@@ -104,7 +109,14 @@ fun TvBrowseControlRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BrowseControlPill(onClick = onSort) { foreground ->
+        BrowseControlPill(
+            onClick = onSort,
+            modifier = if (sortPillFocusRequester != null) {
+                Modifier.focusRequester(sortPillFocusRequester)
+            } else {
+                Modifier
+            },
+        ) { foreground ->
             Icon(
                 imageVector = Icons.Filled.SwapVert,
                 contentDescription = null,
@@ -309,7 +321,8 @@ fun TvBrowseSortPanel(
                         maxLines = 1,
                     )
                     Spacer(modifier = Modifier.weight(1f))
-                    if (isCurrent) {
+                    // Source-order entries have no asc/desc to show or flip.
+                    if (isCurrent && option.hasDirection) {
                         Text(
                             text = option.directionLabel(order),
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),

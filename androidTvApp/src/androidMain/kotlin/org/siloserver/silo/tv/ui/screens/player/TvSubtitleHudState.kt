@@ -3,6 +3,8 @@ package org.siloserver.silo.tv.ui.screens.player
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
+import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
+import org.siloserver.silo.playback.subtitleMediaIdentityOrNull
 
 internal data class TvSubtitleHudOption(
     val stableId: String,
@@ -30,6 +32,49 @@ internal data class TvSubtitleHudPresentation(
     val onSelect: (SubtitleIdentity) -> Unit = {},
     val onFocused: (String) -> Unit = {},
 )
+
+/**
+ * Which subtitle-appearance controls actually reach the picture for the
+ * currently selected track.
+ *
+ * Image (PGS/DVB) captions are pre-rendered pixels: Media3's `SubtitlePainter`
+ * draws the cue's own bitmap and reads none of the caption style, so Font,
+ * Background, Opacity, Outline and the colour swatches are inert. Position and
+ * Size still work, because Silo rewrites the cue's geometry before handing it to
+ * the `SubtitleView` (see `remapBitmapCue` in android-shared).
+ *
+ * A server burn-in track has already been composited into the video frames, so
+ * nothing the client does can change it.
+ */
+internal data class TvSubtitleAppearanceApplicability(
+    /** Position and Size — the cue-geometry presets. */
+    val geometryApplies: Boolean,
+    /** Font, Background, Opacity, Outline and the colour swatches. */
+    val stylingApplies: Boolean,
+    /** One-line explanation for the pane, or null when everything applies. */
+    val note: String?,
+)
+
+internal fun tvSubtitleAppearanceApplicability(
+    identity: SubtitleIdentity?,
+): TvSubtitleAppearanceApplicability = when {
+    identity is SubtitleIdentity.ServerBurnIn -> TvSubtitleAppearanceApplicability(
+        geometryApplies = false,
+        stylingApplies = false,
+        note = "Burned-in subtitles are part of the video and keep the server's styling.",
+    )
+    isBitmapSubtitleCodecFamily(identity?.subtitleMediaIdentityOrNull()?.codecFamily) ->
+        TvSubtitleAppearanceApplicability(
+            geometryApplies = true,
+            stylingApplies = false,
+            note = "Image subtitles keep their own styling — only Position and Size apply.",
+        )
+    else -> TvSubtitleAppearanceApplicability(
+        geometryApplies = true,
+        stylingApplies = true,
+        note = null,
+    )
+}
 
 internal fun tvSubtitleOptionStableId(identity: SubtitleIdentity): String =
     encodeSubtitleIdentityPreference(identity)

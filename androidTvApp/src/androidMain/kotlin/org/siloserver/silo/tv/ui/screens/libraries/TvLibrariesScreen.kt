@@ -16,7 +16,12 @@ import org.koin.compose.viewmodel.koinViewModel
 @Composable
 fun TvLibrariesScreen(
     onItemClick: (contentId: String) -> Unit,
-    onLibraryCollectionClick: (libraryId: Int, collectionId: String, title: String) -> Unit,
+    onLibraryCollectionClick: (
+        libraryId: Int,
+        collectionId: String,
+        title: String,
+        libraryType: String,
+    ) -> Unit,
     // User-created collections resolve via a different catalog source, so they
     // route to the user-collection detail rather than the library one (#69).
     onUserCollectionClick: (collectionId: String, title: String) -> Unit,
@@ -51,7 +56,12 @@ fun TvLibrariesScreen(
                         if (isUserCollection) {
                             onUserCollectionClick(collectionId, title)
                         } else {
-                            onLibraryCollectionClick(selectedLibrary.id, collectionId, title)
+                            onLibraryCollectionClick(
+                                selectedLibrary.id,
+                                collectionId,
+                                title,
+                                selectedLibrary.type,
+                            )
                         }
                     },
                     onInitialContentFocus = onInitialContentFocus,

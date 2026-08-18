@@ -15,10 +15,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -61,6 +63,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -151,9 +155,24 @@ fun PlayerControls(
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 24.dp, vertical = 12.dp)
         } else {
+            // In landscape the safe-drawing insets are lopsided (camera cutout
+            // on one edge, nothing on the other), so padding by them directly
+            // pushes the toolbar and progress bar off the device's centre line.
+            // Apply the larger horizontal inset to BOTH sides: the controls stay
+            // clear of the camera and remain centred on the display.
+            val density = LocalDensity.current
+            val layoutDirection = LocalLayoutDirection.current
+            val safeDrawing = WindowInsets.safeDrawing
+            val horizontalInset = with(density) {
+                maxOf(
+                    safeDrawing.getLeft(this, layoutDirection),
+                    safeDrawing.getRight(this, layoutDirection),
+                ).toDp()
+            }
             Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .windowInsetsPadding(safeDrawing.only(WindowInsetsSides.Vertical))
+                .padding(horizontal = horizontalInset)
                 .padding(16.dp)
         }
 
@@ -226,12 +245,21 @@ fun PlayerControls(
                 }
             }
         } else {
+            // The toolbar and progress bar respect the safe-drawing insets, but
+            // those insets are asymmetric in landscape (cutout on one side,
+            // navigation bar on the other), so a transport row inside the same
+            // padded column lands visibly off-center. Anchor the transport
+            // cluster to the true center of the overlay instead.
             Column(modifier = contentModifier) {
                 toolbar()
                 Spacer(modifier = Modifier.weight(1f))
-                transportControls()
-                Spacer(modifier = Modifier.weight(1f))
                 progressBar()
+            }
+            Box(
+                modifier = Modifier.align(Alignment.Center),
+                contentAlignment = Alignment.Center,
+            ) {
+                transportControls()
             }
         }
     }

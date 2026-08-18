@@ -51,6 +51,14 @@ class PgsSupExtractor(
      * track then appears as `mounted=[1:]` and the pick dies on its deadline.
      */
     private val sourceFormat: Format,
+    /**
+     * The live player-timeline position, in microseconds, when the sidecar is
+     * mounted through [SidecarSubtitleMediaSource]. The video is allowed to
+     * run ahead of this download, so a set can arrive after the playhead has
+     * already passed it; the guard in [flushDisplaySet] uses whichever is
+     * later — the seek point or this — so such a set is history too.
+     */
+    private val playbackFloorUsProvider: () -> Long = { 0L },
 ) : Extractor {
 
     private val cueEncoder = CueEncoder()
@@ -71,6 +79,24 @@ class PgsSupExtractor(
     private var emittedCues = 0
     private var lastIndexedTimeUs = 0L
     private var lastIndexedPosition = 0L
+
+    /**
+     * The player-timeline position this read started from — Media3's own seek
+     * target for a resume or scrub, or the reset seek at first load. Anything
+     * that lands before it is history and never becomes a sample; see
+     * [flushDisplaySet].
+     */
+    private var seekTimeUs = 0L
+
+    /**
+     * The last history display set seen, still framed. PGS ends a caption
+     * only with the next set, so the newest set at or before the seek point
+     * IS the caption on screen at that moment; it is decoded and published
+     * once — at the seek point — before the first in-window set.
+     */
+    private var carriedSet: ByteArray? = null
+    private var carriedSetTimeUs = C.TIME_UNSET
+    private var skippedHistorySets = 0
 
     // ProgressiveMediaPeriod coerces every seek to zero when an extractor
     // advertises an unseekable map. In a MergingMediaSource that makes a PGS
@@ -123,6 +149,9 @@ class PgsSupExtractor(
             input.readFully(headerScratch, 0, SEGMENT_HEADER_SIZE)
         } catch (_: EOFException) {
             discardPendingDisplaySet()
+            // A resume past the last caption: whatever was in force there —
+            // usually the clear that ended it — is still the truth on screen.
+            parser?.let { publishCarriedSet(it, output) }
             return Extractor.RESULT_END_OF_INPUT
         }
         val header = ParsableByteArray(headerScratch)
@@ -228,58 +257,115 @@ class PgsSupExtractor(
         val output = trackOutput ?: return
         if (timeUs == C.TIME_UNSET) return
 
+        // A SUP is always read from byte zero (or from a coarse indexed point
+        // below the target), so every set before the seek point streams
+        // through here first. PGS is CUE_REPLACEMENT_BEHAVIOR_REPLACE with no
+        // duration: were those history sets published — clamped to zero on a
+        // re-anchored timeline, or simply timestamped in the past — each one
+        // would be "the newest cue at or before the position" for as long as
+        // it took the next to download, and the viewer would watch the film's
+        // entire caption history replay while the video buffered at the resume
+        // point. Hold only the newest history set and let the rest go.
+        //
+        // The same applies past the seek point once the video has been let
+        // run ahead of this download: a set the playhead has already passed
+        // would flash for one render tick if published, so the floor is the
+        // later of the seek point and the live position.
+        val adjustedTimeUs = timeUs + offsetUsProvider()
+        val floorUs = maxOf(seekTimeUs, playbackFloorUsProvider())
+        if (adjustedTimeUs < floorUs) {
+            carriedSet = bytes
+            carriedSetTimeUs = timeUs
+            skippedHistorySets++
+            if (skippedHistorySets == 1 || skippedHistorySets % 500 == 0) {
+                org.siloserver.silo.common.player.SubDiag.log(
+                    "SUP history skipped=$skippedHistorySets t=${timeUs / 1000}ms " +
+                        "floor=${floorUs / 1000}ms",
+                )
+            }
+            return
+        }
+        publishCarriedSet(activeParser, output)
+
         emittedSets++
         if (emittedSets <= 3 || emittedSets % 200 == 0) {
             org.siloserver.silo.common.player.SubDiag.log(
                 "SUP set=$emittedSets t=${timeUs / 1000}ms bytes=${bytes.size}",
             )
         }
-        // The bundled Media3 PGS parser trusts the display set's own 16-bit
-        // width/height: it allocates IntArray(width * height) and applies RLE
-        // runs with no pixel bound of its own. A corrupt or hostile set can
-        // therefore throw NegativeArraySizeException, an oversized-run
-        // IllegalArgumentException, or ask for an allocation large enough to
-        // take the process down on a low-memory box.
-        //
-        // Bounding the byte length upstream does not help — a handful of bytes
-        // can declare an enormous bitmap. So the parse is contained here, and a
-        // damaged caption costs one missing subtitle rather than the film.
-        //
-        // OutOfMemoryError is caught deliberately. It is not an error this
-        // process caused by being unhealthy; it is one specific allocation
-        // sized by untrusted input, and refusing to catch it on principle means
-        // a bad caption kills playback.
-        val decoded = try {
-            decodeDisplaySet(activeParser, bytes, timeUs)
-        } catch (e: Exception) {
-            malformedSets++
-            org.siloserver.silo.common.player.SubDiag.log(
-                "SUP set $emittedSets rejected: ${e::class.simpleName}: ${e.message}",
-            )
-            null
-        } catch (e: OutOfMemoryError) {
-            // Narrow by construction: this block now contains only parsing and
-            // cue encoding, both sized by the display set's own declared
-            // dimensions. It is not a general OOM handler — the sample queue is
-            // no longer inside it.
-            malformedSets++
-            org.siloserver.silo.common.player.SubDiag.log(
-                "SUP set $emittedSets exhausted memory and was dropped",
-            )
-            null
+        val decoded = decodeGuarded(activeParser, bytes, timeUs) ?: return
+        publishDisplaySet(output, decoded, adjustedTimeUs.coerceAtLeast(0L))
+        val indexedTimeUs = adjustedTimeUs.coerceAtLeast(0L)
+        if (
+            position > lastIndexedPosition &&
+            indexedTimeUs > lastIndexedTimeUs
+        ) {
+            seekMap.addSeekPoint(indexedTimeUs, position)
+            lastIndexedTimeUs = indexedTimeUs
+            lastIndexedPosition = position
         }
-        decoded?.let {
-            publishDisplaySet(output, it, timeUs)
-            val indexedTimeUs = (timeUs + offsetUsProvider()).coerceAtLeast(0L)
-            if (
-                position > lastIndexedPosition &&
-                indexedTimeUs > lastIndexedTimeUs
-            ) {
-                seekMap.addSeekPoint(indexedTimeUs, position)
-                lastIndexedTimeUs = indexedTimeUs
-                lastIndexedPosition = position
-            }
-        }
+    }
+
+    /**
+     * Publish the caption in force at the point the read caught up, if one was
+     * carried past it. It is timestamped at its own time, or at the seek point
+     * if that is later — the player's queue starts there, and on a re-anchored
+     * timeline its own time may well be negative. Every set that follows it
+     * lies at or after the floor, which is at or after the seek point, so it
+     * never pre-empts one; and until then it is "the newest cue at or before
+     * the position", which for REPLACE is exactly what shows.
+     */
+    private fun publishCarriedSet(activeParser: SubtitleParser, output: TrackOutput) {
+        val bytes = carriedSet ?: return
+        val timeUs = carriedSetTimeUs
+        carriedSet = null
+        carriedSetTimeUs = C.TIME_UNSET
+        val decoded = decodeGuarded(activeParser, bytes, timeUs) ?: return
+        val sampleTimeUs = maxOf(timeUs + offsetUsProvider(), seekTimeUs).coerceAtLeast(0L)
+        org.siloserver.silo.common.player.SubDiag.log(
+            "SUP carried caption t=${timeUs / 1000}ms -> ${sampleTimeUs / 1000}ms " +
+                "after skipping $skippedHistorySets",
+        )
+        publishDisplaySet(output, decoded, sampleTimeUs)
+    }
+
+    /**
+     * The bundled Media3 PGS parser trusts the display set's own 16-bit
+     * width/height: it allocates IntArray(width * height) and applies RLE
+     * runs with no pixel bound of its own. A corrupt or hostile set can
+     * therefore throw NegativeArraySizeException, an oversized-run
+     * IllegalArgumentException, or ask for an allocation large enough to
+     * take the process down on a low-memory box.
+     *
+     * Bounding the byte length upstream does not help — a handful of bytes
+     * can declare an enormous bitmap. So the parse is contained here, and a
+     * damaged caption costs one missing subtitle rather than the film.
+     *
+     * OutOfMemoryError is caught deliberately. It is not an error this
+     * process caused by being unhealthy; it is one specific allocation
+     * sized by untrusted input, and refusing to catch it on principle means
+     * a bad caption kills playback. Narrow by construction: the block
+     * contains only parsing and cue encoding, both sized by the display
+     * set's own declared dimensions — the sample queue is not inside it.
+     */
+    private fun decodeGuarded(
+        activeParser: SubtitleParser,
+        bytes: ByteArray,
+        timeUs: Long,
+    ): List<ByteArray>? = try {
+        decodeDisplaySet(activeParser, bytes, timeUs)
+    } catch (e: Exception) {
+        malformedSets++
+        org.siloserver.silo.common.player.SubDiag.log(
+            "SUP set $emittedSets rejected: ${e::class.simpleName}: ${e.message}",
+        )
+        null
+    } catch (e: OutOfMemoryError) {
+        malformedSets++
+        org.siloserver.silo.common.player.SubDiag.log(
+            "SUP set $emittedSets exhausted memory and was dropped",
+        )
+        null
     }
 
     /**
@@ -320,12 +406,19 @@ class PgsSupExtractor(
         return encodedSamples
     }
 
-    /** Publish decoded samples. Nothing here can throw on untrusted input. */
-    private fun publishDisplaySet(output: TrackOutput, samples: List<ByteArray>, timeUs: Long) {
+    /**
+     * Publish decoded samples at [sampleTimeUs], already on the player
+     * timeline. Nothing here can throw on untrusted input.
+     */
+    private fun publishDisplaySet(
+        output: TrackOutput,
+        samples: List<ByteArray>,
+        sampleTimeUs: Long,
+    ) {
         samples.forEach { encoded ->
             output.sampleData(ParsableByteArray(encoded), encoded.size)
             output.sampleMetadata(
-                (timeUs + offsetUsProvider()).coerceAtLeast(0L),
+                sampleTimeUs,
                 C.BUFFER_FLAG_KEY_FRAME,
                 encoded.size,
                 0,
@@ -340,6 +433,10 @@ class PgsSupExtractor(
         displaySetPosition = C.POSITION_UNSET.toLong()
         displaySetSegmentCount = 0
         failedClosed = false
+        seekTimeUs = timeUs
+        carriedSet = null
+        carriedSetTimeUs = C.TIME_UNSET
+        skippedHistorySets = 0
         parser?.reset()
     }
 

@@ -1,6 +1,5 @@
 package org.siloserver.silo.repository
 
-import org.siloserver.silo.model.auth.AuthSession
 import org.siloserver.silo.model.auth.InvitationLookupResponse
 import org.siloserver.silo.model.auth.LoginResponse
 import org.siloserver.silo.model.auth.LoginRequest
@@ -164,14 +163,6 @@ class AuthRepository(
             tokenManager.signOutCurrentServer()
         }
     }
-
-    /** Lists active sessions for the current user. */
-    suspend fun getSessions(): ApiResult<List<AuthSession>> =
-        authApi.getSessions().map { it.sessions }
-
-    /** Revokes a specific session by ID. */
-    suspend fun deleteSession(id: String): ApiResult<Unit> =
-        authApi.revokeSession(id)
 
     /** Returns true when a refresh token is present (user has previously logged in). */
     suspend fun isLoggedIn(): Boolean =

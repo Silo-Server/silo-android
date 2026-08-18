@@ -52,9 +52,16 @@ class PersonalListViewModelGenerationTest {
     private class TestList : PersonalListViewModel(pageSize = 2) {
         val pending = ArrayDeque<CompletableDeferred<ApiResult<CatalogResponse>>>()
         val offsets = mutableListOf<Int>()
+        /** The query each fetch actually went out under, in order. */
+        val queries = mutableListOf<PersonalListQuery>()
 
-        override suspend fun fetchPage(offset: Int, limit: Int): ApiResult<CatalogResponse> {
+        override suspend fun fetchPage(
+            offset: Int,
+            limit: Int,
+            query: PersonalListQuery,
+        ): ApiResult<CatalogResponse> {
             offsets += offset
+            queries += query
             val deferred = CompletableDeferred<ApiResult<CatalogResponse>>()
             pending.addLast(deferred)
             return deferred.await()
@@ -186,6 +193,39 @@ class PersonalListViewModelGenerationTest {
         assertFalse(vm.uiState.value.isRefreshing, "isRefreshing must not outlive the refresh that claimed it")
         assertFalse(vm.uiState.value.isLoading)
         assertEquals(listOf("x", "y"), vm.uiState.value.items.map { it.contentId })
+    }
+
+    /**
+     * A sort/filter change reloads from zero under the new query, and does so
+     * through the same generation bump every other replacement uses — so a page
+     * still in flight under the OLD query cannot append its differently-ordered
+     * items onto the new list.
+     */
+    @Test
+    fun applyQueryReloadsUnderTheNewQueryAndDropsTheSupersededPage() = runTest {
+        val vm = TestList()
+        vm.start()
+        vm.pending.removeFirst().complete(page("a", "b", hasMore = true))
+
+        vm.loadMore()
+        val stalePage = vm.pending.removeFirst()
+
+        val sorted = PersonalListQuery(sort = "title", order = "asc")
+        vm.applyQuery(sorted)
+        assertEquals(listOf(0, 2, 0), vm.offsets)
+        assertEquals(sorted, vm.queries.last(), "the reload must carry the new query")
+        assertEquals(sorted, vm.uiState.value.query)
+
+        vm.pending.removeFirst().complete(page("x", "y"))
+        assertEquals(listOf("x", "y"), vm.uiState.value.items.map { it.contentId })
+
+        stalePage.complete(page("c", "d"))
+        assertEquals(listOf("x", "y"), vm.uiState.value.items.map { it.contentId })
+        assertFalse(vm.uiState.value.isLoadingMore)
+
+        // Re-applying the same query is a no-op — nothing re-fetches.
+        vm.applyQuery(sorted)
+        assertEquals(3, vm.offsets.size)
     }
 
     @Test

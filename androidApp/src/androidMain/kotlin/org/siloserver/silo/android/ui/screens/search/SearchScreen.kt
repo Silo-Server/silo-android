@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -60,6 +63,8 @@ fun SearchScreen(
     initialMediaType: MobileSearchMediaType? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val voiceAvailableState = rememberVoiceSearchAvailability()
+    val voiceAvailable = voiceAvailableState.value
     val personalDataRepository: PersonalDataRepository = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
@@ -107,7 +112,17 @@ fun SearchScreen(
                 query = state.query,
                 onQueryChanged = { viewModel.onQueryChanged(it) },
                 onClear = { viewModel.clearSearch() },
+                onVoiceQuery = { viewModel.onVoiceQuery(it) },
+                voiceAvailable = voiceAvailable,
+                onVoiceUnavailable = { voiceAvailableState.value = false },
             )
+
+            if (state.isSearching) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
 
             if (state.query.isNotBlank() && state.availableMediaTypes.size > 1) {
                 SingleChoiceSegmentedButtonRow(
@@ -127,7 +142,7 @@ fun SearchScreen(
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(8.dp))
             }
 
             @Composable
@@ -181,14 +196,34 @@ fun SearchScreen(
 
             when {
                 state.isSearching && state.results.isEmpty() -> {
-                    // iOS shows a blank surface (Color.clear) while the first
-                    // page is in flight — no spinner.
-                    Box(modifier = Modifier.fillMaxSize())
+                    // Sits in the top part of the content area, matching the
+                    // empty state's offset, so it stays visible above the IME
+                    // instead of being centred in the space the keyboard covers.
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Spacer(modifier = Modifier.height(80.dp))
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Searching…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 !state.hasSearched && state.query.isBlank() -> {
                     SearchEmptyState(
                         text = "Search Silo",
-                        subtitle = "Find movies, shows, books, audio, and people.",
+                        subtitle = if (voiceAvailable) {
+                            "Find movies, shows, books, audio, and people. " +
+                                "Tap the mic to search by voice."
+                        } else {
+                            "Find movies, shows, books, audio, and people."
+                        },
                     )
                 }
                 state.error != null && state.results.isEmpty() -> {
@@ -212,6 +247,10 @@ fun SearchScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
                             )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            FilledTonalButton(onClick = { viewModel.retry() }) {
+                                Text("Retry")
+                            }
                         }
                     }
                 }

@@ -2,21 +2,21 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.SubDiag
 import org.siloserver.silo.common.player.MountedSubtitleTrack
-import org.siloserver.silo.common.player.resolveMountedSubtitle
 import org.siloserver.silo.common.player.trackIdDenotes
 import org.siloserver.silo.common.player.subtitleArtifactTrackId
+import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 
 /**
- * Who asked for a subtitle mount, ordered by authority.
+ * Why a subtitle mount was asked for, ordered by authority.
  *
- * TV runs two mount pipelines at once: the subtitle transaction, and the legacy
- * restore/auto machinery that reacts to track changes. Both drive a single
- * remount latch and a single request channel, so without an explicit ordering
- * the last writer wins — and because a transaction's own replan republishes the
- * track list, the legacy pipeline reliably fires *after* the transaction and
- * overwrites the selection the user just made.
+ * Every mount now originates in the subtitle transaction adapter — the legacy
+ * ordinal pipeline that raced it is gone — but the adapter still serves three
+ * kinds of intent, and a weaker one arriving late must not evict a stronger one
+ * that is still being applied. That collision is what used to turn an applied
+ * subtitle back off: a rollback armed the pre-transaction identity (typically
+ * Off) over the selection the viewer had just made.
  *
  * Higher ordinal wins.
  */
@@ -35,6 +35,21 @@ internal data class TvSubtitleRemountOwner(
     val identity: SubtitleIdentity,
     val generation: Long,
     val priority: TvSubtitleMountPriority = TvSubtitleMountPriority.UserTransaction,
+)
+
+/**
+ * A mount the screen must apply to the player backend, carrying its owner.
+ *
+ * The owner travels WITH the request rather than sitting in a ViewModel field
+ * the acknowledgement reads back: that field was the reason an app-originated
+ * selection could be applied to the player and then dropped on the floor,
+ * because whoever emitted the request had armed no owner and the
+ * acknowledgement silently returned. An ownerless mount is now unrepresentable.
+ */
+internal data class TvSubtitleMountRequest(
+    val owner: TvSubtitleRemountOwner,
+    /** Media3 flat text-track ordinal, or -1 to disable text entirely. */
+    val trackIndex: Int,
 )
 
 internal class TvSubtitleSnapshotSettlementTracker {
@@ -160,8 +175,16 @@ internal class SubtitleRemountReselection(
         meaningfulSnapshotKeys.clear()
     }
 
+    /**
+     * @param subtitleRows the authoritative inventory rows, needed to resolve a
+     * server-row identity whose track is muxed into the stream rather than
+     * mounted as an authored artifact (see [tvResolveMountedSubtitleTrack]).
+     * Without them such an identity resolves to no ordinal at all, and a mount
+     * the adapter committed locally would fail and roll back.
+     */
     fun consume(
         subtitleTracks: List<PlayerTrackEntry>,
+        subtitleRows: List<PlayerSubtitleInfo> = emptyList(),
         snapshotKey: String?,
         settled: Boolean,
     ): TvSubtitleRemountEvent? {
@@ -180,7 +203,7 @@ internal class SubtitleRemountReselection(
 
         val mounted = subtitleTracks.map(PlayerTrackEntry::toMountedTvSubtitleTrack)
         val exactTrackId = owner.identity.exactTvMountTrackId()
-        val matchIndex = if (exactTrackId != null) {
+        val matchIndex = exactTrackId?.let { expected ->
             // Every candidate here denotes the SAME authored artifact id, so
             // multiple hits are the one sidecar merged more than once (Media3
             // prefixes each with its MergingMediaSource child index, e.g.
@@ -190,11 +213,23 @@ internal class SubtitleRemountReselection(
             // deadline blew and the transaction rolled back to Off. Ambiguity
             // between genuinely different tracks is still caught by the
             // metadata path below and by hasAmbiguousTvLabel.
-            mounted.filter { trackIdDenotes(it.trackId, exactTrackId) }
+            mounted.filter { trackIdDenotes(it.trackId, expected) }
                 .minByOrNull { it.index }
                 ?.index
-        } else {
-            resolveMountedSubtitle(identity = owner.identity, tracks = mounted)?.track?.index
+        } ?: when {
+            // An identity carrying a REAL Media3 id stays exact-only: falling
+            // back to metadata could mount a different track that merely looks
+            // alike. A sidecar's id is authored by us, not by the stream, and a
+            // v3 row describing a track muxed into a direct-play stream is
+            // typed as a sidecar all the same — so that id matches nothing and
+            // the mount hung until the deadline. Only that case may resolve
+            // through the row (see tvResolveMountedSubtitleTrack).
+            exactTrackId != null && owner.identity !is SubtitleIdentity.ServerSidecar -> null
+            else -> tvResolveMountedSubtitleTrack(
+                identity = owner.identity,
+                subtitleRows = subtitleRows,
+                mounted = mounted,
+            )?.index
         }
         SubDiag.log("REMOUNT consume id=${owner.identity} exact=$exactTrackId mounted=${mounted.map { it.trackId }} settled=$settled match=$matchIndex")
         if (matchIndex != null) {

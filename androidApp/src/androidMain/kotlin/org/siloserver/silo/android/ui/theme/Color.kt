@@ -18,6 +18,47 @@ val SiloOutline = Color.White.copy(alpha = 0.12f)
 val SiloDivider = Color.White.copy(alpha = 0.12f)
 val SiloOverlay = Color.Black.copy(alpha = 0.60f)
 
+// --- Grouped-surface palette (Silo web client parity) ---
+//
+// The OLED values above are the app's chrome: pure black grounds with
+// white-at-opacity on top. That reads well over artwork and badly over a long
+// form, where a card has to separate from its page without a border and a
+// hairline has to be visible without glowing. These are the web client's
+// settings values, and they fill M3's `surfaceContainer*` ladder — which
+// `darkColorScheme` otherwise leaves on its purple-tinted baseline.
+
+/** Lifted page ground for form-shaped screens. Web `--background`. */
+val SiloSettingsBackground = Color(0xFF141417)
+
+/** Grouped card surface. Web `--card`. */
+val SiloSurfaceContainer = Color(0xFF1C1C20)
+
+val SiloSurfaceContainerLowest = Color(0xFF060608)
+val SiloSurfaceContainerLow = Color(0xFF141417)
+val SiloSurfaceContainerHigh = Color(0xFF24242A)
+val SiloSurfaceContainerHighest = Color(0xFF2C2C33)
+val SiloSurfaceDim = Color(0xFF000000)
+val SiloSurfaceBright = Color(0xFF2C2C33)
+
+/** Hairline between rows and around inset controls. Web `--border`. */
+val SiloBorder = Color(0xFF28282E)
+
+/** Secondary copy on a grouped surface. Web `--muted-foreground`. */
+val SiloMutedText = Color(0xFF9696A0)
+
+/** Primary copy on a grouped surface. Web `--foreground`. */
+val SiloForeground = Color(0xFFE8E8EC)
+
+/**
+ * The single destructive tint.
+ *
+ * Settings previously carried two: `colorScheme.error` (0xFFB00020, an M3
+ * *light*-theme red that fails contrast on a dark card) for Sign Out and Reset
+ * Playback Overrides, and an iOS system red (0xFFFF453A) for Remove All
+ * Downloads. Web `--destructive`.
+ */
+val SiloDestructive = Color(0xFFEF4444)
+
 val SiloError = Color(0xFFB00020)
 val SiloOnError = Color(0xFFFFFFFF)
 val SiloSuccess = Color(0xFF34C759) // SwiftUI .green on dark

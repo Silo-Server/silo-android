@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -20,11 +19,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.auth.AuthColors
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.common.ui.components.isImageAvatar
+import org.siloserver.silo.common.ui.components.isEmojiAvatar
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
-import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
-import org.siloserver.silo.common.ui.components.resolveAvatarUrl
+import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 
 /**
  * Pre-defined avatar options using the server's supported preset vocabulary.
@@ -73,7 +72,7 @@ object AvatarOptions {
 /**
  * Displays a profile avatar as an image, emoji, or initials inside a coloured circle.
  *
- * @param avatar Avatar string stored on the profile (nullable).
+ * @param avatar Avatar ref + server-resolved URL for the profile.
  * @param name Profile name, used for initials fallback.
  * @param size Circle diameter.
  * @param selected Whether to show a highlight border.
@@ -81,7 +80,7 @@ object AvatarOptions {
  */
 @Composable
 fun ProfileAvatar(
-    avatar: String?,
+    avatar: ProfileAvatarRef,
     name: String,
     modifier: Modifier = Modifier,
     size: Dp = 72.dp,
@@ -91,12 +90,7 @@ fun ProfileAvatar(
     val displayText = profileAvatarDisplayText(avatar = avatar, name = name)
     // iOS ProfileAvatarView uses a single flat siloSurfaceVariant (#0E0F12).
     val bgColor = Color(0xFF0E0F12)
-    val serverUrl = rememberProfileServerUrl()
-    val resolvedAvatarUrl = remember(avatar, serverUrl) {
-        avatar
-            ?.takeIf(::isImageAvatar)
-            ?.let { resolveAvatarUrl(serverUrl, it) }
-    }
+    val avatarImage = rememberProfileAvatarImage(avatar)
 
     val borderModifier = if (selected) {
         Modifier.border(3.dp, AuthColors.Primary, CircleShape)
@@ -113,9 +107,9 @@ fun ProfileAvatar(
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
-        if (resolvedAvatarUrl != null) {
+        if (avatarImage != null) {
             ThumbhashImage(
-                url = resolvedAvatarUrl,
+                url = avatarImage.url,
                 thumbhash = null,
                 contentDescription = "$name avatar",
                 modifier = Modifier
@@ -123,11 +117,12 @@ fun ProfileAvatar(
                     .clip(CircleShape),
                 contentScale = ContentScale.Crop,
                 transparent = true,
+                cacheKey = avatarImage.cacheKey,
+                onError = avatarImage.onLoadFailed,
             )
         } else {
             // iOS: emoji at size*0.45; initials at size*0.34 semibold, onSurface.
-            val isEmoji = !avatar.isNullOrBlank() && !isImageAvatar(avatar)
-            if (isEmoji) {
+            if (isEmojiAvatar(avatar)) {
                 Text(
                     text = displayText,
                     fontSize = (size.value * 0.45).sp,
@@ -155,7 +150,9 @@ fun AvatarPickerItem(
     modifier: Modifier = Modifier,
 ) {
     ProfileAvatar(
-        avatar = avatarRef,
+        // Picker entries are always preset refs, never uploads, so there is no
+        // server URL to carry alongside them.
+        avatar = ProfileAvatarRef(avatarRef),
         name = "Profile avatar",
         modifier = modifier,
         size = 40.dp,

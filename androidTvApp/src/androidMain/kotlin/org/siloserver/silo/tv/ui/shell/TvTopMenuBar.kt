@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.shell
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
@@ -46,6 +47,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,9 +60,12 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
+import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.tv.ui.theme.ChromeSelectedBorder
 import org.siloserver.silo.tv.ui.theme.ChromeSelectedFill
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
@@ -130,7 +135,8 @@ private sealed class TvTopMenuFocus {
  * The custom top menu bar — the Skyline grammar from tvOS `TVTopMenuBar.swift`.
  *
  * Layout (three zones):
- * - Leading: the **SILO** wordmark (heavy, tracked).
+ * - Leading: the Silo brand lockup (`R.drawable.silo_wordmark`, see
+ *   [TvSiloWordmark]).
  * - Center: Search icon · `Home` · one inverted-capsule tab per visible
  *   library-type · `Calendar`, derived from [destinations] (the shell's
  *   `visibleRoots`), with an invisible search-size twin trailing the tabs so
@@ -507,7 +513,7 @@ fun TvTopMenuBar(
             },
         verticalAlignment = Alignment.Bottom,
     ) {
-        // Leading: SILO wordmark.
+        // Leading: the Silo brand lockup.
         Box(
             modifier = Modifier
                 .padding(start = TvSkyline.safeAreaX)
@@ -662,26 +668,50 @@ fun TvTopMenuBar(
 /** Minimal account view-data the menu bar + profile dropdown render. */
 data class TvAccountState(
     val displayName: String = "Profile",
-    val avatar: String? = null,
-    val avatarUrl: String? = null,
+    /** Avatar ref + server-resolved URL, kept together so neither is lost. */
+    val avatar: ProfileAvatarRef = ProfileAvatarRef.None,
     /** Secondary line under the name in the dropdown header (role / username). */
     val subtitle: String = "",
     /** Active server display name, shown in the dropdown header. */
     val serverName: String = "",
-    /** Whether the signed-in user is an acting admin (gates the Admin row). */
-    val isAdmin: Boolean = false,
 )
 
-/** Heavy, tracked SILO wordmark at the bar's leading edge (§5.1). */
+/**
+ * The Silo brand lockup at the bar's leading edge (§5.1).
+ *
+ * This is the shipped trademark artwork, not type: silo-branding's
+ * `silo-wordmark-white.svg` as its `derive.py` renders it for Android
+ * (`R.drawable.silo_wordmark`, 764x400). Branding's own rules pick both the
+ * variant and the treatment:
+ * - *"Pick the variant that contrasts with its background: dark art on light,
+ *   white on dark."* The menu bar is dark chrome, so the **white** lockup is the
+ *   correct cut — and it is the only wordmark `derive.py` emits for Android.
+ * - *"Don't recolour the mark, or add shadows, outlines or effects."* So, unlike
+ *   the `Text` this replaced, no `SiloOnSurface` tint is applied. The lockup's
+ *   type is already `#FFFFFF` and its three bars carry the signal palette; a
+ *   `ColorFilter` would flatten them and breach the trademark guidance.
+ * - *"Typeset 'Silo' in place of the supplied wordmark"* is on branding's
+ *   **Don't** list — which is precisely what the old `Text("SILO")` did.
+ *
+ * The PNG is used rather than a hand-built `VectorDrawable` because `derive.py`
+ * is branding's declared source of truth for downstream Android assets and emits
+ * exactly this file at exactly this path; a transcribed vector would fork the
+ * mark out of that pipeline and go stale the next time the artwork changes. It
+ * costs nothing in sharpness: the source is 764px wide against a ~46dp render
+ * (92px at the 320dpi TV reference, 184px even on a 4x surface).
+ *
+ * Height comes from [TvSkyline.wordmarkHeight]; the width follows the drawable's
+ * intrinsic 764:400 ratio (~45.8.dp) with [ContentScale.Fit], so the artwork is
+ * never stretched or cropped — also forbidden. Decorative: an `Image` adds no
+ * focusable node, so the bar's D-pad order is unchanged.
+ */
 @Composable
 private fun TvSiloWordmark() {
-    Text(
-        text = "SILO",
-        color = SiloOnSurface,
-        fontWeight = FontWeight.Black,
-        fontSize = TvSkyline.wordmarkSize,
-        letterSpacing = TvSkyline.wordmarkTracking,
-        maxLines = 1,
+    Image(
+        painter = painterResource(id = R.drawable.silo_wordmark),
+        contentDescription = "Silo",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.height(TvSkyline.wordmarkHeight),
     )
 }
 
@@ -890,6 +920,7 @@ private fun TvTopMenuAvatar(
     val avatarText = remember(accountState.avatar, accountState.displayName) {
         profileAvatarDisplayText(accountState.avatar, accountState.displayName)
     }
+    val avatarImage = rememberProfileAvatarImage(accountState.avatar)
     // The avatar circle plus a decorative unread badge anchored to its top-end
     // corner. The badge is purely informational — the profile Surface stays the
     // sole focus target, so the focus model is unchanged.
@@ -906,14 +937,16 @@ private fun TvTopMenuAvatar(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (accountState.avatarUrl != null) {
+            if (avatarImage != null) {
                 ThumbhashImage(
-                    url = accountState.avatarUrl,
+                    url = avatarImage.url,
                     thumbhash = null,
                     contentDescription = accountState.displayName,
                     modifier = Modifier.fillMaxHeight(),
                     contentScale = ContentScale.Crop,
                     transparent = true,
+                    cacheKey = avatarImage.cacheKey,
+                    onError = avatarImage.onLoadFailed,
                 )
             } else {
                 Text(

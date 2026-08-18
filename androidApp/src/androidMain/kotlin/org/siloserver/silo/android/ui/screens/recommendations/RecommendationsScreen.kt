@@ -29,6 +29,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,6 +42,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.siloserver.silo.android.ui.screens.personal.FavoritesGridContent
 import org.siloserver.silo.android.ui.screens.personal.WatchlistGridContent
+import org.siloserver.silo.android.ui.screens.personal.PersonalListControlsRow
+import org.siloserver.silo.android.ui.screens.personal.PersonalListSource
+import org.siloserver.silo.android.ui.screens.personal.queryState
+import org.siloserver.silo.android.ui.screens.personal.rememberPersonalListControls
+import org.siloserver.silo.viewmodel.PersonalListUiState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -50,26 +56,44 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
+import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
  * Phone Recommendations ("For You") screen.
  *
- * Mirrors iOS `RecommendationsView.swift` (phone) 1:1: a saved-shortcuts pill
- * row (Watchlist / Favorites) above the recommendation section rows, the same
- * SectionRow layout used by Home, iOS section spacing, and the iOS sparkles
- * empty state. The screen title + actions header is supplied by the shared
- * `MainAppTopBar` in `MainScreen` (matching iOS `TabTopBarActions`).
+ * Mirrors iOS `RecommendationsView.swift` (phone): a saved-shortcuts pill
+ * row (Watchlist / Favorites) above the feed, and the iOS sparkles empty
+ * state. The feed itself follows the Libraries "Recommended" shape — plain
+ * HomeSectionRow rows in server order, no hero carousel — so the browse
+ * surfaces read as one app. The screen title + actions header is supplied by the shared
+ * `MainAppTopBar` in `MainScreen` (matching iOS `TabTopBarActions`); the
+ * saved-list selection is hoisted there so the header title can name what is
+ * on screen (For You / Watchlist / Favorites).
+ *
+ * The pill row scrolls with the content rather than pinning, so nothing is
+ * clipped along a hard edge — rows slide under the header glass instead.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecommendationsScreen(
     onItemClick: (String) -> Unit,
+    savedListSelection: ForYouList?,
+    onSavedListSelectionChange: (ForYouList?) -> Unit,
+    /**
+     * What the screen is actually showing, for the header title. Differs from
+     * [savedListSelection] only in the empty-feed fallback, which shows the
+     * Watchlist without turning that into an explicit selection.
+     */
+    onDisplayedListChange: (ForYouList?) -> Unit = {},
     contentTopPadding: Dp = 0.dp,
     viewModel: RecommendationsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val inFallback = !state.isLoading && state.error == null && state.sections.isEmpty()
+    val displayedList = if (inFallback) savedListSelection ?: ForYouList.Watchlist else savedListSelection
+    LaunchedEffect(displayedList) { onDisplayedListChange(displayedList) }
 
     // Self-heal the "For You" fallback. The shared VM loads only in init{} and
     // survives tab switches (saveState/restoreState), so an empty server
@@ -94,8 +118,22 @@ fun RecommendationsScreen(
 
     when {
         state.isLoading && state.sections.isEmpty() -> {
-            // iOS phone loading state is an empty (Color.clear) placeholder.
-            Box(modifier = Modifier.fillMaxSize().padding(top = contentTopPadding))
+            // Skeleton in the shape of the feed (pill row + poster rows) so the
+            // tab is never a blank black page while recommendations load.
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = contentTopPadding + 16.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    SavedShortcutsRow(
+                        onWatchlistClick = { onSavedListSelectionChange(ForYouList.Watchlist) },
+                        onFavoritesClick = { onSavedListSelectionChange(ForYouList.Favorites) },
+                    )
+                }
+                MediaRowsSkeleton(rowCount = 3)
+            }
         }
 
         state.error != null && state.sections.isEmpty() -> {
@@ -134,116 +172,158 @@ fun RecommendationsScreen(
             // (e.g. embeddings disabled), the shortcut row becomes an inline
             // selector — Watchlist by default — over the saved-list grid,
             // instead of navigating away or showing an empty promise.
-            var savedListSelection by rememberSaveable { mutableStateOf(SavedList.Watchlist) }
-            Column(modifier = Modifier.fillMaxSize()) {
-                Spacer(modifier = Modifier.height(contentTopPadding + 8.dp))
-                SavedShortcutsRow(
-                    onWatchlistClick = { savedListSelection = SavedList.Watchlist },
-                    onFavoritesClick = { savedListSelection = SavedList.Favorites },
-                    selection = savedListSelection,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "No recommendations yet — showing your saved titles.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                // Explicit retry so the fallback is recoverable in place — the
-                // embedded grids below carry their own pull-to-refresh, so we do
-                // NOT wrap them in another PullToRefreshBox (nesting misbehaves).
-                OutlinedButton(
-                    onClick = { viewModel.refresh() },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                ) {
-                    Text("Check again")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                when (savedListSelection) {
-                    SavedList.Watchlist -> WatchlistGridContent(
-                        onItemClick = onItemClick,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
+            val selection = savedListSelection ?: ForYouList.Watchlist
+            val header: @Composable () -> Unit = {
+                Column {
+                    SavedShortcutsRow(
+                        onWatchlistClick = { onSavedListSelectionChange(ForYouList.Watchlist) },
+                        onFavoritesClick = { onSavedListSelectionChange(ForYouList.Favorites) },
+                        selection = selection,
                     )
-                    SavedList.Favorites -> FavoritesGridContent(
-                        onItemClick = onItemClick,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "No recommendations yet — showing your saved titles.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // Explicit retry so the fallback is recoverable in place — the
+                    // embedded grids carry their own pull-to-refresh, so we do
+                    // NOT wrap them in another PullToRefreshBox (nesting misbehaves).
+                    OutlinedButton(onClick = { viewModel.refresh() }) {
+                        Text("Check again")
+                    }
                 }
             }
+            SavedListGrid(
+                list = selection,
+                onItemClick = onItemClick,
+                contentTopPadding = contentTopPadding,
+                header = header,
+            )
         }
 
         else -> {
             // Watchlist / Favorites toggle IN PLACE over the recommendations feed
             // instead of navigating to a separate page (Jim 2026-07-09 — a
             // deliberate divergence from iOS, which navigates when recs exist).
-            // The pill row is pinned above the content so it is always reachable;
-            // null selection shows the recommendation sections, and re-tapping the
-            // active pill returns to them.
-            var savedListSelection by rememberSaveable { mutableStateOf<SavedList?>(null) }
-            Column(modifier = Modifier.fillMaxSize()) {
-                Spacer(modifier = Modifier.height(contentTopPadding + 8.dp))
+            // The pill row leads the content and scrolls with it; null selection
+            // shows the recommendation sections, and re-tapping the active pill
+            // returns to them.
+            val pills: @Composable () -> Unit = {
                 SavedShortcutsRow(
                     onWatchlistClick = {
-                        savedListSelection =
-                            if (savedListSelection == SavedList.Watchlist) null else SavedList.Watchlist
+                        onSavedListSelectionChange(
+                            if (savedListSelection == ForYouList.Watchlist) null else ForYouList.Watchlist,
+                        )
                     },
                     onFavoritesClick = {
-                        savedListSelection =
-                            if (savedListSelection == SavedList.Favorites) null else SavedList.Favorites
+                        onSavedListSelectionChange(
+                            if (savedListSelection == ForYouList.Favorites) null else ForYouList.Favorites,
+                        )
                     },
                     selection = savedListSelection,
-                    modifier = Modifier.padding(horizontal = 16.dp),
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                when (savedListSelection) {
-                    SavedList.Watchlist -> WatchlistGridContent(
-                        onItemClick = onItemClick,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
-                    )
-                    SavedList.Favorites -> FavoritesGridContent(
-                        onItemClick = onItemClick,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
-                    )
-                    null -> PullToRefreshBox(
-                        isRefreshing = state.isRefreshing,
-                        onRefresh = { viewModel.refresh() },
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
+            }
+            when (savedListSelection) {
+                null -> PullToRefreshBox(
+                    isRefreshing = state.isRefreshing,
+                    onRefresh = { viewModel.refresh() },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        // Content starts under the header glass and keeps room for
+                        // the floating bottom nav while preserving iOS section
+                        // rhythm inside the list. Top = header + the grid's own
+                        // 16dp inset so the pills sit at the same y in both modes.
+                        contentPadding = PaddingValues(
+                            top = contentTopPadding + 16.dp,
+                            bottom = 24.dp + LocalBottomChromeInset.current,
+                        ),
+                        // iOS sectionSpacing (phone) = largePadding (24).
+                        verticalArrangement = Arrangement.spacedBy(24.dp),
                     ) {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            // Keep room for the floating bottom nav while preserving
-                            // iOS section rhythm inside the list.
-                            contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChromeInset.current),
-                            // iOS sectionSpacing (phone) = largePadding (24).
-                            verticalArrangement = Arrangement.spacedBy(24.dp),
-                        ) {
-                            items(
-                                items = state.sections,
-                                key = { it.id },
-                            ) { section ->
-                                HomeSectionRow(
-                                    section = section,
-                                    onItemClick = onItemClick,
-                                )
-                            }
+                        item(key = "savedShortcuts") {
+                            Box(modifier = Modifier.padding(horizontal = 16.dp)) { pills() }
+                        }
+                        items(
+                            items = state.sections,
+                            key = { it.id },
+                        ) { section ->
+                            // No "See All" — iOS has no such affordance, so the
+                            // row omits it when onSeeAllClick is null.
+                            HomeSectionRow(
+                                section = section,
+                                onItemClick = onItemClick,
+                            )
                         }
                     }
                 }
+                else -> SavedListGrid(
+                    list = savedListSelection,
+                    onItemClick = onItemClick,
+                    contentTopPadding = contentTopPadding,
+                    header = pills,
+                )
             }
         }
     }
 }
 
-/** Which saved list the empty-state fallback is showing. */
-private enum class SavedList { Watchlist, Favorites }
+/** Which saved list For You is showing; null is the recommendations feed. */
+enum class ForYouList { Watchlist, Favorites }
+
+/** Header title for the current For You content. */
+fun ForYouList?.headerTitle(): String = when (this) {
+    null -> "For You"
+    ForYouList.Watchlist -> "Watchlist"
+    ForYouList.Favorites -> "Favorites"
+}
+
+@Composable
+private fun SavedListGrid(
+    list: ForYouList,
+    onItemClick: (String) -> Unit,
+    contentTopPadding: Dp,
+    header: @Composable () -> Unit,
+) {
+    val contentPadding = PaddingValues(
+        top = contentTopPadding,
+        bottom = 24.dp + LocalBottomChromeInset.current,
+    )
+    // Sort/filter controls (TV parity), shared with the standalone
+    // Watchlist / Favorites screens through the activity-scoped holder.
+    val source = when (list) {
+        ForYouList.Watchlist -> PersonalListSource.Watchlist
+        ForYouList.Favorites -> PersonalListSource.Favorites
+    }
+    val controls = rememberPersonalListControls(source)
+    val query by controls.queryState()
+    val gridHeader: @Composable (PersonalListUiState) -> Unit = { state ->
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            header()
+            PersonalListControlsRow(controls = controls, total = state.total)
+        }
+    }
+    when (list) {
+        ForYouList.Watchlist -> WatchlistGridContent(
+            onItemClick = onItemClick,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = contentPadding,
+            query = query,
+            header = gridHeader,
+        )
+        ForYouList.Favorites -> FavoritesGridContent(
+            onItemClick = onItemClick,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = contentPadding,
+            query = query,
+            header = gridHeader,
+        )
+    }
+}
+
 
 /**
  * Watchlist / Favorites pill row. Mirrors iOS `SavedShortcutsRow` (phone):
@@ -256,7 +336,7 @@ private fun SavedShortcutsRow(
     onFavoritesClick: () -> Unit,
     modifier: Modifier = Modifier,
     /** Non-null renders the pills as an inline selector (fallback mode). */
-    selection: SavedList? = null,
+    selection: ForYouList? = null,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -267,13 +347,13 @@ private fun SavedShortcutsRow(
             title = "Watchlist",
             icon = Icons.Filled.Bookmark,
             onClick = onWatchlistClick,
-            selected = selection == SavedList.Watchlist,
+            selected = selection == ForYouList.Watchlist,
         )
         SavedShortcutPill(
             title = "Favorites",
             icon = Icons.Filled.Favorite,
             onClick = onFavoritesClick,
-            selected = selection == SavedList.Favorites,
+            selected = selection == ForYouList.Favorites,
         )
     }
 }

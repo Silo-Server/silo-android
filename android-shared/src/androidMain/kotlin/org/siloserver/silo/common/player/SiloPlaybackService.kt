@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player
 
 import android.content.Intent
+import android.os.Bundle
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -85,6 +86,34 @@ class SiloPlaybackService : MediaSessionService() {
             }
             return true
         }
+
+        /**
+         * True when [connectionHints] belong to the synthetic caller Media3
+         * fabricates for a media-button event that started the service
+         * (`MediaSessionService.createFallbackMediaButtonCaller`). It is not a
+         * real controller — it exists only so [onGetSession] can accept or
+         * refuse being cold-started by a transport key.
+         */
+        internal fun isMediaButtonFallbackCaller(connectionHints: Bundle): Boolean =
+            connectionHints.getString(
+                MediaSessionService.CONNECTION_HINT_KEY_CONTROLLER_INFO_TYPE,
+            ) == Intent.ACTION_MEDIA_BUTTON
+
+        /**
+         * Pure decision shared by both start-path guards below: the service has
+         * nothing it could possibly act on when no media is queued, it is not
+         * already running as a foreground playback service, and no controller is
+         * connected to it. That combination only occurs when something outside
+         * the app cold-started us — a remote key or a stale PendingIntent — and
+         * it is the state in which the service must terminate rather than sit
+         * idle waiting for a `startForeground()` that will never come.
+         */
+        internal fun hasNothingToServe(
+            queuedMediaItemCount: Int,
+            isPlaybackOngoing: Boolean,
+            connectedControllerCount: Int,
+        ): Boolean =
+            queuedMediaItemCount == 0 && !isPlaybackOngoing && connectedControllerCount == 0
     }
 
     private val playerFactory: SiloPlayerFactory by inject()
@@ -212,11 +241,86 @@ class SiloPlaybackService : MediaSessionService() {
     private fun createPlaybackPlayer(): Player =
         playerFactory.createPlayer()
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
-        mediaSession
+    /**
+     * Live read of [hasNothingToServe] against the service's current state.
+     * `isPlaybackOngoing()` is Media3's own "am I a running foreground playback
+     * service" flag, so this is false for every state reached through normal
+     * playback.
+     */
+    private fun hasNothingToServeNow(): Boolean = hasNothingToServe(
+        queuedMediaItemCount = (activePlayer ?: mediaSession?.player)?.mediaItemCount ?: 0,
+        isPlaybackOngoing = isPlaybackOngoing(),
+        connectedControllerCount = mediaSession?.connectedControllers?.size ?: 0,
+    )
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        // Because our manifest advertises `MediaSessionService.SERVICE_INTERFACE`
+        // and declares no MediaButtonReceiver, Media3 registers this service as
+        // the session's media-button target using
+        // `PendingIntent.getForegroundService()` (MediaSessionLegacyStub). A
+        // transport key on a TV remote is therefore delivered by the system as
+        // `startForegroundService(SiloPlaybackService)` even when our process is
+        // cold — which arms the platform's 10-second "call startForeground() or
+        // be killed" watchdog (ActiveServices.SERVICE_START_FOREGROUND_TIMEOUT).
+        //
+        // Media3 already guards that case, but only through this method: when
+        // onGetSession() refuses the synthetic media-button caller it runs its
+        // own `stopSelfSafely()`, which posts a throwaway foreground
+        // notification, immediately drops it again and stops the service. That
+        // is the only shutdown sequence that is legal for a
+        // startForegroundService() launch — a bare stopSelf() would be killed by
+        // the same watchdog.
+        //
+        // We used to return the session unconditionally, so that guard never
+        // ran. The freshly built player was idle with an empty timeline,
+        // MediaNotificationManager.shouldShowNotification() bails out on an empty
+        // timeline, nothing ever called startForeground(), and ten seconds later
+        // the watchdog killed the whole app with RemoteServiceException —
+        // observed twice on a Shield (API 30, Media3 1.10.1) while the user was
+        // pressing remote keys on the sign-in screen.
+        //
+        // Refusing here is safe for real playback: once a session has been added
+        // to the service Media3 resolves media buttons via getSessionByUri() and
+        // never calls onGetSession() at all, so this branch is unreachable while
+        // anything is playing. Silo also implements no
+        // `MediaSession.Callback.onPlaybackResumption`, so a cold transport key
+        // has genuinely nothing to resume — declining it costs no product
+        // behaviour. Every other caller (the phone/TV player screens, system and
+        // Assistant controllers) still gets the session unconditionally.
+        if (isMediaButtonFallbackCaller(controllerInfo.connectionHints) && hasNothingToServeNow()) {
+            android.util.Log.i(
+                TAG,
+                "Declining media-button cold start: nothing queued to play",
+            )
+            return null
+        }
+        return mediaSession
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (dispatchPictureInPictureAction(intent, activePlayer ?: mediaSession?.player)) {
+            // PiP transport actions reach us through `PendingIntent.getService()`
+            // (SiloPictureInPictureCoordinator), i.e. a plain startService(), so
+            // unlike the media-button PendingIntent above this branch does not arm
+            // the start-foreground watchdog and returning without calling
+            // startForeground() cannot crash us. Keep it that way: switching that
+            // PendingIntent to getForegroundService() would make this path fatal in
+            // exactly the way onGetSession() documents.
+            //
+            // It can still cold-start the process from a PiP window that outlived
+            // us. PipActionCapability regenerates its token per process, so a stale
+            // intent fails authorisation, dispatch is refused, and we would be left
+            // running an idle service and player forever. Terminate instead.
+            // pauseAllPlayersAndStopSelf() is Media3's own termination path and is
+            // documented as safe only while playback is not ongoing, which is
+            // precisely what hasNothingToServeNow() establishes.
+            if (hasNothingToServeNow()) {
+                android.util.Log.i(
+                    TAG,
+                    "Stopping service after unusable PiP action: nothing queued to play",
+                )
+                pauseAllPlayersAndStopSelf()
+            }
             return START_STICKY
         }
         return super.onStartCommand(intent, flags, startId)

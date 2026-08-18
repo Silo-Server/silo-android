@@ -5,19 +5,15 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
-import org.siloserver.silo.model.admin.shouldShowClientAdminSurface
-import org.siloserver.silo.model.auth.AuthSession
 import org.siloserver.silo.model.auth.User
-import org.siloserver.silo.model.auth.isActingAdmin
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
-import org.siloserver.silo.repository.ProfileRepository
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,12 +43,7 @@ data class SettingsUiState(
     val user: User? = null,
     val serverUrl: String = "",
     val isLoadingUser: Boolean = false,
-    val sessions: List<AuthSession> = emptyList(),
-    val isLoadingSessions: Boolean = false,
-    val showSessions: Boolean = false,
     val loggedOut: Boolean = false,
-    // Client admin is hidden for now even when the server would accept acting-admin.
-    val isAdminVisible: Boolean = false,
 
     // Whether this server serves the canonical settings API. When it reports
     // SERVER_UPGRADE_REQUIRED the screen explains that instead of rendering
@@ -72,7 +63,7 @@ data class SettingsUiState(
     // BCP 47 tag, "" = no preference. The picker converts to and from labels.
     val audioLanguage: String = "",
     val audioLanguageSuggestions: List<String> = emptyList(),
-    val autoSkipIntro: Boolean = false,
+    val introSkipMode: IntroSkipMode = IntroSkipMode.Default,
     val autoSkipCredits: Boolean = false,
     val pictureInPictureEnabled: Boolean = true,
     val dolbyVisionEnabled: Boolean = true,
@@ -119,7 +110,6 @@ data class SettingsUiState(
 class SettingsViewModel(
     private val authRepository: AuthRepository,
     private val playerSettingsStore: PlayerSettingsStore,
-    private val profileRepository: ProfileRepository,
     private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
     private val overlayPrefsStore: OverlayPrefsStore,
     private val notificationsRepository: NotificationsRepository,
@@ -153,46 +143,9 @@ class SettingsViewModel(
 
             playerSettingsStore.refreshFromServer()
 
-            // The profile still supplies identity (name, role) for the admin
-            // gate; its preference columns no longer feed this screen — those
-            // are resolved canonically below.
-            // Bounded retry, in the ViewModel rather than the screen. The admin
-            // gate fails closed on an unresolved profile, so a transient
-            // failure would otherwise hide the Admin row from a genuine owner
-            // for the life of this ViewModel. Bounded because the far more
-            // common reason for "no admin row" is simply not being an admin,
-            // and an unbounded retry would hammer the API for every ordinary
-            // user forever.
-            var profileResult = profileRepository.getActiveProfileResult()
-            var attempt = 1
-            while (profileResult !is ApiResult.Success && attempt < PROFILE_RESOLVE_ATTEMPTS) {
-                delay(PROFILE_RESOLVE_RETRY_MS)
-                profileResult = profileRepository.getActiveProfileResult()
-                attempt += 1
-            }
-            when (profileResult) {
-                is ApiResult.Success -> {
-                    val profile = profileResult.data
-                    _uiState.update {
-                        it.copy(
-                            isAdminVisible = shouldShowClientAdminSurface(isActingAdmin(it.user, profile)),
-                        )
-                    }
-                }
-                is ApiResult.Error, is ApiResult.NetworkError -> {
-                    // Retries exhausted: the profile is unresolved, so the
-                    // admin surface stays hidden. The account role is the same
-                    // on every profile in the household, and without the
-                    // profile there is nothing to tell the owner from a child.
-                    // This branch is why the bug was reachable — a settings
-                    // load that merely failed used to reveal Admin on any
-                    // profile. It reappears next time Settings is opened.
-                    _uiState.update {
-                        it.copy(isAdminVisible = shouldShowClientAdminSurface(isActingAdmin(it.user, null)))
-                    }
-                }
-            }
-
+            // The active profile is no longer resolved here. It existed only to
+            // decide the admin gate, which this screen no longer has; the
+            // profile-scoped *preferences* are resolved canonically below.
             loadProfileSettings()
         }
     }
@@ -231,7 +184,7 @@ class SettingsViewModel(
         val quality: String,
         val maxBitrateKbps: Int?,
         val audioLanguage: String,
-        val autoSkipIntro: Boolean,
+        val introSkipMode: IntroSkipMode,
         val autoSkipCredits: Boolean,
     )
 
@@ -240,7 +193,7 @@ class SettingsViewModel(
             playerSettingsStore.preferredQualityFlow,
             playerSettingsStore.maxBitrateKbpsFlow,
             playerSettingsStore.audioLanguageFlow,
-            playerSettingsStore.autoSkipIntroFlow,
+            playerSettingsStore.introSkipModeFlow,
             playerSettingsStore.autoSkipCreditsFlow,
             ::PlayerSettingsSnapshot,
         ).onEach { snap ->
@@ -249,7 +202,7 @@ class SettingsViewModel(
                     qualityResolution = snap.quality,
                     maxBitrateKbps = snap.maxBitrateKbps,
                     audioLanguage = snap.audioLanguage,
-                    autoSkipIntro = snap.autoSkipIntro,
+                    introSkipMode = snap.introSkipMode,
                     autoSkipCredits = snap.autoSkipCredits,
                 )
             }
@@ -395,39 +348,6 @@ class SettingsViewModel(
         viewModelScope.launch { notificationsRepository.updatePreferences(update) }
     }
 
-    fun loadSessions() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoadingSessions = true, showSessions = true) }
-            when (val result = authRepository.getSessions()) {
-                is ApiResult.Success -> {
-                    _uiState.update {
-                        it.copy(sessions = result.data, isLoadingSessions = false)
-                    }
-                }
-                is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update { it.copy(isLoadingSessions = false) }
-                }
-            }
-        }
-    }
-
-    fun hideSessions() {
-        _uiState.update { it.copy(showSessions = false) }
-    }
-
-    fun revokeSession(id: String) {
-        viewModelScope.launch {
-            when (authRepository.deleteSession(id)) {
-                is ApiResult.Success -> {
-                    _uiState.update { state ->
-                        state.copy(sessions = state.sessions.filter { it.id != id })
-                    }
-                }
-                is ApiResult.Error, is ApiResult.NetworkError -> Unit
-            }
-        }
-    }
-
     fun logout() {
         viewModelScope.launch {
             // Push any in-flight settings before tearing down the session.
@@ -465,8 +385,8 @@ class SettingsViewModel(
         }
     }
 
-    fun setAutoSkipIntro(enabled: Boolean) {
-        viewModelScope.launch { playerSettingsStore.setAutoSkipIntro(enabled) }
+    fun setIntroSkipMode(mode: IntroSkipMode) {
+        viewModelScope.launch { playerSettingsStore.setIntroSkipMode(mode) }
     }
 
     fun setAutoSkipCredits(enabled: Boolean) {
@@ -631,12 +551,3 @@ class SettingsViewModel(
     private fun downloadQualityWireValue(value: String): String =
         DownloadQuality.entries.firstOrNull { it.label == value }?.wire ?: DownloadQuality.Original.wire
 }
-
-/**
- * How many times the profile lookup is retried before the admin gate settles.
- *
- * Small on purpose. The overwhelmingly common reason for no admin row is not
- * being an admin, so this must not become a retry loop for every ordinary user.
- */
-private const val PROFILE_RESOLVE_ATTEMPTS = 3
-private const val PROFILE_RESOLVE_RETRY_MS = 400L

@@ -33,6 +33,18 @@ private val SiloDarkColorScheme = darkColorScheme(
     onSurface = SiloOnSurface,
     surfaceVariant = SiloSurfaceVariant,
     onSurfaceVariant = SiloSecondaryText,
+    // `darkColorScheme` leaves the container ladder on M3's purple-tinted
+    // baseline, so anything reaching for `surfaceContainer*` used to land off
+    // the Silo palette entirely (the cast bars did, and the settings cards
+    // avoided the roles by borrowing `primaryContainer`). Populated so the
+    // roles mean what they say.
+    surfaceContainerLowest = SiloSurfaceContainerLowest,
+    surfaceContainerLow = SiloSurfaceContainerLow,
+    surfaceContainer = SiloSurfaceContainer,
+    surfaceContainerHigh = SiloSurfaceContainerHigh,
+    surfaceContainerHighest = SiloSurfaceContainerHighest,
+    surfaceDim = SiloSurfaceDim,
+    surfaceBright = SiloSurfaceBright,
     outline = SiloOutline,
     outlineVariant = SiloOutline,
     inverseSurface = SiloOnSurface,

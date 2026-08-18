@@ -46,10 +46,13 @@ import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
 import org.siloserver.silo.common.player.video.canPlayResolvedStreamDirectly
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
+import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroAutoSkipState
+import org.siloserver.silo.domain.player.IntroSkipMode
+import org.siloserver.silo.domain.player.settlingFalseEdges
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.VersionChapter
@@ -138,8 +141,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Phase 1: progress reporting + 404/outage recovery is now delegated to
  * [PlaybackSessionLifecycle]. Per-profile playback preferences are read from
- * [PlayerSettingsStore]. Intro auto-skip behavior (countdown ring, cancel,
- * one-shot fire) is owned by [IntroAutoSkipController].
+ * [PlayerSettingsStore]. The intro-skip prompt (never / ask / always, its
+ * timer, and which intros the viewer has already decided) is owned by
+ * [IntroAutoSkipController].
  */
 /** A transient remote "display_message"; [id] makes repeats re-trigger the toast. */
 data class RemoteMessage(val id: Long, val text: String)
@@ -541,8 +545,17 @@ class PlayerViewModel(
     /** A server "display_message" to surface transiently; null = nothing. */
     val remoteMessage: StateFlow<RemoteMessage?> = _remoteMessage.asStateFlow()
 
-    /** Intro auto-skip banner state. UI consumes this directly. */
+    /** Intro skip pill state. UI consumes this directly. */
     val introSkipState: StateFlow<IntroAutoSkipState> = introAutoSkipController.state
+
+    /** Bumps whenever the pill's timer (re)starts, so the fill can re-anchor. */
+    val introSkipCountdownRun: StateFlow<Int> = introAutoSkipController.countdownRun
+
+    /** False while the pill is up but its timer is frozen by a pause. */
+    val introSkipTimerRunning: StateFlow<Boolean> = introAutoSkipController.timerRunning
+
+    /** Total seconds a fresh intro prompt runs for, for the fill's arithmetic. */
+    val introSkipTotalSeconds: Int = introAutoSkipController.totalCountdownSeconds
 
     /**
      * Transient player notice (server reconnecting, suspend warnings, etc.) emitted by
@@ -561,6 +574,11 @@ class PlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1.0)
     val videoGravity: StateFlow<String> = playerSettingsStore.videoGravityFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, "fit")
+    /** Modulates "fit" only: expand past a letterbox that is encoded into the
+     *  picture. Never changes what [videoGravity] itself stores or means. */
+    val letterboxExpansion: StateFlow<String> =
+        playerSettingsStore.letterboxExpansionFlow
+            .stateIn(viewModelScope, SharingStarted.Eagerly, LetterboxExpansion.Default)
     // iOS parity (PlayerOrientationCoordinator): the phone player defaults to
     // landscape-locked; "rotateFreely" is the persisted opt-out written by the
     // HUD lock toggle. Any other stored value (including the legacy "auto"
@@ -578,8 +596,8 @@ class PlayerViewModel(
     val orientationLockedResolved: StateFlow<Boolean?> = playerSettingsStore.orientationModeFlow
         .map { it != ORIENTATION_MODE_ROTATE_FREELY }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
-    val autoSkipIntroEnabled: StateFlow<Boolean> = playerSettingsStore.autoSkipIntroFlow
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val introSkipMode: StateFlow<IntroSkipMode> = playerSettingsStore.introSkipModeFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, IntroSkipMode.Default)
     val autoPlayNextEnabled: StateFlow<Boolean> = playerSettingsStore.autoPlayNextFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     // Seconds before end to surface the Up Next card when no credits marker
@@ -1382,7 +1400,7 @@ class PlayerViewModel(
             introRange = _uiState
                 .map { it.intro }
                 .distinctUntilChanged(),
-            autoSkipEnabled = playerSettingsStore.autoSkipIntroFlow,
+            mode = playerSettingsStore.introSkipModeFlow,
             introKey = _uiState
                 .map { state ->
                     state.intro?.let { intro ->
@@ -1391,7 +1409,17 @@ class PlayerViewModel(
                     }
                 }
                 .distinctUntilChanged(),
-            onAutoSkipFire = { seekToSec -> onSeek(seekToSec) },
+            onSeek = { seekToSec -> onSeek(seekToSec) },
+            // Filtered, not raw: isPlaying dips for a rebuffer exactly as it
+            // does for a deliberate pause, and a pause that reaches the
+            // controller freezes the timer. isPaused is the viewer's own press
+            // and needs no filtering, so it freezes on the frame of the press.
+            playbackActive = _uiState
+                .map { it.isPlaying && !it.isLoading }
+                .settlingFalseEdges(
+                    graceMillis = PLAYBACK_PAUSE_GRACE_MS,
+                    deliberatelyInactive = _uiState.map { it.isPaused },
+                ),
         )
     }
 
@@ -3569,22 +3597,22 @@ class PlayerViewModel(
         }
     }
 
-    /** Skip the intro (legacy alias used by PlayerOverlay). Same effect as [onSkipIntroNow]. */
-    fun onSkipIntro() {
-        onSkipIntroNow()
+    /**
+     * The intro pill's primary action — a tap on it. The controller decides
+     * where it goes: the intro's end for the `ask` offer, its start for
+     * `always`'s undo. A no-op when no pill is showing.
+     */
+    fun onSelectIntroPrompt() {
+        val target = introAutoSkipController.select() ?: return
+        onSeek(target)
     }
 
-    /** Skip the intro now: seek to the end of the intro range and clear any active countdown. */
-    fun onSkipIntroNow() {
-        val intro = _uiState.value.intro ?: return
-        onSeek(intro.end)
-        introAutoSkipController.cancelCountdown()
-    }
-
-    /** Cancel an in-flight auto-skip countdown — banner falls back to the manual Skip button. */
-    fun onCancelIntroAutoSkip() {
-        introAutoSkipController.cancelCountdown()
-    }
+    /**
+     * System back while the intro pill is showing: take it down and resolve the
+     * intro without moving playback. True when a pill was actually dismissed,
+     * so the caller consumes the press only then.
+     */
+    fun onDismissIntroPrompt(): Boolean = introAutoSkipController.dismiss()
 
     // ---- F2 next-episode auto-advance + pass-out protection ----
 
@@ -3885,6 +3913,10 @@ class PlayerViewModel(
         viewModelScope.launch { playerSettingsStore.setVideoGravity(value) }
     }
 
+    fun onSetLetterboxExpansion(value: String) {
+        viewModelScope.launch { playerSettingsStore.setLetterboxExpansion(value) }
+    }
+
     /** HUD lock toggle — persisted like iOS's `setPlayerOrientationMode`. */
     fun onSetOrientationLocked(locked: Boolean) {
         viewModelScope.launch {
@@ -3894,8 +3926,8 @@ class PlayerViewModel(
         }
     }
 
-    fun onSetAutoSkipIntro(value: Boolean) {
-        viewModelScope.launch { playerSettingsStore.setAutoSkipIntro(value) }
+    fun onSetIntroSkipMode(value: IntroSkipMode) {
+        viewModelScope.launch { playerSettingsStore.setIntroSkipMode(value) }
     }
 
     fun onSetAutoPlayNext(value: Boolean) {
@@ -4345,6 +4377,13 @@ class PlayerViewModel(
 }
 
 /** Snapshots to let a local audio switch take before asking the server. */
+/**
+ * How long `isPlaying == false` must hold before it counts as a pause rather
+ * than a rebuffer, for the intro prompt's timer. The spec's
+ * PLAYBACK_PAUSE_GRACE_MS; TV carries the same constant.
+ */
+private const val PLAYBACK_PAUSE_GRACE_MS = 1_500L
+
 private const val MAX_LOCAL_AUDIO_ATTEMPTS = 3
 
 internal fun authoritativePlaybackSubtitleOrdinal(
