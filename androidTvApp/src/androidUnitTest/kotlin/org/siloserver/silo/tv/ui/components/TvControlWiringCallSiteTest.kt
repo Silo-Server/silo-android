@@ -44,14 +44,6 @@ class TvControlWiringCallSiteTest {
                 primitive = ".clickable(",
                 wiring = "enabled = enabled",
             ),
-            // Delegates rather than owning a primitive: the pill it hands
-            // `interactive` to is itself asserted below.
-            StructuralControl(
-                path = "ui/components/TvAnchoredSelectorMenu.kt",
-                composable = "TvAnchoredSelectorMenu",
-                primitive = "SquaredPillSurface(",
-                wiring = "enabled = interactive",
-            ),
             StructuralControl(
                 path = "ui/components/TvSquaredButtons.kt",
                 composable = "SquaredPillSurface",
@@ -126,6 +118,44 @@ class TvControlWiringCallSiteTest {
                 "$path:$control must not hand in-flight gating to the focus graph",
             )
         }
+    }
+
+    /**
+     * The selector pill is the one deliberate exception to both rules above,
+     * and it is an exception because it is not a control.
+     *
+     * A pill with a single real choice — one version, one audio track — is not
+     * a disabled button; it is Apple's `TVSelectorValue`, a value display that
+     * happens to sit in a row of buttons. `SquaredPillSurface` routes `enabled`
+     * into `Modifier.clickable`, and a disabled clickable is also unfocusable,
+     * so wiring `interactive` into it would delete the pill from the focus
+     * graph. Most titles have exactly one version and one audio track, so that
+     * is not a rare edge: the common case would draw three pills and let the
+     * viewer reach none of them, with Down from the action row skipping the
+     * cluster outright.
+     *
+     * So this pill stays focusable and no-ops on Select, and the chevron —
+     * hidden when the pill will not open — is what carries the signal.
+     */
+    @Test
+    fun singleChoiceSelectorPillStaysFocusableAndNoOps() {
+        val selector = source("ui/components/TvAnchoredSelectorMenu.kt")
+            .declarationBody("TvAnchoredSelectorMenu")
+
+        assertFalse(
+            selector.argumentsOf("SquaredPillSurface(").containsLoosely("enabled ="),
+            "the selector pill must stay focusable, so it must not hand its trigger an enabled flag",
+        )
+        assertEquals(
+            1,
+            selector.countLoosely("onClick = { if (interactive) expansionRequested = true }"),
+            "a non-interactive selector pill must swallow Select rather than leave the focus graph",
+        )
+        assertEquals(
+            1,
+            selector.countLoosely("if (interactive) {"),
+            "the chevron must be hidden when the pill will not open",
+        )
     }
 
     /**

@@ -206,7 +206,16 @@ fun TvAnchoredSelectorMenu(
             onClick = { if (interactive) expansionRequested = true },
             modifier = Modifier,
             focusRequester = triggerFr,
-            enabled = interactive,
+            // Deliberately NOT `enabled = interactive`. A single-choice pill is
+            // not a disabled control — it is Apple's `TVSelectorValue`, a value
+            // display that stays focusable and simply does nothing on Select.
+            // `SquaredPillSurface` routes `enabled` into `Modifier.clickable`,
+            // and a disabled clickable is also unfocusable, so handing it
+            // `interactive` would drop the pill out of D-pad traversal. Most
+            // titles have one version and one audio track, so that would strand
+            // the row: three pills drawn, none reachable, and Down from the
+            // action row skipping the whole cluster. The chevron below is
+            // hidden instead, which is what tells the viewer it will not open.
             // Secondary .compact pill body padding, tvOS 40×22pt → 20×11dp,
             // +2/+1 per design review.
             contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),

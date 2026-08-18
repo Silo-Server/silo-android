@@ -55,6 +55,13 @@ import org.siloserver.silo.player.DolbyVisionDetection
  * Subtitles) — the phone counterpart of the TV detail's selector row.
  * Icon + group label on the left, the current value (ellipsized) and a
  * chevron on the right; tap opens the matching bottom-sheet picker.
+ *
+ * [interactive] = false when the group holds a single real choice (one
+ * version, one audio track, one subtitle track), mirroring Apple's
+ * `DetailPlaybackFormatting.shouldEnable*Selector`. The row then keeps its
+ * box and its value but drops the chevron and the tap target: a picker whose
+ * only outcome is the value already printed is a dead end, not a choice. The
+ * "Auto"/"Off" rows the sheets prepend are pseudo-entries and do not count.
  */
 @Composable
 fun TrackSelectorRow(
@@ -63,6 +70,7 @@ fun TrackSelectorRow(
     value: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    interactive: Boolean = true,
 ) {
     Row(
         modifier = modifier
@@ -70,7 +78,7 @@ fun TrackSelectorRow(
             .clip(RoundedCornerShape(8.dp))
             .background(DarkSurfaceVariant.copy(alpha = 0.7f))
             .border(1.dp, DarkOutline, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .then(if (interactive) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -97,12 +105,14 @@ fun TrackSelectorRow(
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1f),
         )
-        Icon(
-            imageVector = Icons.Outlined.KeyboardArrowDown,
-            contentDescription = "Select",
-            modifier = Modifier.size(14.dp),
-            tint = Color.White.copy(alpha = 0.62f),
-        )
+        if (interactive) {
+            Icon(
+                imageVector = Icons.Outlined.KeyboardArrowDown,
+                contentDescription = "Select",
+                modifier = Modifier.size(14.dp),
+                tint = Color.White.copy(alpha = 0.62f),
+            )
+        }
     }
 }
 

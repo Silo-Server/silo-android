@@ -268,6 +268,11 @@ fun MovieDetailContent(
                             label = "Video",
                             value = formatVersionValueLabel(selectedVersion, isAutoVersion),
                             onClick = { showVersionPicker = true },
+                            // Apple's shouldEnable*Selector: a picker is offered
+                            // only when there is more than one real choice. The
+                            // sheets' Auto/Off rows are pseudo-entries and do
+                            // not count toward it.
+                            interactive = detail.versions.size > 1,
                         )
                         if (audioTracks.isNotEmpty()) {
                             TrackSelectorRow(
@@ -275,6 +280,7 @@ fun MovieDetailContent(
                                 label = "Audio",
                                 value = formatAudioValueLabel(audioTracks, selectedAudioIndex, selectedVersion?.effectiveAudioTrackIndex),
                                 onClick = { showAudioPicker = true },
+                                interactive = audioTracks.size > 1,
                             )
                         }
                         if (subtitleTracks.isNotEmpty()) {
@@ -283,6 +289,7 @@ fun MovieDetailContent(
                                 label = "Subtitles",
                                 value = formatSubtitleValueLabel(subtitleTracks, selectedSubtitleIndex),
                                 onClick = { showSubtitlePicker = true },
+                                interactive = subtitleTracks.size > 1,
                             )
                         }
                     }

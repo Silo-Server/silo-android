@@ -8,7 +8,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import org.siloserver.silo.tv.ui.components.TvSelectorOption
 
 class TvPlaybackFormattingTest {
 
@@ -23,23 +22,23 @@ class TvPlaybackFormattingTest {
         assertFalse(isAudioSelectorOptionSelected(0, 1))
     }
 
-    @Test fun selectorNeedsAtLeastTwoEnabledFinalOptions() {
-        val onlyAction = selectorOption("auto")
-        val unavailable = selectorOption("unknown", enabled = false)
-
-        assertFalse(selectorIsInteractive(emptyList()))
-        assertFalse(selectorIsInteractive(listOf(onlyAction, unavailable)))
-        assertTrue(selectorIsInteractive(listOf(onlyAction, selectorOption("off"))))
+    @Test fun selectorNeedsMoreThanOneRealChoice() {
+        assertFalse(selectorIsInteractive(0))
+        assertFalse(selectorIsInteractive(1))
+        assertTrue(selectorIsInteractive(2))
     }
 
-    @Test fun onePhysicalSubtitleTrackStillLeavesThreeActions() {
-        val options = listOf(
-            selectorOption("subtitle:auto"),
-            selectorOption("subtitle:off"),
-            selectorOption("subtitle:track:1"),
-        )
+    /**
+     * The rule counts REAL choices, so the pseudo-entries the menus prepend do
+     * not make a single-track file interactive. A lone subtitle track assembles
+     * three menu rows (Auto · Off · the track) but is still one choice, and the
+     * old enabled-row count read that as a dropdown worth opening — the bug this
+     * replaced. Apple applies the same `shouldEnableSubtitleSelector` rule.
+     */
+    @Test fun pseudoEntriesDoNotMakeASingleTrackInteractive() {
+        val subtitleTracksOnAOneTrackFile = 1
 
-        assertTrue(selectorIsInteractive(options))
+        assertFalse(selectorIsInteractive(subtitleTracksOnAOneTrackFile))
     }
 
     @Test fun automaticNoTrackCopyMatchesTvOs() {
@@ -714,15 +713,6 @@ class TvPlaybackFormattingTest {
     @Test fun editions_emptyWhenNoVersions() {
         assertTrue(TvPlaybackFormatting.editions(emptyList()).isEmpty())
     }
-
-    private fun selectorOption(key: String, enabled: Boolean = true) = TvSelectorOption(
-        key = key,
-        title = key,
-        detail = "",
-        selected = false,
-        enabled = enabled,
-        onSelect = {},
-    )
 
     // --- builders matching the real Android model constructors ---
 

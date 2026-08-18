@@ -41,8 +41,18 @@ internal fun isAudioSelectorOptionSelected(
     selectedAudioTrackIndex: Int?,
 ): Boolean = optionIndex == selectedAudioTrackIndex
 
-internal fun selectorIsInteractive(options: List<TvSelectorOption>): Boolean =
-    options.count(TvSelectorOption::enabled) > 1
+/**
+ * Apple's `DetailPlaybackFormatting.shouldEnable*Selector`: a selector opens a
+ * menu only when there is more than one REAL choice — scoped versions, audio
+ * tracks, subtitle tracks or editions.
+ *
+ * The "Auto" and "Off" rows the menus prepend are pseudo-entries, not choices,
+ * so they are deliberately NOT counted. Counting them (the previous rule, which
+ * counted enabled menu rows) made every single-track file's Audio pill and every
+ * single-version file's Version pill open a dropdown whose only real outcome was
+ * the value already printed on the pill.
+ */
+internal fun selectorIsInteractive(realChoiceCount: Int): Boolean = realChoiceCount > 1
 
 @Composable
 fun TvPlaybackSelectorRow(
@@ -107,6 +117,16 @@ fun TvPlaybackSelectorRow(
             )
         }
     }
+    // Hoisted out of the buildList blocks below: these are the REAL choices, and
+    // their counts — not the assembled menu row counts, which carry Auto/Off —
+    // decide whether each pill is interactive.
+    val formattedAudioOptions =
+        TvPlaybackFormatting.audioOptions(currentVersion, selectedAudioTrackIndex)
+    val formattedSubtitleOptions = TvPlaybackFormatting.subtitleOptions(
+        currentVersion,
+        selectedSubtitleTrackIndex,
+        preferredLanguage = preferredSubtitleLanguage,
+    )
     val audioSelectorOptions = buildList {
         add(
             TvSelectorOption(
@@ -117,8 +137,6 @@ fun TvPlaybackSelectorRow(
                 onSelect = { onSelectAudioTrack(null) },
             ),
         )
-        val formattedAudioOptions =
-            TvPlaybackFormatting.audioOptions(currentVersion, selectedAudioTrackIndex)
         if (formattedAudioOptions.isEmpty()) {
             add(
                 TvSelectorOption(
@@ -163,11 +181,7 @@ fun TvPlaybackSelectorRow(
                 onSelect = { onSelectSubtitleTrack(-1) },
             ),
         )
-        TvPlaybackFormatting.subtitleOptions(
-            currentVersion,
-            selectedSubtitleTrackIndex,
-            preferredLanguage = preferredSubtitleLanguage,
-        ).forEach { option ->
+        formattedSubtitleOptions.forEach { option ->
             add(
                 TvSelectorOption(
                     key = "subtitle:${option.stableId}",
@@ -198,7 +212,7 @@ fun TvPlaybackSelectorRow(
                 label = "Edition",
                 value = currentEdition?.label ?: "Standard",
                 options = editionOptions,
-                interactive = selectorIsInteractive(editionOptions),
+                interactive = selectorIsInteractive(editions.size),
             )
         }
 
@@ -209,7 +223,7 @@ fun TvPlaybackSelectorRow(
             label = "Version",
             value = TvPlaybackFormatting.versionShortLabel(currentVersion),
             options = versionOptions,
-            interactive = selectorIsInteractive(versionOptions),
+            interactive = selectorIsInteractive(scopedVersions.size),
         )
 
         // Audio
@@ -219,7 +233,7 @@ fun TvPlaybackSelectorRow(
             label = "Audio",
             value = TvPlaybackFormatting.audioValueLabel(currentVersion, selectedAudioTrackIndex),
             options = audioSelectorOptions,
-            interactive = selectorIsInteractive(audioSelectorOptions),
+            interactive = selectorIsInteractive(formattedAudioOptions.size),
         )
 
         // Subtitles — tvOS uses `captions.bubble`; Chat (bubble with text
@@ -243,7 +257,7 @@ fun TvPlaybackSelectorRow(
                 ),
             ),
             options = subtitleSelectorOptions,
-            interactive = selectorIsInteractive(subtitleSelectorOptions),
+            interactive = selectorIsInteractive(formattedSubtitleOptions.size),
         )
     }
 }
