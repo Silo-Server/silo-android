@@ -23,9 +23,18 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withTimeout
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import androidx.test.core.app.ApplicationProvider
+import org.siloserver.silo.android.ui.screens.browse.BrowsePrefsStore
 import org.siloserver.silo.catalog.filter.CatalogFacet
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.model.server.ServerEntry
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.PersonalDataApi
@@ -37,6 +46,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 @OptIn(ExperimentalCoroutinesApi::class)
+// BrowsePrefsStore writes through real SharedPreferences, so the persistence
+// regression below needs an Android context.
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = android.app.Application::class)
 class LibrariesViewModelTest {
     @Test
     fun recommendedResponseFromPreviousLibraryCannotReplaceCurrentLibraryRows() = runTest {
@@ -226,6 +239,46 @@ class LibrariesViewModelTest {
         }
     }
 
+    @Test
+    fun browseSortIsPersistedAndRestoredOnAFreshViewModel() = runTest {
+        val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val browsePrefs = BrowsePrefsStore(
+            context = ApplicationProvider.getApplicationContext(),
+            serverRegistry = FakeServerRegistry(),
+        )
+        val viewModel = fixture.viewModel(browsePrefs = browsePrefs)
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("sections:1")
+            viewModel.uiState.first { !it.isLoadingSections }
+            viewModel.selectTab(LibrariesSubtab.Browse)
+            fixture.awaitRequest("catalog:1:added_at:desc")
+
+            viewModel.selectBrowseSort(LibraryBrowseSort.Title)
+            // The sort is persisted before the reload is issued, so awaiting
+            // the re-sorted request is a sufficient sync point.
+            fixture.awaitRequest("catalog:1:title:asc")
+
+            val restored = fixture.viewModel(browsePrefs = browsePrefs)
+            val restoredStore = ViewModelStore().also { it.put("libraries-restored", restored) }
+            try {
+                val state = restored.uiState.first {
+                    !it.isLoadingLibraries && it.selectedLibraryId == 1
+                }
+                assertEquals(LibraryBrowseSort.Title, state.browseSort)
+                assertEquals("title", state.filterState.sort)
+                assertEquals("asc", state.filterState.order)
+            } finally {
+                restoredStore.clear()
+            }
+        } finally {
+            store.clear()
+            Dispatchers.resetMain()
+            fixture.close()
+        }
+    }
+
     private suspend fun LibrariesViewModel.onlyActiveRequest(): Job = withTimeout(5_000) {
         while (true) {
             val activeRequests = viewModelScope.coroutineContext[Job]
@@ -240,6 +293,26 @@ class LibrariesViewModelTest {
             }
         }
         error("Unreachable")
+    }
+
+    /** BrowsePrefsStore persists nothing without an active server + profile. */
+    private class FakeServerRegistry : ServerRegistry {
+        private val entry = ServerEntry(
+            id = "server-1",
+            url = "https://silo.test",
+            profileId = "profile-1",
+        )
+        override val entries: StateFlow<List<ServerEntry>> = MutableStateFlow(listOf(entry))
+        override val activeServerId: StateFlow<String?> = MutableStateFlow(entry.id)
+        override val activeEntry: StateFlow<ServerEntry?> = MutableStateFlow(entry)
+        override suspend fun addOrUpdate(url: String, fetchedName: String?): String = entry.id
+        override suspend fun rename(serverId: String, userOverrideName: String?) = Unit
+        override suspend fun setFetchedName(serverId: String, fetchedName: String?) = Unit
+        override suspend fun setProfileId(serverId: String, profileId: String?) = Unit
+        override suspend fun remove(serverId: String) = Unit
+        override suspend fun signOut(serverId: String) = Unit
+        override suspend fun switchTo(serverId: String) = Unit
+        override suspend fun touchActive() = Unit
     }
 
     private class DeferredLibrariesFixture(
@@ -285,10 +358,11 @@ class LibrariesViewModelTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
 
-        fun viewModel() = LibrariesViewModel(
+        fun viewModel(browsePrefs: BrowsePrefsStore? = null) = LibrariesViewModel(
             personalDataRepository = PersonalDataRepository(PersonalDataApi(client)),
             sectionRepository = SectionRepository(SectionApi(client)),
             catalogRepository = CatalogRepository(CatalogApi(client)),
+            browsePrefs = browsePrefs,
         )
 
         suspend fun awaitRequest(expected: String) {

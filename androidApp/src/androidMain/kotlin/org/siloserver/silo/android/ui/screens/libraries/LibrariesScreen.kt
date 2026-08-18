@@ -146,7 +146,21 @@ enum class LibraryBrowseSort(
 ) {
     RecentlyAdded("Recently Added", "added_at", "desc"),
     Title("Title", "title", "asc"),
-    ReleaseDate("Release Date", "release_date", "desc"),
+    ReleaseDate("Release Date", "release_date", "desc");
+
+    companion object {
+        /**
+         * The sort rides the persisted [CatalogFilterState] (same as
+         * BrowseViewModel), so restoring saved browse prefs also restores the
+         * chip label. [CatalogFilterState]'s own defaults are exactly
+         * [RecentlyAdded]'s pair, so a state saved before the sort travelled
+         * with it — or one naming a field this client does not offer — falls
+         * back to [RecentlyAdded].
+         */
+        fun fromFilterState(state: CatalogFilterState): LibraryBrowseSort =
+            entries.firstOrNull { it.sortField == state.sort && it.sortOrder == state.order }
+                ?: RecentlyAdded
+    }
 }
 
 data class LibrariesUiState(
@@ -248,6 +262,13 @@ class LibrariesViewModel(
                     // whatever filters are already active.
                     val restoreBrowsePrefs =
                         selectedLibraryId != null && selectedLibraryId != previousLibraryId
+                    // Null when there is nothing to restore, so the branches
+                    // below keep the live state untouched.
+                    val restoredFilterState = if (restoreBrowsePrefs) {
+                        browsePrefs?.savedState(selectedLibraryId) ?: CatalogFilterState()
+                    } else {
+                        null
+                    }
 
                     _uiState.update {
                         it.copy(
@@ -255,9 +276,12 @@ class LibrariesViewModel(
                             libraries = libraries,
                             selectedLibraryId = selectedLibraryId,
                             librariesError = null,
-                            filterState = if (restoreBrowsePrefs)
-                                (browsePrefs?.savedState(selectedLibraryId) ?: CatalogFilterState())
-                            else it.filterState,
+                            filterState = restoredFilterState ?: it.filterState,
+                            // The sort lives inside the persisted filter state,
+                            // so derive the chip from what was restored.
+                            browseSort = restoredFilterState
+                                ?.let(LibraryBrowseSort::fromFilterState)
+                                ?: it.browseSort,
                             preserveFilters = if (restoreBrowsePrefs)
                                 (browsePrefs?.preserveEnabled(selectedLibraryId) ?: true)
                             else it.preserveFilters,
@@ -297,6 +321,10 @@ class LibrariesViewModel(
         recommendedLoadedLibraryId = null
         browseLoadedLibraryId = null
         collectionsLoadedLibraryId = null
+        // Restore this library's persisted filter/sort state (iOS parity) so a
+        // preserved selection doesn't flash the unfiltered grid; default to a
+        // clean filter — and therefore RecentlyAdded — when nothing is saved.
+        val restoredFilterState = browsePrefs?.savedState(libraryId) ?: CatalogFilterState()
         _uiState.update {
             it.copy(
                 selectedLibraryId = libraryId,
@@ -305,10 +333,8 @@ class LibrariesViewModel(
                 catalogItems = emptyList(),
                 catalogTotal = 0,
                 catalogHasMore = false,
-                // Restore this library's persisted filter/preserve state (iOS
-                // parity) so a preserved selection doesn't flash the unfiltered
-                // grid; default to a clean filter when nothing is saved.
-                filterState = browsePrefs?.savedState(libraryId) ?: CatalogFilterState(),
+                filterState = restoredFilterState,
+                browseSort = LibraryBrowseSort.fromFilterState(restoredFilterState),
                 availableFilters = null,
                 preserveFilters = browsePrefs?.preserveEnabled(libraryId) ?: true,
                 selectedNamePrefix = null,
@@ -329,16 +355,22 @@ class LibrariesViewModel(
     /** Apply a new facet/match filter selection, persist it (when preserve is
      *  on), and reload the catalog. Mirrors BrowseViewModel.applyFilterState. */
     fun applyFilterState(state: CatalogFilterState) {
-        if (state == _uiState.value.filterState) return
+        val current = _uiState.value.filterState
+        // [selectBrowseSort] owns sort/order. Callers derive `state` from a
+        // composition snapshot that can be a frame stale — the Reset control
+        // changes the sort and clears the facets in the same frame — so take
+        // only the facet/match parts and keep the sort already committed here.
+        val reconciled = state.copy(sort = current.sort, order = current.order)
+        if (reconciled == current) return
         _uiState.update {
             it.copy(
-                filterState = state,
+                filterState = reconciled,
                 catalogItems = emptyList(),
                 catalogTotal = 0,
                 catalogHasMore = false,
             )
         }
-        browsePrefs?.saveState(_uiState.value.selectedLibraryId, state)
+        browsePrefs?.saveState(_uiState.value.selectedLibraryId, reconciled)
         _uiState.value.selectedLibraryId?.let { loadCatalog(it, reset = true, force = true) }
     }
 
@@ -350,14 +382,23 @@ class LibrariesViewModel(
     }
 
     fun selectBrowseSort(sort: LibraryBrowseSort) {
+        // The sort rides the persisted filter state so "Preserve sort & filters"
+        // actually restores it, instead of the chips coming back while the sort
+        // snaps to Recently Added.
+        val nextFilterState = _uiState.value.filterState.copy(
+            sort = sort.sortField,
+            order = sort.sortOrder,
+        )
         _uiState.update {
             it.copy(
                 browseSort = sort,
+                filterState = nextFilterState,
                 catalogItems = emptyList(),
                 catalogTotal = 0,
                 catalogHasMore = false,
             )
         }
+        browsePrefs?.saveState(_uiState.value.selectedLibraryId, nextFilterState)
         _uiState.value.selectedLibraryId?.let { loadCatalog(it, reset = true, force = true) }
     }
 

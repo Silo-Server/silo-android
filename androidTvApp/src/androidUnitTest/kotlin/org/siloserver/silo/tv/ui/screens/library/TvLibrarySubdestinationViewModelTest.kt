@@ -94,6 +94,28 @@ class TvLibrarySubdestinationViewModelTest {
         assertEquals(null, viewModel.uiState.value.selectedAudiobookGroup)
     }
 
+    @Test
+    fun reselectingTheActiveBrowseTabKeepsTheViewersSort() = runLibraryTest {
+        val requests = mutableListOf<RequestRecord>()
+        val viewModel = viewModelFor(requests, libraryType = "movies")
+
+        viewModel.onTabSelected(TvLibraryTab.Browse)
+        awaitState { requests.catalogRequestCount() >= 1 }
+        viewModel.onSortKeySelected(TvLibrarySortOption.ReleaseDate)
+        awaitState { requests.lastCatalogRequestOrNull()?.query?.get("sort") == "year" }
+        val requestsBeforeReentry = requests.catalogRequestCount()
+
+        // Re-entering the screen (back out of item detail) re-issues the
+        // already-committed section against this same ViewModel. That must not
+        // reset the sort the viewer picked.
+        viewModel.onTabSelected(TvLibraryTab.Browse)
+        settle()
+
+        assertEquals("year", viewModel.uiState.value.browseFilter.sort)
+        assertEquals("desc", viewModel.uiState.value.browseFilter.order)
+        assertEquals(requestsBeforeReentry, requests.catalogRequestCount())
+    }
+
     private val createdViewModels = mutableListOf<androidx.lifecycle.ViewModel>()
 
     private fun runLibraryTest(block: suspend () -> Unit) = runTest {
@@ -109,6 +131,11 @@ class TvLibrarySubdestinationViewModelTest {
             createdViewModels.clear()
             Dispatchers.resetMain()
         }
+    }
+
+    /** Real-time window for any spurious request to land before asserting none did. */
+    private suspend fun settle() {
+        withContext(Dispatchers.IO) { delay(200) }
     }
 
     private suspend fun awaitState(predicate: () -> Boolean) {
