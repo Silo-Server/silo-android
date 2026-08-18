@@ -32,7 +32,9 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.model.settings.CardCaptionPreset
 import org.siloserver.silo.tv.ui.theme.ProgressFill
 import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
@@ -54,6 +56,7 @@ fun TvReferenceShelfCard(
     userState: org.siloserver.silo.model.catalog.MediaItemUserState? = null,
     actions: TvMediaCardActions = TvMediaCardActions(),
 ) {
+    val presentation = LocalCardPresentation.current
     val shape = RoundedCornerShape(12.dp)
     val focus = siloCardDefaults(shape = shape, focusedScale = 1f)
 
@@ -84,86 +87,92 @@ fun TvReferenceShelfCard(
                     modifier = Modifier.fillMaxSize(),
                 )
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            0.55f to Color.Transparent,
-                            0.83f to Color.Black.copy(alpha = 0.52f),
-                            1f to Color.Black.copy(alpha = 0.86f),
-                        ),
-                    ),
-            )
+                if (presentation.caption != CardCaptionPreset.ARTWORK) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0f to Color.Transparent,
+                                    0.55f to Color.Transparent,
+                                    0.83f to Color.Black.copy(alpha = 0.52f),
+                                    1f to Color.Black.copy(alpha = 0.86f),
+                                ),
+                            ),
+                    )
+                }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .border(1.dp, Color.White.copy(alpha = 0.08f), shape),
-            )
-
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .border(1.dp, Color.White.copy(alpha = 0.08f), shape),
                 )
 
-                if (!subtitle.isNullOrBlank() || !detail.isNullOrBlank()) {
-                    Row(
+                if (presentation.caption != CardCaptionPreset.ARTWORK) {
+                    Column(
                         modifier = Modifier
+                            .align(Alignment.BottomStart)
                             .fillMaxWidth()
-                            .padding(top = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                     ) {
-                        if (!subtitle.isNullOrBlank()) {
-                            Text(
-                                text = subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.8f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        if (!detail.isNullOrBlank()) {
-                            Text(
-                                text = detail,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.8f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+
+                        if (
+                            presentation.caption == CardCaptionPreset.TITLE_METADATA &&
+                            (!subtitle.isNullOrBlank() || !detail.isNullOrBlank())
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (!subtitle.isNullOrBlank()) {
+                                    Text(
+                                        text = subtitle,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.8f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                if (!detail.isNullOrBlank()) {
+                                    Text(
+                                        text = detail,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.8f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-            }
 
-            if (progress != null && progress > 0f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .align(Alignment.BottomStart)
-                        .background(ProgressTrack),
-                ) {
+                if (progress != null && progress > 0f) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth(progress.coerceIn(0f, 1f))
+                            .fillMaxWidth()
                             .height(3.dp)
-                            .background(ProgressFill),
-                    )
+                            .align(Alignment.BottomStart)
+                            .background(ProgressTrack),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                .height(3.dp)
+                                .background(ProgressFill),
+                        )
+                    }
                 }
-            }
-
             }
         }
 

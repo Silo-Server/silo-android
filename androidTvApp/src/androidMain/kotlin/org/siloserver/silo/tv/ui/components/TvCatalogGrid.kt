@@ -39,6 +39,8 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.forPosterPreset
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.rememberTvGridBringIntoViewSpec
@@ -138,6 +140,9 @@ fun TvCatalogGrid(
             }
         }
     }
+    val posterPreset = LocalCardPresentation.current.posterSize
+    val effectiveMinCellWidth = minCellWidth.forPosterPreset(posterPreset)
+    val effectiveFixedColumnCount = fixedColumnCount?.forPosterPreset(posterPreset)
 
     // Backoff gate against an endless load-more retry storm. When a load-more
     // completes without growing the list while the server still reports more
@@ -211,8 +216,8 @@ fun TvCatalogGrid(
     ) {
     LazyVerticalGrid(
         state = resolvedGridState,
-        columns = fixedColumnCount?.let { GridCells.Fixed(it) }
-            ?: GridCells.Adaptive(minSize = minCellWidth),
+        columns = effectiveFixedColumnCount?.let { GridCells.Fixed(it) }
+            ?: GridCells.Adaptive(minSize = effectiveMinCellWidth),
         horizontalArrangement = Arrangement.spacedBy(horizontalSpacing),
         verticalArrangement = Arrangement.spacedBy(verticalSpacing),
         contentPadding = contentPadding,

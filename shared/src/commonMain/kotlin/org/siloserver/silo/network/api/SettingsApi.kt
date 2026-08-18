@@ -4,6 +4,7 @@ import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
 import org.siloserver.silo.model.settings.EffectiveSettingsResponse
 import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
+import org.siloserver.silo.model.settings.NavigationShortcutItemWriteRequest
 import org.siloserver.silo.model.settings.SettingEntry
 import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SettingScopeIdentity
@@ -14,6 +15,8 @@ import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.UpdateSettingRequest
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.authScope as pinAuthScope
 import io.ktor.client.HttpClient
 import io.ktor.client.request.HttpRequestBuilder
 import kotlinx.serialization.Serializable
@@ -199,15 +202,21 @@ open class SettingsApi(private val client: HttpClient) {
      * season view spanning several series. Passing no [keys] resolves every
      * remote definition in the server's contract. [libraryIds] and
      * [seriesIds] widen the resolution to those content scopes; the profile
-     * and device parts of the context come from the session headers the auth
-     * interceptor already attaches.
+     * and client-family/device parts of the context come from the session
+     * headers the auth interceptor already attaches.
      */
     open suspend fun getEffectiveValues(
         keys: List<String> = emptyList(),
         libraryIds: List<Int> = emptyList(),
         seriesIds: List<String> = emptyList(),
+        profileId: String? = null,
+        authScope: AuthScopeSnapshot? = null,
     ): ApiResult<EffectiveSettingValuesResponse> = safeApiCall {
         client.get("/api/v1/settings/values/effective") {
+            authScope?.let(::pinAuthScope)
+            if (!profileId.isNullOrBlank()) {
+                header("X-Profile-Id", profileId)
+            }
             url {
                 if (keys.isNotEmpty()) parameters.append("keys", keys.joinToString(","))
                 if (libraryIds.isNotEmpty()) {
@@ -240,14 +249,41 @@ open class SettingsApi(private val client: HttpClient) {
         value: JsonElement,
         mutationId: String,
         profileId: String? = null,
+        authScope: AuthScopeSnapshot? = null,
     ): ApiResult<StoredSettingValue> = safeApiCall {
         client.put("/api/v1/settings/values/$key") {
+            authScope?.let(::pinAuthScope)
             applyScopeIdentity(scope, profileId)
             if (mutationId.isNotBlank()) {
                 header("X-Silo-Mutation-Id", mutationId)
             }
             contentType(ContentType.Application.Json)
             setBody(SettingValueWriteRequest(value))
+        }
+    }
+
+    /**
+     * Atomically add or remove one profile-wide navigation shortcut. The
+     * server owns the read/modify/write transaction so independent devices do
+     * not replace each other's catalog entries.
+     */
+    open suspend fun putNavigationShortcutItem(
+        item: JsonElement,
+        present: Boolean,
+        mutationId: String,
+        profileId: String? = null,
+        authScope: AuthScopeSnapshot? = null,
+    ): ApiResult<StoredSettingValue> = safeApiCall {
+        client.put("/api/v1/settings/values/nav.shortcuts/item") {
+            authScope?.let(::pinAuthScope)
+            if (!profileId.isNullOrBlank()) {
+                header("X-Profile-Id", profileId)
+            }
+            if (mutationId.isNotBlank()) {
+                header("X-Silo-Mutation-Id", mutationId)
+            }
+            contentType(ContentType.Application.Json)
+            setBody(NavigationShortcutItemWriteRequest(item = item, present = present))
         }
     }
 
@@ -261,8 +297,10 @@ open class SettingsApi(private val client: HttpClient) {
         key: String,
         scope: SettingScopeIdentity,
         profileId: String? = null,
+        authScope: AuthScopeSnapshot? = null,
     ): ApiResult<Unit> = safeApiCall {
         client.delete("/api/v1/settings/values/$key") {
+            authScope?.let(::pinAuthScope)
             applyScopeIdentity(scope, profileId)
         }
     }
@@ -274,8 +312,9 @@ open class SettingsApi(private val client: HttpClient) {
      * the session's `X-Profile-Id` header; an explicit [profileId] overrides
      * it (the interceptor only fills the header when absent), matching how
      * [setDeviceSetting] lets a parent act for a child profile. The device id
-     * is never set here — the interceptor always attaches
-     * `X-Silo-Device-Id`, and appending it again would send two values.
+     * always comes from the interceptor. A durable client/device mutation may
+     * carry an explicitly captured family; the interceptor only fills that
+     * header when this method did not pin one.
      */
     private fun HttpRequestBuilder.applyScopeIdentity(
         scope: SettingScopeIdentity,
@@ -288,6 +327,10 @@ open class SettingsApi(private val client: HttpClient) {
         }
         if (!profileId.isNullOrBlank() && scope.scope != SettingScope.ACCOUNT) {
             header("X-Profile-Id", profileId)
+        }
+        scope.clientFamily?.let { family ->
+            headers.remove("X-Silo-Client-Family")
+            header("X-Silo-Client-Family", family.wire)
         }
     }
 }

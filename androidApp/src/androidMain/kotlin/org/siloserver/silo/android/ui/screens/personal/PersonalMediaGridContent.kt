@@ -247,7 +247,7 @@ private fun PersonalMediaGridContent(
                 // contentPadding goes inside the grid so items scroll edge to
                 // edge under any chrome the caller reserved space for.
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+                    columns = GridCells.Adaptive(MediaGridDefaults.posterGridMinWidth()),
                     state = gridState,
                     contentPadding = PaddingValues(
                         start = 16.dp + contentPadding.calculateStartPadding(layoutDirection),

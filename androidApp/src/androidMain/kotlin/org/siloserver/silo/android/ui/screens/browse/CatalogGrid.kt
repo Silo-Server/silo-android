@@ -63,6 +63,8 @@ import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.forPosterPreset
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.overlays.OverlayDataExtractor
 
@@ -97,7 +99,9 @@ fun CatalogGrid(
     header: (@Composable () -> Unit)? = null,
 ) {
     val gridState = rememberLazyGridState()
-    val cardWidth = viewDensity.minCardWidth
+    val cardWidth = viewDensity.minCardWidth.forPosterPreset(
+        LocalCardPresentation.current.posterSize,
+    )
 
     // Trigger load more when scrolled near bottom
     val shouldLoadMore by remember {

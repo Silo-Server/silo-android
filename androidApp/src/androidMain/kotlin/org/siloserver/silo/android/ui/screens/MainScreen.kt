@@ -71,10 +71,12 @@ import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.network.ServerReachabilityStatus
+import org.siloserver.silo.common.settings.UiCustomizationStore
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.PersonalDataRepository
+import org.siloserver.silo.model.settings.effectivePrimaryMenuForSupport
 import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
@@ -146,6 +148,10 @@ fun MainScreen(
     val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: MetadataAiFeatureStore = koinInject()
+    val uiCustomizationStore: UiCustomizationStore = koinInject()
+    val primaryMenu by uiCustomizationStore.primaryMenu.collectAsState()
+    val uiCustomizationSupported by
+        uiCustomizationStore.uiCustomizationSupported.collectAsState()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val reachabilityScope = rememberCoroutineScope()
@@ -179,7 +185,13 @@ fun MainScreen(
             profileId = activeEntry?.profileId ?: headerState.activeProfile?.id,
         )
     }
-    val visibleTabs = remember(mediaCapabilities, downloadRecords, activeScopeLocalBytes) {
+    val visibleTabs = remember(
+        mediaCapabilities,
+        downloadRecords,
+        activeScopeLocalBytes,
+        primaryMenu,
+        uiCustomizationSupported,
+    ) {
         val hasAnyDownload = shouldShowDownloadsTab(
             serverRecordCount = downloadRecords.size,
             activeScopeLocalBytes = activeScopeLocalBytes,
@@ -187,6 +199,10 @@ fun MainScreen(
         visibleMobileTabs(
             capabilities = mediaCapabilities,
             showDownloads = hasAnyDownload,
+            primaryMenu = effectivePrimaryMenuForSupport(
+                primaryMenu,
+                uiCustomizationSupported,
+            ),
         )
     }
 

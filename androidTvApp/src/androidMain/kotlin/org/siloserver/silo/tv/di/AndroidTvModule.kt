@@ -12,12 +12,15 @@ import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.DataStoreCleartextConsentStore
 import org.siloserver.silo.common.settings.AndroidServerSettingsCache
+import org.siloserver.silo.common.settings.DefaultUiCustomizationStore
+import org.siloserver.silo.common.settings.UiCustomizationStore
 import android.content.SharedPreferences
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.EncryptedTokenManagerImpl
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.createSecureSharedPrefs
+import org.siloserver.silo.model.settings.SiloClientFamily
 import org.siloserver.silo.tv.ui.screens.servers.TvServerListViewModel
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.AudioTrackManager
@@ -65,6 +68,7 @@ import org.siloserver.silo.tv.watchnext.WatchNextRepository
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
 import org.koin.core.qualifier.named
@@ -147,11 +151,25 @@ val androidTvModule = module {
     // androidModule for why every identity reporter resolves this instead of
     // deriving its own answer.
     single { SiloClientBuildIdentity(BuildConfig.BUILD_NUMBER, BuildConfig.RELEASE_CHANNEL) }
+    single<SiloClientFamily> { SiloClientFamily.TV }
+    single<UiCustomizationStore> {
+        DefaultUiCustomizationStore(
+            family = get(),
+            repository = get(),
+            tokenManager = get(),
+            cache = get(),
+            identityTransitions = get(),
+            scope = kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+            ),
+        )
+    }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
         AndroidDeviceMetadataProvider(
-            androidContext(),
+            context = androidContext(),
             platform = "android-tv",
             buildIdentity = get(),
+            clientFamily = get<SiloClientFamily>().wire,
         )
     }
     // Player infrastructure (duplicate-for-now; extract to :android-player later).
@@ -259,7 +277,7 @@ val androidTvModule = module {
 
     // Skyline per-profile·server·type library scope (persisted across launches).
     single {
-        org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore(androidContext(), get())
+        org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore(androidContext(), get(), get())
     }
 
     // One-shot legacy `tv_prefs` import (playback settings → server device
@@ -405,12 +423,22 @@ val androidTvModule = module {
     }
     viewModel { org.siloserver.silo.tv.ui.screens.browse.TvBrowseViewModel(get()) }
     viewModel { params ->
+        val customization = get<UiCustomizationStore>()
+        val libraryScope = get<TvLibraryScopeStore>()
         org.siloserver.silo.tv.ui.screens.people.TvPersonDetailViewModel(
             catalogRepository = get(),
             personId = params.get(),
             personalDataRepository = getOrNull(),
-            showAudiobooksProvider = {
-                get<TvLibraryScopeStore>().getShowAudiobooksTab()
+            audiobookVisibilityPolicyFlow = combine(
+                customization.primaryMenu,
+                customization.uiCustomizationSupported,
+                libraryScope.showAudiobooksTabFlow(),
+            ) { menu, supported, legacy ->
+                org.siloserver.silo.tv.ui.shell.TvAudiobookVisibilityPolicy(
+                    primaryMenu = menu,
+                    uiCustomizationSupported = supported,
+                    legacyFallback = legacy,
+                )
             },
         )
     }
@@ -433,7 +461,7 @@ val androidTvModule = module {
             title = params.get(),
         )
     }
-    viewModel { TvSearchViewModel(get(), get(), get()) }
+    viewModel { TvSearchViewModel(get(), get(), get(), get()) }
     viewModel { params ->
         TvItemDetailViewModel(
             catalogRepository = get(),
@@ -522,6 +550,8 @@ val androidTvModule = module {
             overlayPrefsStore = get(),
             legacyTvPrefsMigration = get(),
             profileSettings = get(),
+            personalDataRepository = get(),
+            uiCustomizationStore = get(),
             tvLibraryScopeStore = getOrNull(),
         )
     }

@@ -2,7 +2,9 @@ package org.siloserver.silo.tv.ui.screens.people
 
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.CatalogApi
+import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.CatalogRepository
+import org.siloserver.silo.repository.PersonalDataRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -13,14 +15,17 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
@@ -94,6 +99,91 @@ class TvPersonDetailViewModelTest {
         assertFalse(viewModel.uiState.value.items.any { it.type == "audiobook" })
     }
 
+    @Test
+    fun slowLibraryLookupCannotExposeAudiobooksBeforeHiddenPreferenceIsObserved() = runPersonTest {
+        val libraryRequestStarted = CompletableDeferred<Unit>()
+        val releaseLibraryResponse = CompletableDeferred<Unit>()
+        val personalDataClient = HttpClient(
+            MockEngine { request ->
+                assertEquals("/api/v1/user/libraries", request.url.encodedPath)
+                libraryRequestStarted.complete(Unit)
+                releaseLibraryResponse.await()
+                respondJson(
+                    """[{"id":9,"name":"Audiobooks","type":"audiobooks","sort_order":0}]""",
+                )
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+        }
+        val visibility = MutableStateFlow(false)
+        val viewModel = TvPersonDetailViewModel(
+            catalogRepository = repositoryFor(mutableListOf()),
+            personId = 7,
+            personalDataRepository = PersonalDataRepository(PersonalDataApi(personalDataClient)),
+            showAudiobooksFlow = visibility,
+        ).also { createdViewModels += it }
+
+        try {
+            libraryRequestStarted.await()
+            awaitState(viewModel) {
+                !it.isLoading && !it.isLoadingItems && it.items.isNotEmpty()
+            }
+
+            assertFalse(viewModel.uiState.value.items.any { it.type == "audiobook" })
+            assertFalse(
+                viewModel.uiState.value.availableFilters.contains(TvPersonMediaFilter.Audiobooks),
+            )
+        } finally {
+            releaseLibraryResponse.complete(Unit)
+            viewModel.viewModelScope.cancel()
+            viewModel.viewModelScope.coroutineContext[Job]?.join()
+            personalDataClient.close()
+        }
+    }
+
+    @Test
+    fun syncedAudiobookVisibilityUpdatesFiltersAndLoadedResults() = runPersonTest {
+        val visibility = MutableStateFlow(false)
+        val queries = mutableListOf<Map<String, String?>>()
+        val viewModel = TvPersonDetailViewModel(
+            catalogRepository = repositoryFor(queries),
+            personId = 7,
+            showAudiobooksFlow = visibility,
+        ).also { createdViewModels += it }
+        awaitState(viewModel) {
+            !it.isLoading && !it.isLoadingItems && it.items.isNotEmpty() &&
+                TvPersonMediaFilter.Audiobooks !in it.availableFilters
+        }
+        assertFalse(viewModel.uiState.value.items.any { it.type == "audiobook" })
+
+        visibility.value = true
+        awaitState(viewModel) {
+            !it.isLoadingItems &&
+                TvPersonMediaFilter.Audiobooks in it.availableFilters &&
+                it.items.any { item -> item.type == "audiobook" }
+        }
+        viewModel.applyFilter(TvPersonMediaFilter.Audiobooks)
+        awaitState(viewModel) {
+            !it.isLoadingItems &&
+                it.selectedFilter == TvPersonMediaFilter.Audiobooks &&
+                it.items.map { item -> item.contentId } == listOf("audiobook-filtered")
+        }
+
+        val queriesBeforeHide = queries.size
+        visibility.value = false
+        awaitState(viewModel) {
+            !it.isLoadingItems &&
+                TvPersonMediaFilter.Audiobooks !in it.availableFilters &&
+                it.selectedFilter == TvPersonMediaFilter.All &&
+                it.items.none { item -> item.type == "audiobook" }
+        }
+        assertTrue(
+            queries.drop(queriesBeforeHide).any { query ->
+                query["limit"] == "60" && query["type"] == null
+            },
+        )
+    }
+
     private val createdViewModels = mutableListOf<androidx.lifecycle.ViewModel>()
 
     private fun createViewModel(
@@ -111,7 +201,10 @@ class TvPersonDetailViewModelTest {
             // dispatch on Dispatchers.Main, and one still alive when a later
             // test calls setMain throws IllegalStateException from
             // TestMainDispatcher — the CI-only flake on this class.
-            createdViewModels.forEach { it.viewModelScope.cancel() }
+            createdViewModels.forEach { viewModel ->
+                viewModel.viewModelScope.cancel()
+                viewModel.viewModelScope.coroutineContext[Job]?.join()
+            }
             createdViewModels.clear()
             Dispatchers.resetMain()
         }

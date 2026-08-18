@@ -4,6 +4,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
@@ -119,12 +123,14 @@ object TvTopMenuLayout {
 
 /**
  * Identifies which menu button currently holds focus. Library-type tabs share
- * the [Tab] case keyed by [TvLibraryTabType]; the remaining cases are the
- * fixed Home/Calendar tabs plus the Search icon and trailing profile avatar.
+ * the [Tab] case keyed by the EXACT [TvRootDestination.LibraryType] — an
+ * authored menu can pin two libraries of the same media type, so the bare type
+ * is no longer a unique key. The remaining cases are the fixed Home/Calendar
+ * tabs plus the Search icon and trailing profile avatar.
  */
 private sealed class TvTopMenuFocus {
     data object Home : TvTopMenuFocus()
-    data class Tab(val type: TvLibraryTabType) : TvTopMenuFocus()
+    data class Tab(val destination: TvRootDestination.LibraryType) : TvTopMenuFocus()
     data object ForYou : TvTopMenuFocus()
     data object Calendar : TvTopMenuFocus()
     data object Search : TvTopMenuFocus()
@@ -167,7 +173,7 @@ fun TvTopMenuBar(
     destinations: List<TvRootDestination>,
     accountState: TvAccountState,
     onSelectRoot: (TvRootDestination) -> Unit,
-    onSelectTab: (TvLibraryTabType) -> Unit = {},
+    onSelectTab: (TvRootDestination.LibraryType) -> Unit = {},
     onSearchClick: () -> Unit,
     onProfileClick: () -> Unit,
     onProfileDwell: () -> Unit,
@@ -205,10 +211,14 @@ fun TvTopMenuBar(
     val forYouFocusRequester = remember { FocusRequester() }
     val searchFocusRequester = remember { FocusRequester() }
     val profileFocusRequester = remember { FocusRequester() }
-    // One requester per library-type tab; stable across recompositions so a
-    // focus request still lands after the visible-tab set changes.
+    // One requester per exact library destination (including direct library
+    // pins). The map is kept across recompositions so reorder/visibility edits
+    // do not replace requesters for destinations that stay in the focus graph.
     val tabFocusRequesters = remember {
-        TvLibraryTabType.entries.associateWith { FocusRequester() }
+        mutableMapOf<TvRootDestination.LibraryType, FocusRequester>()
+    }
+    destinations.filterIsInstance<TvRootDestination.LibraryType>().forEach { destination ->
+        tabFocusRequesters.getOrPut(destination) { FocusRequester() }
     }
 
     // Track which button currently holds focus so we can shape the capsule
@@ -245,7 +255,7 @@ fun TvTopMenuBar(
         TvRootDestination.Home -> TvTopMenuFocus.Home
         TvRootDestination.ForYou -> TvTopMenuFocus.ForYou
         TvRootDestination.Calendar -> TvTopMenuFocus.Calendar
-        is TvRootDestination.LibraryType -> TvTopMenuFocus.Tab(root.type)
+        is TvRootDestination.LibraryType -> TvTopMenuFocus.Tab(root)
     }
 
     fun focusForPanel(panel: TvTopMenuPanel): TvTopMenuFocus? = when (panel) {
@@ -255,7 +265,7 @@ fun TvTopMenuBar(
 
     fun requesterForFocus(focus: TvTopMenuFocus): FocusRequester = when (focus) {
         TvTopMenuFocus.Home -> homeFocusRequester
-        is TvTopMenuFocus.Tab -> tabFocusRequesters[focus.type] ?: homeFocusRequester
+        is TvTopMenuFocus.Tab -> tabFocusRequesters[focus.destination] ?: homeFocusRequester
         TvTopMenuFocus.ForYou -> forYouFocusRequester
         TvTopMenuFocus.Calendar -> calendarFocusRequester
         TvTopMenuFocus.Search -> searchFocusRequester
@@ -263,18 +273,28 @@ fun TvTopMenuBar(
     }
 
     fun panelForFocus(focus: TvTopMenuFocus?): TvTopMenuPanel? = when (focus) {
-        is TvTopMenuFocus.Tab ->
-            TvTopMenuPanel.Root(TvRootDestination.LibraryType(focus.type))
+        is TvTopMenuFocus.Tab -> TvTopMenuPanel.Root(focus.destination)
         TvTopMenuFocus.ForYou -> TvTopMenuPanel.Root(TvRootDestination.ForYou)
         else -> null
     }
 
-    fun selectedEntryRequester(): FocusRequester = when (val root = selectedRoot) {
-        TvRootDestination.Home -> homeFocusRequester
-        TvRootDestination.Calendar -> calendarFocusRequester
-        is TvRootDestination.LibraryType -> tabFocusRequesters[root.type] ?: homeFocusRequester
-        TvRootDestination.ForYou -> forYouFocusRequester
-        null -> if (isSearchActive) searchFocusRequester else homeFocusRequester
+    // An authored menu can drop the destination the current route belongs to.
+    // Resolving through the visible entry list keeps entry on a requester that
+    // is actually attached; the fallback picks a control that always composes.
+    fun selectedEntryRequester(): FocusRequester {
+        val root = selectedTopMenuEntry(selectedRoot, destinations)
+            ?: return when (
+                selectedTopMenuEntryFallback(selectedRoot, isSearchActive, destinations)
+            ) {
+                TvTopMenuEntryFallback.HOME -> homeFocusRequester
+                TvTopMenuEntryFallback.SEARCH -> searchFocusRequester
+            }
+        return when (root) {
+            TvRootDestination.Home -> homeFocusRequester
+            TvRootDestination.Calendar -> calendarFocusRequester
+            is TvRootDestination.LibraryType -> tabFocusRequesters[root] ?: homeFocusRequester
+            TvRootDestination.ForYou -> forYouFocusRequester
+        }
     }
 
     // Focus the selected tab when `focusRequest` actually changes (the
@@ -382,7 +402,7 @@ fun TvTopMenuBar(
         }
         if (focus is TvTopMenuFocus.Tab) {
             delay(if (openPanel == null) TopMenuInitialPreviewDelayMillis else TopMenuPanelSwitchDelayMillis)
-            onDwell(TvTopMenuPanel.Root(TvRootDestination.LibraryType(focus.type)))
+            onDwell(TvTopMenuPanel.Root(focus.destination))
         } else if (focus is TvTopMenuFocus.ForYou) {
             delay(if (openPanel == null) TopMenuInitialPreviewDelayMillis else TopMenuPanelSwitchDelayMillis)
             onDwell(TvTopMenuPanel.Root(TvRootDestination.ForYou))
@@ -411,6 +431,14 @@ fun TvTopMenuBar(
     // pick (which, with the old align-zoned layout, wrongly landed in the
     // trailing cluster). On non-tab routes (Search) we enter the search icon.
     val barEntryRequester = selectedEntryRequester()
+    // Explicit left/right neighbours make bar traversal independent of the 2D
+    // focus search, which cannot reliably cross a scrolling viewport.
+    val rootFocusRequesters = destinations.map { destination ->
+        requesterForFocus(focusForRoot(destination))
+    }
+    val firstRootFocusRequester = rootFocusRequesters.firstOrNull()
+    val lastRootFocusRequester = rootFocusRequesters.lastOrNull()
+    val centerScrollState = rememberScrollState()
 
     // Publish the synchronous anchor-focus hook. This runs on the composition
     // thread, so a Back handler can move focus BEFORE it removes the panel.
@@ -505,7 +533,7 @@ fun TvTopMenuBar(
                     // cascade rows guard against the same way).
                     (event.key == Key.DirectionCenter || event.key == Key.Enter) &&
                         focus is TvTopMenuFocus.Tab -> {
-                        if (event.type == KeyEventType.KeyUp) onSelectTab(focus.type)
+                        if (event.type == KeyEventType.KeyUp) onSelectTab(focus.destination)
                         true
                     }
                     else -> false
@@ -523,14 +551,24 @@ fun TvTopMenuBar(
             TvSiloWordmark()
         }
 
-        Spacer(modifier = Modifier.weight(1f))
-
-        // Center cluster: Search · Home · library-type tabs · Calendar.
-        // tvOS parity (TVTopMenuBar.tabCluster): search sits just left of Home,
-        // and an invisible same-size twin at the trailing end keeps the tab
-        // group itself screen-centered.
+        // Center cluster: Search · authored roots. tvOS parity
+        // (TVTopMenuBar.tabCluster): search sits just left of the roots, and an
+        // invisible same-size twin at the trailing end keeps the group centered.
+        // The Box centers a short menu but constrains a long one to the span
+        // between brand and profile: an authored menu may carry up to 64
+        // entries, and letting that Row measure at its natural width pushed both
+        // ends of the chrome off screen. Every entry stays composed, so its
+        // stable FocusRequester still works while scrolled out of view.
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(TvSkyline.barHeight),
+            contentAlignment = Alignment.Center,
+        ) {
         Row(
-            modifier = Modifier.height(TvSkyline.barHeight),
+            modifier = Modifier
+                .height(TvSkyline.barHeight)
+                .horizontalScroll(centerScrollState),
             horizontalArrangement = Arrangement.spacedBy(TvSkyline.tabSpacing),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -540,6 +578,7 @@ fun TvTopMenuBar(
                 isFocused = focusedButton == TvTopMenuFocus.Search,
                 canFocus = canFocusButton(TvTopMenuFocus.Search),
                 focusRequester = searchFocusRequester,
+                rightFocusRequester = firstRootFocusRequester ?: profileFocusRequester,
                 onFocusChanged = { hasFocus ->
                     focusedButton = if (hasFocus) {
                         TvTopMenuFocus.Search
@@ -550,7 +589,11 @@ fun TvTopMenuBar(
                 onClick = onSearchClick,
             )
 
-            destinations.forEach { destination ->
+            destinations.forEachIndexed { index, destination ->
+                val leftFocusRequester = rootFocusRequesters.getOrNull(index - 1)
+                    ?: searchFocusRequester
+                val rightFocusRequester = rootFocusRequesters.getOrNull(index + 1)
+                    ?: profileFocusRequester
                 when (destination) {
                     TvRootDestination.Home -> TvTopMenuTab(
                         label = "Home",
@@ -558,6 +601,8 @@ fun TvTopMenuBar(
                         isFocused = focusedButton == TvTopMenuFocus.Home,
                         canFocus = canFocusButton(TvTopMenuFocus.Home),
                         focusRequester = homeFocusRequester,
+                        leftFocusRequester = leftFocusRequester,
+                        rightFocusRequester = rightFocusRequester,
                         onFocusChanged = { hasFocus ->
                             focusedButton = if (hasFocus) {
                                 TvTopMenuFocus.Home
@@ -569,22 +614,26 @@ fun TvTopMenuBar(
                     )
 
                     is TvRootDestination.LibraryType -> {
-                        val type = destination.type
                         val panel = TvTopMenuPanel.Root(destination)
                         TvTopMenuTab(
-                            label = type.title,
+                            label = destination.title,
                             isSelected = selectedRoot == destination,
-                            isFocused = focusedButton == TvTopMenuFocus.Tab(type),
-                            canFocus = canFocusButton(TvTopMenuFocus.Tab(type)),
-                            focusRequester = tabFocusRequesters[type] ?: homeFocusRequester,
+                            isFocused = focusedButton == TvTopMenuFocus.Tab(destination),
+                            canFocus = canFocusButton(TvTopMenuFocus.Tab(destination)),
+                            focusRequester = tabFocusRequesters[destination]
+                                ?: homeFocusRequester,
+                            leftFocusRequester = leftFocusRequester,
+                            rightFocusRequester = rightFocusRequester,
                             onFocusChanged = { hasFocus ->
                                 focusedButton = if (hasFocus) {
-                                    TvTopMenuFocus.Tab(type)
+                                    TvTopMenuFocus.Tab(destination)
                                 } else {
-                                    focusedButton.takeUnless { it == TvTopMenuFocus.Tab(type) }
+                                    focusedButton.takeUnless {
+                                        it == TvTopMenuFocus.Tab(destination)
+                                    }
                                 }
                             },
-                            onClick = { onSelectTab(type) },
+                            onClick = { onSelectTab(destination) },
                             // Library-type tabs publish their anchor so the shell
                             // can position the cascade panel under them. The
                             // d-pad-down → enter-panel intercept lives on the
@@ -601,6 +650,8 @@ fun TvTopMenuBar(
                         isFocused = focusedButton == TvTopMenuFocus.ForYou,
                         canFocus = canFocusButton(TvTopMenuFocus.ForYou),
                         focusRequester = forYouFocusRequester,
+                        leftFocusRequester = leftFocusRequester,
+                        rightFocusRequester = rightFocusRequester,
                         onFocusChanged = { hasFocus ->
                             focusedButton = if (hasFocus) {
                                 TvTopMenuFocus.ForYou
@@ -623,6 +674,8 @@ fun TvTopMenuBar(
                         isFocused = focusedButton == TvTopMenuFocus.Calendar,
                         canFocus = canFocusButton(TvTopMenuFocus.Calendar),
                         focusRequester = calendarFocusRequester,
+                        leftFocusRequester = leftFocusRequester,
+                        rightFocusRequester = rightFocusRequester,
                         onFocusChanged = { hasFocus ->
                             focusedButton = if (hasFocus) {
                                 TvTopMenuFocus.Calendar
@@ -639,8 +692,7 @@ fun TvTopMenuBar(
             // centered on screen with search sitting to its left.
             Spacer(modifier = Modifier.size(TvSkyline.barIconSize))
         }
-
-        Spacer(modifier = Modifier.weight(1f))
+        }
 
         // Trailing cluster: profile avatar.
         Row(
@@ -655,6 +707,7 @@ fun TvTopMenuBar(
                 isFocused = focusedButton == TvTopMenuFocus.Profile,
                 canFocus = canFocusButton(TvTopMenuFocus.Profile),
                 focusRequester = profileFocusRequester,
+                leftFocusRequester = lastRootFocusRequester ?: searchFocusRequester,
                 onFocusChanged = { hasFocus ->
                     focusedButton = if (hasFocus) TvTopMenuFocus.Profile else focusedButton.takeUnless { it == TvTopMenuFocus.Profile }
                     if (!hasFocus) onProfileBlur()
@@ -732,13 +785,21 @@ private fun TvTopMenuTab(
     isFocused: Boolean,
     canFocus: Boolean,
     focusRequester: FocusRequester,
+    leftFocusRequester: FocusRequester,
+    rightFocusRequester: FocusRequester,
     onFocusChanged: (Boolean) -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    // A tab scrolled outside the center viewport still holds a live requester,
+    // so focus can land on it off screen. Bring it back into view on arrival.
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val isInteractionFocused by interactionSource.collectIsFocusedAsState()
-    LaunchedEffect(isInteractionFocused) { onFocusChanged(isInteractionFocused) }
+    LaunchedEffect(isInteractionFocused) {
+        onFocusChanged(isInteractionFocused)
+        if (isInteractionFocused) bringIntoViewRequester.bringIntoView()
+    }
 
     val shape = RoundedCornerShape(percent = 50)
     val containerColor = when {
@@ -777,7 +838,12 @@ private fun TvTopMenuTab(
             focusedBorder = Border(border = BorderStroke(0.dp, Color.Transparent), shape = shape),
         ),
         modifier = modifier
-            .focusProperties { this.canFocus = canFocus }
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .focusProperties {
+                this.canFocus = canFocus
+                left = leftFocusRequester
+                right = rightFocusRequester
+            }
             .focusRequester(focusRequester)
             .height(TvSkyline.tabPillHeight),
     ) {
@@ -816,12 +882,17 @@ private fun TvTopMenuIconButton(
     isFocused: Boolean,
     canFocus: Boolean,
     focusRequester: FocusRequester,
+    rightFocusRequester: FocusRequester,
     onFocusChanged: (Boolean) -> Unit,
     onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val isInteractionFocused by interactionSource.collectIsFocusedAsState()
-    LaunchedEffect(isInteractionFocused) { onFocusChanged(isInteractionFocused) }
+    LaunchedEffect(isInteractionFocused) {
+        onFocusChanged(isInteractionFocused)
+        if (isInteractionFocused) bringIntoViewRequester.bringIntoView()
+    }
 
     val shape = CircleShape
     val containerColor = if (isFocused) SiloOnSurface else Color.Transparent
@@ -845,7 +916,11 @@ private fun TvTopMenuIconButton(
             focusedBorder = Border(border = BorderStroke(0.dp, Color.Transparent), shape = shape),
         ),
         modifier = Modifier
-            .focusProperties { this.canFocus = canFocus }
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .focusProperties {
+                this.canFocus = canFocus
+                right = rightFocusRequester
+            }
             .focusRequester(focusRequester)
             .size(TvSkyline.barIconSize),
     ) {
@@ -872,6 +947,7 @@ private fun TvTopMenuProfileButton(
     isFocused: Boolean,
     canFocus: Boolean,
     focusRequester: FocusRequester,
+    leftFocusRequester: FocusRequester,
     onFocusChanged: (Boolean) -> Unit,
     onClick: () -> Unit,
 ) {
@@ -899,7 +975,10 @@ private fun TvTopMenuProfileButton(
             focusedBorder = Border(border = BorderStroke(0.dp, Color.Transparent), shape = shape),
         ),
         modifier = Modifier
-            .focusProperties { this.canFocus = canFocus }
+            .focusProperties {
+                this.canFocus = canFocus
+                left = leftFocusRequester
+            }
             .focusRequester(focusRequester)
             .size(TvSkyline.barIconSize),
     ) {

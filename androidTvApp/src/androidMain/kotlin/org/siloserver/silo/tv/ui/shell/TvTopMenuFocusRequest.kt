@@ -10,6 +10,33 @@ internal fun isTopMenuFocusTargetAvailable(
     TvTopMenuPanel.Profile, null -> true
 }
 
+/** Returns only a destination whose focus requester is attached to the current bar. */
+internal fun selectedTopMenuEntry(
+    selectedRoot: TvRootDestination?,
+    destinations: List<TvRootDestination>,
+): TvRootDestination? = selectedRoot?.takeIf { it in destinations }
+
+internal enum class TvTopMenuEntryFallback {
+    HOME,
+    SEARCH,
+}
+
+/**
+ * Preserves Home as the normal detail-route entry while using the always-composed
+ * Search control when an authored root disappeared or Home itself is hidden.
+ */
+internal fun selectedTopMenuEntryFallback(
+    selectedRoot: TvRootDestination?,
+    isSearchActive: Boolean,
+    destinations: List<TvRootDestination>,
+): TvTopMenuEntryFallback = if (
+    isSearchActive || selectedRoot != null || TvRootDestination.Home !in destinations
+) {
+    TvTopMenuEntryFallback.SEARCH
+} else {
+    TvTopMenuEntryFallback.HOME
+}
+
 internal suspend fun handleTopMenuFocusRequestIfAvailable(
     requestIdentity: Pair<Int, TvTopMenuPanel?>,
     lastHandledRequest: Pair<Int, TvTopMenuPanel?>,

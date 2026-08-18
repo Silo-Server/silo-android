@@ -27,6 +27,14 @@ import io.ktor.util.AttributeKey
  * was active when this snapshot was captured. [isIdentityGenerationStamped]
  * distinguishes a legitimate capture at generation zero from a legacy,
  * hand-built scope that never captured the generation at all.
+ *
+ * [credentialOwnerId] is a durable, opaque identifier for the saved account
+ * slot. Unlike [credentialEpoch] and [identityGeneration] — both of which are
+ * process-scoped and reset on every launch — it is persisted alongside the
+ * credentials and survives process restarts, and unlike [profileToken] it does
+ * not rotate after PIN verification. Durable caches and outboxes can therefore
+ * use it as their account boundary without coupling ownership to an individual
+ * auth token or to a single process lifetime.
  */
 data class AuthScopeSnapshot(
     val serverId: String,
@@ -36,6 +44,7 @@ data class AuthScopeSnapshot(
     val credentialGenerationId: String? = null,
     val identityGeneration: Long = 0L,
     val isIdentityGenerationStamped: Boolean = false,
+    val credentialOwnerId: String? = null,
     /**
      * Bumped every time this server's PERSISTENT credentials are written or
      * cleared — i.e. by sign-in and sign-out, but deliberately NOT by a
@@ -58,6 +67,7 @@ data class AuthScopeSnapshot(
             "serverId=<redacted>, profileId=<redacted>, serverUrl=<redacted>, " +
             "profileToken=<redacted>, credentialGenerationId=<redacted>, " +
             "identityGeneration=<redacted>, isIdentityGenerationStamped=<redacted>, " +
+            "credentialOwnerId=<redacted>, " +
             "credentialEpoch=<redacted>)"
 }
 

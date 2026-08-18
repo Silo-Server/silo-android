@@ -9,6 +9,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class IdentityTransitionBarrierTest {
@@ -160,5 +163,62 @@ class IdentityTransitionBarrierTest {
         assertMutation(IdentityTransitionKind.SIGN_OUT) { tokens.signOutCurrentServer() }
         assertMutation(IdentityTransitionKind.TEMPORARY_SCOPE_BEGIN) { tokens.beginTemporaryScope(temporary) }
         assertMutation(IdentityTransitionKind.TEMPORARY_SCOPE_END) { tokens.endTemporaryScope() }
+    }
+
+    /**
+     * `latestTransition` is a replayable StateFlow, not a notification: it is
+     * what `TvLibraryScopeStore.showAudiobooksTabFlow()`'s `onSubscription`
+     * block reads to key a brand-new subscriber. It must move to WILL_CHANGE
+     * before the mutation is visible and then COME TO REST on a DID_CHANGE that
+     * still carries the resolved target, so a subscriber that arrives after the
+     * transition keys on the settled identity rather than staying gated.
+     */
+    @Test
+    fun latestTransitionMovesToWillChangeThenRestsOnADidChangeCarryingTheFullTarget() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+        assertNull(barrier.latestTransition.value)
+
+        val duringMutation = barrier.changing(
+            kind = IdentityTransitionKind.ACCOUNT_REPLACE,
+            target = {
+                IdentityTransitionTarget(
+                    serverId = "server-b",
+                    affectsCurrentIdentity = true,
+                    purgesPersistentIdentity = false,
+                )
+            },
+        ) { assertNotNull(barrier.latestTransition.value) }
+
+        assertEquals(IdentityTransitionPhase.WILL_CHANGE, duringMutation.phase)
+        assertEquals(IdentityTransitionKind.ACCOUNT_REPLACE, duringMutation.kind)
+        assertEquals("server-b", duringMutation.targetServerId)
+        assertEquals(1L, duringMutation.generation)
+
+        val settled = assertNotNull(barrier.latestTransition.value)
+        assertEquals(IdentityTransitionPhase.DID_CHANGE, settled.phase)
+        assertEquals(IdentityTransitionKind.ACCOUNT_REPLACE, settled.kind)
+        assertEquals(1L, settled.generation)
+        assertEquals("server-b", settled.targetServerId)
+        assertTrue(settled.affectsCurrentIdentity)
+        assertFalse(settled.purgesPersistentIdentity)
+    }
+
+    /** A failed mutation must still settle, or every later subscriber stays gated. */
+    @Test
+    fun latestTransitionSettlesOnDidChangeEvenWhenTheMutationFails() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+
+        assertFailsWith<IllegalStateException> {
+            barrier.changing(
+                kind = IdentityTransitionKind.SIGN_OUT,
+                target = { IdentityTransitionTarget(serverId = "server-a") },
+            ) { error("failed") }
+        }
+
+        val settled = assertNotNull(barrier.latestTransition.value)
+        assertEquals(IdentityTransitionPhase.DID_CHANGE, settled.phase)
+        assertEquals(IdentityTransitionKind.SIGN_OUT, settled.kind)
+        assertEquals("server-a", settled.targetServerId)
+        assertTrue(settled.purgesPersistentIdentity)
     }
 }

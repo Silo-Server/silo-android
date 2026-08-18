@@ -105,7 +105,10 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
 import org.siloserver.silo.common.diagnostics.DiagnosticsFocusLogger
+import org.siloserver.silo.common.settings.UiCustomizationStore
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
@@ -120,6 +123,7 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.personal.UserLibrary
+import org.siloserver.silo.model.settings.effectivePrimaryMenuForSupport
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
@@ -175,6 +179,17 @@ import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
  */
 private const val CONTENT_HANDOFF_ATTEMPTS = 3
 
+internal fun shouldRefreshTvUiCustomization(serverId: String?, profileId: String?): Boolean =
+    !serverId.isNullOrBlank() && !profileId.isNullOrBlank()
+
+internal data class TvLegacyAudiobookVisibility(
+    val show: Boolean = false,
+    val isResolved: Boolean = false,
+)
+
+internal fun resolvedTvLegacyAudiobookVisibility(show: Boolean) =
+    TvLegacyAudiobookVisibility(show = show, isResolved = true)
+
 /**
  * Main authenticated TV shell. Mirrors `TVMainTabView` on tvOS: a content
  * `NavHost` with a `TvTopMenuBar` overlay that hosts Search / Home / Libraries
@@ -217,6 +232,11 @@ fun TvMainShell(
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: org.siloserver.silo.model.feature.MetadataAiFeatureStore = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
+    val uiCustomizationStore: UiCustomizationStore = koinInject()
+    val primaryMenu by uiCustomizationStore.primaryMenu.collectAsState()
+    val uiCustomizationSupported by
+        uiCustomizationStore.uiCustomizationSupported.collectAsState()
+    val uiCustomizationRefreshScope = rememberCoroutineScope()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val activeServerEntry by serverRegistry.activeEntry.collectAsState()
@@ -227,6 +247,26 @@ fun TvMainShell(
     val currentWatchTogetherRoom by watchTogetherViewModel.currentRoom.collectAsState()
     var watchTogetherEntryOpen by rememberSaveable { mutableStateOf(false) }
     var watchTogetherJoinOpen by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(activeServerEntry?.id, activeServerEntry?.profileId) {
+        if (!shouldRefreshTvUiCustomization(
+                activeServerEntry?.id,
+                activeServerEntry?.profileId,
+            )
+        ) {
+            uiCustomizationStore.clear()
+        }
+    }
+    LifecycleResumeEffect(activeServerEntry?.id to activeServerEntry?.profileId) {
+        if (shouldRefreshTvUiCustomization(
+                activeServerEntry?.id,
+                activeServerEntry?.profileId,
+            )
+        ) {
+            uiCustomizationRefreshScope.launch { uiCustomizationStore.refresh() }
+        }
+        onPauseOrDispose { }
+    }
 
     LaunchedEffect(watchTogetherState.result) {
         val room = watchTogetherState.result ?: return@LaunchedEffect
@@ -261,22 +301,76 @@ fun TvMainShell(
     // Skyline tab set (§3.1): Home + present library-type tabs + Calendar.
     // tvOS parity: the Audiobooks tab is opt-in via Settings > General
     // (hidden by default); the store is device+profile local.
-    var showAudiobooksTab by remember { mutableStateOf(false) }
-    // Gates the snap-to-Home redirect below (alongside librariesLoaded) so a
-    // restored/deep-linked main/audiobooks route isn't ejected before this
-    // async DataStore read has landed.
-    var showAudiobooksTabResolved by remember { mutableStateOf(false) }
-    // The store exposes no Flow and Settings is an in-shell NavHost route (so no
-    // ON_RESUME fires when the user backs out of it), which is why a one-shot
-    // read left the tab bar stale after toggling the setting. Re-read on every
-    // shell route change — a cheap DataStore lookup — so toggling Settings >
-    // "Show Audiobooks tab" takes effect on return, without recreating the shell.
-    LaunchedEffect(libraries, currentEntry?.destination?.route) {
-        showAudiobooksTab = runCatching { tvLibraryScopeStore.getShowAudiobooksTab() }.getOrDefault(false)
-        showAudiobooksTabResolved = true
+    // Start hidden and unresolved so a restored Audiobooks route cannot be
+    // rejected before the first DataStore value arrives. The store's live flow
+    // emits a safe false at every WILL_CHANGE boundary, then rekeys to the new
+    // atomic owner on DID_CHANGE; the shell therefore never keeps rendering the
+    // previous owner's legacy visibility while the new namespace is loading.
+    val legacyAudiobookVisibility by produceState(
+        initialValue = TvLegacyAudiobookVisibility(),
+        tvLibraryScopeStore,
+    ) {
+        tvLibraryScopeStore.showAudiobooksTabFlow()
+            .catch { emit(false) }
+            .collect { show ->
+                value = resolvedTvLegacyAudiobookVisibility(show)
+            }
     }
-    val visibleRoots = remember(libraries, showAudiobooksTab) {
-        visibleTvRoots(libraries, showAudiobooks = showAudiobooksTab)
+    val showAudiobooksTab = legacyAudiobookVisibility.show
+    val showAudiobooksTabResolved = legacyAudiobookVisibility.isResolved
+    val visibleRoots = remember(
+        libraries,
+        showAudiobooksTab,
+        primaryMenu,
+        uiCustomizationSupported,
+    ) {
+        visibleTvRoots(
+            libraries,
+            showAudiobooks = showAudiobooksTab,
+            primaryMenu = effectivePrimaryMenuForSupport(
+                primaryMenu,
+                uiCustomizationSupported,
+            ),
+        )
+    }
+    // Media roots share one route per type, so the route alone cannot tell a
+    // built-in Movies tab from a direct pinned-library tab. Retain the exact
+    // bar destination the viewer committed so focus/highlight never jumps to
+    // a sibling tab that happens to render the same route.
+    var selectedLibraryDestinationIdentity by rememberSaveable(
+        activeServerEntry?.id,
+        activeServerEntry?.profileId,
+    ) {
+        mutableStateOf<String?>(null)
+    }
+    val selectedLibraryDestination = remember(
+        selectedLibraryDestinationIdentity,
+        visibleRoots,
+    ) {
+        resolveSavedTvLibraryDestination(
+            identity = selectedLibraryDestinationIdentity,
+            destinations = visibleRoots,
+        )
+    }
+    val uiCustomizationResolved = uiCustomizationSupported != null || primaryMenu != null
+    LaunchedEffect(
+        selectedLibraryDestinationIdentity,
+        selectedLibraryDestination,
+        visibleRoots,
+        librariesLoaded,
+        showAudiobooksTabResolved,
+        uiCustomizationResolved,
+    ) {
+        if (librariesLoaded && showAudiobooksTabResolved &&
+            uiCustomizationResolved &&
+            selectedLibraryDestinationIdentity != null &&
+            selectedLibraryDestination == null
+        ) {
+            // The authored menu no longer contains this semantic destination.
+            // Clear the saved identity so a later menu re-adding the same root
+            // does not unexpectedly revive an old exact-tab selection.
+            selectedLibraryDestinationIdentity = null
+        }
     }
 
     // In-session scope/pill selections per library type. Scope selections are
@@ -591,8 +685,25 @@ fun TvMainShell(
         )
     }
 
-    val selectedRoot by remember(currentRoute) {
-        derivedStateOf { mapRouteToRoot(currentRoute) }
+    val selectedRoot by remember(
+        currentRoute,
+        visibleRoots,
+        selectedLibraryDestination,
+        resolvedLibraries.toMap(),
+        scopeSelections.toMap(),
+    ) {
+        derivedStateOf {
+            val routeRoot = mapRouteToRoot(currentRoute)
+            val selectedLibraryId = (routeRoot as? TvRootDestination.LibraryType)?.let { root ->
+                scopeSelections[root.type] ?: resolvedLibraries[root.type]?.id
+            }
+            selectedTvRoot(
+                routeRoot = routeRoot,
+                destinations = visibleRoots,
+                selectedLibraryId = selectedLibraryId,
+                exactSelection = selectedLibraryDestination,
+            )
+        }
     }
     // Where an Up out of content lands on the bar. The selected root when there
     // is one; For You's dropdown children (Watchlist / Favorites) map to the
@@ -745,6 +856,9 @@ fun TvMainShell(
     }
 
     val onSelectRoot: (TvRootDestination) -> Unit = { dest ->
+        if (dest is TvRootDestination.LibraryType) {
+            selectedLibraryDestinationIdentity = dest.saveableSelectionIdentity()
+        }
         val route = dest.toRoute()
         if (dest == TvRootDestination.ForYou) {
             // Same reason as Home below: an explicit tab selection ends the
@@ -813,7 +927,21 @@ fun TvMainShell(
     // Commit a scope (and optionally a section pill) from the cascade: persist
     // the library scope, record the session pill, navigate to that type's route,
     // close the panel, and move focus into the freshly-scoped content.
-    val commitScope: (TvLibraryTabType, UserLibrary, TvLibraryPill) -> Unit = { type, library, pill ->
+    fun commitScope(
+        type: TvLibraryTabType,
+        library: UserLibrary,
+        pill: TvLibraryPill,
+        explicitDestination: TvRootDestination.LibraryType? = null,
+    ) {
+        val panelDestination = (focusState.openPanel as? TvTopMenuPanel.Root)
+            ?.dest as? TvRootDestination.LibraryType
+        selectedLibraryDestinationIdentity = committedTvLibraryDestination(
+            type = type,
+            libraryId = library.id,
+            explicitDestination = explicitDestination,
+            panelDestination = panelDestination,
+            destinations = visibleRoots,
+        )?.saveableSelectionIdentity()
         scopeSelections[type] = library.id
         pillSelections[type] = pill
         // Bump the per-type section nonce so re-committing the SAME pill still
@@ -1421,17 +1549,31 @@ fun TvMainShell(
             destinations = visibleRoots,
             accountState = accountSnapshot,
             onSelectRoot = onSelectRoot,
-            onSelectTab = { type ->
+            onSelectTab = { destination ->
+                val type = destination.type
+                selectedLibraryDestinationIdentity = destination.saveableSelectionIdentity()
                 // Enter/Select on a library-type tab jumps straight to that
                 // type's Recommended content. Prefer a full scope commit (so it
                 // lands on Recommended and closes any open preview panel); fall
                 // back to a plain route nav if the active library hasn't
                 // resolved yet.
-                val activeLib = activeLibrary(type)
+                val activeLib = destination.libraryId?.let { id ->
+                    libraries.firstOrNull { it.id == id && type.matches(it) }
+                } ?: activeLibrary(type)
                 if (activeLib != null) {
-                    commitScope(type, activeLib, TvLibraryPill.Recommended)
+                    commitScope(
+                        type,
+                        activeLib,
+                        TvLibraryPill.Recommended,
+                        explicitDestination = destination,
+                    )
                 } else {
-                    onSelectRoot(TvRootDestination.LibraryType(type))
+                    // Pass the exact bar destination through: a synthetic
+                    // LibraryType(type) would make onSelectRoot overwrite the
+                    // identity just recorded above with the built-in tab's,
+                    // so a pinned library selected before the library list
+                    // resolved would highlight and restore the built-in tab.
+                    onSelectRoot(destination)
                 }
             },
             onSearchClick = onSearchPressed,
@@ -1560,7 +1702,10 @@ fun TvMainShell(
                     TvCascadeSelector(
                         type = dest.type,
                         libraries = libraries.filter { dest.type.matches(it) },
-                        currentScopeId = activeLibrary(dest.type)?.id,
+                        currentScopeId = cascadeCurrentScopeId(
+                            destination = dest,
+                            activeLibraryId = activeLibrary(dest.type)?.id,
+                        ),
                         libraryHasCollections = { id ->
                             librariesWithCollections?.contains(id) ?: true
                         },

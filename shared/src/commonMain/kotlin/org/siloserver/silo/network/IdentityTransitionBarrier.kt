@@ -41,6 +41,7 @@ data class IdentityTransitionTarget(
 interface IdentityTransitionBarrier {
     val transitions: SharedFlow<IdentityTransition>
     val generation: StateFlow<Long>
+    val latestTransition: StateFlow<IdentityTransition?>
 
     /** Installs the inline privacy gate, which must complete before identity mutation. */
     fun installGate(listener: suspend (IdentityTransition) -> Unit)
@@ -72,6 +73,7 @@ class DefaultIdentityTransitionBarrier : IdentityTransitionBarrier {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     private val _generation = MutableStateFlow(0L)
+    private val _latestTransition = MutableStateFlow<IdentityTransition?>(null)
 
     @Volatile
     private var gates: List<suspend (IdentityTransition) -> Unit> = emptyList()
@@ -81,6 +83,7 @@ class DefaultIdentityTransitionBarrier : IdentityTransitionBarrier {
 
     override val transitions: SharedFlow<IdentityTransition> = _transitions.asSharedFlow()
     override val generation: StateFlow<Long> = _generation.asStateFlow()
+    override val latestTransition: StateFlow<IdentityTransition?> = _latestTransition.asStateFlow()
 
     override fun installGate(listener: suspend (IdentityTransition) -> Unit) {
         // Gates are installed during sequential application startup. Publish an
@@ -115,20 +118,24 @@ class DefaultIdentityTransitionBarrier : IdentityTransitionBarrier {
             // This callback is the privacy boundary. It runs inline before new identity is visible.
             gates.forEach { gate -> gate(willChange) }
             _generation.value = nextGeneration
+            _latestTransition.value = willChange
             publish(willChange)
             try {
                 block()
             } finally {
-                publish(
-                    IdentityTransition(
-                        phase = IdentityTransitionPhase.DID_CHANGE,
-                        kind = kind,
-                        generation = nextGeneration,
-                        targetServerId = resolvedTarget.serverId,
-                        affectsCurrentIdentity = resolvedTarget.affectsCurrentIdentity,
-                        purgesPersistentIdentity = resolvedTarget.purgesPersistentIdentity,
-                    ),
+                val didChange = IdentityTransition(
+                    phase = IdentityTransitionPhase.DID_CHANGE,
+                    kind = kind,
+                    generation = nextGeneration,
+                    targetServerId = resolvedTarget.serverId,
+                    affectsCurrentIdentity = resolvedTarget.affectsCurrentIdentity,
+                    purgesPersistentIdentity = resolvedTarget.purgesPersistentIdentity,
                 )
+                // Keep the completed lifecycle marker replayable. Clearing an
+                // in-progress flag around publication would leave a narrow gap
+                // where a new subscriber could miss DID_CHANGE permanently.
+                _latestTransition.value = didChange
+                publish(didChange)
             }
         }
 

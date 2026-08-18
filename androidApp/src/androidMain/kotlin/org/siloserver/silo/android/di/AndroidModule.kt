@@ -33,11 +33,14 @@ import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStarter
 import org.siloserver.silo.android.BuildConfig
+import org.siloserver.silo.android.mobileUiCustomizationFamily
 import org.siloserver.silo.common.network.AndroidDeviceMetadataProvider
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.DataStoreCleartextConsentStore
 import org.siloserver.silo.common.settings.AndroidServerSettingsCache
+import org.siloserver.silo.common.settings.DefaultUiCustomizationStore
+import org.siloserver.silo.common.settings.UiCustomizationStore
 import android.content.SharedPreferences
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.EncryptedTokenManagerImpl
@@ -179,9 +182,26 @@ val androidModule = module {
     // every collaborator that reports client identity (headers, playback
     // context, diagnostics) resolves this rather than deriving its own answer.
     single { SiloClientBuildIdentity(BuildConfig.BUILD_NUMBER, BuildConfig.RELEASE_CHANNEL) }
+    single<UiCustomizationStore> {
+        val context = androidContext()
+        // Shared with MainActivity's reclassification check so both read the
+        // same (application) Configuration.
+        val familyProvider = { mobileUiCustomizationFamily(context) }
+        DefaultUiCustomizationStore(
+            family = familyProvider(),
+            repository = get(),
+            tokenManager = get(),
+            cache = get(),
+            identityTransitions = get(),
+            scope = kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+            ),
+            familyProvider = familyProvider,
+        )
+    }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
         AndroidDeviceMetadataProvider(
-            androidContext(),
+            context = androidContext(),
             platform = "android",
             buildIdentity = get(),
         )
@@ -432,7 +452,7 @@ val androidModule = module {
             tmdbId = args.second,
         )
     }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get()) }

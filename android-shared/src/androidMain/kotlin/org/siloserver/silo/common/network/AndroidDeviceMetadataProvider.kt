@@ -21,6 +21,7 @@ class AndroidDeviceMetadataProvider(
     private val context: Context,
     private val platform: String,
     private val buildIdentity: SiloClientBuildIdentity,
+    private val clientFamily: String? = null,
 ) : DeviceMetadataProvider {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val cachedClientName: String by lazy { clientNameFor(platform) }
@@ -39,6 +40,10 @@ class AndroidDeviceMetadataProvider(
             id = deviceId,
             name = model,
             platform = platform,
+            clientFamily = clientFamily ?: androidClientFamily(
+                platform = platform,
+                smallestScreenWidthDp = context.resources.configuration.smallestScreenWidthDp,
+            ),
             clientName = cachedClientName,
             clientVersion = cachedClientVersion,
             clientBuild = buildIdentity.reportedBuildNumber,
@@ -67,3 +72,10 @@ class AndroidDeviceMetadataProvider(
         const val KEY_DEVICE_ID = "device_id"
     }
 }
+
+fun androidClientFamily(platform: String, smallestScreenWidthDp: Int): String =
+    when {
+        platform == "android-tv" -> "tv"
+        smallestScreenWidthDp >= 600 -> "tablet"
+        else -> "mobile"
+    }

@@ -52,6 +52,7 @@ import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
 import org.siloserver.silo.android.ui.components.MediaCard
+import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
@@ -160,7 +161,7 @@ private fun PersonDetailContent(
     onItemClick: (String) -> Unit,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 110.dp),
+        columns = GridCells.Adaptive(minSize = MediaGridDefaults.posterGridMinWidth()),
         contentPadding = PaddingValues(
             start = SafePadding,
             end = SafePadding,

@@ -3,10 +3,14 @@ package org.siloserver.silo.repository
 import org.siloserver.silo.model.settings.EffectiveSetting
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
+import org.siloserver.silo.model.settings.PrimaryMenuItem
 import org.siloserver.silo.model.settings.SettingScopeIdentity
+import org.siloserver.silo.model.settings.SiloClientFamily
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.model.settings.SubtitleAppearance
+import org.siloserver.silo.model.settings.UiCustomizationCodec
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.OverlayConfigResponse
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.network.api.SettingsCapabilitiesResult
@@ -57,8 +61,16 @@ class SettingsRepository(
         keys: List<String> = emptyList(),
         libraryIds: List<Int> = emptyList(),
         seriesIds: List<String> = emptyList(),
+        profileId: String? = null,
+        authScope: AuthScopeSnapshot? = null,
     ): ApiResult<Map<String, EffectiveSettingValue>> =
-        settingsApi.getEffectiveValues(keys, libraryIds, seriesIds).map { response ->
+        settingsApi.getEffectiveValues(
+            keys,
+            libraryIds,
+            seriesIds,
+            profileId,
+            authScope,
+        ).map { response ->
             response.settings.associateBy { it.key }
         }
 
@@ -85,12 +97,59 @@ class SettingsRepository(
         key: String,
         value: JsonElement,
         mutationId: String = newSettingMutationId(),
+        profileId: String? = null,
     ): ApiResult<StoredSettingValue> =
         settingsApi.putValue(
             key = key,
             scope = SettingScopeIdentity.profile(),
             value = value,
             mutationId = mutationId,
+            profileId = profileId,
+        )
+
+    /** Atomically set one shortcut's desired membership at profile scope. */
+    suspend fun setNavigationShortcutPresent(
+        item: PrimaryMenuItem,
+        present: Boolean,
+        mutationId: String = newSettingMutationId(),
+        profileId: String? = null,
+        authScope: AuthScopeSnapshot? = null,
+    ): ApiResult<StoredSettingValue> {
+        val encoded = UiCustomizationCodec.encodeShortcutItem(item)
+            ?: return ApiResult.Error(
+                code = 400,
+                error = "invalid_shortcut_item",
+                message = "Navigation shortcuts cannot target built-in destinations",
+            )
+        return settingsApi.putNavigationShortcutItem(
+            item = encoded,
+            present = present,
+            mutationId = mutationId,
+            profileId = profileId,
+            authScope = authScope,
+        )
+    }
+
+    /**
+     * Write a value shared by this profile's current client family (TV,
+     * mobile, tablet, desktop, or web). The auth interceptor supplies the
+     * canonical `X-Silo-Client-Family` header alongside the profile identity.
+     */
+    suspend fun setProfileClientValue(
+        key: String,
+        value: JsonElement,
+        mutationId: String = newSettingMutationId(),
+        profileId: String? = null,
+        authScope: AuthScopeSnapshot? = null,
+        clientFamily: SiloClientFamily? = null,
+    ): ApiResult<StoredSettingValue> =
+        settingsApi.putValue(
+            key = key,
+            scope = SettingScopeIdentity.profileClient(clientFamily),
+            value = value,
+            mutationId = mutationId,
+            profileId = profileId,
+            authScope = authScope,
         )
 
     /**
@@ -98,8 +157,57 @@ class SettingsRepository(
      * nothing was stored there, which is the state the caller asked for, so it
      * reports success rather than an error the UI would have to special-case.
      */
-    suspend fun clearProfileValue(key: String): ApiResult<Unit> =
-        when (val result = settingsApi.deleteValue(key, SettingScopeIdentity.profile())) {
+    suspend fun clearProfileValue(key: String, profileId: String? = null): ApiResult<Unit> =
+        when (
+            val result = settingsApi.deleteValue(
+                key,
+                SettingScopeIdentity.profile(),
+                profileId,
+            )
+        ) {
+            is ApiResult.Error ->
+                if (result.code == 404) ApiResult.Success(Unit) else result
+            else -> result
+        }
+
+    /** Clear this family's override so contract/default resolution applies. */
+    suspend fun clearProfileClientValue(
+        key: String,
+        profileId: String? = null,
+        authScope: AuthScopeSnapshot? = null,
+        clientFamily: SiloClientFamily? = null,
+    ): ApiResult<Unit> =
+        when (
+            val result = settingsApi.deleteValue(
+                key,
+                SettingScopeIdentity.profileClient(clientFamily),
+                profileId,
+                authScope,
+            )
+        ) {
+            is ApiResult.Error ->
+                if (result.code == 404) ApiResult.Success(Unit) else result
+            else -> result
+        }
+
+    /**
+     * Clear the current device's higher-precedence override so the value
+     * inherited from this profile's client family becomes effective again.
+     */
+    suspend fun clearProfileDeviceValue(
+        key: String,
+        profileId: String? = null,
+        authScope: AuthScopeSnapshot? = null,
+        clientFamily: SiloClientFamily? = null,
+    ): ApiResult<Unit> =
+        when (
+            val result = settingsApi.deleteValue(
+                key,
+                SettingScopeIdentity.profileDevice(clientFamily),
+                profileId,
+                authScope,
+            )
+        ) {
             is ApiResult.Error ->
                 if (result.code == 404) ApiResult.Success(Unit) else result
             else -> result

@@ -92,6 +92,12 @@ import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityPresets
+import org.siloserver.silo.model.settings.CardCaptionPreset
+import org.siloserver.silo.model.settings.CardPresentation
+import org.siloserver.silo.model.settings.CardPresentationPreset
+import org.siloserver.silo.model.settings.PosterSizePreset
+import org.siloserver.silo.model.settings.PrimaryMenuItem
+import org.siloserver.silo.model.settings.UiCustomizationCodec
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -153,6 +159,18 @@ fun TvSettingsScreen(
     var categoryColumnHasFocus by remember { mutableStateOf(false) }
     var detailFocusRequest by remember { mutableStateOf(0) }
     var showSignOutConfirm by remember { mutableStateOf(false) }
+    var unresolvedCustomizationFocusFallback by remember { mutableStateOf(false) }
+    LaunchedEffect(state.uiCustomizationSupport) {
+        unresolvedCustomizationFocusFallback = false
+        if (state.uiCustomizationSupport == null) {
+            delay(UiCustomizationFocusFallbackDelayMillis)
+            unresolvedCustomizationFocusFallback = true
+        }
+    }
+    val generalInitialFocusTarget = tvGeneralInitialFocusTarget(
+        state = state,
+        allowUnresolvedReadOnly = unresolvedCustomizationFocusFallback,
+    )
 
     LaunchedEffect(Unit) {
         // Was four attempts judged on requestFocus() returning true — that is
@@ -198,8 +216,16 @@ fun TvSettingsScreen(
             .claimFocusOrReport(target = "settings_category", action = "eligibility_fallback")
     }
 
-    LaunchedEffect(detailFocusRequest) {
+    LaunchedEffect(detailFocusRequest, selectedCategory, generalInitialFocusTarget) {
         if (detailFocusRequest > 0) {
+            // The General pane defers its own initial focus while the
+            // customization capability is still unresolved: claiming the detail
+            // column now would land on a row that is about to be replaced.
+            if (selectedCategory == TvSettingsCategory.General &&
+                generalInitialFocusTarget == TvGeneralInitialFocusTarget.DEFER
+            ) {
+                return@LaunchedEffect
+            }
             requestFocusUntilObserved(
                 maxAttempts = TvContentInitialFocusMaxAttempts,
                 awaitAttempt = { withFrameNanos { } },
@@ -237,6 +263,7 @@ fun TvSettingsScreen(
         diagnosticsState = diagnosticsState,
         diagnosticsViewModel = diagnosticsViewModel,
         selectedCategory = selectedCategory,
+        generalInitialFocusTarget = generalInitialFocusTarget,
         categoryFocusRequesters = categoryFocusRequesters,
         detailFocusRequester = detailFocusRequester,
         onDetailFocusChanged = { detailHasFocus = it },
@@ -280,6 +307,15 @@ fun TvSettingsScreen(
         onSubtitleDeviceOverrideEnabledChanged = viewModel::setSubtitleDeviceOverrideEnabled,
         onSubtitleMatchesDeviceChanged = viewModel::onSubtitleMatchesDeviceChanged,
         onShowAudiobooksTabChanged = viewModel::onShowAudiobooksTabChanged,
+        onNavigationPresetSelected = viewModel::setNavigationPreset,
+        onMoveMenuItem = viewModel::moveMenuItem,
+        onRemoveMenuItem = viewModel::removeMenuItem,
+        onAddMenuItem = viewModel::addMenuItem,
+        onUnpinShortcut = viewModel::unpinShortcut,
+        onCardPresentationPresetChanged = viewModel::setCardPresentationPreset,
+        onPosterSizeChanged = viewModel::setPosterSize,
+        onCardCaptionChanged = viewModel::setCardCaption,
+        onUseFamilyInterfaceSettings = viewModel::useFamilyInterfaceSettings,
     )
 
     if (showSignOutConfirm) {
@@ -374,6 +410,7 @@ private fun SettingsSplitLayout(
     diagnosticsState: org.siloserver.silo.common.diagnostics.DiagnosticsUiState,
     diagnosticsViewModel: TvDiagnosticsViewModel,
     selectedCategory: TvSettingsCategory,
+    generalInitialFocusTarget: TvGeneralInitialFocusTarget,
     categoryFocusRequesters: Map<TvSettingsCategory, FocusRequester>,
     detailFocusRequester: FocusRequester,
     onDetailFocusChanged: (Boolean) -> Unit,
@@ -383,6 +420,15 @@ private fun SettingsSplitLayout(
     onCategorySelected: (TvSettingsCategory) -> Unit,
     onEnterCategory: (TvSettingsCategory) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onNavigationPresetSelected: (TvSettingsViewModel.NavigationPreset) -> Unit,
+    onMoveMenuItem: (String, Int) -> Unit,
+    onRemoveMenuItem: (String) -> Unit,
+    onAddMenuItem: (String) -> Unit,
+    onUnpinShortcut: (String) -> Unit,
+    onCardPresentationPresetChanged: (CardPresentationPreset) -> Unit,
+    onPosterSizeChanged: (PosterSizePreset) -> Unit,
+    onCardCaptionChanged: (CardCaptionPreset) -> Unit,
+    onUseFamilyInterfaceSettings: () -> Unit,
     onSwitchProfile: () -> Unit,
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
@@ -437,6 +483,7 @@ private fun SettingsSplitLayout(
         SettingsRail(
             state = state,
             visibleCategories = tvSettingsVisibleCategories(diagnosticsState.profileEligible),
+            generalInitialFocusTarget = generalInitialFocusTarget,
             selectedCategory = selectedCategory,
             categoryFocusRequesters = categoryFocusRequesters,
             detailFocusRequester = detailFocusRequester,
@@ -452,12 +499,22 @@ private fun SettingsSplitLayout(
         )
         SettingsDetailPane(
             state = state,
+            generalInitialFocusTarget = generalInitialFocusTarget,
             diagnosticsState = diagnosticsState,
             diagnosticsViewModel = diagnosticsViewModel,
             selectedCategory = selectedCategory,
             detailFocusRequester = detailFocusRequester,
             onDetailFocusChanged = onDetailFocusChanged,
             onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
+            onNavigationPresetSelected = onNavigationPresetSelected,
+            onMoveMenuItem = onMoveMenuItem,
+            onRemoveMenuItem = onRemoveMenuItem,
+            onAddMenuItem = onAddMenuItem,
+            onUnpinShortcut = onUnpinShortcut,
+            onCardPresentationPresetChanged = onCardPresentationPresetChanged,
+            onPosterSizeChanged = onPosterSizeChanged,
+            onCardCaptionChanged = onCardCaptionChanged,
+            onUseFamilyInterfaceSettings = onUseFamilyInterfaceSettings,
             onManageServers = onManageServers,
             onOpenDiagnosticsReport = onOpenDiagnosticsReport,
             onQualityPresetSelected = onQualityPresetSelected,
@@ -513,6 +570,7 @@ private fun SettingsSplitLayout(
 private fun SettingsRail(
     state: TvSettingsViewModel.UiState,
     visibleCategories: List<TvSettingsCategory>,
+    generalInitialFocusTarget: TvGeneralInitialFocusTarget,
     selectedCategory: TvSettingsCategory,
     categoryFocusRequesters: Map<TvSettingsCategory, FocusRequester>,
     detailFocusRequester: FocusRequester,
@@ -556,7 +614,14 @@ private fun SettingsRail(
                 },
                 // Entry focus lands on General, not the profile row.
                 focusRequester = categoryFocusRequesters.getValue(category),
-                rightFocusRequester = detailFocusRequester,
+                rightFocusRequester = if (
+                    category == TvSettingsCategory.General &&
+                    generalInitialFocusTarget == TvGeneralInitialFocusTarget.DEFER
+                ) {
+                    FocusRequester.Cancel
+                } else {
+                    detailFocusRequester
+                },
             )
         }
         Spacer(modifier = Modifier.weight(1f))
@@ -713,12 +778,22 @@ private fun SettingsRailActionRow(
 @Composable
 private fun SettingsDetailPane(
     state: TvSettingsViewModel.UiState,
+    generalInitialFocusTarget: TvGeneralInitialFocusTarget,
     diagnosticsState: org.siloserver.silo.common.diagnostics.DiagnosticsUiState,
     diagnosticsViewModel: TvDiagnosticsViewModel,
     selectedCategory: TvSettingsCategory,
     detailFocusRequester: FocusRequester,
     onDetailFocusChanged: (Boolean) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onNavigationPresetSelected: (TvSettingsViewModel.NavigationPreset) -> Unit,
+    onMoveMenuItem: (String, Int) -> Unit,
+    onRemoveMenuItem: (String) -> Unit,
+    onAddMenuItem: (String) -> Unit,
+    onUnpinShortcut: (String) -> Unit,
+    onCardPresentationPresetChanged: (CardPresentationPreset) -> Unit,
+    onPosterSizeChanged: (PosterSizePreset) -> Unit,
+    onCardCaptionChanged: (CardCaptionPreset) -> Unit,
+    onUseFamilyInterfaceSettings: () -> Unit,
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
     /** Receives a [QualityPresets] preset id. */
@@ -778,7 +853,17 @@ private fun SettingsDetailPane(
             TvSettingsCategory.General -> TvGeneralSettingsPane(
                 state = state,
                 firstFocusRequester = detailFocusRequester,
+                initialFocusTarget = generalInitialFocusTarget,
                 onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
+                onNavigationPresetSelected = onNavigationPresetSelected,
+                onMoveMenuItem = onMoveMenuItem,
+                onRemoveMenuItem = onRemoveMenuItem,
+                onAddMenuItem = onAddMenuItem,
+                onUnpinShortcut = onUnpinShortcut,
+                onCardPresentationPresetChanged = onCardPresentationPresetChanged,
+                onPosterSizeChanged = onPosterSizeChanged,
+                onCardCaptionChanged = onCardCaptionChanged,
+                onUseFamilyInterfaceSettings = onUseFamilyInterfaceSettings,
             )
             TvSettingsCategory.Playback -> TvPlaybackSettingsPane(
                 state = state,
@@ -846,13 +931,72 @@ private fun SettingsDetailPane(
 private fun TvGeneralSettingsPane(
     state: TvSettingsViewModel.UiState,
     firstFocusRequester: FocusRequester,
+    initialFocusTarget: TvGeneralInitialFocusTarget,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onNavigationPresetSelected: (TvSettingsViewModel.NavigationPreset) -> Unit,
+    onMoveMenuItem: (String, Int) -> Unit,
+    onRemoveMenuItem: (String) -> Unit,
+    onAddMenuItem: (String) -> Unit,
+    onUnpinShortcut: (String) -> Unit,
+    onCardPresentationPresetChanged: (CardPresentationPreset) -> Unit,
+    onPosterSizeChanged: (PosterSizePreset) -> Unit,
+    onCardCaptionChanged: (CardCaptionPreset) -> Unit,
+    onUseFamilyInterfaceSettings: () -> Unit,
 ) {
+    var activePicker by remember { mutableStateOf<GeneralPicker?>(null) }
+    val menuEditingEnabled = state.uiCustomizationAvailable &&
+        !state.primaryMenuUsesDeviceOverride &&
+        state.customizationLibrariesResolved
+    val audiobookToggleEnabled = tvAudiobookToggleEnabled(state)
+    // Same set the ViewModel feeds moveVisibleTvMenuItem: the two projections
+    // must agree or a move offset would address the wrong row.
+    val editorVisibleLibraryIds = remember(state.libraries) {
+        state.libraries.mapTo(mutableSetOf()) { it.id }
+    }
+    val editorMenuItems = remember(state.menuItems, editorVisibleLibraryIds) {
+        visibleTvMenuItems(state.menuItems, editorVisibleLibraryIds)
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
+        if (initialFocusTarget == TvGeneralInitialFocusTarget.READ_ONLY) {
+            item {
+                SettingsGroup(title = "Interface Sync") {
+                    SettingsValueRow(
+                        label = "Interface settings",
+                        value = "Temporarily unavailable",
+                        onClick = {},
+                        focusRequester = firstFocusRequester,
+                        showChevron = false,
+                    )
+                    SettingsFooterText(
+                        text = "The server capability could not be resolved. Existing interface settings remain visible but read-only.",
+                    )
+                }
+            }
+        }
+        if (state.uiCustomizationAvailable &&
+            (state.primaryMenuUsesDeviceOverride ||
+            state.cardPresentationUsesDeviceOverride
+            )
+        ) {
+            item {
+                SettingsGroup(title = "Interface Sync") {
+                    SettingsActionRow(
+                        label = "Use Synced TV Settings",
+                        onClick = onUseFamilyInterfaceSettings,
+                        focusRequester = firstFocusRequester.takeIf {
+                            initialFocusTarget == TvGeneralInitialFocusTarget.SYNC
+                        },
+                    )
+                    SettingsFooterText(
+                        text = "This device has older device-specific interface settings. Clear them to use choices shared with other TVs on this profile.",
+                    )
+                }
+            }
+        }
         item {
             // tvOS TVGeneralSettingsPane TOP MENU parity: the Audiobooks tab
             // is opt-in (hidden by default) even when the server has an
@@ -862,19 +1006,259 @@ private fun TvGeneralSettingsPane(
                     label = "Show Audiobooks",
                     checked = state.showAudiobooksTab,
                     onCheckedChange = onShowAudiobooksTabChanged,
-                    focusRequester = firstFocusRequester,
+                    focusRequester = firstFocusRequester.takeIf {
+                        initialFocusTarget == TvGeneralInitialFocusTarget.AUDIOBOOKS
+                    },
+                    enabled = audiobookToggleEnabled,
                 )
+                SettingsValueRow(
+                    label = "Layout Preset",
+                    value = state.navigationPreset.label,
+                    onClick = { activePicker = GeneralPicker.NavigationPreset },
+                    focusRequester = firstFocusRequester.takeIf {
+                        initialFocusTarget == TvGeneralInitialFocusTarget.LAYOUT_PRESET
+                    },
+                    enabled = menuEditingEnabled,
+                )
+                editorMenuItems
+                    .forEachIndexed { position, item ->
+                        val identity = UiCustomizationCodec.identity(item)
+                        SettingsValueRow(
+                            label = item.label,
+                            value = "${position + 1} of ${editorMenuItems.size}",
+                            onClick = { activePicker = GeneralPicker.MenuItem(identity) },
+                            // A profile_device row outranks family sync. Keep
+                            // the effective layout visible but read-only until
+                            // the user explicitly clears that device row.
+                            enabled = menuEditingEnabled &&
+                                (identity != "builtin:home" || editorMenuItems.size > 1),
+                        )
+                    }
+                if (state.addableMenuItems.isNotEmpty()) {
+                    SettingsValueRow(
+                        label = "Add Menu Item",
+                        value = "${state.addableMenuItems.size} available",
+                        onClick = { activePicker = GeneralPicker.AddMenuItem },
+                        enabled = menuEditingEnabled,
+                    )
+                }
                 SettingsFooterText(
-                    text = "Adds an Audiobooks tab to the top menu when your server has an audiobook library. Hidden by default.",
+                    text = when {
+                        !state.uiCustomizationAvailable ->
+                            "Layout and card customization require a newer server. Show Audiobooks remains stored on this TV."
+                        state.customizationLibrariesLoadFailed ->
+                            "Library destinations could not be loaded, so menu changes are disabled. Reopen Settings to retry."
+                        !state.customizationLibrariesResolved ->
+                            "Loading library destinations before enabling menu changes."
+                        state.menuItems.size >= TvPrimaryMenuMaxItems ->
+                            "The top menu has reached its $TvPrimaryMenuMaxItems-item limit. Hide an item before adding another."
+                        state.shortcuts.items.size >= TvNavigationShortcutsMaxItems ->
+                            "The profile has reached its $TvNavigationShortcutsMaxItems-shortcut limit. Unpin a shortcut before adding another library to the menu."
+                        else ->
+                            "Order, visibility, and pinned libraries sync with other TVs on this profile. Search and Profile stay fixed."
+                    },
                 )
             }
         }
-        // No Library group — tvOS parity: Apple's TVSettingsView has no such
-        // section (it is iOS-only). On TV these destinations live in the
-        // For You dropdown (Watchlist/Favorites), the profile menu
-        // (Watchlist/Favorites/History), Home (Browse), and each library's
-        // cascade (Collections). (QA 2026-07-08.)
+        if (state.uiCustomizationAvailable && state.shortcuts.items.isNotEmpty()) {
+            item {
+                SettingsGroup(title = "Pinned Shortcuts") {
+                    SettingsValueRow(
+                        label = "Manage Pinned Shortcuts",
+                        value = "${state.shortcuts.items.size} pinned",
+                        onClick = { activePicker = GeneralPicker.PinnedShortcuts },
+                    )
+                    SettingsFooterText(
+                        text = "Unpinning removes only the profile shortcut. It does not hide or reorder the top menu.",
+                    )
+                }
+            }
+        }
+        item {
+            SettingsGroup(title = "Cards") {
+                SettingsValueRow(
+                    label = "Preset",
+                    value = CardPresentationPreset.matching(
+                        CardPresentation(state.posterSize, state.cardCaption),
+                    )?.label ?: "Custom",
+                    onClick = { activePicker = GeneralPicker.CardPreset },
+                    focusRequester = firstFocusRequester.takeIf {
+                        initialFocusTarget == TvGeneralInitialFocusTarget.CARD_PRESET
+                    },
+                    enabled = state.uiCustomizationAvailable &&
+                        !state.cardPresentationUsesDeviceOverride,
+                )
+                SettingsValueRow(
+                    label = "Poster Size",
+                    value = state.posterSize.label,
+                    onClick = { activePicker = GeneralPicker.PosterSize },
+                    enabled = state.uiCustomizationAvailable &&
+                        !state.cardPresentationUsesDeviceOverride,
+                )
+                SettingsValueRow(
+                    label = "Captions",
+                    value = state.cardCaption.label,
+                    onClick = { activePicker = GeneralPicker.CardCaption },
+                    enabled = state.uiCustomizationAvailable &&
+                        !state.cardPresentationUsesDeviceOverride,
+                )
+                SettingsFooterText(
+                    text = "Applies to poster rows and grids on every TV in this profile's TV family.",
+                )
+            }
+        }
     }
+
+    when (val picker = activePicker) {
+        GeneralPicker.NavigationPreset -> TvSettingsPickerSheet(
+            title = "Top Menu Preset",
+            options = TvSettingsViewModel.NavigationPreset.entries
+                .filterNot { it == TvSettingsViewModel.NavigationPreset.CUSTOM }
+                .map { PickerOption(it.wire, it.label) },
+            selectedId = state.navigationPreset.wire,
+            onSelect = { id ->
+                TvSettingsViewModel.NavigationPreset.entries.firstOrNull { it.wire == id }
+                    ?.let(onNavigationPresetSelected)
+                activePicker = null
+            },
+            onDismiss = { activePicker = null },
+        )
+        GeneralPicker.CardPreset -> TvSettingsPickerSheet(
+            title = "Card Preset",
+            options = CardPresentationPreset.entries.map { PickerOption(it.wire, it.label) },
+            selectedId = CardPresentationPreset.matching(
+                CardPresentation(state.posterSize, state.cardCaption),
+            )?.wire ?: "",
+            onSelect = { id ->
+                CardPresentationPreset.fromWire(id)?.let(onCardPresentationPresetChanged)
+                activePicker = null
+            },
+            onDismiss = { activePicker = null },
+        )
+        GeneralPicker.PosterSize -> TvSettingsPickerSheet(
+            title = "Poster Size",
+            options = PosterSizePreset.entries.map { PickerOption(it.wire, it.label) },
+            selectedId = state.posterSize.wire,
+            onSelect = { id ->
+                PosterSizePreset.entries.firstOrNull { it.wire == id }?.let(onPosterSizeChanged)
+                activePicker = null
+            },
+            onDismiss = { activePicker = null },
+        )
+        GeneralPicker.CardCaption -> TvSettingsPickerSheet(
+            title = "Card Captions",
+            options = CardCaptionPreset.entries.map { PickerOption(it.wire, it.label) },
+            selectedId = state.cardCaption.wire,
+            onSelect = { id ->
+                CardCaptionPreset.entries.firstOrNull { it.wire == id }?.let(onCardCaptionChanged)
+                activePicker = null
+            },
+            onDismiss = { activePicker = null },
+        )
+        GeneralPicker.AddMenuItem -> TvSettingsPickerSheet(
+            title = "Add Menu Item",
+            options = state.addableMenuItems.map {
+                PickerOption(UiCustomizationCodec.identity(it), it.label)
+            },
+            selectedId = "",
+            onSelect = { id -> onAddMenuItem(id); activePicker = null },
+            onDismiss = { activePicker = null },
+        )
+        GeneralPicker.PinnedShortcuts -> TvSettingsPickerSheet(
+            title = "Unpin Shortcut",
+            options = state.shortcuts.items.map {
+                PickerOption(UiCustomizationCodec.identity(it), "Unpin ${it.label}")
+            },
+            selectedId = "",
+            onSelect = { id -> onUnpinShortcut(id); activePicker = null },
+            onDismiss = { activePicker = null },
+        )
+        is GeneralPicker.MenuItem -> {
+            val index = editorMenuItems.indexOfFirst {
+                UiCustomizationCodec.identity(it) == picker.identity
+            }
+            val isHome = picker.identity == "builtin:home"
+            val options = buildList {
+                if (index > 0) add(PickerOption("earlier", "Move Earlier"))
+                if (index in 0 until editorMenuItems.lastIndex) {
+                    add(PickerOption("later", "Move Later"))
+                }
+                if (!isHome) add(PickerOption("hide", "Hide from Menu"))
+            }
+            TvSettingsPickerSheet(
+                title = editorMenuItems.getOrNull(index)?.label ?: "Menu Item",
+                options = options,
+                selectedId = "",
+                onSelect = { action ->
+                    when (action) {
+                        "earlier" -> onMoveMenuItem(picker.identity, -1)
+                        "later" -> onMoveMenuItem(picker.identity, 1)
+                        "hide" -> onRemoveMenuItem(picker.identity)
+                    }
+                    activePicker = null
+                },
+                onDismiss = { activePicker = null },
+            )
+        }
+        null -> Unit
+    }
+}
+
+internal fun tvAudiobookToggleEnabled(state: TvSettingsViewModel.UiState): Boolean =
+    when (state.uiCustomizationSupport) {
+        true -> !state.primaryMenuUsesDeviceOverride &&
+            state.customizationLibrariesResolved &&
+            (state.showAudiobooksTab || canEnableTvAudiobooksTab(state.menuItems))
+        false -> true
+        null -> false
+    }
+
+internal enum class TvGeneralInitialFocusTarget {
+    SYNC,
+    AUDIOBOOKS,
+    LAYOUT_PRESET,
+    CARD_PRESET,
+    READ_ONLY,
+    DEFER,
+}
+
+/** Selects exactly one attached, enabled General row, or defers while support is unknown. */
+internal fun tvGeneralInitialFocusTarget(
+    state: TvSettingsViewModel.UiState,
+    allowUnresolvedReadOnly: Boolean = false,
+): TvGeneralInitialFocusTarget {
+    if (state.uiCustomizationSupport == null) {
+        return if (allowUnresolvedReadOnly) {
+            TvGeneralInitialFocusTarget.READ_ONLY
+        } else {
+            TvGeneralInitialFocusTarget.DEFER
+        }
+    }
+    if (state.uiCustomizationAvailable &&
+        (state.primaryMenuUsesDeviceOverride || state.cardPresentationUsesDeviceOverride)
+    ) {
+        return TvGeneralInitialFocusTarget.SYNC
+    }
+    if (tvAudiobookToggleEnabled(state)) return TvGeneralInitialFocusTarget.AUDIOBOOKS
+
+    val menuEditingEnabled = state.uiCustomizationAvailable &&
+        !state.primaryMenuUsesDeviceOverride &&
+        state.customizationLibrariesResolved
+    if (menuEditingEnabled) return TvGeneralInitialFocusTarget.LAYOUT_PRESET
+    if (state.uiCustomizationAvailable && !state.cardPresentationUsesDeviceOverride) {
+        return TvGeneralInitialFocusTarget.CARD_PRESET
+    }
+    return TvGeneralInitialFocusTarget.DEFER
+}
+
+private sealed interface GeneralPicker {
+    data object NavigationPreset : GeneralPicker
+    data object CardPreset : GeneralPicker
+    data object PosterSize : GeneralPicker
+    data object CardCaption : GeneralPicker
+    data object AddMenuItem : GeneralPicker
+    data object PinnedShortcuts : GeneralPicker
+    data class MenuItem(val identity: String) : GeneralPicker
 }
 
 @Composable
@@ -1983,6 +2367,7 @@ internal fun SettingsValueRow(
     focusRequester: FocusRequester? = null,
     enabled: Boolean = true,
     modifier: Modifier = Modifier,
+    showChevron: Boolean = true,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -2027,15 +2412,19 @@ internal fun SettingsValueRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(
-                imageVector = Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.55f),
-                modifier = Modifier.size(14.dp),
-            )
+            if (showChevron) {
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = (if (isFocused) FocusedContent else Color.White).copy(alpha = 0.55f),
+                    modifier = Modifier.size(14.dp),
+                )
+            }
         }
     }
 }
+
+private const val UiCustomizationFocusFallbackDelayMillis = 1_500L
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable

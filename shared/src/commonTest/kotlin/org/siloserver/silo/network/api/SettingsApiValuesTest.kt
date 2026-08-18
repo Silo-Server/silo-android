@@ -1,7 +1,12 @@
 package org.siloserver.silo.network.api
 
 import org.siloserver.silo.model.settings.EffectiveSettingValue
+import org.siloserver.silo.model.settings.PrimaryMenuItem
 import org.siloserver.silo.model.settings.SettingScopeIdentity
+import org.siloserver.silo.model.settings.SiloClientFamily
+import org.siloserver.silo.model.settings.SettingsContractCapabilities
+import org.siloserver.silo.model.settings.UiCustomizationCodec
+import org.siloserver.silo.model.settings.supportsUiCustomization
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.SiloJson
 import io.ktor.client.HttpClient
@@ -30,6 +35,48 @@ import kotlin.test.assertTrue
 
 /** Tests for the canonical settings API surface: `/settings/contract` and the `/settings/values` routes. */
 class SettingsApiValuesTest {
+
+    @Test
+    fun `ui customization fails closed unless revision atomic and idempotency match`() {
+        assertFalse(
+            SettingsContractCapabilities(
+                revision = 4,
+                supportsBatchedEffective = true,
+                supportsIdempotentWrites = true,
+                supportsAtomicShortcuts = true,
+            ).supportsUiCustomization,
+        )
+        assertFalse(SettingsContractCapabilities(revision = 5).supportsUiCustomization)
+        assertFalse(
+            SettingsContractCapabilities(
+                revision = 5,
+                supportsIdempotentWrites = true,
+                supportsAtomicShortcuts = true,
+            ).supportsUiCustomization,
+        )
+        assertFalse(
+            SettingsContractCapabilities(
+                revision = 5,
+                supportsBatchedEffective = true,
+                supportsAtomicShortcuts = true,
+            ).supportsUiCustomization,
+        )
+        assertFalse(
+            SettingsContractCapabilities(
+                revision = 5,
+                supportsBatchedEffective = true,
+                supportsIdempotentWrites = true,
+            ).supportsUiCustomization,
+        )
+        assertTrue(
+            SettingsContractCapabilities(
+                revision = 5,
+                supportsBatchedEffective = true,
+                supportsIdempotentWrites = true,
+                supportsAtomicShortcuts = true,
+            ).supportsUiCustomization,
+        )
+    }
 
     private class Captured {
         var method: HttpMethod? = null
@@ -71,10 +118,11 @@ class SettingsApiValuesTest {
     fun `getContractCapabilities parses the server capabilities shape`() = runTest {
         val (api, captured) = api(
             responseBody = """
-                {"api_version":1,"revision":4,"contract_etag":"\"abc123\"",
+                {"api_version":1,"revision":5,"contract_etag":"\"abc123\"",
                  "definition_count":41,
-                 "scopes":["account","profile","profile_device","profile_library","profile_series"],
-                 "supports_batched_effective":true,"supports_idempotent_writes":true}
+                 "scopes":["account","profile","profile_client","profile_device","profile_library","profile_series"],
+                 "supports_batched_effective":true,"supports_idempotent_writes":true,
+                 "supports_atomic_shortcuts":true}
             """.trimIndent(),
         )
 
@@ -83,12 +131,14 @@ class SettingsApiValuesTest {
         assertEquals("/api/v1/settings/contract/capabilities", captured.path)
         assertIs<SettingsCapabilitiesResult.Available>(result)
         assertEquals(1, result.capabilities.apiVersion)
-        assertEquals(4, result.capabilities.revision)
+        assertEquals(5, result.capabilities.revision)
         assertEquals("\"abc123\"", result.capabilities.contractEtag)
         assertEquals(41, result.capabilities.definitionCount)
-        assertEquals(5, result.capabilities.scopes.size)
+        assertEquals(6, result.capabilities.scopes.size)
+        assertTrue("profile_client" in result.capabilities.scopes)
         assertTrue(result.capabilities.supportsBatchedEffective)
         assertTrue(result.capabilities.supportsIdempotentWrites)
+        assertTrue(result.capabilities.supportsAtomicShortcuts)
     }
 
     @Test
@@ -157,12 +207,14 @@ class SettingsApiValuesTest {
             keys = listOf("playback.auto_play_next", "playback.preferred_quality"),
             libraryIds = listOf(3, 7),
             seriesIds = listOf("s1", "s2"),
+            profileId = "profile-pinned-at-request-start",
         )
 
         assertEquals("/api/v1/settings/values/effective", captured.path)
         assertEquals("playback.auto_play_next,playback.preferred_quality", captured.query["keys"])
         assertEquals("3,7", captured.query["library_ids"])
         assertEquals("s1,s2", captured.query["series_ids"])
+        assertEquals("profile-pinned-at-request-start", captured.headers["X-Profile-Id"])
 
         assertIs<ApiResult.Success<*>>(result)
         val response = (result as ApiResult.Success).data
@@ -256,6 +308,33 @@ class SettingsApiValuesTest {
     }
 
     @Test
+    fun `putValue sends profile client scope and decodes its family receipt`() = runTest {
+        val (api, captured) = api(
+            responseBody = """
+                {"key":"ui.card_presentation","scope":"profile_client",
+                 "profile_id":"p1","client_family":"tv",
+                 "value":{"poster_size":"large","caption":"artwork"}}
+            """.trimIndent(),
+        )
+
+        val result = api.putValue(
+            key = "ui.card_presentation",
+            scope = SettingScopeIdentity.profileClient(SiloClientFamily.MOBILE),
+            value = buildJsonObject {
+                put("poster_size", "large")
+                put("caption", "artwork")
+            },
+            mutationId = "mut-family",
+        )
+
+        assertEquals("profile_client", captured.query["scope"])
+        assertNull(captured.query["client_family"])
+        assertEquals("mobile", captured.headers["X-Silo-Client-Family"])
+        assertIs<ApiResult.Success<*>>(result)
+        assertEquals("tv", (result as ApiResult.Success).data.clientFamily)
+    }
+
+    @Test
     fun `putValue surfaces a mutation id conflict as a typed error`() = runTest {
         val (api, _) = api(
             status = HttpStatusCode.Conflict,
@@ -287,6 +366,42 @@ class SettingsApiValuesTest {
         )
 
         assertEquals("child-profile", captured.headers["X-Profile-Id"])
+    }
+
+    @Test
+    fun `putNavigationShortcutItem sends atomic intent body and stable mutation id`() = runTest {
+        val item = PrimaryMenuItem.Section(7, "recent", "Recently Added")
+        val encodedItem = checkNotNull(UiCustomizationCodec.encodeShortcutItem(item))
+        val (api, captured) = api(
+            responseBody = """
+                {"key":"nav.shortcuts","scope":"profile","profile_id":"p1",
+                 "value":{"items":[{"type":"section","library_id":7,
+                 "section_id":"recent","label":"Recently Added"}]},"revision":4}
+            """.trimIndent(),
+        )
+
+        val result = api.putNavigationShortcutItem(
+            item = encodedItem,
+            present = true,
+            mutationId = "shortcut-mut-1",
+            profileId = "profile-pinned-at-request-start",
+        )
+
+        assertEquals(HttpMethod.Put, captured.method)
+        assertEquals("/api/v1/settings/values/nav.shortcuts/item", captured.path)
+        assertTrue(captured.query.isEmpty())
+        assertEquals("shortcut-mut-1", captured.headers["X-Silo-Mutation-Id"])
+        assertEquals(
+            "profile-pinned-at-request-start",
+            captured.headers["X-Profile-Id"],
+        )
+        val body = SiloJson.parseToJsonElement(captured.body).jsonObject
+        assertEquals(encodedItem, body["item"])
+        assertEquals(true, body["present"]?.jsonPrimitive?.content?.toBoolean())
+
+        assertIs<ApiResult.Success<*>>(result)
+        assertEquals("nav.shortcuts", (result as ApiResult.Success).data.key)
+        assertEquals(4L, result.data.revision)
     }
 
     // ---- deletes ----

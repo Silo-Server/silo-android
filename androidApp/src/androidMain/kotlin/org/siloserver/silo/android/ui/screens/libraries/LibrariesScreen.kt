@@ -78,6 +78,8 @@ import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.forPosterPreset
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
 import org.siloserver.silo.android.ui.components.TabTopBarActions
@@ -1192,7 +1194,11 @@ private fun CollectionsTabContent(
             // column/row spacing and 16pt padding insets. Follows the Library
             // grid's view density so both tabs show the same column count.
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(state.catalogDensity.minCardWidth),
+                columns = GridCells.Adaptive(
+                    state.catalogDensity.minCardWidth.forPosterPreset(
+                        LocalCardPresentation.current.posterSize,
+                    ),
+                ),
                 horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
                 verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
                 modifier = Modifier.fillMaxSize(),

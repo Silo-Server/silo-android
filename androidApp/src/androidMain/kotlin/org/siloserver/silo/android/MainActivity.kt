@@ -52,6 +52,7 @@ import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
+import org.siloserver.silo.common.settings.UiCustomizationStore
 import org.siloserver.silo.common.startup.StartupArtworkPlan
 import org.siloserver.silo.common.startup.warmAuthenticatedStartup
 import org.siloserver.silo.common.startup.warmProfileSelectionStartup
@@ -64,6 +65,7 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
+import org.siloserver.silo.model.settings.SiloClientFamily
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -107,6 +109,7 @@ class MainActivity : ComponentActivity() {
     // example while an existing top Activity is being resumed by onNewIntent).
     // A replay-free SharedFlow can silently drop exactly that warm delivery.
     private val pendingExternalRouteRequests = MutableStateFlow<ExternalRouteRequest?>(null)
+    private var uiCustomizationFamily: SiloClientFamily? = null
 
     /**
      * The external route already delivered for the Intent this Activity was
@@ -127,6 +130,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         consumedExternalRoute = savedInstanceState?.getString(STATE_CONSUMED_EXTERNAL_ROUTE)
+        uiCustomizationFamily = mobileUiCustomizationFamily(applicationContext)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
         maybeRequestLegacyPublicDownloadPermission()
@@ -229,6 +233,24 @@ class MainActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         consumedExternalRoute?.let { outState.putString(STATE_CONSUMED_EXTERNAL_ROUTE, it) }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val previousFamily = uiCustomizationFamily
+        // [newConfig] is deliberately unused here: it is this Activity's
+        // configuration, which in multi-window can differ from the
+        // application's. The UiCustomizationStore's familyProvider reads the
+        // application configuration on every write, so classifying from
+        // anything else would fire reclassifyClientFamily() for a change the
+        // store cannot observe (a no-op) and skip one it can.
+        val currentFamily = mobileUiCustomizationFamily(applicationContext)
+        uiCustomizationFamily = currentFamily
+        if (previousFamily != null && previousFamily != currentFamily) {
+            val store = get<UiCustomizationStore>(UiCustomizationStore::class.java)
+            store.reclassifyClientFamily()
+            lifecycleScope.launch(Dispatchers.IO) { store.refresh() }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

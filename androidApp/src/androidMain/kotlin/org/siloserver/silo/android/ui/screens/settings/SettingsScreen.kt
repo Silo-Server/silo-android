@@ -54,6 +54,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.ui.navigation.MobileNavigationPreset
+import org.siloserver.silo.android.ui.navigation.Tab
 import org.siloserver.silo.android.ui.screens.downloads.DownloadsViewModel
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.shouldShowDiagnosticsEntry
@@ -73,6 +77,8 @@ import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
+import org.siloserver.silo.model.settings.CardPresentation
+import org.siloserver.silo.model.settings.CardPresentationPreset
 
 /**
  * Main settings screen organized in grouped sections.
@@ -162,6 +168,153 @@ fun SettingsScreen(
                     onPairDevice = onPairDevice,
                     onSignOut = viewModel::logout,
                 )
+            }
+
+            if (state.uiCustomizationAvailable &&
+                (state.primaryMenuUsesDeviceOverride ||
+                    state.cardPresentationUsesDeviceOverride)
+            ) {
+                item {
+                    SettingsSectionCard {
+                        SettingsSectionHeader(title = "Interface Sync")
+                        Text(
+                            text = "This device has interface settings that override the " +
+                                "synced ${if (state.primaryMenuUsesDeviceOverride && state.cardPresentationUsesDeviceOverride) "menu and card" else "family"} choices.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                        TextButton(onClick = viewModel::useFamilyInterfaceSettings) {
+                            Text("Use Synced Family Settings")
+                        }
+                    }
+                }
+            }
+
+            if (state.uiCustomizationAvailable) {
+                item { SettingsSectionCard {
+                    SettingsSectionHeader(title = "Top Menu")
+                    SettingsDropdownRow(
+                        label = "Layout Preset",
+                        value = state.mobileNavigationPreset.label,
+                        options = MobileNavigationPreset.entries
+                            .filterNot { it == MobileNavigationPreset.CUSTOM }
+                            .map { it.label },
+                        onOptionSelected = { label ->
+                            MobileNavigationPreset.entries
+                                .firstOrNull { it.label == label }
+                                ?.let(viewModel::setMobileNavigationPreset)
+                        },
+                        enabled = !state.primaryMenuUsesDeviceOverride,
+                    )
+                    state.mobileMenuTabs.forEachIndexed { index, tab ->
+                        val actions = buildList {
+                            if (index > 0) add("Move Earlier")
+                            if (index < state.mobileMenuTabs.lastIndex) add("Move Later")
+                            if (tab in state.hideableMobileMenuTabs) add("Hide")
+                        }
+                        SettingsDropdownRow(
+                            label = tab.label,
+                            value = "${index + 1} of ${state.mobileMenuTabs.size}",
+                            options = actions,
+                            onOptionSelected = { action ->
+                                when (action) {
+                                    "Move Earlier" -> viewModel.moveMobileMenuTab(tab, -1)
+                                    "Move Later" -> viewModel.moveMobileMenuTab(tab, 1)
+                                    "Hide" -> viewModel.hideMobileMenuTab(tab)
+                                }
+                            },
+                            enabled = !state.primaryMenuUsesDeviceOverride,
+                        )
+                    }
+                    if (state.addableMobileMenuTabs.isNotEmpty()) {
+                        SettingsDropdownRow(
+                            label = "Add Menu Item",
+                            value = "${state.addableMobileMenuTabs.size} available",
+                            options = state.addableMobileMenuTabs.map { it.label },
+                            onOptionSelected = { label ->
+                                state.addableMobileMenuTabs
+                                    .firstOrNull { it.label == label }
+                                    ?.let(viewModel::showMobileMenuTab)
+                            },
+                            enabled = !state.primaryMenuUsesDeviceOverride,
+                        )
+                    }
+                    Text(
+                        text = "Media and pinned library items share the Libraries tab. Downloads, Search, and Profile remain automatic utilities.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                } }
+
+                item { SettingsSectionCard {
+                    SettingsSectionHeader(title = "Appearance")
+                    SettingsDropdownRow(
+                        label = "Card Preset",
+                        value = CardPresentationPreset.matching(
+                            CardPresentation(state.posterSize, state.cardCaption),
+                        )?.label ?: "Custom",
+                        options = CardPresentationPreset.entries.map { it.label },
+                        onOptionSelected = { label ->
+                            CardPresentationPreset.entries
+                                .firstOrNull { it.label == label }
+                                ?.let(viewModel::setCardPresentationPreset)
+                        },
+                        enabled = !state.cardPresentationUsesDeviceOverride,
+                    )
+                    SettingsDropdownRow(
+                        label = "Poster Size",
+                        value = state.posterSize.label,
+                        options = org.siloserver.silo.model.settings.PosterSizePreset.entries
+                            .map { it.label },
+                        onOptionSelected = { label ->
+                            org.siloserver.silo.model.settings.PosterSizePreset.entries
+                                .firstOrNull { it.label == label }
+                                ?.let(viewModel::setPosterSize)
+                        },
+                        enabled = !state.cardPresentationUsesDeviceOverride,
+                    )
+                    SettingsDropdownRow(
+                        label = "Card Captions",
+                        value = state.cardCaption.label,
+                        options = org.siloserver.silo.model.settings.CardCaptionPreset.entries
+                            .map { it.label },
+                        onOptionSelected = { label ->
+                            org.siloserver.silo.model.settings.CardCaptionPreset.entries
+                                .firstOrNull { it.label == label }
+                                ?.let(viewModel::setCardCaption)
+                        },
+                        enabled = !state.cardPresentationUsesDeviceOverride,
+                    )
+                } }
+            } else {
+                // Android TV parity (TvSettingsScreen General pane): when the
+                // capability check fails the surface must say so rather than
+                // silently render nothing where Top Menu and Appearance were.
+                // The two failures are distinct: `false` is a settled answer
+                // about the server, `null` is an unresolved one that a reopen
+                // can still turn into either.
+                item {
+                    val unsupported = state.uiCustomizationSupport == false
+                    SettingsSection(title = "Interface") {
+                        SettingsProse(
+                            title = if (unsupported) {
+                                "Layout and card customization require a newer server"
+                            } else {
+                                "Interface settings are temporarily unavailable"
+                            },
+                            body = if (unsupported) {
+                                "This server cannot store the menu order and card appearance " +
+                                    "shared across your devices. Everything else on this screen " +
+                                    "still works. Ask whoever runs the server to update it."
+                            } else {
+                                "The server capability could not be resolved, so layout and card " +
+                                    "customization are hidden for now. Reopen Settings to retry."
+                            },
+                        )
+                    }
+                }
             }
 
             if (shouldShowDiagnosticsEntry(diagnosticsState)) {

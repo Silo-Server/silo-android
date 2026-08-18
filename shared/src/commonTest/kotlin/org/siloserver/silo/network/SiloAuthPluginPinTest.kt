@@ -145,6 +145,7 @@ class SiloAuthPluginPinTest {
         var authorization: String? = null
         var profileId: String? = null
         var profileToken: String? = null
+        var siloClientFamily: String? = null
         var siloClient: String? = null
         var siloClientVersion: String? = null
     }
@@ -160,6 +161,7 @@ class SiloAuthPluginPinTest {
                 captured.authorization = request.headers[HttpHeaders.Authorization]
                 captured.profileId = request.headers["X-Profile-Id"]
                 captured.profileToken = request.headers["X-Profile-Token"]
+                captured.siloClientFamily = request.headers["X-Silo-Client-Family"]
                 captured.siloClient = request.headers["X-Silo-Client"]
                 captured.siloClientVersion = request.headers["X-Silo-Client-Version"]
                 respond("{}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
@@ -225,6 +227,7 @@ class SiloAuthPluginPinTest {
                     id = "device-1",
                     name = "Amazon AFTKA",
                     platform = "android-tv",
+                    clientFamily = "tv",
                     clientName = "Silo Android TV",
                     clientVersion = "0.2.3",
                 )
@@ -232,8 +235,33 @@ class SiloAuthPluginPinTest {
 
         client(tokenManager, captured, provider).post("/api/v1/playback/start")
 
+        assertEquals("tv", captured.siloClientFamily)
         assertEquals("Silo Android TV", captured.siloClient)
         assertEquals("0.2.3", captured.siloClientVersion)
+    }
+
+    @Test
+    fun explicitClientFamilyHeaderIsNotOverwrittenByLiveDeviceMetadata() = runTest {
+        val tokenManager = TokenManagerImpl().apply {
+            setServerUrl("https://silo.example")
+            saveTokens(accessToken = "ACCESS-A", refreshToken = "REFRESH-A", expiresIn = 3600)
+        }
+        val captured = Captured()
+        val provider = object : DeviceMetadataProvider {
+            override suspend fun current(): SiloDeviceMetadata =
+                SiloDeviceMetadata(
+                    id = "device-1",
+                    name = "Foldable",
+                    platform = "android",
+                    clientFamily = "tablet",
+                )
+        }
+
+        client(tokenManager, captured, provider).post("/api/v1/settings/values/ui.card_presentation") {
+            header("X-Silo-Client-Family", "mobile")
+        }
+
+        assertEquals("mobile", captured.siloClientFamily)
     }
 
     @Test
