@@ -107,9 +107,9 @@ fun TvLibraryDetailScreen(
     // Collections). Null leaves the ViewModel's default (Recommended) and any
     // user-driven tab changes alone.
     initialSection: TvLibraryTab? = null,
-    // Monotonic nonce bumped by the host on every cascade commit. Keying the
-    // section-apply effect on it (not just initialSection) makes re-committing
-    // the SAME pill re-apply the section instead of being a silent no-op.
+    // Monotonic nonce bumped by the host on every cascade commit, so the
+    // section-apply effect below re-runs when the SAME pill is committed
+    // again rather than being keyed on the section value alone.
     sectionRequestNonce: Int = 0,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     viewModel: TvLibraryDetailViewModel = koinViewModel(
@@ -121,9 +121,10 @@ fun TvLibraryDetailScreen(
 
     // Apply the committed cascade section on entry / whenever the commit
     // changes it. Keyed on sectionRequestNonce (bumped on every commit) AND the
-    // section value, so re-committing the SAME pill re-applies the section
-    // rather than being a silent no-op, while a non-commit recomposition leaves
-    // manual in-screen tab moves untouched.
+    // section value, so a non-commit recomposition leaves manual in-screen tab
+    // moves untouched. This fires again on every re-entry — backing out of item
+    // detail returns to a surviving ViewModel — so onTabSelected treats the
+    // already-active section as a no-op and keeps the viewer's sort/filters.
     LaunchedEffect(sectionRequestNonce, initialSection) {
         initialSection?.let(viewModel::onTabSelected)
     }
