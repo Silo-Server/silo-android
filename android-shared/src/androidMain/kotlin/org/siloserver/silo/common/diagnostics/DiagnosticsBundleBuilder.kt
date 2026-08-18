@@ -469,6 +469,7 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         val result = StringBuilder(length.coerceAtMost(maxUtf8Bytes))
         var index = 0
         var usedBytes = 0
+        var lastLineBoundary = -1
         while (index < length) {
             val codePoint = codePointAt(index)
             val value = String(Character.toChars(codePoint))
@@ -477,8 +478,10 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             result.append(value)
             usedBytes += bytes
             index += Character.charCount(codePoint)
+            if (codePoint == '\n'.code) lastLineBoundary = result.length
         }
-        return result.toString().takeIf { !it.hasUnsafeHostedResidue() } ?: HOSTED_UNSAFE_TEXT
+        val bounded = if (lastLineBoundary > 0) result.substring(0, lastLineBoundary) else HOSTED_UNSAFE_TEXT
+        return bounded.takeIf { !it.hasUnsafeHostedResidue() } ?: HOSTED_UNSAFE_TEXT
     }
 
     private fun String.sanitizeHostedText(): String {

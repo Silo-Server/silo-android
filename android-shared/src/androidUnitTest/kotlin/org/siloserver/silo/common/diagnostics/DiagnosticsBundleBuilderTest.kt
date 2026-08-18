@@ -622,7 +622,7 @@ class DiagnosticsBundleBuilderTest {
     @Test
     fun hostedBundleRedactsUnsafeCrashStackLinesWithoutDiscardingSafeFrames() {
         val rawStack = (
-            "java.lang.IllegalStateException: named failure\n" +
+            "java.lang.IllegalStateException: content://private.authority/item/42\n" +
                 "    at a.b.c(SourceFile:42)\n" +
                 "    at java.base/java.lang.Thread.run(Thread.java:840)\n" +
                 "    at app//com.example.Foo.bar(Foo.java:12)\n" +
@@ -768,6 +768,13 @@ class DiagnosticsBundleBuilderTest {
         assertTrue(hostedExcerpt.encodeToByteArray().size <= 8 * 1_024, hostedExcerpt.length.toString())
         assertTrue(hostedExcerpt.contains("at org.siloserver.silo.Player.play(Player.kt:9)"), hostedExcerpt)
         assertFalse(hostedExcerpt.contains("x://"), hostedExcerpt)
+        assertTrue(
+            hostedExcerpt.removeSuffix("\n").lineSequence().all { line ->
+                line == "[redacted_private_id]" ||
+                    line == "    at org.siloserver.silo.Player.play(Player.kt:9)"
+            },
+            hostedExcerpt.takeLast(80),
+        )
     }
 
     @Test
