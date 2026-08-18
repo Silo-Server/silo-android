@@ -625,8 +625,11 @@ class DiagnosticsBundleBuilderTest {
             "java.lang.IllegalStateException: named failure\n" +
                 "    at a.b.c(SourceFile:42)\n" +
                 "    at java.base/java.lang.Thread.run(Thread.java:840)\n" +
+                "    at app//com.example.Foo.bar(Foo.java:12)\n" +
+                "    at app/my.module@1.0/com.example.Foo.baz(Foo.java:13)\n" +
                 "    at org.siloserver.silo.Player.<init>(Player.kt:3)\n" +
                 "    at org.siloserver.silo.Player.play(Player.kt:9)\n" +
+                "caused by java.lang.IllegalArgumentException: nested failure\n" +
                 "diagnostic source content://private.authority/item/42\n"
             )
         val artifacts = mapOf(
@@ -661,12 +664,17 @@ class DiagnosticsBundleBuilderTest {
             .getValue("stack_excerpt").jsonPrimitive.content
 
         listOf(hostedStack, hostedExcerpt).forEach { text ->
-            assertTrue(text.contains("java.lang.IllegalStateException: named failure"), text)
+            assertTrue(text.lineSequence().any { it == "java.lang.IllegalStateException" }, text)
             assertTrue(text.contains("at android-obfuscated-frame(SourceFile:42)"), text)
             assertTrue(text.contains("at java.lang.Thread.run(Thread.java:840)"), text)
+            assertTrue(text.contains("at com.example.Foo.bar(Foo.java:12)"), text)
+            assertTrue(text.contains("at com.example.Foo.baz(Foo.java:13)"), text)
             assertTrue(text.contains("at org.siloserver.silo.Player.<init>(Player.kt:3)"), text)
             assertTrue(text.contains("at org.siloserver.silo.Player.play(Player.kt:9)"), text)
+            assertTrue(text.lineSequence().any { it == "caused by java.lang.IllegalArgumentException" }, text)
             assertTrue(text.contains("[redacted_private_id]"), text)
+            assertFalse(text.contains("named failure"), text)
+            assertFalse(text.contains("nested failure"), text)
             assertFalse(text.contains("content://"), text)
             assertFalse(text.contains("private.authority"), text)
         }
@@ -706,7 +714,7 @@ class DiagnosticsBundleBuilderTest {
             "device.json" to "{}".encodeToByteArray(),
             "crash/stack.txt" to (
                 "server content://private.authority/item/42\n" +
-                    "$privateHost\n" +
+                    "java.lang.IllegalStateException: $privateHost\n" +
                     "    at org.siloserver.silo.Player.play(Player.kt:9)\n"
                 ).encodeToByteArray(),
         )
@@ -717,6 +725,7 @@ class DiagnosticsBundleBuilderTest {
         ).sanitizedEntries.getValue("crash/stack.txt").decodeToString()
 
         assertTrue(hosted.contains("[redacted_private_id]"), hosted)
+        assertTrue(hosted.lineSequence().any { it == "java.lang.IllegalStateException" }, hosted)
         assertTrue(hosted.contains("at org.siloserver.silo.Player.play(Player.kt:9)"), hosted)
         assertFalse(hosted.contains("content://"), hosted)
         assertFalse(hosted.contains(privateHost), hosted)

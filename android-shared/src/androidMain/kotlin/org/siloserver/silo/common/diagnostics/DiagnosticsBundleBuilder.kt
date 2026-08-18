@@ -449,23 +449,19 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
     }
 
     private fun String.sanitizeHostedCrashStackLine(): String {
-        val withoutModuleQualifier = HOSTED_MODULE_QUALIFIED_STACK_FRAME.matchEntire(this)?.let { match ->
+        val withoutFrameQualifiers = HOSTED_QUALIFIED_STACK_FRAME.matchEntire(this)?.let { match ->
             match.groupValues[1] + match.groupValues[2]
         } ?: this
-        return withoutModuleQualifier.sanitizeHostedText()
+        val sanitized = withoutFrameQualifiers.sanitizeHostedText()
+        val throwable = HOSTED_THROWABLE_LINE.matchEntire(sanitized.trim()) ?: return sanitized
+        return throwable.groupValues[1] + throwable.groupValues[2]
     }
 
     private fun String.isUsefulHostedCrashStackLine(): Boolean {
         val line = trim()
         if (line.isEmpty() || line == HOSTED_UNSAFE_TEXT) return false
         if (HOSTED_STACK_FRAME_LINE.matches(line) || HOSTED_STACK_OMITTED_LINE.matches(line)) return true
-        val throwable = line
-            .removePrefix("Caused by:")
-            .removePrefix("Suppressed:")
-            .trimStart()
-            .substringBefore(':')
-            .trim()
-        return throwable.matches(QUALIFIED_ERROR_TYPE) || throwable == HOSTED_OBFUSCATED_ERROR
+        return HOSTED_THROWABLE_LINE.matches(line)
     }
 
     private fun String.boundHostedCrashText(maxUtf8Bytes: Int?): String {
@@ -1199,12 +1195,18 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
                 "[A-Za-z_$][A-Za-z0-9_$]*(?:\\.(?:[A-Za-z_$][A-Za-z0-9_$]*|<init>|<clinit>))+" +
                 ")\\([^\\r\\n]*\\)$",
         )
-        val HOSTED_MODULE_QUALIFIED_STACK_FRAME = Regex(
+        val HOSTED_QUALIFIED_STACK_FRAME = Regex(
             "^([ \\t]*at[ \\t]+)" +
-                "[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*" +
-                "(?:@[A-Za-z0-9][A-Za-z0-9._+-]*)?/" +
+                "(?:(?:[^\\s/]+/){1,2}|[^\\s/]+//)" +
                 "([A-Za-z_$][A-Za-z0-9_$]*(?:\\.(?:[A-Za-z_$][A-Za-z0-9_$]*|<init>|<clinit>))+" +
                 "\\([^\\r\\n]*\\))$",
+        )
+        val HOSTED_THROWABLE_LINE = Regex(
+            "^((?:(?i:caused[ \\t]+by|suppressed):?[ \\t]*)?)" +
+                "(android-obfuscated-error|" +
+                "[A-Za-z_][A-Za-z0-9_$]*(?:\\.[A-Za-z_][A-Za-z0-9_$]*)*\\." +
+                "[A-Z][A-Za-z0-9_$]*(?:Exception|Error))" +
+                "(?:[ \\t]*:.*)?$",
         )
         val HOSTED_STACK_OMITTED_LINE = Regex("^\\.\\.\\.[ \\t]+[0-9]+[ \\t]+more$")
         val SOURCE_FILE_TOKEN = Regex("^[A-Z][A-Za-z0-9_$-]*\\.(?:c|cc|cpp|h|java|kt|m|mm|swift)$")
