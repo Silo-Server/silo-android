@@ -542,6 +542,7 @@ class DiagnosticsBundleBuilderTest {
         val rawStack = (
             "java.lang.IllegalStateException: named failure\n" +
                 "    at a.b.c(SourceFile:42)\n" +
+                "    at java.base/java.lang.Thread.run(Thread.java:840)\n" +
                 "    at org.siloserver.silo.Player.<init>(Player.kt:3)\n" +
                 "    at org.siloserver.silo.Player.play(Player.kt:9)\n" +
                 "diagnostic source content://private.authority/item/42\n"
@@ -580,6 +581,7 @@ class DiagnosticsBundleBuilderTest {
         listOf(hostedStack, hostedExcerpt).forEach { text ->
             assertTrue(text.contains("java.lang.IllegalStateException: named failure"), text)
             assertTrue(text.contains("at android-obfuscated-frame(SourceFile:42)"), text)
+            assertTrue(text.contains("at java.lang.Thread.run(Thread.java:840)"), text)
             assertTrue(text.contains("at org.siloserver.silo.Player.<init>(Player.kt:3)"), text)
             assertTrue(text.contains("at org.siloserver.silo.Player.play(Player.kt:9)"), text)
             assertTrue(text.contains("[redacted_private_id]"), text)

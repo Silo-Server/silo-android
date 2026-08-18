@@ -433,7 +433,7 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         val lines = split('\n').let { if (hadTrailingNewline) it.dropLast(1) else it }
         val sanitized = buildList {
             lines.forEach { line ->
-                val sanitizedLine = line.sanitizeHostedText()
+                val sanitizedLine = line.sanitizeHostedCrashStackLine()
                 val retained = sanitizedLine.takeIf { it.isUsefulHostedCrashStackLine() }
                     ?: HOSTED_UNSAFE_TEXT
                 if (retained != HOSTED_UNSAFE_TEXT || lastOrNull() != HOSTED_UNSAFE_TEXT) {
@@ -446,6 +446,13 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
         if (joined.hasUnsafeHostedResidue()) return HOSTED_UNSAFE_TEXT
         return (if (hadTrailingNewline) "$joined\n" else joined)
             .boundHostedCrashText(maxUtf8Bytes)
+    }
+
+    private fun String.sanitizeHostedCrashStackLine(): String {
+        val withoutModuleQualifier = HOSTED_MODULE_QUALIFIED_STACK_FRAME.matchEntire(this)?.let { match ->
+            match.groupValues[1] + match.groupValues[2]
+        } ?: this
+        return withoutModuleQualifier.sanitizeHostedText()
     }
 
     private fun String.isUsefulHostedCrashStackLine(): Boolean {
@@ -1159,6 +1166,13 @@ class FileDiagnosticsBundleBuilder : DiagnosticsBundleBuilder {
             "^at[ \\t]+(?:android-obfuscated-frame|" +
                 "[A-Za-z_$][A-Za-z0-9_$]*(?:\\.(?:[A-Za-z_$][A-Za-z0-9_$]*|<init>|<clinit>))+" +
                 ")\\([^\\r\\n]*\\)$",
+        )
+        val HOSTED_MODULE_QUALIFIED_STACK_FRAME = Regex(
+            "^([ \\t]*at[ \\t]+)" +
+                "[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*" +
+                "(?:@[A-Za-z0-9][A-Za-z0-9._+-]*)?/" +
+                "([A-Za-z_$][A-Za-z0-9_$]*(?:\\.(?:[A-Za-z_$][A-Za-z0-9_$]*|<init>|<clinit>))+" +
+                "\\([^\\r\\n]*\\))$",
         )
         val HOSTED_STACK_OMITTED_LINE = Regex("^\\.\\.\\.[ \\t]+[0-9]+[ \\t]+more$")
         val SOURCE_FILE_TOKEN = Regex("^[A-Z][A-Za-z0-9_$-]*\\.(?:c|cc|cpp|h|java|kt|m|mm|swift)$")
