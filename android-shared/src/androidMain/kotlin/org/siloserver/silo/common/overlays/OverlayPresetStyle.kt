@@ -38,6 +38,8 @@ internal data class OverlayPresetStyle(
     val background: (accent: Color) -> Color,
     val foreground: (accent: Color) -> Color,
     val border: (accent: Color) -> Color,
+    /** The actual card-width multiplier applied to fixed renderer details. */
+    val scale: Float = 1f,
 ) {
     sealed interface CornerStyle {
         /** Fully rounded capsule (clamped at half the height). */
@@ -66,6 +68,7 @@ internal data class OverlayPresetStyle(
             },
             iconSize = iconSize * safeScale,
             gap = gap * safeScale,
+            scale = safeScale,
         )
     }
 }

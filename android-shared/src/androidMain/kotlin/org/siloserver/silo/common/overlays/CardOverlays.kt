@@ -1,7 +1,7 @@
 package org.siloserver.silo.common.overlays
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -53,6 +53,8 @@ enum class CardOverlayVariant {
  *     CardOverlays(data = data, prefs = prefs, variant = CardOverlayVariant.Poster)
  * }
  * ```
+ *
+ * @param scale optical multiplier for wide/hero cards; posters measure their actual width.
  */
 @Composable
 fun CardOverlays(
@@ -63,8 +65,21 @@ fun CardOverlays(
     scale: Float = 1f,
     forceOpaqueBackground: Boolean = false,
 ) {
-    val preset = remember(prefs.preset, scale) { OverlayPresetStyles.style(prefs.preset).scaled(scale) }
-    Box(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        // The web Home carousel's 185-unit overlay layer is the cross-platform
+        // visual reference. Reading the actual logical width also covers
+        // adaptive grids, phone density choices, TV rails, and fill-width cards.
+        val resolvedScale = if (variant == CardOverlayVariant.Poster) {
+            maxWidth.value
+                .takeIf { it.isFinite() && it > 0f }
+                ?.div(185f)
+                ?: scale
+        } else {
+            scale
+        }
+        val preset = remember(prefs.preset, resolvedScale) {
+            OverlayPresetStyles.style(prefs.preset).scaled(resolvedScale)
+        }
         for (position in OverlayPosition.entries) {
             CornerStack(
                 position = position,
@@ -72,7 +87,7 @@ fun CardOverlays(
                 prefs = prefs,
                 preset = preset,
                 variant = variant,
-                scale = scale,
+                scale = resolvedScale,
                 forceOpaqueBackground = forceOpaqueBackground,
             )
         }
