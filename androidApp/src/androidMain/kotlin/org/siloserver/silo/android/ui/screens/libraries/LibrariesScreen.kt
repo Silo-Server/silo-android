@@ -974,7 +974,7 @@ private fun RecommendedTabContent(
             ) {
 
                 items(
-                    items = state.sections,
+                    items = state.sections.distinctBy { it.id },
                     key = { section -> section.id },
                 ) { section ->
                     // No "See All" — iOS has no such affordance (H3, Jim

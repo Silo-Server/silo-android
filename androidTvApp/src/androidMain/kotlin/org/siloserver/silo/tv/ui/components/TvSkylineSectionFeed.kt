@@ -125,7 +125,9 @@ fun TvSkylineSectionFeed(
     cardActions: (ResolvedSection, SectionItem) -> TvMediaCardActions = { _, _ -> TvMediaCardActions() },
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
 ) {
-    val rows = remember(sections) { sections.filter { it.items.isNotEmpty() } }
+    val rows = remember(sections) {
+        sections.filter { it.items.isNotEmpty() }.distinctBy { it.id }
+    }
     val tintState = rememberAmbientBackdropTintState()
     val context = LocalContext.current
 

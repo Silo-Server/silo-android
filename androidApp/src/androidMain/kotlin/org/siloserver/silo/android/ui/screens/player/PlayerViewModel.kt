@@ -2201,7 +2201,10 @@ class PlayerViewModel(
         if (isPlaying && !_uiState.value.isPaused && _uiState.value.showControls) {
             scheduleControlsHide()
         }
-        if (!isPlaying) {
+        if (!isPlaying &&
+            !positionReportsBlockedForPendingLoad &&
+            awaitingMediaMountGeneration == null
+        ) {
             maybeRecordPosition(_uiState.value.position, _uiState.value.duration, force = true)
         }
     }

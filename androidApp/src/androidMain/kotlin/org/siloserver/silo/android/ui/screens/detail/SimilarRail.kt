@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.MediaCard
+import org.siloserver.silo.android.ui.components.uniqueByContentId
 import org.siloserver.silo.model.catalog.ItemDetail
 
 /**
@@ -46,13 +48,14 @@ private fun SimilarRailContent(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val uniqueItems = remember(items) { items.uniqueByContentId { it.contentId } }
     LazyRow(
         contentPadding = PaddingValues(horizontal = SafePadding),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
         items(
-            items,
+            uniqueItems,
             key = { it.contentId },
             contentType = { "similar-item" },
         ) { item ->
