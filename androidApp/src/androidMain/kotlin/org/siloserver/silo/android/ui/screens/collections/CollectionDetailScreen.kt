@@ -23,7 +23,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -33,6 +35,7 @@ import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.android.ui.components.uniqueByContentId
 import org.siloserver.silo.android.ui.screens.personal.MediaGridItem
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,13 +48,19 @@ fun CollectionDetailScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val gridState = rememberLazyGridState()
+    val uniqueItems = remember(state.items) { state.items.uniqueByContentId { it.contentId } }
+    var loadMoreRequestedSize by remember { mutableIntStateOf(-1) }
 
     LaunchedEffect(collectionId) {
         viewModel.initialize(collectionId)
     }
 
-    val shouldLoadMore by remember {
+    val shouldLoadMore by remember(uniqueItems.size, state.hasMore, state.isLoadingMore, state.isLoading) {
         derivedStateOf {
+            if (!state.hasMore || state.isLoadingMore || state.isLoading || uniqueItems.isEmpty()) {
+                return@derivedStateOf false
+            }
+            if (uniqueItems.size == loadMoreRequestedSize) return@derivedStateOf false
             val layoutInfo = gridState.layoutInfo
             val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             lastVisible >= layoutInfo.totalItemsCount - 8
@@ -59,9 +68,14 @@ fun CollectionDetailScreen(
     }
 
     LaunchedEffect(shouldLoadMore) {
-        if (shouldLoadMore && state.hasMore && !state.isLoadingMore && !state.isLoading) {
+        if (shouldLoadMore) {
+            loadMoreRequestedSize = uniqueItems.size
             viewModel.loadMore()
         }
+    }
+
+    LaunchedEffect(uniqueItems.firstOrNull()?.contentId, uniqueItems.size) {
+        loadMoreRequestedSize = -1
     }
 
     Scaffold(
@@ -108,7 +122,7 @@ fun CollectionDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
                     ) {
                         items(
-                            items = state.items,
+                            items = uniqueItems,
                             key = { it.contentId },
                         ) { item ->
                             MediaGridItem(

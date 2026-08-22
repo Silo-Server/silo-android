@@ -121,7 +121,7 @@ fun HomeScreen(
     // No hero billboard on phone (matches iOS): a `featured` section is just
     // another row, rendered in the order the server configured it.
     val regularSections = remember(sections) {
-        sections.filter { it.items.isNotEmpty() }
+        sections.filter { it.items.isNotEmpty() }.distinctBy { it.id }
     }
 
     val listState = rememberLazyListState()

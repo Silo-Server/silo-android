@@ -17,7 +17,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
@@ -26,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
+import org.siloserver.silo.android.ui.components.uniqueByContentId
 import org.siloserver.silo.model.catalog.BrowseItem
 
 /**
@@ -65,17 +68,29 @@ fun SearchResults(
         }
     }
 
+    val uniqueResults = remember(results) { results.uniqueByContentId { it.contentId } }
+    var loadMoreRequestedSize by remember { mutableIntStateOf(-1) }
+
     // Trigger load more when scrolled near bottom
-    val shouldLoadMore by remember {
+    val shouldLoadMore by remember(uniqueResults.size, hasMore, isSearching) {
         derivedStateOf {
+            if (!hasMore || isSearching || uniqueResults.isEmpty()) return@derivedStateOf false
+            if (uniqueResults.size == loadMoreRequestedSize) return@derivedStateOf false
             val lastVisible = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             val totalItems = gridState.layoutInfo.totalItemsCount
-            hasMore && !isSearching && lastVisible >= totalItems - 6
+            lastVisible >= totalItems - 6
         }
     }
 
     LaunchedEffect(shouldLoadMore) {
-        if (shouldLoadMore) onLoadMore()
+        if (shouldLoadMore) {
+            loadMoreRequestedSize = uniqueResults.size
+            onLoadMore()
+        }
+    }
+
+    LaunchedEffect(uniqueResults.firstOrNull()?.contentId, uniqueResults.size) {
+        loadMoreRequestedSize = -1
     }
 
     LazyVerticalGrid(
@@ -99,7 +114,7 @@ fun SearchResults(
         }
 
         items(
-            items = results,
+            items = uniqueResults,
             key = { it.contentId },
             contentType = { item -> item.type },
         ) { item ->
@@ -125,7 +140,7 @@ fun SearchResults(
         }
 
         // Loading indicator
-        if (isSearching && results.isNotEmpty()) {
+        if (isSearching && uniqueResults.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }, contentType = "search-loading") {
                 Box(
                     modifier = Modifier

@@ -67,7 +67,9 @@ fun MediaRow(
     cardActions: (SectionItem) -> MediaCardActions = { MediaCardActions() },
 ) {
     val rowItems = remember(items, showProgress, cardStyle) {
-        items.map { item ->
+        // Keyed LazyRow throws on a repeated contentId. Feeds can return the
+        // same title twice in one row — that crashed TV in production (#188).
+        items.uniqueByContentId { it.contentId }.map { item ->
             val pos = item.positionSeconds
             val dur = item.durationSeconds
             val progress = if (showProgress && pos != null && dur != null && dur > 0) {

@@ -63,6 +63,7 @@ import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
+import org.siloserver.silo.android.ui.components.uniqueByContentId
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.overlays.OverlayDataExtractor
 
@@ -98,20 +99,33 @@ fun CatalogGrid(
 ) {
     val gridState = rememberLazyGridState()
     val cardWidth = viewDensity.minCardWidth
+    // Keyed lazy grids throw on a repeated contentId. Paging can hand the same
+    // item back across pages (TV #188). Deduplicate before keying.
+    val uniqueItems = remember(items) { items.uniqueByContentId { it.contentId } }
+    // If a page is all duplicates, uniqueItems does not grow. Without this
+    // stall the load-more edge would fire forever against hasMore.
+    var loadMoreRequestedSize by remember { mutableIntStateOf(-1) }
 
     // Trigger load more when scrolled near bottom
-    val shouldLoadMore by remember {
+    val shouldLoadMore by remember(uniqueItems.size, hasMore, isLoadingMore) {
         derivedStateOf {
+            if (!hasMore || isLoadingMore || uniqueItems.isEmpty()) return@derivedStateOf false
+            if (uniqueItems.size == loadMoreRequestedSize) return@derivedStateOf false
             val lastVisibleItem = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             val totalItems = gridState.layoutInfo.totalItemsCount
-            hasMore && !isLoadingMore && lastVisibleItem >= totalItems - 6
+            lastVisibleItem >= totalItems - 6
         }
     }
 
     LaunchedEffect(shouldLoadMore) {
         if (shouldLoadMore) {
+            loadMoreRequestedSize = uniqueItems.size
             onLoadMore()
         }
+    }
+
+    LaunchedEffect(uniqueItems.firstOrNull()?.contentId, uniqueItems.size) {
+        loadMoreRequestedSize = -1
     }
 
     Box(modifier = modifier) {
@@ -139,7 +153,7 @@ fun CatalogGrid(
             }
 
             items(
-                items = items,
+                items = uniqueItems,
                 key = { it.contentId },
                 contentType = { item -> item.type },
             ) { item ->
