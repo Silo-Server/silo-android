@@ -54,7 +54,11 @@ import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.WatchedBadge
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.overlays.CardOverlayVariant
+import org.siloserver.silo.common.overlays.CardOverlays
+import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.viewmodel.FavoritesViewModel
 import org.siloserver.silo.viewmodel.HistoryViewModel
 import org.siloserver.silo.viewmodel.PersonalListQuery
@@ -306,6 +310,7 @@ fun MediaGridItem(
     isInWatchlist: Boolean = false,
 ) {
     val (actions, userState) = rememberBrowseItemCardActions(item)
+    val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
 
     androidx.compose.foundation.layout.Column(
@@ -315,16 +320,27 @@ fun MediaGridItem(
         ),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Box {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3.3f)
+                .clip(RoundedCornerShape(8.dp)),
+        ) {
             ThumbhashImage(
                 url = item.posterUrl,
                 thumbhash = item.posterThumbhash,
                 contentDescription = item.title,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(2f / 3.3f)
-                    .clip(RoundedCornerShape(8.dp)),
+                modifier = Modifier.fillMaxSize(),
             )
+
+            if (overlayState.enabled) {
+                CardOverlays(
+                    data = OverlayDataExtractor.fromBrowseItem(item),
+                    prefs = overlayState.prefs,
+                    variant = CardOverlayVariant.Poster,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
 
             if (userState.played) {
                 WatchedBadge(modifier = Modifier.align(Alignment.TopEnd))

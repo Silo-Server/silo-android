@@ -152,7 +152,6 @@ fun TvMediaCard(
                         data = overlay,
                         prefs = overlayState.prefs,
                         variant = CardOverlayVariant.Poster,
-                        scale = TvCardOverlayScale,
                         forceOpaqueBackground = false,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -236,7 +235,7 @@ fun TvMediaCard(
  */
 val TvCardWidth: Dp = RowDimens.PosterWidth
 
-/** Optical TV scale: compact like tvOS badges, still readable at sofa distance. */
+/** Optical scale for wide TV thumbnails; poster cards scale from their actual width. */
 const val TvCardOverlayScale: Float = 0.7f
 
 /** Hoisted so every card shares one instance instead of allocating a shape per composition. */

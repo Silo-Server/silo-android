@@ -108,14 +108,14 @@ internal fun OverlayBadge(
         box = box.background(paintedBackground, shape)
     }
     if (border != Color.Unspecified) {
-        box = box.border(1.dp, border, shape)
+        box = box.border(1.dp * preset.scale, border, shape)
     }
     box = box
         .padding(horizontal = preset.horizontalPadding, vertical = preset.verticalPadding)
 
     Row(
         modifier = box,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp * preset.scale),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val iconId = state.iconId
@@ -176,7 +176,11 @@ private fun BadgeText(
             letterSpacing = preset.letterSpacing,
             textAlign = TextAlign.Center,
             shadow = if (preset.textShadow) {
-                Shadow(color = Color.Black.copy(alpha = 0.85f), offset = Offset(0f, 1f), blurRadius = 1f)
+                Shadow(
+                    color = Color.Black.copy(alpha = 0.85f),
+                    offset = Offset(0f, preset.scale),
+                    blurRadius = preset.scale,
+                )
             } else {
                 null
             },
