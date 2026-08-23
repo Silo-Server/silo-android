@@ -1,0 +1,113 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "43 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: Silo-Server/silo-android
+  UPSTREAM_BRANCH: main
+
+jobs:
+  sync:
+    name: Merge, validate, and update main
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out the fork main branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge upstream on a temporary branch
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "blurbery"
+          git config user.email "blurbery@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --no-tags upstream "${UPSTREAM_BRANCH}"
+
+          if git merge-base --is-ancestor "upstream/${UPSTREAM_BRANCH}" HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Fork main already contains the latest upstream commit."
+            exit 0
+          fi
+
+          git switch -c "automation/upstream-sync-${GITHUB_RUN_ID}"
+          git merge --no-ff --no-edit "upstream/${UPSTREAM_BRANCH}"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the scheduled workflow active
+        if: steps.merge.outputs.changed == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          last_commit_epoch="$(git log -1 --format=%ct)"
+          current_epoch="$(date +%s)"
+          keepalive_after_seconds=$((45 * 24 * 60 * 60))
+          if (( current_epoch - last_commit_epoch < keepalive_after_seconds )); then
+            echo "Repository activity is recent; no keepalive commit is needed."
+            exit 0
+          fi
+          git commit --allow-empty -m "chore: keep upstream sync active"
+          git push origin HEAD:main
+
+      - name: Set up JDK 21
+        if: steps.merge.outputs.changed == 'true'
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        if: steps.merge.outputs.changed == 'true'
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+
+      - name: Check the build supply chain
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          ./scripts/test-check-build-supply-chain.sh
+          ./scripts/check-build-supply-chain.sh
+
+      - name: Run unit tests
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          ./gradlew \
+            -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
+            testDebugUnitTest \
+            --max-workers=2
+
+      - name: Run Android lint
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          ./gradlew \
+            -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
+            :android-shared:lintDebug :androidApp:lintDebug :androidTvApp:lintDebug \
+            :androidApp:lintVitalRelease :androidTvApp:lintVitalRelease \
+            --max-workers=2
+
+      - name: Advance fork main after validation
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin HEAD:main
+
+      - name: Summarize a failed sync
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "## Upstream sync failed"
+            echo
+            echo "The fork's main branch was left unchanged. Review the failed step in this run."
+          } >> "$GITHUB_STEP_SUMMARY"
