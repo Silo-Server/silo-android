@@ -14,6 +14,7 @@ import org.siloserver.silo.model.image.ImageSize
 import org.siloserver.silo.model.image.ImagesCapability
 import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.ImagesApi
+import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.SectionApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -143,6 +144,7 @@ class ImageSizeSelectorTest {
         val shared = selector(http, ImageSize.LARGE)
         val catalog = CatalogApi(http, shared)
         val sections = SectionApi(http, shared)
+        val personal = PersonalDataApi(http, shared)
 
         catalog.getCatalog(limit = 20)
         catalog.getItemDetail("abc")
@@ -156,12 +158,52 @@ class ImageSizeSelectorTest {
         sections.getLibrarySections(3)
         sections.getLibrarySectionItems(3, "recent")
         sections.getLibraryCollectionItems("col-1")
+        personal.listFavorites()
+        personal.listWatchlist()
+        personal.listHistory()
 
         assertEquals(1, recorder.capabilityHits, "Capability must be cached for the session")
-        assertEquals(12, recorder.requests.size)
+        assertEquals(15, recorder.requests.size)
         for ((path, query) in recorder.requests) {
             assertEquals("large", query["image_size"], "Expected image_size on $path")
         }
+    }
+
+    @Test
+    fun `personal data mutations and membership checks carry no image_size`() = runTest {
+        val recorder = Recorder()
+        val http = client(recorder)
+        val personal = PersonalDataApi(http, selector(http, ImageSize.LARGE))
+
+        personal.checkFavorite("abc")
+        personal.addFavorite("abc")
+        personal.removeFavorite("abc")
+        personal.checkWatchlist("abc")
+        personal.addToWatchlist("abc")
+        personal.removeFromWatchlist("abc")
+        personal.listProgress()
+
+        assertEquals(7, recorder.requests.size)
+        for ((path, query) in recorder.requests) {
+            assertTrue("image_size" !in query.keys, "$path must not carry image_size")
+        }
+    }
+
+    @Test
+    fun `phone sends no image_size on the personal data grids`() = runTest {
+        val recorder = Recorder()
+        val http = client(recorder)
+        val personal = PersonalDataApi(http, selector(http, preferred = null))
+
+        personal.listFavorites()
+        personal.listWatchlist()
+        personal.listHistory()
+
+        assertEquals(3, recorder.requests.size)
+        for ((path, query) in recorder.requests) {
+            assertTrue("image_size" !in query.keys, "$path must not carry image_size")
+        }
+        assertEquals(0, recorder.capabilityHits)
     }
 
     @Test

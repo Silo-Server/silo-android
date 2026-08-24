@@ -23,7 +23,7 @@ val networkModule = module {
     single { ImageSizeSelector(get(), getOrNull<PreferredImageSize>()) }
     single { CatalogApi(get(), get()) }
     single { PlaybackApi(get()) }
-    single { PersonalDataApi(get()) }
+    single { PersonalDataApi(get(), get()) }
     single { CollectionApi(get()) }
     single { ProfileApi(get()) }
     single { SectionApi(get(), get()) }
