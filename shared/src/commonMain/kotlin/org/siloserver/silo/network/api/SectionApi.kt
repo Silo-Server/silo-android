@@ -9,7 +9,9 @@ import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.section.*
 import org.siloserver.silo.network.ApiErrorBody
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ImageSizeSelector
 import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.imageSizeParameter
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -18,33 +20,53 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class SectionApi(private val client: HttpClient) {
+/**
+ * [imageSize] is optional so existing constructions keep compiling; when absent
+ * no `image_size` parameter is sent and the server applies its default variants.
+ */
+class SectionApi(
+    private val client: HttpClient,
+    private val imageSize: ImageSizeSelector? = null,
+) {
 
     // --- Home ---
 
+    // Layout carries no artwork, so it deliberately skips image_size.
     suspend fun getHomeLayout(): ApiResult<HomeLayoutResponse> = safeApiCall {
         client.get("/api/v1/home/layout")
     }
 
     suspend fun getHomeSections(): ApiResult<SectionsResponse> = safeApiCall {
-        client.get("/api/v1/home/sections")
+        val requestedImageSize = imageSize?.current()
+        client.get("/api/v1/home/sections") {
+            imageSizeParameter(requestedImageSize)
+        }
     }
 
     suspend fun getHomeSectionItems(sectionId: String): ApiResult<HomeSectionItemsResponse> = safeApiCall {
-        client.get("/api/v1/home/sections/$sectionId/items")
+        val requestedImageSize = imageSize?.current()
+        client.get("/api/v1/home/sections/$sectionId/items") {
+            imageSizeParameter(requestedImageSize)
+        }
     }
 
     // --- Library Sections ---
 
     suspend fun getLibrarySections(libraryId: Int): ApiResult<SectionsResponse> = safeApiCall {
-        client.get("/api/v1/library/$libraryId/sections")
+        val requestedImageSize = imageSize?.current()
+        client.get("/api/v1/library/$libraryId/sections") {
+            imageSizeParameter(requestedImageSize)
+        }
     }
 
     suspend fun getLibrarySectionItems(
         libraryId: Int,
         sectionId: String
     ): ApiResult<HomeSectionItemsResponse> = safeApiCall {
-        client.get("/api/v1/library/$libraryId/sections/$sectionId/items")
+        val requestedImageSize = imageSize?.current()
+        client.get("/api/v1/library/$libraryId/sections/$sectionId/items") {
+            imageSizeParameter(requestedImageSize)
+        }
     }
 
     // --- Library Collections ---
@@ -86,7 +108,9 @@ class SectionApi(private val client: HttpClient) {
         queryGroups: List<CatalogQueryGroup> = emptyList(),
         match: String? = null,
     ): ApiResult<CatalogResponse> = safeApiCall {
+        val requestedImageSize = imageSize?.current()
         client.get("/api/v1/catalog") {
+            imageSizeParameter(requestedImageSize)
             parameter("source", "library_collection")
             parameter("collection_id", collectionId)
             parameter("offset", offset)
