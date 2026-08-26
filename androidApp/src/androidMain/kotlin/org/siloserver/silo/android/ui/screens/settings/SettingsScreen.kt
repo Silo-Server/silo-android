@@ -242,6 +242,17 @@ fun SettingsScreen(
             }
 
             item {
+                SettingsSection(title = "Interface") {
+                    SettingsSwitchRow(
+                        label = "Show featured hero",
+                        description = "Show featured cards at the top of Home.",
+                        checked = state.showFeaturedHero,
+                        onCheckedChange = viewModel::setShowFeaturedHero,
+                    )
+                }
+            }
+
+            item {
                 SettingsSection(title = "Library") {
                     SettingsNavigationRow(
                         label = "Watchlist",

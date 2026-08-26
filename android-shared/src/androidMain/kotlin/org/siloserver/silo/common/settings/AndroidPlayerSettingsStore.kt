@@ -380,6 +380,9 @@ class AndroidPlayerSettingsStore(
     override val showAudiobooksFlow: Flow<Boolean> =
         profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.NavShowAudiobooks, false) }
 
+    override val showFeaturedHeroFlow: Flow<Boolean> =
+        profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.HomeShowFeaturedHero, true) }
+
     // tvOS "Match Device Settings" parity: when on, playback styling follows
     // the OS captioning preferences (CaptioningManager); the stored custom
     // appearance stays untouched underneath.
@@ -396,6 +399,9 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun setShowAudiobooks(enabled: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.NavShowAudiobooks, enabled)
+
+    override suspend fun setShowFeaturedHero(enabled: Boolean) =
+        writeBoolLocal(PlaybackSettingsKeys.HomeShowFeaturedHero, enabled)
 
     // ---- Setters (write to scoped key + enqueue server flush) ---------
     /**

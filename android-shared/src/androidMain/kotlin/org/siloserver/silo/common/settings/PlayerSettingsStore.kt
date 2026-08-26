@@ -123,6 +123,8 @@ interface PlayerSettingsStore {
     val subtitleMatchesDeviceFlow: Flow<Boolean>
     /** iOS AppNavPreferences.showAudiobooks parity — audiobook surfaces are opt-in. */
     val showAudiobooksFlow: Flow<Boolean>
+    /** Phone Home featured hero visibility. Local to this device and enabled by default. */
+    val showFeaturedHeroFlow: Flow<Boolean>
     /** [subtitleAppearanceFlow] with the match-device override applied. */
     val effectiveSubtitleAppearanceFlow: Flow<org.siloserver.silo.model.settings.SubtitleAppearance>
 
@@ -207,6 +209,7 @@ interface PlayerSettingsStore {
     suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean)
     suspend fun setSubtitleMatchesDevice(enabled: Boolean)
     suspend fun setShowAudiobooks(enabled: Boolean)
+    suspend fun setShowFeaturedHero(enabled: Boolean)
 
     /**
      * Clear the server-side device override for one key. Local DataStore

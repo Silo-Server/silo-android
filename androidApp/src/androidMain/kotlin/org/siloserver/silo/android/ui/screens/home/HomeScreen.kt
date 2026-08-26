@@ -67,6 +67,7 @@ import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingBottomOver
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.pairing.CompanionPairingStatus
 import org.siloserver.silo.common.pairing.CompanionPairingTarget
+import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.ui.components.LocalImagePresentationDeferral
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.isAudiobookItemType
@@ -75,6 +76,7 @@ import org.siloserver.silo.model.section.splitTopFeatured
 import org.siloserver.silo.viewmodel.HomeViewModel
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
+import org.koin.compose.koinInject
 
 private const val ChromeFadeDistanceDp = 72f
 
@@ -108,6 +110,8 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val playerSettingsStore: PlayerSettingsStore = koinInject()
+    val showFeaturedHero by playerSettingsStore.showFeaturedHeroFlow.collectAsState(initial = true)
     val companionPairingViewModel = koinViewModel<CompanionPairingViewModel>()
     val companionTargets by companionPairingViewModel.targets.collectAsState()
     val companionStatus by companionPairingViewModel.status.collectAsState()
@@ -117,7 +121,7 @@ fun HomeScreen(
     var dismissedPairingSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val sections = state.sections
     val featuredSplit = remember(sections) { sections.splitTopFeatured() }
-    val featuredSection = featuredSplit.featured
+    val featuredSection = featuredSplit.featured.takeIf { showFeaturedHero }
     // Only an explicitly featured top row is rendered as the phone spotlight.
     // Featured rows farther down remain in the feed in their configured order.
     val regularSections = remember(featuredSplit.rest) {

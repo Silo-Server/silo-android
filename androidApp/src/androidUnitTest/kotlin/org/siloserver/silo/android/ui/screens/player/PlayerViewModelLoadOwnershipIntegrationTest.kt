@@ -877,6 +877,7 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override val subtitleUsesDeviceOverrideFlow: Flow<Boolean> = flowOf(false)
     override val subtitleMatchesDeviceFlow: Flow<Boolean> = flowOf(false)
     override val showAudiobooksFlow: Flow<Boolean> = flowOf(false)
+    override val showFeaturedHeroFlow: Flow<Boolean> = flowOf(true)
     override val effectiveSubtitleAppearanceFlow: Flow<SubtitleAppearance> =
         flowOf(SubtitleAppearance.DEFAULT)
 
@@ -909,6 +910,7 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) = Unit
     override suspend fun setSubtitleMatchesDevice(enabled: Boolean) = Unit
     override suspend fun setShowAudiobooks(enabled: Boolean) = Unit
+    override suspend fun setShowFeaturedHero(enabled: Boolean) = Unit
     override suspend fun resetDeviceSetting(key: String) = Unit
     override suspend fun resetAllDeviceSettings() = Unit
     override suspend fun flushPendingDeviceSettings() = Unit

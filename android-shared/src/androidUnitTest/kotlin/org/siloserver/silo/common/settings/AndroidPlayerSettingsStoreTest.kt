@@ -182,6 +182,20 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `featured hero defaults on and stays local`() = runTest {
+        val store = newStore()
+        assertTrue(store.showFeaturedHeroFlow.first())
+
+        store.setShowFeaturedHero(false)
+
+        assertFalse(store.showFeaturedHeroFlow.first())
+        assertFalse(
+            fakeFlusher.calls.any { it.key == PlaybackSettingsKeys.HomeShowFeaturedHero },
+            "Featured hero visibility is a device-local interface preference.",
+        )
+    }
+
+    @Test
     fun `setSubtitleAppearance round-trips through JSON`() = runTest {
         val store = newStore()
         val custom = SubtitleAppearance.DEFAULT.copy(

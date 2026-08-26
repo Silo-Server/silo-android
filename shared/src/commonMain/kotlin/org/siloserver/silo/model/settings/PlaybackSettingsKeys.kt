@@ -78,6 +78,9 @@ object PlaybackSettingsKeys {
      *  AppNavPreferences.showAudiobooks parity; hidden by default). */
     const val NavShowAudiobooks = "nav.show_audiobooks.local"
 
+    /** Local-only: show the featured hero at the top of phone Home. */
+    const val HomeShowFeaturedHero = "home.show_featured_hero.local"
+
     /**
      * Local-only per-profile flag — when true (default), DownloadWorker is
      * constrained to NetworkType.UNMETERED. Never synced to the server.
