@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.section.SectionItem
 
 /**
@@ -236,7 +237,9 @@ private fun SpotlightSlide(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
-                    onClick = { onPlayClick(item.contentId, item.positionSeconds) },
+                    onClick = {
+                        dispatchFeaturedHeroPlay(item, onPlayClick, onInfoClick)
+                    },
                     shape = RoundedCornerShape(100),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color.White,
@@ -267,6 +270,23 @@ private fun SpotlightSlide(
                 }
             }
         }
+    }
+}
+
+/**
+ * Keeps audiobook containers out of the video player. Home section items do
+ * not carry the file id required by audiobook playback, so their primary hero
+ * action opens details where the existing audiobook flow resolves the part.
+ */
+internal fun dispatchFeaturedHeroPlay(
+    item: SectionItem,
+    onPlayClick: (String, Double?) -> Unit,
+    onInfoClick: (String) -> Unit,
+) {
+    if (isAudiobookItemType(item.type)) {
+        onInfoClick(item.contentId)
+    } else {
+        onPlayClick(item.contentId, item.positionSeconds)
     }
 }
 
