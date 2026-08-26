@@ -16,13 +16,14 @@ import kotlinx.serialization.json.JsonNull
  */
 
 /**
- * The five scopes an explicit value can live at, in the server's wire
+ * The scopes an explicit value can live at, in the server's wire
  * spelling. Kept as an enum for request construction only — response fields
  * stay raw strings so a server that adds a scope cannot break deserialization.
  */
 enum class SettingScope(val wire: String) {
     ACCOUNT("account"),
     PROFILE("profile"),
+    PROFILE_CLIENT("profile_client"),
     PROFILE_DEVICE("profile_device"),
     PROFILE_LIBRARY("profile_library"),
     PROFILE_SERIES("profile_series"),
@@ -33,7 +34,8 @@ enum class SettingScope(val wire: String) {
  *
  * Only the content ids travel with the request: `scope` plus `library_id` /
  * `series_id` go in the query string. The profile and device parts of the
- * identity come from the session headers (`X-Profile-Id`, `X-Silo-Device-Id`)
+ * identity come from the session headers (`X-Profile-Id`,
+ * `X-Silo-Client-Family`, `X-Silo-Device-Id`)
  * that the auth interceptor already attaches — the server reads them from
  * there deliberately, so one profile cannot write another's settings by
  * naming it in the query.
@@ -49,6 +51,8 @@ data class SettingScopeIdentity(
     val libraryId: Int? = null,
     /** Set only for [SettingScope.PROFILE_SERIES]. */
     val seriesId: String? = null,
+    /** Request-pinned family for durable client/device-scoped mutations. */
+    val clientFamily: SiloClientFamily? = null,
 ) {
     init {
         require((scope == SettingScope.PROFILE_LIBRARY) == (libraryId != null)) {
@@ -59,6 +63,13 @@ data class SettingScopeIdentity(
             "series_id is required for profile_series and forbidden elsewhere"
         }
         seriesId?.let { require(it.isNotBlank()) { "series_id must not be blank" } }
+        require(
+            clientFamily == null ||
+                scope == SettingScope.PROFILE_CLIENT ||
+                scope == SettingScope.PROFILE_DEVICE,
+        ) {
+            "client_family is only valid for profile_client or profile_device"
+        }
     }
 
     companion object {
@@ -66,8 +77,11 @@ data class SettingScopeIdentity(
 
         fun profile(): SettingScopeIdentity = SettingScopeIdentity(SettingScope.PROFILE)
 
-        fun profileDevice(): SettingScopeIdentity =
-            SettingScopeIdentity(SettingScope.PROFILE_DEVICE)
+        fun profileClient(clientFamily: SiloClientFamily? = null): SettingScopeIdentity =
+            SettingScopeIdentity(SettingScope.PROFILE_CLIENT, clientFamily = clientFamily)
+
+        fun profileDevice(clientFamily: SiloClientFamily? = null): SettingScopeIdentity =
+            SettingScopeIdentity(SettingScope.PROFILE_DEVICE, clientFamily = clientFamily)
 
         fun profileLibrary(libraryId: Int): SettingScopeIdentity =
             SettingScopeIdentity(SettingScope.PROFILE_LIBRARY, libraryId = libraryId)
@@ -92,12 +106,31 @@ data class SettingsContractCapabilities(
     val scopes: List<String> = emptyList(),
     @SerialName("supports_batched_effective") val supportsBatchedEffective: Boolean = false,
     @SerialName("supports_idempotent_writes") val supportsIdempotentWrites: Boolean = false,
+    @SerialName("supports_atomic_shortcuts") val supportsAtomicShortcuts: Boolean = false,
 )
+
+/**
+ * UI customization first shipped with contract revision 5 and depends on the
+ * batched effective reads, the atomic shortcut membership endpoint, and stable
+ * idempotency receipts. All checks are intentional: revision alone cannot
+ * distinguish an older partial implementation, and a missing capability field
+ * must fail closed.
+ */
+val SettingsContractCapabilities.supportsUiCustomization: Boolean
+    get() = revision >= 5 && supportsBatchedEffective &&
+        supportsIdempotentWrites && supportsAtomicShortcuts
 
 /** Body for `PUT /api/v1/settings/values/{key}`: `{"value": …}`. */
 @Serializable
 data class SettingValueWriteRequest(
     val value: JsonElement,
+)
+
+/** Atomic profile-wide membership change for one navigation shortcut. */
+@Serializable
+data class NavigationShortcutItemWriteRequest(
+    val item: JsonElement,
+    val present: Boolean,
 )
 
 /**
@@ -111,6 +144,7 @@ data class StoredSettingValue(
     val key: String,
     val scope: String,
     @SerialName("profile_id") val profileId: String? = null,
+    @SerialName("client_family") val clientFamily: String? = null,
     @SerialName("device_id") val deviceId: String? = null,
     @SerialName("library_id") val libraryId: Int? = null,
     @SerialName("series_id") val seriesId: String? = null,
@@ -141,6 +175,7 @@ data class EffectiveSettingValue(
     @SerialName("suggested_values") val suggestedValues: List<String> = emptyList(),
     val scope: String? = null,
     @SerialName("profile_id") val profileId: String? = null,
+    @SerialName("client_family") val clientFamily: String? = null,
     @SerialName("device_id") val deviceId: String? = null,
     @SerialName("library_id") val libraryId: Int? = null,
     @SerialName("series_id") val seriesId: String? = null,

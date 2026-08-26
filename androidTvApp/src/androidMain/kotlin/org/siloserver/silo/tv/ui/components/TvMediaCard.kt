@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.components
 
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.forPosterPreset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -44,6 +46,7 @@ import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.model.settings.CardCaptionPreset
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.ProgressFill
@@ -84,14 +87,16 @@ fun TvMediaCard(
     actions: TvMediaCardActions = TvMediaCardActions(),
 ) {
     val overlayState = LocalCardOverlayUiState.current
+    val presentation = LocalCardPresentation.current
+    val effectiveWidth = width.forPosterPreset(presentation.posterSize)
     val effectiveAspectRatio = artworkAspectRatio
         ?: tvArtworkAspectRatioForMediaType(mediaType)
         ?: (2f / 3f)
-    val height = width / effectiveAspectRatio
-    val watchedBadgeSize = (width * RowDimens.WatchedBadgeSizeFraction)
+    val height = effectiveWidth / effectiveAspectRatio
+    val watchedBadgeSize = (effectiveWidth * RowDimens.WatchedBadgeSizeFraction)
         .coerceIn(RowDimens.WatchedBadgeMinSize, RowDimens.WatchedBadgeMaxSize)
     val watchedBadgeIconSize = watchedBadgeSize * RowDimens.WatchedBadgeIconSizeFraction
-    val watchedBadgePadding = (width * RowDimens.WatchedBadgePaddingFraction)
+    val watchedBadgePadding = (effectiveWidth * RowDimens.WatchedBadgePaddingFraction)
         .coerceIn(RowDimens.WatchedBadgeMinPadding, RowDimens.WatchedBadgeMaxPadding)
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -105,7 +110,7 @@ fun TvMediaCard(
         modifier = if (fillWidth) {
             modifier
         } else {
-            modifier.width(width)
+            modifier.width(effectiveWidth)
         },
     ) {
         TvMediaCardContextMenu(
@@ -133,7 +138,7 @@ fun TvMediaCard(
             } else {
                 cardModifier
                     .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                    .size(width, height)
+                    .size(effectiveWidth, height)
             },
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -194,26 +199,27 @@ fun TvMediaCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(11.dp))
+        if (presentation.caption != CardCaptionPreset.ARTWORK) {
+            Spacer(modifier = Modifier.height(11.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = 15.5.sp,
+                    lineHeight = 18.5.sp,
+                ),
+                color = if (isFocused) {
+                    Color.White
+                } else {
+                    Color.White.copy(alpha = 0.78f)
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall.copy(
-                fontSize = 15.5.sp,
-                lineHeight = 18.5.sp,
-            ),
-            color = if (isFocused) {
-                Color.White
-            } else {
-                Color.White.copy(alpha = 0.78f)
-            },
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Start,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        if (year != null && year > 0) {
+        if (year != null && year > 0 && presentation.caption == CardCaptionPreset.TITLE_METADATA) {
             Text(
                 text = year.toString(),
                 style = MaterialTheme.typography.bodySmall.copy(

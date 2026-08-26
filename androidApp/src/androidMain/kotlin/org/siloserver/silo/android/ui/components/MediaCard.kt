@@ -1,6 +1,8 @@
 package org.siloserver.silo.android.ui.components
 
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.forPosterPreset
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -36,6 +38,7 @@ import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.model.settings.CardCaptionPreset
 import org.siloserver.silo.overlays.OverlayData
 
 object MediaGridDefaults {
@@ -46,6 +49,11 @@ object MediaGridDefaults {
     val PosterGridMinWidth = 104.dp
     val PosterGridHorizontalSpacing = 12.dp
     val PosterGridVerticalSpacing = 16.dp
+
+    @Composable
+    fun posterGridMinWidth(): Dp = PosterGridMinWidth.forPosterPreset(
+        LocalCardPresentation.current.posterSize,
+    )
 }
 
 /**
@@ -69,7 +77,7 @@ fun MediaCard(
     progress: Float? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    width: Dp = 120.dp,
+    width: Dp? = null,
     artworkAspectRatio: Float = 2f / 3.3f,
     overlay: OverlayData? = null,
     actions: MediaCardActions = MediaCardActions(),
@@ -81,6 +89,8 @@ fun MediaCard(
     sharedContentId: String? = null,
 ) {
     val overlayState = LocalCardOverlayUiState.current
+    val presentation = LocalCardPresentation.current
+    val effectiveWidth = width ?: 120.dp.forPosterPreset(presentation.posterSize)
     var menuExpanded by remember { mutableStateOf(false) }
     // Unique per-placement hero key. Two placements of the same content id (e.g.
     // Continue Watching + a genre row) get distinct keys, so they never collide
@@ -93,7 +103,7 @@ fun MediaCard(
     // iOS MediaCard.swift: VStack(alignment: .leading, spacing: 4).
     Column(
         modifier = modifier
-            .width(width)
+            .width(effectiveWidth)
             .combinedClickable(
                 onClick = {
                     // Record which exact placement was tapped so the detail hero
@@ -165,18 +175,20 @@ fun MediaCard(
             }
         }
 
-        // iOS titleText: .siloSubheadline (14sp), 2 lines.
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (presentation.caption != CardCaptionPreset.ARTWORK) {
+            // iOS titleText: .siloSubheadline (14sp), 2 lines.
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         val caption = subtitle ?: year?.takeIf { it > 0 }?.toString()
-        if (caption != null) {
+        if (caption != null && presentation.caption == CardCaptionPreset.TITLE_METADATA) {
             // iOS yearText: .siloCaption (12sp) at secondary text.
             Text(
                 text = caption,

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -42,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.model.settings.CardCaptionPreset
 
 /**
  * Reserved height for the text block under a backdrop card: title (bodySmall)
@@ -86,6 +88,7 @@ fun BackdropCard(
      *  null keeps it decorative and the whole card opens the item page. */
     onOverlayClick: (() -> Unit)? = null,
 ) {
+    val presentation = LocalCardPresentation.current
     var menuExpanded by remember { mutableStateOf(false) }
     Column(
         modifier = modifier
@@ -165,55 +168,62 @@ fun BackdropCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        if (presentation.caption != CardCaptionPreset.ARTWORK) {
+            Spacer(modifier = Modifier.height(6.dp))
 
-        // Fixed-height info block: episode cards draw up to three text lines,
-        // movie cards as few as one. In a mixed row (Continue Watching) the
-        // LazyRow's height would otherwise change with whichever items are
-        // visible, bouncing every row below it during horizontal scrolls.
-        Column(modifier = Modifier.height(backdropInfoBlockHeight)) {
-        if (seriesTitle != null) {
-            // Episode card: show series title, then episode tag + episode title
-            Text(
-                text = seriesTitle,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            val episodeTag = formatEpisodeTag(seasonNumber, episodeNumber)
-            val subtitle = if (episodeTag != null) "$episodeTag \u2022 $title" else title
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            // Movie card: just show the title
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+            // Metadata mode reserves the tallest episode stack so mixed rows
+            // remain stable while scrolling. Title-only mode needs one line.
+            Column(
+                modifier = if (presentation.caption == CardCaptionPreset.TITLE_METADATA) {
+                    Modifier.height(backdropInfoBlockHeight)
+                } else {
+                    Modifier
+                },
+            ) {
+                if (seriesTitle != null) {
+                    Text(
+                        text = seriesTitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (presentation.caption == CardCaptionPreset.TITLE_METADATA) {
+                        val episodeTag = formatEpisodeTag(seasonNumber, episodeNumber)
+                        val subtitle = if (episodeTag != null) "$episodeTag \u2022 $title" else title
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                } else {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
-        // Remaining time
-        if (remainingMinutes != null && remainingMinutes > 0) {
-            Text(
-                text = "${remainingMinutes}m left",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
+                if (
+                    presentation.caption == CardCaptionPreset.TITLE_METADATA &&
+                    remainingMinutes != null && remainingMinutes > 0
+                ) {
+                    Text(
+                        text = "${remainingMinutes}m left",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
 
         MediaCardContextMenu(

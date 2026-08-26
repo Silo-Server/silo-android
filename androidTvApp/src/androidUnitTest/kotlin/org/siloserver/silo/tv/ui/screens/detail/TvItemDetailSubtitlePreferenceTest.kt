@@ -198,6 +198,8 @@ class TvItemDetailSubtitlePreferenceTest {
             keys: List<String>,
             libraryIds: List<Int>,
             seriesIds: List<String>,
+            profileId: String?,
+            authScope: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<EffectiveSettingValuesResponse> = ApiResult.Success(effective)
     }
 

@@ -2,6 +2,7 @@ package org.siloserver.silo.domain.settings
 
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.SettingKeys
+import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsCapabilitiesResult
 import org.siloserver.silo.repository.SettingsRepository
@@ -65,6 +66,8 @@ class ProfileSettingsController(
     data class LoadResult(
         val availability: Availability,
         val snapshot: Snapshot?,
+        /** Exact successful capability probe; null for old/erroring servers. */
+        val capabilities: SettingsContractCapabilities? = null,
     )
 
     /**
@@ -89,7 +92,10 @@ class ProfileSettingsController(
      * [Availability.UNAVAILABLE] for the same reason.
      */
     suspend fun load(): LoadResult {
-        val availability = when (repository.contractCapabilities()) {
+        val capabilityResult = repository.contractCapabilities()
+        val capabilities = (capabilityResult as? SettingsCapabilitiesResult.Available)
+            ?.capabilities
+        val availability = when (capabilityResult) {
             is SettingsCapabilitiesResult.Available -> Availability.AVAILABLE
             is SettingsCapabilitiesResult.ServerUpgradeRequired ->
                 Availability.SERVER_UPGRADE_REQUIRED
@@ -99,9 +105,9 @@ class ProfileSettingsController(
         if (availability != Availability.AVAILABLE) return LoadResult(availability, null)
 
         return when (val result = repository.getEffectiveValues(PROFILE_KEYS)) {
-            is ApiResult.Success -> LoadResult(availability, snapshotOf(result.data))
+            is ApiResult.Success -> LoadResult(availability, snapshotOf(result.data), capabilities)
             is ApiResult.Error, is ApiResult.NetworkError ->
-                LoadResult(Availability.UNAVAILABLE, null)
+                LoadResult(Availability.UNAVAILABLE, null, capabilities)
         }
     }
 

@@ -56,7 +56,11 @@ import org.siloserver.silo.tv.ui.screens.watchtogether.tvWatchTogetherDestinatio
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.WatchTogetherEntryTarget
 import org.siloserver.silo.watchtogether.watchTogetherEntryTarget
+import androidx.compose.runtime.CompositionLocalProvider
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
+import org.siloserver.silo.common.settings.UiCustomizationStore
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
+import org.siloserver.silo.model.settings.effectiveCardPresentationForSupport
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
@@ -335,6 +339,7 @@ fun TvAppNavigation(
     val authRepository: AuthRepository = koinInject()
     val profileRepository: ProfileRepository = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
+    val uiCustomizationStore: UiCustomizationStore = koinInject()
     val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore = koinInject()
     val watchNextSeeder: WatchNextSeeder = koinInject()
     val siloCastReceiver: TvSiloCastReceiver = koinInject()
@@ -546,7 +551,20 @@ fun TvAppNavigation(
         value = tokenManager.getProfileId()
     }
 
+    // Card presentation is provided HERE rather than inside TvMainShell so it
+    // also reaches the routes that render TvMediaCard/TvCatalogGrid outside the
+    // shell — item detail, library-collection detail, person detail — and so it
+    // sits alongside the existing card-overlay provider.
+    val cardPresentation by uiCustomizationStore.cardPresentation.collectAsState()
+    val cardPresentationSupported by
+        uiCustomizationStore.uiCustomizationSupported.collectAsState()
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
+    CompositionLocalProvider(
+        LocalCardPresentation provides effectiveCardPresentationForSupport(
+            cardPresentation,
+            cardPresentationSupported,
+        ),
+    ) {
     Box(modifier = Modifier.fillMaxSize()) {
     NavHost(
         navController = navController,
@@ -1302,6 +1320,7 @@ fun TvAppNavigation(
             onDontSend = { diagnosticsViewModel.declinePrompt(prompt) },
             allowAlwaysSend = diagnosticsState.allowsAutomaticUpload,
         )
+    }
     }
     }
     }

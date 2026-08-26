@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -41,6 +42,7 @@ import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.overlays.OverlayData
+import org.siloserver.silo.model.settings.CardCaptionPreset
 import org.siloserver.silo.tv.ui.theme.ProgressFill
 import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.RowDimens
@@ -75,6 +77,7 @@ fun TvEpisodeCard(
     actions: TvMediaCardActions = TvMediaCardActions(),
 ) {
     val overlayState = LocalCardOverlayUiState.current
+    val presentation = LocalCardPresentation.current
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
@@ -178,41 +181,45 @@ fun TvEpisodeCard(
             }
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 7.dp),
-            horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = seriesTitle ?: title,
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontSize = 15.5.sp,
-                    lineHeight = 18.5.sp,
-                ),
-                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            val secondaryLine = if (seriesTitle != null) title else year?.toString()
-            if (secondaryLine != null) {
+        if (presentation.caption != CardCaptionPreset.ARTWORK) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 7.dp),
+                horizontalAlignment = Alignment.Start,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
-                    text = secondaryLine,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = 14.sp,
-                        lineHeight = 18.sp,
+                    text = seriesTitle ?: title,
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontSize = 15.5.sp,
+                        lineHeight = 18.5.sp,
                     ),
-                    color = Color.White.copy(alpha = 0.75f),
+                    color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                val secondaryLine = if (seriesTitle != null) title else year?.toString()
+                if (
+                    secondaryLine != null &&
+                    presentation.caption == CardCaptionPreset.TITLE_METADATA
+                ) {
+                    Text(
+                        text = secondaryLine,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 14.sp,
+                            lineHeight = 18.sp,
+                        ),
+                        color = Color.White.copy(alpha = 0.75f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
-
     }
 }
 

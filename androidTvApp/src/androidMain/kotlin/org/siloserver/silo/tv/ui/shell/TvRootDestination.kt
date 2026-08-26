@@ -9,11 +9,21 @@ package org.siloserver.silo.tv.ui.shell
  * becomes a Home row in a later stage). Mirrors tvOS `TVRootDestination`.
  */
 sealed class TvRootDestination {
-    /** Curated landing surface. Always the first tab. */
+    /** Curated landing surface. Always present, but user-orderable. */
     data object Home : TvRootDestination()
 
-    /** A library content-type tab (Movies / Series / Music / Audiobooks). */
-    data class LibraryType(val type: TvLibraryTabType) : TvRootDestination()
+    /**
+     * A library content-type tab (Movies / Series / Music / Audiobooks).
+     * [libraryId] and [customLabel] turn it into a direct pinned-library tab
+     * while reusing the same content route and native focus/cascade graph.
+     */
+    data class LibraryType(
+        val type: TvLibraryTabType,
+        val libraryId: Int? = null,
+        val customLabel: String? = null,
+    ) : TvRootDestination() {
+        val title: String get() = customLabel ?: type.title
+    }
 
     /** Personal recommendations ("For You") — tvOS `.recommendations`. */
     data object ForYou : TvRootDestination()

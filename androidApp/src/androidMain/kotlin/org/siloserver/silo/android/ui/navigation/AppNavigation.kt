@@ -20,8 +20,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,6 +35,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navDeepLink
 import androidx.navigation.navArgument
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import org.siloserver.silo.android.cast.GoogleCastMiniBar
 import org.siloserver.silo.android.cast.SiloCastController
@@ -89,12 +94,66 @@ import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.settings.OverlayPrefsStore
+import org.siloserver.silo.common.settings.UiCustomizationStore
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
+import org.siloserver.silo.model.settings.effectiveCardPresentationForSupport
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.ServerRegistry
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 /** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
 private const val PageFadeDurationMs = 200
+
+/** Identity that owns server-hydrated, profile-specific UI preferences. */
+internal data class UiCustomizationHydrationIdentity(
+    val serverId: String,
+    val profileId: String,
+)
+
+internal fun uiCustomizationHydrationIdentity(
+    serverId: String?,
+    profileId: String?,
+): UiCustomizationHydrationIdentity? {
+    val server = serverId?.takeIf { it.isNotBlank() } ?: return null
+    val profile = profileId?.takeIf { it.isNotBlank() } ?: return null
+    return UiCustomizationHydrationIdentity(server, profile)
+}
+
+internal fun shouldRefreshUiCustomization(
+    event: Lifecycle.Event,
+    identity: UiCustomizationHydrationIdentity?,
+): Boolean = event == Lifecycle.Event.ON_RESUME && identity != null
+
+internal enum class UiCustomizationHydrationAction { CLEAR, REFRESH }
+
+internal fun uiCustomizationHydrationAction(
+    identity: UiCustomizationHydrationIdentity?,
+): UiCustomizationHydrationAction = if (identity == null) {
+    UiCustomizationHydrationAction.CLEAR
+} else {
+    UiCustomizationHydrationAction.REFRESH
+}
+
+/** Prevents observer attachment to an already-resumed owner from duplicating identity hydration. */
+internal class UiCustomizationResumeRefreshGate(
+    skipSynchronizedResume: Boolean,
+) {
+    private var skipNextResume = skipSynchronizedResume
+
+    fun shouldRefresh(
+        event: Lifecycle.Event,
+        identity: UiCustomizationHydrationIdentity?,
+    ): Boolean {
+        if (event == Lifecycle.Event.ON_PAUSE) skipNextResume = false
+        if (!shouldRefreshUiCustomization(event, identity)) return false
+        if (skipNextResume) {
+            skipNextResume = false
+            return false
+        }
+        return true
+    }
+}
 
 internal class PlayerTargetProviderRegistration(
     val backStackEntryId: String,
@@ -126,8 +185,15 @@ fun AppNavigation(
     onRequeueExternalRoute: (String) -> Unit = {},
 ) {
     val tokenManager: TokenManager = koinInject()
-    val serverRegistry: org.siloserver.silo.network.ServerRegistry = koinInject()
+    val serverRegistry: ServerRegistry = koinInject()
+    val activeServerEntry by serverRegistry.activeEntry.collectAsState()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
+    val uiCustomizationStore: UiCustomizationStore = koinInject()
+    val cardPresentation by uiCustomizationStore.cardPresentation.collectAsState()
+    val uiCustomizationSupported by
+        uiCustomizationStore.uiCustomizationSupported.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val uiCustomizationRefreshScope = rememberCoroutineScope()
     val siloCastController: SiloCastController = koinInject()
     val diagnosticsViewModel = koinViewModel<DiagnosticsViewModel>()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
@@ -259,19 +325,43 @@ fun AppNavigation(
         )
     }
 
-    // Re-read the authenticated profile id whenever the current destination
-    // changes (Login → ProfileSelection → Main). This drives card-overlay
-    // hydration off the authenticated identity instead of a one-shot at app
-    // start, where the user is still on Login and the settings calls 401.
+    // Drive hydration from the registry's atomic server/profile entry. A
+    // profile id is only unique within a server; keying on it alone leaves the
+    // previous server's cache active when two servers use the same id.
     val currentEntry by navController.currentBackStackEntryAsState()
     LaunchedEffect(currentEntry?.destination?.route) {
         DiagnosticsLifecycleLogger.route(currentEntry?.destination?.route)
     }
-    val overlaySessionKey by produceState<String?>(
-        initialValue = null,
-        currentEntry?.destination?.route,
-    ) {
-        value = tokenManager.getProfileId()
+    val overlaySessionKey = uiCustomizationHydrationIdentity(
+        serverId = activeServerEntry?.id,
+        profileId = activeServerEntry?.profileId,
+    )
+
+    // Rehydrate once for every distinct authenticated identity, including an
+    // in-place profile/server switch while this lifecycle is already resumed.
+    LaunchedEffect(overlaySessionKey, uiCustomizationStore) {
+        when (uiCustomizationHydrationAction(overlaySessionKey)) {
+            UiCustomizationHydrationAction.CLEAR -> uiCustomizationStore.clear()
+            UiCustomizationHydrationAction.REFRESH -> uiCustomizationStore.refresh()
+        }
+    }
+
+    // Keep one observer across identity changes and read its latest identity;
+    // those changes are hydrated above. A later real ON_RESUME still refreshes
+    // edits from another device and retries offline pending operations.
+    val latestOverlaySessionKey by rememberUpdatedState(overlaySessionKey)
+    DisposableEffect(lifecycleOwner, uiCustomizationStore) {
+        val refreshGate = UiCustomizationResumeRefreshGate(
+            skipSynchronizedResume = lifecycleOwner.lifecycle.currentState
+                .isAtLeast(Lifecycle.State.RESUMED),
+        )
+        val observer = LifecycleEventObserver { _, event ->
+            if (refreshGate.shouldRefresh(event, latestOverlaySessionKey)) {
+                uiCustomizationRefreshScope.launch { uiCustomizationStore.refresh() }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
@@ -286,6 +376,10 @@ fun AppNavigation(
     CompositionLocalProvider(
         LocalSharedTransitionScope provides this,
         LocalHeroSourceHandoff provides heroSourceHandoff,
+        LocalCardPresentation provides effectiveCardPresentationForSupport(
+            cardPresentation,
+            uiCustomizationSupported,
+        ),
     ) {
     Box(modifier = Modifier.fillMaxSize()) {
     NavHost(

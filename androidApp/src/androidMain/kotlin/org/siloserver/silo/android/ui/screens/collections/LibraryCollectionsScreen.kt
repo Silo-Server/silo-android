@@ -234,7 +234,7 @@ fun LibraryCollectionsScreen(
                         .padding(padding),
                 ) {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+                        columns = GridCells.Adaptive(MediaGridDefaults.posterGridMinWidth()),
                         contentPadding = PaddingValues(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
                         verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),

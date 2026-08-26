@@ -15,6 +15,7 @@ import org.siloserver.silo.network.IdentityTransitionKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -310,5 +311,82 @@ class RegistryPairingAuthPortTest {
         assertFalse(
             prefs.all.keys.any { key -> key.startsWith(AndroidServerRegistry.serverScopedKey(serverB, "")) },
         )
+    }
+
+    /**
+     * Disk-level proof that the durable credential owner rotates INSIDE the same
+     * atomic commit as the replacement credentials: the post-commit callback is
+     * killed, so the only state anyone can observe is what the single editor
+     * transaction wrote. A reconstruction that found account B's tokens under
+     * account A's owner id would mean an owner-keyed cache (UiCustomizationStore,
+     * TvLibraryScopeStore) could adopt the previous account's local data.
+     */
+    @Test
+    fun processDeathAfterAtomicCommitReconstructsTheRotatedCredentialOwnerWithTheNewTokens() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("pairing-credential-owner-rotation", Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val registry = AndroidServerRegistry(prefs)
+        val serverId = registry.addOrUpdate("https://silo.example")
+        registry.switchTo(serverId)
+        val tokens = EncryptedTokenManagerImpl(prefs, registry)
+        tokens.saveTokens("old-access", "old-refresh", 3600)
+        tokens.setProfileIdentity("old-profile", "old-profile-token")
+        val ownerKey = AndroidServerRegistry.serverScopedKey(serverId, "credential_owner_id")
+        val oldOwner = checkNotNull(tokens.snapshotCurrentScope()?.credentialOwnerId)
+        assertEquals(oldOwner, prefs.getString(ownerKey, null))
+
+        val simulatedDeath = EncryptedTokenManagerImpl(
+            prefs = prefs,
+            registry = AndroidServerRegistry(prefs),
+            afterAccountSessionCommit = { error("simulated process death") },
+        )
+        assertFailsWith<IllegalStateException> {
+            simulatedDeath.replaceAccountSession(
+                serverId = serverId,
+                accessToken = "new-access",
+                refreshToken = "new-refresh",
+                expiresIn = 7200,
+                profileId = "new-profile",
+                profileToken = "new-profile-token",
+            )
+        }
+
+        val reconstructedRegistry = AndroidServerRegistry(prefs)
+        val reconstructedTokens = EncryptedTokenManagerImpl(prefs, reconstructedRegistry)
+        val reconstructed = checkNotNull(reconstructedTokens.snapshotCurrentScope())
+        assertEquals("new-access", reconstructedTokens.getAccessToken())
+        assertEquals("new-refresh", reconstructedTokens.getRefreshToken())
+        assertNotEquals(oldOwner, reconstructed.credentialOwnerId)
+        assertEquals(reconstructed.credentialOwnerId, prefs.getString(ownerKey, null))
+    }
+
+    /** Sign-out must not leave the previous account's durable owner id on disk. */
+    @Test
+    fun processDeathAfterAtomicSignOutReconstructsNoDurableCredentialOwner() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("pairing-credential-owner-sign-out", Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val registry = AndroidServerRegistry(prefs)
+        val serverId = registry.addOrUpdate("https://signed-in.example")
+        registry.switchTo(serverId)
+        val tokens = EncryptedTokenManagerImpl(prefs, registry)
+        tokens.saveTokens("old-access", "old-refresh", 3600)
+        tokens.setProfileIdentity("old-profile", "old-profile-token")
+        val ownerKey = AndroidServerRegistry.serverScopedKey(serverId, "credential_owner_id")
+        val oldOwner = checkNotNull(tokens.snapshotCurrentScope()?.credentialOwnerId)
+        assertEquals(oldOwner, prefs.getString(ownerKey, null))
+
+        val simulatedDeath = EncryptedTokenManagerImpl(
+            prefs = prefs,
+            registry = AndroidServerRegistry(prefs),
+            afterAccountSignOutCommit = { error("simulated process death") },
+        )
+        assertFailsWith<IllegalStateException> { simulatedDeath.signOutCurrentServer() }
+
+        assertNull(prefs.getString(ownerKey, null))
+        val reconstructedTokens = EncryptedTokenManagerImpl(prefs, AndroidServerRegistry(prefs))
+        assertNull(reconstructedTokens.getAccessToken())
+        assertNotEquals(oldOwner, reconstructedTokens.snapshotCurrentScope()?.credentialOwnerId)
     }
 }

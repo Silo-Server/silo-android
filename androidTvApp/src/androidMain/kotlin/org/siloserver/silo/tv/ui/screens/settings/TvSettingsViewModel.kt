@@ -6,10 +6,24 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.common.settings.UiCustomizationStore
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.settings.QualityPresets
+import org.siloserver.silo.model.settings.CardCaptionPreset
+import org.siloserver.silo.model.settings.CardPresentationPreset
+import org.siloserver.silo.model.settings.NavigationShortcuts
+import org.siloserver.silo.model.settings.PosterSizePreset
+import org.siloserver.silo.model.settings.PrimaryMenu
+import org.siloserver.silo.model.settings.PrimaryMenuBuiltin
+import org.siloserver.silo.model.settings.PrimaryMenuItem
+import org.siloserver.silo.model.settings.SettingScope
+import org.siloserver.silo.model.settings.UiCustomizationCodec
+import org.siloserver.silo.model.settings.UiCustomizationLimits
+import org.siloserver.silo.model.settings.effectiveCardPresentationForSupport
+import org.siloserver.silo.model.settings.effectivePrimaryMenuForSupport
+import org.siloserver.silo.model.settings.supportsUiCustomization
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
@@ -19,9 +33,13 @@ import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileRepository
+import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.data.preferences.SubtitleSize
+import org.siloserver.silo.tv.ui.shell.TvLibraryTabType
+import org.siloserver.silo.tv.ui.shell.resolvedTvAudiobookVisibility
+import org.siloserver.silo.tv.ui.util.visibleOnTv
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +48,207 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+internal const val TvPrimaryMenuMaxItems = UiCustomizationLimits.MAX_PRIMARY_MENU_ITEMS
+internal const val TvNavigationShortcutsMaxItems = UiCustomizationLimits.MAX_NAVIGATION_SHORTCUT_ITEMS
+
+internal sealed interface TvNavigationPresetMutation {
+    data object ResetPrimaryMenu : TvNavigationPresetMutation
+    data class SetPrimaryMenu(val value: PrimaryMenu) : TvNavigationPresetMutation
+}
+
+internal fun prepareTvNavigationPresetMutation(
+    preset: TvSettingsViewModel.NavigationPreset,
+    libraries: List<org.siloserver.silo.model.personal.UserLibrary>,
+    showAudiobooks: Boolean,
+    librariesResolved: Boolean,
+): TvNavigationPresetMutation? {
+    if (!librariesResolved || preset == TvSettingsViewModel.NavigationPreset.CUSTOM) return null
+    return when (preset) {
+        // Standard is the native, availability-aware baseline. Clearing the
+        // authored family row keeps it dynamic as libraries are added or
+        // removed instead of freezing today's resolved library types.
+        TvSettingsViewModel.NavigationPreset.STANDARD ->
+            TvNavigationPresetMutation.ResetPrimaryMenu
+        TvSettingsViewModel.NavigationPreset.MEDIA_FIRST ->
+            TvNavigationPresetMutation.SetPrimaryMenu(
+                mediaFirstTvMenu(libraries, showAudiobooks),
+            )
+        TvSettingsViewModel.NavigationPreset.MINIMAL ->
+            TvNavigationPresetMutation.SetPrimaryMenu(minimalTvMenu())
+        TvSettingsViewModel.NavigationPreset.CUSTOM -> null
+    }
+}
+
+internal fun standardTvMenu(
+    libraries: List<org.siloserver.silo.model.personal.UserLibrary>,
+    showAudiobooks: Boolean,
+): PrimaryMenu = PrimaryMenu(
+    buildList {
+        add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.HOME))
+        if (libraries.any(TvLibraryTabType.Movies::matches)) {
+            add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.MOVIES))
+        }
+        if (libraries.any(TvLibraryTabType.Series::matches)) {
+            add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.SERIES))
+        }
+        if (libraries.any(TvLibraryTabType.Music::matches)) {
+            add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.MUSIC))
+        }
+        if (showAudiobooks && libraries.any(TvLibraryTabType.Audiobooks::matches)) {
+            add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.AUDIOBOOKS))
+        }
+        add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.FOR_YOU))
+        add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.CALENDAR))
+    },
+)
+
+internal fun mediaFirstTvMenu(
+    libraries: List<org.siloserver.silo.model.personal.UserLibrary>,
+    showAudiobooks: Boolean,
+): PrimaryMenu {
+    val standard = standardTvMenu(libraries, showAudiobooks).items
+    val home = PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.HOME)
+    val personal = PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.FOR_YOU)
+    val calendar = PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.CALENDAR)
+    val media = standard.filterNot { it == home || it == personal || it == calendar }
+    return PrimaryMenu(media + home + personal + calendar)
+}
+
+internal fun minimalTvMenu(): PrimaryMenu = PrimaryMenu(
+    listOf(
+        PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.HOME),
+        PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.FOR_YOU),
+    ),
+)
+
+/**
+ * Prepares the two documents produced by adding a TV menu item. Returning
+ * `null` means the edit would violate a server contract limit and therefore
+ * must be rejected before either optimistic store write starts.
+ */
+internal data class TvMenuItemAddition(
+    val primaryMenu: PrimaryMenu,
+    val shortcuts: NavigationShortcuts?,
+)
+
+internal fun prepareTvMenuItemAddition(
+    menuItems: List<PrimaryMenuItem>,
+    currentShortcuts: NavigationShortcuts,
+    item: PrimaryMenuItem,
+): TvMenuItemAddition? {
+    val identity = UiCustomizationCodec.identity(item)
+    if (menuItems.size >= TvPrimaryMenuMaxItems ||
+        menuItems.any { UiCustomizationCodec.identity(it) == identity }
+    ) {
+        return null
+    }
+
+    val needsShortcut = item is PrimaryMenuItem.Library &&
+        currentShortcuts.items.none { UiCustomizationCodec.identity(it) == identity }
+    val shortcuts = when {
+        !needsShortcut -> null
+        currentShortcuts.items.size >= TvNavigationShortcutsMaxItems -> return null
+        else -> NavigationShortcuts(currentShortcuts.items + item)
+    }
+
+    return TvMenuItemAddition(
+        primaryMenu = PrimaryMenu(menuItems + item),
+        shortcuts = shortcuts,
+    )
+}
+
+internal fun canEnableTvAudiobooksTab(menuItems: List<PrimaryMenuItem>): Boolean =
+    PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.AUDIOBOOKS) in menuItems ||
+    menuItems.size < TvPrimaryMenuMaxItems
+
+internal fun resolvedTvAudiobooksTab(
+    effectiveMenu: PrimaryMenu?,
+    legacyFallback: Boolean,
+    libraries: List<org.siloserver.silo.model.personal.UserLibrary> = emptyList(),
+): Boolean = resolvedTvAudiobookVisibility(
+    primaryMenu = effectiveMenu,
+    uiCustomizationSupported = true,
+    legacyFallback = legacyFallback,
+    libraries = libraries,
+)
+
+internal fun tvUiCustomizationAvailable(
+    result: ProfileSettingsController.LoadResult,
+): Boolean = tvUiCustomizationSupport(result) == true
+
+internal fun tvUiCustomizationSupport(
+    result: ProfileSettingsController.LoadResult,
+): Boolean? {
+    val capabilities = result.capabilities
+    return when {
+        capabilities != null -> capabilities.supportsUiCustomization
+        result.availability ==
+            ProfileSettingsController.Availability.SERVER_UPGRADE_REQUIRED -> false
+        // A successful probe always carries its decoded capabilities. Treat a
+        // malformed/manual AVAILABLE result without them as confirmed unusable.
+        result.availability == ProfileSettingsController.Availability.AVAILABLE -> false
+        else -> null
+    }
+}
+
+internal fun TvSettingsViewModel.UiState.withObservedUiCustomizationSupport(
+    supported: Boolean?,
+): TvSettingsViewModel.UiState = copy(uiCustomizationSupport = supported)
+
+/**
+ * Materializes an inherited native menu when the legacy audiobook toggle is
+ * changed so the choice becomes a real family-synced document. Returning
+ * `null` means an existing override already expresses the requested state.
+ * Callers must apply [canEnableTvAudiobooksTab] before enabling.
+ */
+internal fun prepareTvAudiobookMenuWrite(
+    currentOverride: PrimaryMenu?,
+    inheritedMenu: PrimaryMenu,
+    enabled: Boolean,
+): PrimaryMenu? {
+    val currentItems = currentOverride?.items ?: inheritedMenu.items
+    val audiobook = PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.AUDIOBOOKS)
+    val nextItems = if (enabled) {
+        if (audiobook in currentItems) {
+            currentItems
+        } else {
+            val insertAt = currentItems.indexOfFirst {
+                it == PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.FOR_YOU)
+            }.takeIf { it >= 0 } ?: currentItems.size
+            currentItems.toMutableList().apply { add(insertAt, audiobook) }
+        }
+    } else {
+        currentItems.filterNot { it == audiobook }
+    }
+    return PrimaryMenu(nextItems).takeIf {
+        currentOverride == null || nextItems != currentItems
+    }
+}
+
+internal data class TvAudiobookToggleMutation(
+    val legacyValue: Boolean,
+    val primaryMenu: PrimaryMenu?,
+)
+
+/** Route the pre-contract toggle locally, and only author a menu when supported. */
+internal fun prepareTvAudiobookToggleMutation(
+    customizationAvailable: Boolean,
+    currentOverride: PrimaryMenu?,
+    inheritedMenu: PrimaryMenu?,
+    enabled: Boolean,
+): TvAudiobookToggleMutation = TvAudiobookToggleMutation(
+    legacyValue = enabled,
+    primaryMenu = if (customizationAvailable) {
+        prepareTvAudiobookMenuWrite(
+            currentOverride = currentOverride,
+            inheritedMenu = checkNotNull(inheritedMenu),
+            enabled = enabled,
+        )
+    } else {
+        null
+    },
+)
 
 /**
  * ViewModel for the TV settings screen. Server-managed device settings
@@ -54,10 +273,19 @@ class TvSettingsViewModel(
     private val overlayPrefsStore: OverlayPrefsStore,
     private val legacyTvPrefsMigration: LegacyTvPrefsMigration,
     private val profileSettings: ProfileSettingsController,
+    private val personalDataRepository: PersonalDataRepository,
+    private val uiCustomizationStore: UiCustomizationStore,
     private val tvLibraryScopeStore: org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore? = null,
 ) : ViewModel() {
 
     enum class NavAction { SIGNED_OUT, SWITCH_PROFILE }
+
+    enum class NavigationPreset(val wire: String, val label: String) {
+        STANDARD("standard", "Standard"),
+        MEDIA_FIRST("media_first", "Media first"),
+        MINIMAL("minimal", "Minimal"),
+        CUSTOM("custom", "Custom"),
+    }
 
     data class UiState(
         val user: User? = null,
@@ -73,6 +301,8 @@ class TvSettingsViewModel(
         // showing rows whose edits go nowhere; playback is unaffected.
         val settingsAvailability: ProfileSettingsController.Availability =
             ProfileSettingsController.Availability.UNKNOWN,
+        /** true=supported, false=confirmed incompatible, null=not resolved/transient failure. */
+        val uiCustomizationSupport: Boolean? = null,
         // Quality is two orthogonal values behind one picker:
         // playback.preferred_quality (resolution) and
         // playback.max_bitrate_kbps (bandwidth; null = uncapped). The preset
@@ -98,7 +328,25 @@ class TvSettingsViewModel(
         val introSkipMode: IntroSkipMode = IntroSkipMode.Default,
         val matchContentFrameRate: Boolean = false,
         val dolbyVisionEnabled: Boolean = true,
-        val showAudiobooksTab: Boolean = false,
+        /** Local fallback used only while no server-authored primary menu is effective. */
+        val legacyShowAudiobooksTab: Boolean = false,
+        val posterSize: PosterSizePreset = PosterSizePreset.STANDARD,
+        val cardCaption: CardCaptionPreset = CardCaptionPreset.TITLE_METADATA,
+        val primaryMenuOverride: PrimaryMenu? = null,
+        val primaryMenuUsesDeviceOverride: Boolean = false,
+        val cardPresentationUsesDeviceOverride: Boolean = false,
+        val menuItems: List<PrimaryMenuItem> = listOf(
+            PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.HOME),
+            PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.FOR_YOU),
+            PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.CALENDAR),
+        ),
+        val addableMenuItems: List<PrimaryMenuItem> = emptyList(),
+        val navigationPreset: NavigationPreset = NavigationPreset.STANDARD,
+        val libraries: List<org.siloserver.silo.model.personal.UserLibrary> = emptyList(),
+        /** True only after the library request succeeds, including an empty result. */
+        val customizationLibrariesResolved: Boolean = false,
+        val customizationLibrariesLoadFailed: Boolean = false,
+        val shortcuts: NavigationShortcuts = NavigationShortcuts.EMPTY,
         val subtitleMatchesDevice: Boolean = false,
         val dvProfile7HDR10Fallback: Boolean = true,
         val autoSkipCredits: Boolean = false,
@@ -110,7 +358,26 @@ class TvSettingsViewModel(
         // (0 = at the very end). Mirrors tvOS `nextUpPromptSeconds`.
         val nextUpPromptSeconds: Int = 10,
         val navAction: NavAction? = null,
-    )
+    ) {
+        /** Presentation may remain cached while UNKNOWN, but revision-5 writes must stay disabled. */
+        val uiCustomizationAvailable: Boolean
+            get() = canAuthorUiCustomization
+
+        internal val canAuthorUiCustomization: Boolean
+            get() = uiCustomizationSupport == true
+
+        /**
+         * A resolved family/device menu is authoritative. The old local flag
+         * remains only as the native-menu fallback when no menu row exists.
+         */
+        val showAudiobooksTab: Boolean
+            get() = resolvedTvAudiobookVisibility(
+                primaryMenu = primaryMenuOverride,
+                uiCustomizationSupported = uiCustomizationSupport,
+                legacyFallback = legacyShowAudiobooksTab,
+                libraries = libraries,
+            )
+    }
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
@@ -119,6 +386,8 @@ class TvSettingsViewModel(
         loadUser()
         loadSettings()
         observePlayerSettings()
+        observeUiCustomization()
+        loadCustomizationLibraries()
     }
 
     /**
@@ -203,10 +472,237 @@ class TvSettingsViewModel(
             // The store writes them to its DataStore; observePlayerSettings()
             // mirrors them into _uiState.
             playerSettingsStore.refreshFromServer()
+            uiCustomizationStore.refresh()
 
             loadProfileSettings()
         }
     }
+
+    private fun observeUiCustomization() {
+        viewModelScope.launch {
+            combine(
+                uiCustomizationStore.primaryMenu,
+                uiCustomizationStore.shortcuts,
+                uiCustomizationStore.cardPresentation,
+                uiCustomizationStore.primaryMenuSource,
+                uiCustomizationStore.cardPresentationSource,
+            ) { menu, shortcuts, card, menuSource, cardSource ->
+                CustomizationSnapshot(menu, shortcuts, card, menuSource, cardSource, null)
+            }
+                .combine(uiCustomizationStore.uiCustomizationSupported) { snapshot, supported ->
+                    snapshot.copy(supported = supported)
+                }
+                .collect { customization ->
+                    _uiState.update { state ->
+                        val support = customization.supported
+                        val menu = effectivePrimaryMenuForSupport(
+                            customization.menu,
+                            support,
+                        )
+                        val card = effectiveCardPresentationForSupport(
+                            customization.card,
+                            support,
+                        )
+                        projectMenu(
+                            state.withObservedUiCustomizationSupport(support).copy(
+                                primaryMenuOverride = menu,
+                                shortcuts = customization.shortcuts,
+                                posterSize = card.posterSize,
+                                cardCaption = card.caption,
+                                primaryMenuUsesDeviceOverride =
+                                    customization.menuSource == SettingScope.PROFILE_DEVICE.wire,
+                                cardPresentationUsesDeviceOverride =
+                                    customization.cardSource == SettingScope.PROFILE_DEVICE.wire,
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    private data class CustomizationSnapshot(
+        val menu: PrimaryMenu?,
+        val shortcuts: NavigationShortcuts,
+        val card: org.siloserver.silo.model.settings.CardPresentation,
+        val menuSource: String?,
+        val cardSource: String?,
+        val supported: Boolean?,
+    )
+
+    private fun loadCustomizationLibraries() {
+        viewModelScope.launch {
+            when (val result = personalDataRepository.listUserLibraries()) {
+                is ApiResult.Success -> _uiState.update { state ->
+                    projectMenu(
+                        state.copy(
+                            libraries = result.data.visibleOnTv().sortedBy { it.sortOrder },
+                            customizationLibrariesResolved = true,
+                            customizationLibrariesLoadFailed = false,
+                        ),
+                    )
+                }
+                is ApiResult.Error, is ApiResult.NetworkError -> _uiState.update { state ->
+                    state.copy(
+                        customizationLibrariesResolved = false,
+                        customizationLibrariesLoadFailed = true,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun projectMenu(state: UiState): UiState {
+        val standard = standardTvMenu(state.libraries, state.showAudiobooksTab)
+        val effective = effectivePrimaryMenuForSupport(
+            state.primaryMenuOverride,
+            state.uiCustomizationSupport,
+        ) ?: standard
+        val candidates = menuCandidates(state.libraries)
+        val existing = effective.items.map(UiCustomizationCodec::identity).toSet()
+        val preset = when (effective.items.map(UiCustomizationCodec::identity)) {
+            standard.items.map(UiCustomizationCodec::identity) -> NavigationPreset.STANDARD
+            mediaFirstTvMenu(state.libraries, state.showAudiobooksTab).items
+                .map(UiCustomizationCodec::identity) -> NavigationPreset.MEDIA_FIRST
+            minimalTvMenu().items.map(UiCustomizationCodec::identity) -> NavigationPreset.MINIMAL
+            else -> NavigationPreset.CUSTOM
+        }
+        return state.copy(
+            menuItems = effective.items,
+            addableMenuItems = candidates.filter { candidate ->
+                UiCustomizationCodec.identity(candidate) !in existing &&
+                    prepareTvMenuItemAddition(
+                        menuItems = effective.items,
+                        currentShortcuts = state.shortcuts,
+                        item = candidate,
+                    ) != null
+            },
+            navigationPreset = preset,
+        )
+    }
+
+    fun setNavigationPreset(preset: NavigationPreset) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.primaryMenuUsesDeviceOverride) return
+        val state = _uiState.value
+        when (val mutation = prepareTvNavigationPresetMutation(
+            preset = preset,
+            libraries = state.libraries,
+            showAudiobooks = state.showAudiobooksTab,
+            librariesResolved = state.customizationLibrariesResolved,
+        )) {
+            TvNavigationPresetMutation.ResetPrimaryMenu ->
+                uiCustomizationStore.resetPrimaryMenu()
+            is TvNavigationPresetMutation.SetPrimaryMenu ->
+                uiCustomizationStore.setPrimaryMenu(mutation.value)
+            null -> Unit
+        }
+    }
+
+    fun moveMenuItem(identity: String, offset: Int) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.primaryMenuUsesDeviceOverride) return
+        if (!_uiState.value.customizationLibrariesResolved) return
+        // The editor's own projection: state.libraries is already visibleOnTv()
+        // filtered, so a foreign ebook pin is never an offset target.
+        val visibleLibraryIds = _uiState.value.libraries.mapTo(mutableSetOf()) { it.id }
+        val fallback = PrimaryMenu(editableMenuItems())
+        uiCustomizationStore.updatePrimaryMenu(fallback) { current ->
+            val moved = moveVisibleTvMenuItem(
+                items = current.items,
+                identity = identity,
+                offset = offset,
+                visibleLibraryIds = visibleLibraryIds,
+            ) ?: return@updatePrimaryMenu current
+            PrimaryMenu(moved)
+        }
+    }
+
+    fun removeMenuItem(identity: String) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.primaryMenuUsesDeviceOverride) return
+        if (!_uiState.value.customizationLibrariesResolved) return
+        if (identity == "builtin:home") return
+        val fallback = PrimaryMenu(editableMenuItems())
+        uiCustomizationStore.updatePrimaryMenu(fallback) { current ->
+            PrimaryMenu(
+                current.items.filterNot { UiCustomizationCodec.identity(it) == identity },
+            )
+        }
+    }
+
+    fun addMenuItem(identity: String) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.primaryMenuUsesDeviceOverride) return
+        if (!_uiState.value.customizationLibrariesResolved) return
+        val item = _uiState.value.addableMenuItems
+            .firstOrNull { UiCustomizationCodec.identity(it) == identity } ?: return
+        prepareTvMenuItemAddition(
+            menuItems = editableMenuItems(),
+            currentShortcuts = uiCustomizationStore.shortcuts.value,
+            item = item,
+        ) ?: return
+
+        val fallback = PrimaryMenu(editableMenuItems())
+        val prepare: (PrimaryMenu) -> PrimaryMenu? = { current ->
+            prepareTvMenuItemAddition(
+                menuItems = current.items,
+                currentShortcuts = uiCustomizationStore.shortcuts.value,
+                item = item,
+            )?.primaryMenu
+        }
+        if (item !is PrimaryMenuItem.Builtin) {
+            uiCustomizationStore.updatePrimaryMenuAndShortcut(
+                fallback = fallback,
+                item = item,
+                present = true,
+                transform = prepare,
+            )
+        } else {
+            uiCustomizationStore.updatePrimaryMenu(fallback) { current ->
+                prepare(current) ?: current
+            }
+        }
+    }
+
+    fun setPosterSize(value: PosterSizePreset) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.cardPresentationUsesDeviceOverride) return
+        uiCustomizationStore.updateCardPresentation { current ->
+            current.copy(posterSize = value)
+        }
+    }
+
+    fun setCardPresentationPreset(value: CardPresentationPreset) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.cardPresentationUsesDeviceOverride) return
+        uiCustomizationStore.setCardPresentation(value.presentation)
+    }
+
+    fun setCardCaption(value: CardCaptionPreset) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.cardPresentationUsesDeviceOverride) return
+        uiCustomizationStore.updateCardPresentation { current ->
+            current.copy(caption = value)
+        }
+    }
+
+    fun useFamilyInterfaceSettings() {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        uiCustomizationStore.useFamilySettings()
+    }
+
+    /** Remove only the profile shortcut; the top-menu layout is intentionally unchanged. */
+    fun unpinShortcut(identity: String) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        val item = _uiState.value.shortcuts.items.firstOrNull {
+            UiCustomizationCodec.identity(it) == identity
+        } ?: return
+        uiCustomizationStore.setShortcutPresent(item, present = false)
+    }
+
+    private fun editableMenuItems(): List<PrimaryMenuItem> =
+        _uiState.value.primaryMenuOverride?.items
+            ?: standardTvMenu(_uiState.value.libraries, _uiState.value.showAudiobooksTab).items
 
     /**
      * Resolves the profile-scoped preferences through the canonical settings
@@ -221,18 +717,24 @@ class TvSettingsViewModel(
         viewModelScope.launch {
             val result = profileSettings.load()
             _uiState.update { state ->
-                val snapshot = result.snapshot ?: return@update state.copy(
-                    settingsAvailability = result.availability,
-                )
-                state.copy(
-                    settingsAvailability = result.availability,
-                    subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
-                    subtitleLanguage = snapshot.subtitleLanguage,
-                    metadataLanguage = snapshot.metadataLanguage,
-                    showForcedSubtitles = snapshot.showForcedSubtitles,
-                    audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
-                    subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
-                    metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
+                val snapshot = result.snapshot
+                projectMenu(
+                    if (snapshot == null) {
+                        state.copy(
+                            settingsAvailability = result.availability,
+                        )
+                    } else {
+                        state.copy(
+                            settingsAvailability = result.availability,
+                            subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
+                            subtitleLanguage = snapshot.subtitleLanguage,
+                            metadataLanguage = snapshot.metadataLanguage,
+                            showForcedSubtitles = snapshot.showForcedSubtitles,
+                            audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
+                            subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
+                            metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
+                        )
+                    },
                 )
             }
         }
@@ -350,7 +852,7 @@ class TvSettingsViewModel(
         viewModelScope.launch {
             tvLibraryScopeStore?.let { store ->
                 val value = runCatching { store.getShowAudiobooksTab() }.getOrDefault(false)
-                _uiState.update { it.copy(showAudiobooksTab = value) }
+                _uiState.update { projectMenu(it.copy(legacyShowAudiobooksTab = value)) }
             }
         }
         viewModelScope.launch {
@@ -550,7 +1052,47 @@ class TvSettingsViewModel(
 
     /** tvOS navPrefs.showAudiobooks parity — opt-in Audiobooks top-menu tab. */
     fun onShowAudiobooksTabChanged(value: Boolean) {
-        _uiState.update { it.copy(showAudiobooksTab = value) }
+        val currentState = _uiState.value
+        if (currentState.uiCustomizationSupport == null) return
+        if (currentState.uiCustomizationSupport == false) {
+            val mutation = prepareTvAudiobookToggleMutation(
+                customizationAvailable = false,
+                currentOverride = currentState.primaryMenuOverride,
+                inheritedMenu = null,
+                enabled = value,
+            )
+            _uiState.update {
+                projectMenu(it.copy(legacyShowAudiobooksTab = mutation.legacyValue))
+            }
+            viewModelScope.launch {
+                runCatching { tvLibraryScopeStore?.setShowAudiobooksTab(value) }
+            }
+            return
+        }
+        if (currentState.primaryMenuUsesDeviceOverride) return
+        if (!currentState.customizationLibrariesResolved) return
+        val inheritedMenu = standardTvMenu(
+            currentState.libraries,
+            currentState.showAudiobooksTab,
+        )
+        val editableItems = currentState.primaryMenuOverride?.items ?: inheritedMenu.items
+        if (value && !canEnableTvAudiobooksTab(editableItems)) return
+
+        val mutation = prepareTvAudiobookToggleMutation(
+            customizationAvailable = true,
+            currentOverride = currentState.primaryMenuOverride,
+            inheritedMenu = inheritedMenu,
+            enabled = value,
+        )
+        _uiState.update {
+            projectMenu(
+                it.copy(
+                    legacyShowAudiobooksTab = mutation.legacyValue,
+                    primaryMenuOverride = mutation.primaryMenu ?: it.primaryMenuOverride,
+                ),
+            )
+        }
+        mutation.primaryMenu?.let(uiCustomizationStore::setPrimaryMenu)
         viewModelScope.launch {
             runCatching { tvLibraryScopeStore?.setShowAudiobooksTab(value) }
         }
@@ -612,6 +1154,7 @@ class TvSettingsViewModel(
             // `PlaybackPrefsStore.clear()` in the sign-out path.
             libraryPlaybackPrefsStore.clear()
             overlayPrefsStore.clear()
+            uiCustomizationStore.clear()
             _uiState.update { it.copy(navAction = NavAction.SIGNED_OUT) }
         }
     }
@@ -641,6 +1184,29 @@ class TvSettingsViewModel(
         SubtitleFontSizePreset.Large,
         SubtitleFontSizePreset.XLarge,
         SubtitleFontSizePreset.XXLarge -> SubtitleSize.Large
+    }
+
+    private fun menuCandidates(
+        libraries: List<org.siloserver.silo.model.personal.UserLibrary>,
+    ): List<PrimaryMenuItem> = buildList {
+        add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.HOME))
+        if (libraries.any(TvLibraryTabType.Movies::matches)) {
+            add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.MOVIES))
+        }
+        if (libraries.any(TvLibraryTabType.Series::matches)) {
+            add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.SERIES))
+        }
+        if (libraries.any(TvLibraryTabType.Music::matches)) {
+            add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.MUSIC))
+        }
+        if (libraries.any(TvLibraryTabType.Audiobooks::matches)) {
+            add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.AUDIOBOOKS))
+        }
+        add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.FOR_YOU))
+        add(PrimaryMenuItem.Builtin(PrimaryMenuBuiltin.CALENDAR))
+        libraries.forEach { library ->
+            add(PrimaryMenuItem.Library(library.id, library.name))
+        }
     }
 
     private data class Snapshot(

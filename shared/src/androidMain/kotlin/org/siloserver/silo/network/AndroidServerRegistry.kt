@@ -195,6 +195,7 @@ class AndroidServerRegistry(
         refreshToken: String,
         expiryEpochMs: Long,
         lifetimeMs: Long,
+        credentialOwnerId: String,
     ) {
         mutex.withLock {
             check(_entries.value.any { it.id == serverId }) { "account replacement target is not registered" }
@@ -215,6 +216,13 @@ class AndroidServerRegistry(
                 .putString(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN), refreshToken)
                 .putLong(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY), expiryEpochMs)
                 .putLong(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME), lifetimeMs)
+                // Rotated in the same transaction as the credentials so a
+                // durable cache keyed on the owner id can never observe the new
+                // account's tokens under the previous account's ownership.
+                .putString(
+                    serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_CREDENTIAL_OWNER_ID),
+                    credentialOwnerId,
+                )
             val profileIdKey = serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_ID)
             val profileTokenKey = serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_TOKEN)
             if (profileId == null) editor.remove(profileIdKey) else editor.putString(profileIdKey, profileId)
@@ -239,6 +247,7 @@ class AndroidServerRegistry(
                 .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME))
                 .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_ID))
                 .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_PROFILE_TOKEN))
+                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_CREDENTIAL_OWNER_ID))
             check(commitEditor(editor)) { "unable to durably sign out account" }
             applyStateLocked(state)
         }

@@ -2,15 +2,36 @@ package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.android.ui.navigation.MobileNavigationPreset
+import org.siloserver.silo.android.ui.navigation.Tab
+import org.siloserver.silo.android.ui.navigation.canHideMobileTab
+import org.siloserver.silo.android.ui.navigation.configurableMobileTabs
+import org.siloserver.silo.android.ui.navigation.defaultMobilePrimaryMenu
+import org.siloserver.silo.android.ui.navigation.hideMobileTab
+import org.siloserver.silo.android.ui.navigation.mobileNavigationPreset
+import org.siloserver.silo.android.ui.navigation.moveMobileTab
+import org.siloserver.silo.android.ui.navigation.primaryMenuForMobilePreset
+import org.siloserver.silo.android.ui.navigation.projectedMobileTabs
+import org.siloserver.silo.android.ui.navigation.showMobileTab
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.common.settings.UiCustomizationStore
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.settings.QualityPresets
+import org.siloserver.silo.model.settings.CardCaptionPreset
+import org.siloserver.silo.model.settings.CardPresentation
+import org.siloserver.silo.model.settings.CardPresentationPreset
+import org.siloserver.silo.model.settings.PosterSizePreset
+import org.siloserver.silo.model.settings.PrimaryMenu
+import org.siloserver.silo.model.settings.SettingScope
+import org.siloserver.silo.model.settings.effectiveCardPresentationForSupport
+import org.siloserver.silo.model.settings.effectivePrimaryMenuForSupport
+import org.siloserver.silo.model.settings.supportsUiCustomization
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
@@ -51,6 +72,8 @@ data class SettingsUiState(
     // the local defaults either way.
     val settingsAvailability: ProfileSettingsController.Availability =
         ProfileSettingsController.Availability.UNKNOWN,
+    /** true=supported, false=confirmed incompatible, null=not resolved/transient failure. */
+    val uiCustomizationSupport: Boolean? = null,
 
     // Playback
     // The quality picker composes playback.preferred_quality (a resolution
@@ -70,6 +93,17 @@ data class SettingsUiState(
     val dvProfile7HDR10Fallback: Boolean = true,
     val subtitleMatchesDevice: Boolean = false,
     val showAudiobooks: Boolean = false,
+    val posterSize: PosterSizePreset = PosterSizePreset.STANDARD,
+    val cardCaption: CardCaptionPreset = CardCaptionPreset.TITLE_METADATA,
+    val primaryMenuOverride: PrimaryMenu? = null,
+    val primaryMenuUsesDeviceOverride: Boolean = false,
+    val cardPresentationUsesDeviceOverride: Boolean = false,
+    val mobileMenuTabs: List<Tab> = configurableMobileTabs,
+    val addableMobileMenuTabs: List<Tab> = emptyList(),
+    val hideableMobileMenuTabs: List<Tab> = configurableMobileTabs.filter { tab ->
+        canHideMobileTab(menu = null, tab = tab)
+    },
+    val mobileNavigationPreset: MobileNavigationPreset = MobileNavigationPreset.STANDARD,
     val subtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
         org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
     // Up Next card: auto-play the next episode at countdown expiry, and how
@@ -105,7 +139,22 @@ data class SettingsUiState(
     val notifyWatchlist: Boolean = true,
     val notifyContinueWatching: Boolean = true,
     val notifyNextUp: Boolean = true,
-)
+) {
+    /** Presentation may remain cached while UNKNOWN, but revision-5 writes must stay disabled. */
+    val uiCustomizationAvailable: Boolean
+        get() = canAuthorUiCustomization
+
+    internal val canAuthorUiCustomization: Boolean
+        get() = uiCustomizationSupport == true
+}
+
+internal fun SettingsUiState.withObservedUiCustomizationSupport(
+    supported: Boolean?,
+): SettingsUiState = copy(uiCustomizationSupport = supported)
+
+internal fun phoneUiCustomizationAvailable(
+    result: ProfileSettingsController.LoadResult,
+): Boolean = result.capabilities?.supportsUiCustomization == true
 
 class SettingsViewModel(
     private val authRepository: AuthRepository,
@@ -114,6 +163,7 @@ class SettingsViewModel(
     private val overlayPrefsStore: OverlayPrefsStore,
     private val notificationsRepository: NotificationsRepository,
     private val profileSettings: ProfileSettingsController,
+    private val uiCustomizationStore: UiCustomizationStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -124,7 +174,59 @@ class SettingsViewModel(
         observePlayerSettings()
         observePlaybackBehaviorSettings()
         observeNotifications()
+        observeUiCustomization()
+        viewModelScope.launch { uiCustomizationStore.refresh() }
     }
+
+    private fun observeUiCustomization() {
+        combine(
+            uiCustomizationStore.primaryMenu,
+            uiCustomizationStore.cardPresentation,
+            uiCustomizationStore.primaryMenuSource,
+            uiCustomizationStore.cardPresentationSource,
+            uiCustomizationStore.uiCustomizationSupported,
+        ) { menu, presentation, menuSource, cardSource, supported ->
+            UiCustomizationSnapshot(menu, presentation, menuSource, cardSource, supported)
+        }
+            .onEach { customization ->
+                val menu = effectivePrimaryMenuForSupport(
+                    customization.menu,
+                    customization.supported,
+                )
+                val presentation = effectiveCardPresentationForSupport(
+                    customization.presentation,
+                    customization.supported,
+                )
+                val projected = projectedMobileTabs(menu)
+                _uiState.update {
+                    it.withObservedUiCustomizationSupport(customization.supported).copy(
+                        posterSize = presentation.posterSize,
+                        cardCaption = presentation.caption,
+                        primaryMenuOverride = menu,
+                        mobileMenuTabs = projected,
+                        addableMobileMenuTabs = configurableMobileTabs.filter { tab ->
+                            tab !in projected
+                        },
+                        hideableMobileMenuTabs = projected.filter { tab ->
+                            canHideMobileTab(menu, tab)
+                        },
+                        mobileNavigationPreset = mobileNavigationPreset(menu),
+                        primaryMenuUsesDeviceOverride =
+                            customization.menuSource == SettingScope.PROFILE_DEVICE.wire,
+                        cardPresentationUsesDeviceOverride =
+                            customization.cardSource == SettingScope.PROFILE_DEVICE.wire,
+                    )
+                }
+            }.launchIn(viewModelScope)
+    }
+
+    private data class UiCustomizationSnapshot(
+        val menu: PrimaryMenu?,
+        val presentation: CardPresentation,
+        val menuSource: String?,
+        val cardSource: String?,
+        val supported: Boolean?,
+    )
 
     private fun loadUserInfo() {
         viewModelScope.launch {
@@ -357,6 +459,7 @@ class SettingsViewModel(
             // stale rows flash before the fresh fetch lands.
             libraryPlaybackPrefsStore.clear()
             overlayPrefsStore.clear()
+            uiCustomizationStore.clear()
             _uiState.update { it.copy(loggedOut = true) }
         }
     }
@@ -411,6 +514,72 @@ class SettingsViewModel(
 
     fun setShowAudiobooks(enabled: Boolean) {
         viewModelScope.launch { playerSettingsStore.setShowAudiobooks(enabled) }
+    }
+
+    fun setPosterSize(value: PosterSizePreset) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.cardPresentationUsesDeviceOverride) return
+        uiCustomizationStore.updateCardPresentation { current ->
+            current.copy(posterSize = value)
+        }
+    }
+
+    fun setMobileNavigationPreset(value: MobileNavigationPreset) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.primaryMenuUsesDeviceOverride) return
+        if (value == MobileNavigationPreset.CUSTOM) return
+        val menu = primaryMenuForMobilePreset(
+            preset = value,
+            currentMenu = uiCustomizationStore.primaryMenu.value,
+        )
+        if (menu == null) {
+            uiCustomizationStore.resetPrimaryMenu()
+        } else {
+            uiCustomizationStore.setPrimaryMenu(menu)
+        }
+    }
+
+    fun moveMobileMenuTab(tab: Tab, offset: Int) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.primaryMenuUsesDeviceOverride) return
+        uiCustomizationStore.updatePrimaryMenu(defaultMobilePrimaryMenu()) { current ->
+            moveMobileTab(current, tab, offset)
+        }
+    }
+
+    fun hideMobileMenuTab(tab: Tab) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.primaryMenuUsesDeviceOverride) return
+        uiCustomizationStore.updatePrimaryMenu(defaultMobilePrimaryMenu()) { current ->
+            hideMobileTab(current, tab)
+        }
+    }
+
+    fun showMobileMenuTab(tab: Tab) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.primaryMenuUsesDeviceOverride) return
+        uiCustomizationStore.updatePrimaryMenu(defaultMobilePrimaryMenu()) { current ->
+            showMobileTab(current, tab)
+        }
+    }
+
+    fun setCardPresentationPreset(value: CardPresentationPreset) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.cardPresentationUsesDeviceOverride) return
+        uiCustomizationStore.setCardPresentation(value.presentation)
+    }
+
+    fun setCardCaption(value: CardCaptionPreset) {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        if (_uiState.value.cardPresentationUsesDeviceOverride) return
+        uiCustomizationStore.updateCardPresentation { current ->
+            current.copy(caption = value)
+        }
+    }
+
+    fun useFamilyInterfaceSettings() {
+        if (!_uiState.value.canAuthorUiCustomization) return
+        uiCustomizationStore.useFamilySettings()
     }
 
     fun setSubtitleAppearance(value: org.siloserver.silo.model.settings.SubtitleAppearance) {

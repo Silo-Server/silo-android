@@ -6,12 +6,15 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
 import org.siloserver.silo.model.navigation.tvMediaModeCapabilities
+import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore
+import org.siloserver.silo.common.settings.UiCustomizationStore
+import org.siloserver.silo.tv.ui.shell.TvAudiobookVisibilityPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -19,6 +22,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -35,6 +41,7 @@ class TvSearchViewModel(
     private val catalogRepository: CatalogRepository,
     private val personalDataRepository: PersonalDataRepository,
     private val libraryScopeStore: TvLibraryScopeStore,
+    private val uiCustomizationStore: UiCustomizationStore,
 ) : ViewModel() {
 
     data class UiState(
@@ -56,7 +63,19 @@ class TvSearchViewModel(
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    init { loadAvailableMediaTypes() }
+    init {
+        viewModelScope.launch {
+            combine(
+                uiCustomizationStore.primaryMenu,
+                uiCustomizationStore.uiCustomizationSupported,
+                libraryScopeStore.showAudiobooksTabFlow(),
+            ) { menu, supported, legacy ->
+                TvAudiobookVisibilityPolicy(menu, supported, legacy)
+            }
+                .distinctUntilChanged()
+                .collectLatest(::loadAvailableMediaTypes)
+        }
+    }
 
     /**
      * Derive the visible media-type chips from the user's libraries (parity with
@@ -64,46 +83,58 @@ class TvSearchViewModel(
      * audio library. "All" is always present. If the active filter becomes
      * unavailable it falls back to All.
      */
-    private fun loadAvailableMediaTypes() {
-        viewModelScope.launch {
-            val libraries = when (val result = personalDataRepository.listUserLibraries()) {
-                is ApiResult.Success -> result.data
-                else -> return@launch
-            }
-            val caps = libraries.tvMediaModeCapabilities()
-            val showAudiobooks = libraryScopeStore.getShowAudiobooksTab()
-            // The "Audiobooks" chip sends type=audiobook, so gate it on an
-            // actual audiobook-like library — hasAudio also covers music, which
-            // wouldn't match the audiobook filter.
-            val hasAudiobooks = libraries.any { isAudiobookLikeLibraryType(it.type) }
-            val types = buildList {
-                add(TvSearchMediaType.All)
-                if (caps.hasVideo) {
-                    add(TvSearchMediaType.Movies)
-                    add(TvSearchMediaType.Series)
+    private suspend fun loadAvailableMediaTypes(visibility: TvAudiobookVisibilityPolicy) {
+        var libraries: List<UserLibrary>? = null
+        for (attempt in 0 until libraryLoadMaxAttempts) {
+            when (val result = personalDataRepository.listUserLibraries()) {
+                is ApiResult.Success -> {
+                    libraries = result.data
+                    break
                 }
-                if (showAudiobooks && hasAudiobooks) add(TvSearchMediaType.Audiobooks)
+                is ApiResult.Error,
+                is ApiResult.NetworkError -> if (attempt < libraryLoadMaxAttempts - 1) {
+                    delay(libraryLoadRetryDelayMillis)
+                }
             }
-            val current = _uiState.value
-            val nextMediaType = if (current.mediaType in types) current.mediaType else TvSearchMediaType.All
-            _uiState.update {
-                it.copy(
-                    availableMediaTypes = types,
-                    mediaType = nextMediaType,
-                    showAudiobooks = showAudiobooks,
-                )
+        }
+        val resolvedLibraries = libraries ?: return
+        val showAudiobooks = visibility.resolve(resolvedLibraries)
+        val caps = resolvedLibraries.tvMediaModeCapabilities()
+        // The "Audiobooks" chip sends type=audiobook, so gate it on an
+        // actual audiobook-like library — hasAudio also covers music, which
+        // wouldn't match the audiobook filter.
+        val hasAudiobooks = resolvedLibraries.any { isAudiobookLikeLibraryType(it.type) }
+        val types = buildList {
+            add(TvSearchMediaType.All)
+            if (caps.hasVideo) {
+                add(TvSearchMediaType.Movies)
+                add(TvSearchMediaType.Series)
             }
-            // If the active filter was forced to change while a query is live,
-            // re-run so results aren't left stale under the old filter.
-            if (
-                (nextMediaType != current.mediaType || showAudiobooks != current.showAudiobooks) &&
-                current.query.isNotBlank()
-            ) {
-                searchGeneration += 1
-                searchJob?.cancel()
-                loadMoreJob?.cancel()
-                searchJob = viewModelScope.launch { runSearchInternal(reset = true) }
-            }
+            if (showAudiobooks && hasAudiobooks) add(TvSearchMediaType.Audiobooks)
+        }
+        val current = _uiState.value
+        val nextMediaType = if (current.mediaType in types) {
+            current.mediaType
+        } else {
+            TvSearchMediaType.All
+        }
+        _uiState.update {
+            it.copy(
+                availableMediaTypes = types,
+                mediaType = nextMediaType,
+                showAudiobooks = showAudiobooks,
+            )
+        }
+        // If the active filter was forced to change while a query is live,
+        // re-run so results aren't left stale under the old filter.
+        if (
+            (nextMediaType != current.mediaType || showAudiobooks != current.showAudiobooks) &&
+            current.query.isNotBlank()
+        ) {
+            searchGeneration += 1
+            searchJob?.cancel()
+            loadMoreJob?.cancel()
+            searchJob = viewModelScope.launch { runSearchInternal(reset = true) }
         }
     }
 
@@ -120,6 +151,11 @@ class TvSearchViewModel(
     // query's results (it sent the new query at the old query's offset otherwise).
     private var searchGeneration = 0
     private var resultsGeneration = 0
+
+    private companion object {
+        const val libraryLoadMaxAttempts = 3
+        const val libraryLoadRetryDelayMillis = 400L
+    }
 
     fun onQueryChanged(query: String) {
         searchGeneration += 1

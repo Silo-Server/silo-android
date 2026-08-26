@@ -63,6 +63,8 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.forPosterPreset
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.tv.ui.components.TvAlphabetRail
@@ -466,12 +468,16 @@ private fun LibraryGrid(
     onClearFilters: () -> Unit = {},
 ) {
     var attachedRestoreItemId by remember { mutableStateOf<String?>(null) }
+    val posterGridColumns = LibraryBrowseGridColumns.forPosterPreset(
+        LocalCardPresentation.current.posterSize,
+    )
     val nearEnd by remember(
         gridState,
         state.browseHasMore,
         state.browseItems.size,
         state.browseLoading,
         state.browseLoadingMore,
+        posterGridColumns,
     ) {
         derivedStateOf {
             if (!state.browseHasMore || state.browseLoading || state.browseLoadingMore) {
@@ -481,7 +487,7 @@ private fun LibraryGrid(
                 state.browseItems.isNotEmpty() &&
                     lastVisible != null &&
                     lastVisible.index >= state.browseItems.size -
-                        (LibraryGridLoadMoreRowsThreshold * LibraryBrowseGridColumns)
+                        (LibraryGridLoadMoreRowsThreshold * posterGridColumns)
             }
         }
     }
@@ -504,7 +510,7 @@ private fun LibraryGrid(
     ) {
         LazyVerticalGrid(
             state = gridState,
-            columns = GridCells.Fixed(LibraryBrowseGridColumns),
+            columns = GridCells.Fixed(posterGridColumns),
             modifier = Modifier
                 .fillMaxSize()
                 // Entry lands on the return-target card while its requester is
@@ -661,6 +667,9 @@ private fun AudiobookGroupsTab(
     onRetry: () -> Unit,
     onInitialContentFocus: () -> Unit,
 ) {
+    val posterGridColumns = LibraryGridColumns.forPosterPreset(
+        LocalCardPresentation.current.posterSize,
+    )
     val gridState: LazyGridState = rememberLazyGridState()
     val firstGroupFocusRequester = remember { FocusRequester() }
     var groupGridHasFocus by remember { mutableStateOf(false) }
@@ -672,6 +681,7 @@ private fun AudiobookGroupsTab(
         state.audiobookGroups.size,
         state.audiobookGroupsLoading,
         state.audiobookGroupsLoadingMore,
+        posterGridColumns,
     ) {
         derivedStateOf {
             if (!state.audiobookGroupsHasMore || state.audiobookGroupsLoading || state.audiobookGroupsLoadingMore) {
@@ -681,7 +691,7 @@ private fun AudiobookGroupsTab(
                 state.audiobookGroups.isNotEmpty() &&
                     lastVisible != null &&
                     lastVisible.index >= state.audiobookGroups.size -
-                        (LibraryGridLoadMoreRowsThreshold * LibraryGridColumns)
+                        (LibraryGridLoadMoreRowsThreshold * posterGridColumns)
             }
         }
     }
@@ -712,7 +722,7 @@ private fun AudiobookGroupsTab(
     ) {
         LazyVerticalGrid(
             state = gridState,
-            columns = GridCells.Fixed(LibraryGridColumns),
+            columns = GridCells.Fixed(posterGridColumns),
             modifier = Modifier
                 .fillMaxSize()
                 .onFocusChanged { groupGridHasFocus = it.hasFocus },
@@ -923,6 +933,9 @@ private fun CollectionsTab(
     onRetry: () -> Unit,
     onInitialContentFocus: () -> Unit,
 ) {
+    val posterGridColumns = LibraryGridColumns.forPosterPreset(
+        LocalCardPresentation.current.posterSize,
+    )
     val entryFocusRequester = remember { FocusRequester() }
     var collectionGridHasFocus by remember { mutableStateOf(false) }
     var initialFocusRequested by remember { mutableStateOf(false) }
@@ -989,7 +1002,7 @@ private fun CollectionsTab(
     ) {
         LazyVerticalGrid(
             state = gridState,
-            columns = GridCells.Fixed(LibraryGridColumns),
+            columns = GridCells.Fixed(posterGridColumns),
             modifier = Modifier
                 .fillMaxSize()
                 .onFocusChanged { collectionGridHasFocus = it.hasFocus }

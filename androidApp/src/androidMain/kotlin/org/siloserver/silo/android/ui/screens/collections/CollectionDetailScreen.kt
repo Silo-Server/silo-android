@@ -101,7 +101,7 @@ fun CollectionDetailScreen(
                         .padding(padding),
                 ) {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+                        columns = GridCells.Adaptive(MediaGridDefaults.posterGridMinWidth()),
                         state = gridState,
                         contentPadding = PaddingValues(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),

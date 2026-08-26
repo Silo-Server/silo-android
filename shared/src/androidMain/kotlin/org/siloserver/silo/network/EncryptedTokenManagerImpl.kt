@@ -1,6 +1,7 @@
 package org.siloserver.silo.network
 
 import android.content.SharedPreferences
+import java.util.UUID
 import org.siloserver.silo.network.AndroidServerRegistry.Companion.serverScopedKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,7 @@ class EncryptedTokenManagerImpl(
     private var tokenLifetimeMs: Long? = null
     private var profileId: String? = null
     private var profileToken: String? = null
+    private var persistentCredentialOwnerId: String? = null
     private var temporaryScope: TemporaryAuthScope? = null
 
     /**
@@ -197,6 +199,10 @@ class EncryptedTokenManagerImpl(
                 mutex.withLock {
                     val lifetimeMs = expiresIn * 1_000L
                     val expiryEpochMs = System.currentTimeMillis() + lifetimeMs
+                    // A replacement login is a new durable account boundary:
+                    // rotate the owner id so caches scoped to the previous
+                    // account cannot be adopted by this one.
+                    val credentialOwnerId = UUID.randomUUID().toString()
                     // Registry selection and token/profile slots share the same
                     // encrypted preferences file, so commit them atomically and
                     // synchronously before publishing the cache.
@@ -208,6 +214,7 @@ class EncryptedTokenManagerImpl(
                         refreshToken = refreshToken,
                         expiryEpochMs = expiryEpochMs,
                         lifetimeMs = lifetimeMs,
+                        credentialOwnerId = credentialOwnerId,
                     )
                     activeServerId = targetServerId
                     this.profileId = profileId
@@ -216,6 +223,7 @@ class EncryptedTokenManagerImpl(
                     this.refreshToken = refreshToken
                     tokenExpiryEpochMs = expiryEpochMs
                     tokenLifetimeMs = lifetimeMs
+                    persistentCredentialOwnerId = credentialOwnerId
                     persistentCredentialEpoch += 1
                     afterAccountSessionCommit()
                 }
@@ -304,6 +312,7 @@ class EncryptedTokenManagerImpl(
                     .remove(serverScopedKey(serverId, KEY_TOKEN_LIFETIME))
                     .remove(serverScopedKey(serverId, KEY_PROFILE_ID))
                     .remove(serverScopedKey(serverId, KEY_PROFILE_TOKEN))
+                    .remove(serverScopedKey(serverId, KEY_CREDENTIAL_OWNER_ID))
                 check(editor.commit()) { "unable to durably sign out account" }
                 registry.signOut(serverId)
             }
@@ -316,6 +325,7 @@ class EncryptedTokenManagerImpl(
         tokenLifetimeMs = null
         profileId = null
         profileToken = null
+        persistentCredentialOwnerId = null
         if (committedSignOut) afterAccountSignOutCommit()
     }
 
@@ -502,6 +512,7 @@ class EncryptedTokenManagerImpl(
             profileToken = profileToken,
             identityGeneration = identityTransitions.generation.value,
             isIdentityGenerationStamped = true,
+            credentialOwnerId = ensurePersistentCredentialOwnerId(serverId),
             credentialEpoch = persistentCredentialEpoch,
         )
     }
@@ -703,6 +714,7 @@ class EncryptedTokenManagerImpl(
             tokenLifetimeMs = null
             profileId = null
             profileToken = null
+            persistentCredentialOwnerId = null
             return
         }
         accessToken = prefs.getString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), null)
@@ -713,6 +725,25 @@ class EncryptedTokenManagerImpl(
         tokenLifetimeMs = if (prefs.contains(lifetimeKey)) prefs.getLong(lifetimeKey, 0L) else null
         profileId = prefs.getString(serverScopedKey(serverId, KEY_PROFILE_ID), null)
         profileToken = prefs.getString(serverScopedKey(serverId, KEY_PROFILE_TOKEN), null)
+        persistentCredentialOwnerId =
+            prefs.getString(serverScopedKey(serverId, KEY_CREDENTIAL_OWNER_ID), null)
+    }
+
+    /**
+     * Stable account-slot identity for durable local ownership. Existing
+     * installs receive one lazily on their first live snapshot; sign-out
+     * removes it and account replacement rotates it, so a replacement login
+     * cannot inherit the previous account's cache even when the server and
+     * profile identifiers happen to match.
+     */
+    private fun ensurePersistentCredentialOwnerId(serverId: String): String {
+        persistentCredentialOwnerId?.takeIf { it.isNotBlank() }?.let { return it }
+        val created = UUID.randomUUID().toString()
+        persistentCredentialOwnerId = created
+        prefs.edit()
+            .putString(serverScopedKey(serverId, KEY_CREDENTIAL_OWNER_ID), created)
+            .apply()
+        return created
     }
 
     internal companion object {
@@ -722,6 +753,7 @@ class EncryptedTokenManagerImpl(
         const val KEY_TOKEN_LIFETIME = "token_lifetime_ms"
         const val KEY_PROFILE_ID = "profile_id"
         const val KEY_PROFILE_TOKEN = "profile_token"
+        const val KEY_CREDENTIAL_OWNER_ID = "credential_owner_id"
         // Retained only so [AndroidServerRegistry.migrateLegacyIfNeeded] can
         // strip the pre-multi-server unprefixed key off disk.
         const val KEY_SERVER_URL = "server_url"

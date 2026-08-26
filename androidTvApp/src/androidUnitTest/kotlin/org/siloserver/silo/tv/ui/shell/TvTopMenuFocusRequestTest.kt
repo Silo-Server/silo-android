@@ -83,6 +83,64 @@ class TvTopMenuFocusRequestTest {
     }
 
     @Test
+    fun selectedEntryIsClearedWhenItsRootIsNoLongerComposed() {
+        val movies = TvRootDestination.LibraryType(TvLibraryTabType.Movies)
+
+        assertEquals(
+            movies,
+            selectedTopMenuEntry(
+                selectedRoot = movies,
+                destinations = listOf(TvRootDestination.Home, movies),
+            ),
+        )
+        assertEquals(
+            null,
+            selectedTopMenuEntry(
+                selectedRoot = movies,
+                destinations = listOf(TvRootDestination.Home),
+            ),
+        )
+    }
+
+    @Test
+    fun selectedEntryFallbackDistinguishesDetailSearchAndHiddenRootRoutes() {
+        val destinations = listOf(TvRootDestination.Home, TvRootDestination.Calendar)
+
+        assertEquals(
+            TvTopMenuEntryFallback.HOME,
+            selectedTopMenuEntryFallback(
+                selectedRoot = null,
+                isSearchActive = false,
+                destinations = destinations,
+            ),
+        )
+        assertEquals(
+            TvTopMenuEntryFallback.SEARCH,
+            selectedTopMenuEntryFallback(
+                selectedRoot = null,
+                isSearchActive = true,
+                destinations = destinations,
+            ),
+        )
+        assertEquals(
+            TvTopMenuEntryFallback.SEARCH,
+            selectedTopMenuEntryFallback(
+                selectedRoot = TvRootDestination.ForYou,
+                isSearchActive = false,
+                destinations = destinations,
+            ),
+        )
+        assertEquals(
+            TvTopMenuEntryFallback.SEARCH,
+            selectedTopMenuEntryFallback(
+                selectedRoot = null,
+                isSearchActive = false,
+                destinations = listOf(TvRootDestination.Calendar),
+            ),
+        )
+    }
+
+    @Test
     fun focusRequestRemainsPendingUntilItsLibraryDestinationAppears() = runTest {
         val movies = TvRootDestination.LibraryType(TvLibraryTabType.Movies)
         val identity = 1 to TvTopMenuPanel.Root(movies)

@@ -14,6 +14,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -394,6 +395,161 @@ class EncryptedTokenManagerScopeGenerationTest {
         assertEquals(generation, transitions.generation.value)
         assertTrue(observed.isEmpty())
     }
+
+    // ---- Durable credential owner identity ----
+    //
+    // credentialOwnerId is the ONE identity field on AuthScopeSnapshot that is
+    // durable: identityGeneration and credentialEpoch are process-scoped and
+    // reset every launch, so caches that own data across restarts (
+    // UiCustomizationStore, TvLibraryScopeStore) key their ownership on this
+    // instead. Its lifecycle is therefore a storage-isolation contract.
+
+    @Test
+    fun accountReplacementRotatesTheDurableCredentialOwnerTogetherWithTheNewTokens() = runTest {
+        val preferences = seededRegistryPreferences(activeServerId = "server-a", includeServerB = false)
+        val transitions = DefaultIdentityTransitionBarrier()
+        val registry = AndroidServerRegistry(preferences, identityTransitions = transitions)
+        val manager = EncryptedTokenManagerImpl(
+            prefs = preferences,
+            registry = registry,
+            identityTransitions = transitions,
+        )
+        manager.saveTokens("account-a-access", "account-a-refresh", 3600)
+        val before = checkNotNull(manager.snapshotCurrentScope())
+        val ownerA = checkNotNull(before.credentialOwnerId)
+        assertEquals(ownerA, preferences.getString(credentialOwnerKey("server-a"), null))
+
+        manager.replaceAccountSession(
+            serverId = "server-a",
+            accessToken = "account-b-access",
+            refreshToken = "account-b-refresh",
+            expiresIn = 3600,
+            profileId = "account-b-profile",
+            profileToken = "account-b-profile-token",
+        )
+
+        val after = checkNotNull(manager.snapshotCurrentScope())
+        val ownerB = checkNotNull(after.credentialOwnerId)
+        assertNotEquals(ownerA, ownerB)
+        // Rotated on disk inside the same editor transaction as the tokens, so
+        // no reader can ever see account B's credentials under owner A.
+        assertEquals(ownerB, preferences.getString(credentialOwnerKey("server-a"), null))
+        assertEquals("account-b-access", manager.getAccessToken())
+        assertEquals("account-b-access", manager.getAccessTokenForScope(after))
+        assertNull(manager.getAccessTokenForScope(before))
+    }
+
+    @Test
+    fun signOutRemovesTheDurableCredentialOwnerAndTheNextOwnerIsFresh() = runTest {
+        val preferences = seededRegistryPreferences(activeServerId = "server-a", includeServerB = false)
+        val transitions = DefaultIdentityTransitionBarrier()
+        val registry = AndroidServerRegistry(preferences, identityTransitions = transitions)
+        val manager = EncryptedTokenManagerImpl(
+            prefs = preferences,
+            registry = registry,
+            identityTransitions = transitions,
+        )
+        manager.saveTokens("account-a-access", "account-a-refresh", 3600)
+        val ownerA = checkNotNull(manager.snapshotCurrentScope()?.credentialOwnerId)
+
+        manager.clearTokens()
+
+        // Assert the removal BEFORE snapshotting again: the lazy backfill would
+        // otherwise re-create the key and hide a missing removal.
+        assertFalse(preferences.contains(credentialOwnerKey("server-a")))
+        assertNotEquals(ownerA, manager.snapshotCurrentScope()?.credentialOwnerId)
+    }
+
+    /** The non-AndroidServerRegistry sign-out fallback owns the same removal. */
+    @Test
+    fun signOutWithoutTheAndroidRegistryAlsoRemovesTheDurableCredentialOwner() = runTest {
+        val preferences = inMemoryPreferences()
+        val manager = EncryptedTokenManagerImpl(
+            prefs = preferences,
+            registry = FakeServerRegistry(),
+        )
+        manager.saveTokens("account-a-access", "account-a-refresh", 3600)
+        val ownerA = checkNotNull(manager.snapshotCurrentScope()?.credentialOwnerId)
+        assertTrue(preferences.contains(credentialOwnerKey("server-a")))
+
+        manager.clearTokens()
+
+        assertFalse(preferences.contains(credentialOwnerKey("server-a")))
+        assertNotEquals(ownerA, manager.snapshotCurrentScope()?.credentialOwnerId)
+    }
+
+    /**
+     * Installs that predate the key have credentials on disk and no owner id.
+     * The backfill must mint exactly one and keep it — a value that changed per
+     * snapshot or per launch would orphan every owner-keyed cache.
+     */
+    @Test
+    fun installPredatingTheOwnerKeyBackfillsOneStableDurableCredentialOwner() = runTest {
+        val preferences = inMemoryPreferences(
+            AndroidServerRegistry.serverScopedKey("server-a", EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN) to
+                "existing-access",
+            AndroidServerRegistry.serverScopedKey("server-a", EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN) to
+                "existing-refresh",
+        )
+        assertFalse(preferences.contains(credentialOwnerKey("server-a")))
+        val manager = EncryptedTokenManagerImpl(
+            prefs = preferences,
+            registry = FakeServerRegistry(),
+        )
+
+        val backfilled = checkNotNull(manager.snapshotCurrentScope()?.credentialOwnerId)
+
+        assertTrue(backfilled.isNotBlank())
+        assertEquals(backfilled, preferences.getString(credentialOwnerKey("server-a"), null))
+        assertEquals(backfilled, manager.snapshotCurrentScope()?.credentialOwnerId)
+
+        // Simulated process restart over the same durable preferences.
+        val restarted = EncryptedTokenManagerImpl(
+            prefs = preferences,
+            registry = FakeServerRegistry(),
+        )
+        assertEquals("existing-access", restarted.getAccessToken())
+        assertEquals(backfilled, restarted.snapshotCurrentScope()?.credentialOwnerId)
+    }
+
+    /**
+     * A temporary (guest / remote-playback) overlay must not be attributable to
+     * the signed-in account's durable caches, and must not consume or rotate
+     * the account's owner id on the way in or out.
+     */
+    @Test
+    fun aTemporaryOverlayCarriesNoDurableOwnerAndLeavesTheAccountOwnerIntact() = runTest {
+        val manager = EncryptedTokenManagerImpl(
+            prefs = inMemoryPreferences(),
+            registry = FakeServerRegistry(),
+        )
+        manager.saveTokens("saved-access", "saved-refresh", 3600)
+        val accountOwner = checkNotNull(manager.snapshotCurrentScope()?.credentialOwnerId)
+        manager.beginTemporaryScope(
+            TemporaryAuthScope(
+                generationId = "overlay-1",
+                serverId = "overlay-server",
+                serverUrl = "https://overlay.example",
+                accessToken = "overlay-access",
+                refreshToken = "overlay-refresh",
+                profileId = "overlay-profile",
+                profileToken = "overlay-profile-token",
+                expiresAtEpochMs = Long.MAX_VALUE,
+            ),
+        )
+
+        val guest = checkNotNull(manager.snapshotCurrentScope())
+
+        assertNull(guest.credentialOwnerId)
+        assertEquals("overlay-1", guest.credentialGenerationId)
+
+        manager.endTemporaryScope()
+
+        assertEquals(accountOwner, manager.snapshotCurrentScope()?.credentialOwnerId)
+    }
+
+    private fun credentialOwnerKey(serverId: String): String =
+        AndroidServerRegistry.serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_CREDENTIAL_OWNER_ID)
 
     private class FakeServerRegistry : ServerRegistry {
         private val serverA = ServerEntry(id = "server-a", url = "https://server-a.example")

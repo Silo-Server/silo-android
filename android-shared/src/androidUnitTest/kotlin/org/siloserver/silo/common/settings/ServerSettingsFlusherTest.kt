@@ -532,6 +532,7 @@ private class RecordingSettingsApi : SettingsApi(HttpClient()) {
         value: JsonElement,
         mutationId: String,
         profileId: String?,
+        authScope: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<StoredSettingValue> {
         val call = Call(Call.Kind.PUT, key, value, profileId, mutationId, scope)
         calls.add(call)
@@ -549,6 +550,7 @@ private class RecordingSettingsApi : SettingsApi(HttpClient()) {
         key: String,
         scope: SettingScopeIdentity,
         profileId: String?,
+        authScope: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<Unit> {
         val call = Call(Call.Kind.DELETE, key, null, profileId, null, scope)
         calls.add(call)
