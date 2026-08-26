@@ -112,6 +112,7 @@ fun HomeScreen(
     val state by viewModel.uiState.collectAsState()
     val playerSettingsStore: PlayerSettingsStore = koinInject()
     val showFeaturedHero by playerSettingsStore.showFeaturedHeroFlow.collectAsState(initial = true)
+    val useFeaturedHeroCards by playerSettingsStore.useFeaturedHeroCardsFlow.collectAsState(initial = true)
     val companionPairingViewModel = koinViewModel<CompanionPairingViewModel>()
     val companionTargets by companionPairingViewModel.targets.collectAsState()
     val companionStatus by companionPairingViewModel.status.collectAsState()
@@ -217,6 +218,7 @@ fun HomeScreen(
                                 MobileFeaturedHero(
                                     items = featuredSection.items,
                                     textlessPosterUrls = state.featuredTextlessPosters,
+                                    usesCardLayout = useFeaturedHeroCards,
                                     onPlayClick = onPlayClick,
                                     onInfoClick = onItemClick,
                                 )

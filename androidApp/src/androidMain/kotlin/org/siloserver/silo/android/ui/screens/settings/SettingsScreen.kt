@@ -245,9 +245,16 @@ fun SettingsScreen(
                 SettingsSection(title = "Interface") {
                     SettingsSwitchRow(
                         label = "Show featured hero",
-                        description = "Show featured cards at the top of Home.",
+                        description = "Show featured artwork at the top of Home.",
                         checked = state.showFeaturedHero,
                         onCheckedChange = viewModel::setShowFeaturedHero,
+                    )
+                    SettingsSwitchRow(
+                        label = "Card layout",
+                        description = "Turn off for a full-width hero with no card framing.",
+                        checked = state.useFeaturedHeroCards,
+                        onCheckedChange = viewModel::setUseFeaturedHeroCards,
+                        enabled = state.showFeaturedHero,
                     )
                 }
             }

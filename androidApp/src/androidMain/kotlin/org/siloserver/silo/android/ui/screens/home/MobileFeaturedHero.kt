@@ -76,6 +76,7 @@ private val HeroButtonShape = RoundedCornerShape(8.dp)
 fun MobileFeaturedHero(
     items: List<SectionItem>,
     textlessPosterUrls: Map<String, String> = emptyMap(),
+    usesCardLayout: Boolean = true,
     onPlayClick: (String, Double?) -> Unit,
     onInfoClick: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -86,6 +87,7 @@ fun MobileFeaturedHero(
         MobileFeaturedHeroContent(
             items = items,
             textlessPosterUrls = textlessPosterUrls,
+            usesCardLayout = usesCardLayout,
             onPlayClick = onPlayClick,
             onInfoClick = onInfoClick,
             modifier = modifier,
@@ -97,16 +99,19 @@ fun MobileFeaturedHero(
 private fun MobileFeaturedHeroContent(
     items: List<SectionItem>,
     textlessPosterUrls: Map<String, String>,
+    usesCardLayout: Boolean,
     onPlayClick: (String, Double?) -> Unit,
     onInfoClick: (String) -> Unit,
     modifier: Modifier,
 ) {
     val configuration = LocalConfiguration.current
     val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val headerRunway = statusBar + 56.dp
-    val cardWidth = (configuration.screenWidthDp - 24).dp
-    val cardHeight = ((configuration.screenWidthDp - 24) * 1.10f).coerceIn(372f, 470f).dp
-    val totalHeight = headerRunway + cardHeight + 38.dp
+    val headerRunway = if (usesCardLayout) statusBar + 56.dp else 0.dp
+    val horizontalInsetDp = if (usesCardLayout) 12 else 0
+    val heroWidthDp = configuration.screenWidthDp - (horizontalInsetDp * 2)
+    val heroWidth = heroWidthDp.dp
+    val heroHeight = (heroWidthDp * 1.10f).coerceIn(372f, 470f).dp
+    val totalHeight = headerRunway + heroHeight + 38.dp
 
     // An Int.MAX_VALUE pager loses adjacent-page precision once its pixel
     // offset becomes huge. A centred thousand-cycle ring is functionally
@@ -171,50 +176,59 @@ private fun MobileFeaturedHeroContent(
         modifier = modifier
             .fillMaxWidth()
             .height(totalHeight)
-            .background(
-                Brush.verticalGradient(
-                    0.00f to background,
-                    0.66f to background,
-                    0.88f to darkTint.copy(alpha = 0.24f),
-                    1.00f to background,
-                ),
+            .then(
+                if (usesCardLayout) {
+                    Modifier.background(
+                        Brush.verticalGradient(
+                            0.00f to background,
+                            0.66f to background,
+                            0.88f to darkTint.copy(alpha = 0.24f),
+                            1.00f to background,
+                        ),
+                    )
+                } else {
+                    Modifier.background(Color.Black)
+                },
             ),
     ) {
         // A deliberately dark sampled radial gradient makes the card colour
         // feel present beyond its edge. The gradient supplies its own soft edge;
         // avoiding a card-sized runtime blur keeps real devices smooth.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = headerRunway - 8.dp)
-                .width(cardWidth + 18.dp)
-                .height(cardHeight + 34.dp)
-                .clip(HeroCardShape)
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            darkTint.copy(alpha = 0.38f),
-                            darkTint.copy(alpha = 0.16f),
-                            Color.Transparent,
+        if (usesCardLayout) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = headerRunway - 8.dp)
+                    .width(heroWidth + 18.dp)
+                    .height(heroHeight + 34.dp)
+                    .clip(HeroCardShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                darkTint.copy(alpha = 0.38f),
+                                darkTint.copy(alpha = 0.16f),
+                                Color.Transparent,
+                            ),
                         ),
                     ),
-                ),
-        )
+            )
+        }
 
         HorizontalPager(
             state = pagerState,
-            contentPadding = PaddingValues(horizontal = 12.dp),
-            pageSpacing = 10.dp,
+            contentPadding = PaddingValues(horizontal = horizontalInsetDp.dp),
+            pageSpacing = if (usesCardLayout) 10.dp else 0.dp,
             beyondViewportPageCount = 1,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(cardHeight)
+                .height(heroHeight)
                 .offset(y = headerRunway),
         ) { virtualPage ->
             val item = items[positiveModulo(virtualPage, items.size)]
             SpotlightCard(
                 item = item,
                 artworkUrl = preferredArtwork(item, textlessPosterUrls),
+                usesCardLayout = usesCardLayout,
                 onPlayClick = onPlayClick,
                 onInfoClick = onInfoClick,
                 modifier = Modifier.fillMaxSize(),
@@ -227,7 +241,7 @@ private fun MobileFeaturedHeroContent(
             progress = timerProgressProvider,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = headerRunway + cardHeight + 13.dp),
+                .offset(y = headerRunway + heroHeight + 13.dp),
         )
     }
 }
@@ -236,15 +250,22 @@ private fun MobileFeaturedHeroContent(
 private fun SpotlightCard(
     item: SectionItem,
     artworkUrl: String?,
+    usesCardLayout: Boolean,
     onPlayClick: (String, Double?) -> Unit,
     onInfoClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = modifier
+    val presentationModifier = if (usesCardLayout) {
+        Modifier
             .clip(HeroCardShape)
             .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, Color.White.copy(alpha = 0.08f), HeroCardShape)
+    } else {
+        Modifier.background(Color.Black)
+    }
+    Box(
+        modifier = modifier
+            .then(presentationModifier)
             .clickable { onInfoClick(item.contentId) },
         contentAlignment = Alignment.BottomCenter,
     ) {
@@ -264,7 +285,7 @@ private fun SpotlightCard(
                         0.00f to Color.Black.copy(alpha = 0.05f),
                         0.46f to Color.Transparent,
                         0.66f to Color.Black.copy(alpha = 0.48f),
-                        1.00f to Color.Black.copy(alpha = 0.96f),
+                        1.00f to Color.Black.copy(alpha = if (usesCardLayout) 0.96f else 1.00f),
                     ),
                 ),
         )

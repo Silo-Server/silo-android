@@ -125,6 +125,8 @@ interface PlayerSettingsStore {
     val showAudiobooksFlow: Flow<Boolean>
     /** Phone Home featured hero visibility. Local to this device and enabled by default. */
     val showFeaturedHeroFlow: Flow<Boolean>
+    /** Phone Home featured hero card framing. Local and enabled by default. */
+    val useFeaturedHeroCardsFlow: Flow<Boolean>
     /** [subtitleAppearanceFlow] with the match-device override applied. */
     val effectiveSubtitleAppearanceFlow: Flow<org.siloserver.silo.model.settings.SubtitleAppearance>
 
@@ -210,6 +212,7 @@ interface PlayerSettingsStore {
     suspend fun setSubtitleMatchesDevice(enabled: Boolean)
     suspend fun setShowAudiobooks(enabled: Boolean)
     suspend fun setShowFeaturedHero(enabled: Boolean)
+    suspend fun setUseFeaturedHeroCards(enabled: Boolean)
 
     /**
      * Clear the server-side device override for one key. Local DataStore

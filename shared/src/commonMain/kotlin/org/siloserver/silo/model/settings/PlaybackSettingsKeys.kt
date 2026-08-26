@@ -81,6 +81,9 @@ object PlaybackSettingsKeys {
     /** Local-only: show the featured hero at the top of phone Home. */
     const val HomeShowFeaturedHero = "home.show_featured_hero.local"
 
+    /** Local-only: render phone Home's featured hero inside poster cards. */
+    const val HomeUseFeaturedHeroCards = "home.use_featured_hero_cards.local"
+
     /**
      * Local-only per-profile flag — when true (default), DownloadWorker is
      * constrained to NetworkType.UNMETERED. Never synced to the server.

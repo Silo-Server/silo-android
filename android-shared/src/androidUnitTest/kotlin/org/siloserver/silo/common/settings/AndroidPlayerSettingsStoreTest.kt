@@ -196,6 +196,20 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `featured hero card layout defaults on and stays local`() = runTest {
+        val store = newStore()
+        assertTrue(store.useFeaturedHeroCardsFlow.first())
+
+        store.setUseFeaturedHeroCards(false)
+
+        assertFalse(store.useFeaturedHeroCardsFlow.first())
+        assertFalse(
+            fakeFlusher.calls.any { it.key == PlaybackSettingsKeys.HomeUseFeaturedHeroCards },
+            "Featured hero presentation is a device-local interface preference.",
+        )
+    }
+
+    @Test
     fun `setSubtitleAppearance round-trips through JSON`() = runTest {
         val store = newStore()
         val custom = SubtitleAppearance.DEFAULT.copy(

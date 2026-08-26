@@ -383,6 +383,9 @@ class AndroidPlayerSettingsStore(
     override val showFeaturedHeroFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.HomeShowFeaturedHero, true) }
 
+    override val useFeaturedHeroCardsFlow: Flow<Boolean> =
+        profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.HomeUseFeaturedHeroCards, true) }
+
     // tvOS "Match Device Settings" parity: when on, playback styling follows
     // the OS captioning preferences (CaptioningManager); the stored custom
     // appearance stays untouched underneath.
@@ -402,6 +405,9 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun setShowFeaturedHero(enabled: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.HomeShowFeaturedHero, enabled)
+
+    override suspend fun setUseFeaturedHeroCards(enabled: Boolean) =
+        writeBoolLocal(PlaybackSettingsKeys.HomeUseFeaturedHeroCards, enabled)
 
     // ---- Setters (write to scoped key + enqueue server flush) ---------
     /**

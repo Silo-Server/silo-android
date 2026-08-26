@@ -71,6 +71,7 @@ data class SettingsUiState(
     val subtitleMatchesDevice: Boolean = false,
     val showAudiobooks: Boolean = false,
     val showFeaturedHero: Boolean = true,
+    val useFeaturedHeroCards: Boolean = true,
     val subtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
         org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
     // Up Next card: auto-play the next episode at countdown expiry, and how
@@ -235,6 +236,9 @@ class SettingsViewModel(
         }.launchIn(viewModelScope)
         playerSettingsStore.showFeaturedHeroFlow.onEach { enabled ->
             _uiState.update { it.copy(showFeaturedHero = enabled) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.useFeaturedHeroCardsFlow.onEach { enabled ->
+            _uiState.update { it.copy(useFeaturedHeroCards = enabled) }
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleAppearanceFlow.onEach { appearance ->
             _uiState.update { it.copy(subtitleAppearance = appearance) }
@@ -419,6 +423,10 @@ class SettingsViewModel(
 
     fun setShowFeaturedHero(enabled: Boolean) {
         viewModelScope.launch { playerSettingsStore.setShowFeaturedHero(enabled) }
+    }
+
+    fun setUseFeaturedHeroCards(enabled: Boolean) {
+        viewModelScope.launch { playerSettingsStore.setUseFeaturedHeroCards(enabled) }
     }
 
     fun setSubtitleAppearance(value: org.siloserver.silo.model.settings.SubtitleAppearance) {
