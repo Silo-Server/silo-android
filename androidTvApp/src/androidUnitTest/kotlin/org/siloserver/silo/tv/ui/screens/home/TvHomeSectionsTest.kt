@@ -9,6 +9,29 @@ import kotlin.test.assertTrue
 
 class TvHomeSectionsTest {
     @Test
+    fun featuredSectionIsNotRepeatedAsATvRow() {
+        val sections = listOf(
+            ResolvedSection(
+                id = "featured",
+                sectionType = "recently_added",
+                title = "Featured",
+                featured = true,
+                items = listOf(SectionItem(contentId = "m1", type = "movie", title = "Movie")),
+            ),
+            ResolvedSection(
+                id = "continue",
+                sectionType = "continue_watching",
+                title = "Continue Watching",
+                items = listOf(SectionItem(contentId = "m2", type = "movie", title = "Movie 2")),
+            ),
+        )
+
+        val normalized = sections.normalizeTvHomeSections()
+
+        assertEquals(listOf("continue"), normalized.map { it.id })
+    }
+
+    @Test
     fun mixedContinueRowsSplitAudiobooksIntoContinueListening() {
         val sections = listOf(
             ResolvedSection(

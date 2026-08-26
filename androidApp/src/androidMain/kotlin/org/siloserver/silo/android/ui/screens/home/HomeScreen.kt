@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.shape.CircleShape
@@ -71,6 +71,7 @@ import org.siloserver.silo.common.ui.components.LocalImagePresentationDeferral
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.model.section.splitFeatured
 import org.siloserver.silo.viewmodel.HomeViewModel
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
@@ -80,13 +81,10 @@ private const val ChromeFadeDistanceDp = 72f
 /**
  * Phone Home screen.
  *
- * Mirrors iOS `HomeView.swift` (phone) 1:1: a flat OLED background (no hero —
- * a `featured` section renders as an ordinary row in its server order; the
- * phone apps have no hero surface at all), a runway spacer that
- * reserves room under the floating chrome, the resume-first section rows, and
- * a floating top chrome (wordmark + search + profile menu) that fades in a
- * subtle glass surface as content scrolls underneath it. The screen owns its
- * own top inset so the chrome floats over the status bar.
+ * Mirrors iOS `HomeView.swift` (phone) 1:1: the server's featured section is a
+ * full-bleed spotlight under the floating native chrome, followed by the
+ * resume-first section rows. The hero fades into the OLED page background and
+ * is removed from the row feed so the content appears only once.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,11 +116,14 @@ fun HomeScreen(
     var presentedPairingTarget by remember { mutableStateOf<CompanionPairingTarget?>(null) }
     var dismissedPairingSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val sections = state.sections
-    // No hero billboard on phone (matches iOS): a `featured` section is just
-    // another row, rendered in the order the server configured it.
-    val regularSections = remember(sections) {
-        sections.filter { it.items.isNotEmpty() }
+    val featuredSplit = remember(sections) { sections.splitFeatured() }
+    val featuredSection = featuredSplit.featured
+    // The featured section is rendered once as the phone spotlight and never
+    // repeated in the row feed.
+    val regularSections = remember(featuredSplit.rest) {
+        featuredSplit.rest.filter { it.items.isNotEmpty() }
     }
+    val hasHomeContent = featuredSection != null || regularSections.isNotEmpty()
 
     val listState = rememberLazyListState()
     // Pass the State object down without reading it here, so starting/stopping a
@@ -180,12 +181,12 @@ fun HomeScreen(
             .background(MaterialTheme.colorScheme.background),
     ) {
         when {
-            state.isLoading && regularSections.isEmpty() -> HomeLoadingSkeleton()
-            state.error != null && regularSections.isEmpty() -> ErrorView(
+            state.isLoading && !hasHomeContent -> HomeLoadingSkeleton()
+            state.error != null && !hasHomeContent -> ErrorView(
                 message = state.error ?: "Something went wrong",
                 onRetry = { viewModel.loadSections() },
             )
-            regularSections.isEmpty() -> EmptyStateView(
+            !hasHomeContent -> EmptyStateView(
                 title = "Nothing to watch yet",
                 subtitle = "Add media to your libraries or start watching to see it here.",
             )
@@ -206,28 +207,40 @@ fun HomeScreen(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        // iOS `sectionSpacing` = SiloTheme.largePadding (24).
-                        verticalArrangement = Arrangement.spacedBy(24.dp),
                     ) {
-                        // Reserve runway under the floating header so the first row
-                        // doesn't slide under the status-bar chrome. iOS runway =
-                        // topInset + 40 + smallPadding(8) + largePadding(24) +
-                        // smallPadding(8) - headerTopReclaim(16) = topInset + 64.
-                        item(key = "topRunway") {
-                            Spacer(
-                                modifier = Modifier
-                                    .windowInsetsPadding(WindowInsets.statusBars)
-                                    .height(64.dp),
-                            )
+                        if (featuredSection != null) {
+                            item(key = "featured:${featuredSection.id}", contentType = "featured-hero") {
+                                MobileFeaturedHero(
+                                    items = featuredSection.items,
+                                    onPlayClick = onPlayClick,
+                                    onInfoClick = onItemClick,
+                                )
+                            }
+                        } else {
+                            // Without a spotlight, reserve runway under the
+                            // floating native chrome for the first row.
+                            item(key = "topRunway") {
+                                Spacer(
+                                    modifier = Modifier
+                                        .windowInsetsPadding(WindowInsets.statusBars)
+                                        .height(64.dp),
+                                )
+                            }
                         }
 
-                        items(
+                        itemsIndexed(
                             items = regularSections,
-                            key = { it.id },
-                            contentType = { "section-row" },
-                        ) { section ->
+                            key = { _, section -> section.id },
+                            contentType = { _, _ -> "section-row" },
+                        ) { index, section ->
                             HomeSectionRow(
                                 section = section,
+                                // The first row touches the hero's completed
+                                // fade. All subsequent rows keep the standard
+                                // 24 dp Home section rhythm.
+                                modifier = Modifier.padding(
+                                    top = if (featuredSection != null && index == 0) 0.dp else 24.dp,
+                                ),
                                 onItemClick = onItemClick,
                                 onItemPlay = { item ->
                                     // Continue Watching can include audiobooks; the play
@@ -256,7 +269,11 @@ fun HomeScreen(
                         // iOS bottom padding = SiloTheme.largePadding (24), plus the
                         // translucent bottom chrome the content scrolls beneath.
                         item(key = "bottomPad") {
-                            Spacer(modifier = Modifier.height(24.dp + LocalBottomChromeInset.current))
+                            Spacer(
+                                modifier = Modifier
+                                    .padding(top = 24.dp)
+                                    .height(24.dp + LocalBottomChromeInset.current),
+                            )
                         }
                     }
                 }
@@ -442,4 +459,3 @@ private fun HomeFloatingChrome(
 
 /** How far the Home chrome's glass runs past its action row to feather out. */
 private val HomeChromeFeatherExtension = 40.dp
-

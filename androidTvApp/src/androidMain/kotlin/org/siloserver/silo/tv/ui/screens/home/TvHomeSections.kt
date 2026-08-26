@@ -7,7 +7,7 @@ import org.siloserver.silo.tv.ui.util.isAudiobookMediaType
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 
 internal fun List<ResolvedSection>.normalizeTvHomeSections(): List<ResolvedSection> =
-    visibleOnTv().flatMap { section ->
+    visibleOnTv().filterNot { it.featured }.flatMap { section ->
         if (section.isTvProgressRow()) section.splitAudioProgress() else listOf(section)
     }
 
