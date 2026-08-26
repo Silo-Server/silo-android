@@ -19,7 +19,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 
 data class HomeUiState(
     val isLoading: Boolean = true,
@@ -37,6 +41,8 @@ data class HomeUiState(
      * finished list; only a partial publish sets it false.
      */
     val sectionsFullyResolved: Boolean = true,
+    /** Clean provider posters keyed by featured item id. Empty on older servers. */
+    val featuredTextlessPosters: Map<String, String> = emptyMap(),
     val error: String? = null,
 )
 
@@ -74,6 +80,7 @@ class HomeViewModel(
     }
 
     private var realtimeRefreshInFlight = false
+    private var featuredArtworkJob: Job? = null
 
     /**
      * Bumped by every fetch, checked before any of them publishes.
@@ -223,6 +230,9 @@ class HomeViewModel(
                         it.copy(isLoading = false, error = null)
                     }
                 }
+                if (generation == fetchGeneration && (fullyResolved || !hadSections)) {
+                    refreshFeaturedArtwork(overlaid, generation)
+                }
             }
             is ApiResult.Error -> {
                 // A superseded fetch's failure is not this home's failure.
@@ -247,6 +257,39 @@ class HomeViewModel(
             }
         }
         return generation
+    }
+
+    private fun refreshFeaturedArtwork(sections: List<ResolvedSection>, generation: Int) {
+        val items = sections.firstOrNull()
+            ?.takeIf { it.featured }
+            ?.items
+            .orEmpty()
+            .filter { it.type.equals("movie", true) || it.type.equals("series", true) }
+            .distinctBy { it.contentId }
+
+        featuredArtworkJob?.cancel()
+        if (items.isEmpty()) {
+            _uiState.update { it.copy(featuredTextlessPosters = emptyMap()) }
+            return
+        }
+
+        featuredArtworkJob = viewModelScope.launch {
+            val resolved = supervisorScope {
+                items.map { item ->
+                    async {
+                        val url = when (val result = sectionRepository.getTextlessPoster(item.contentId)) {
+                            is ApiResult.Success -> result.data.posterUrl?.takeIf { it.isNotBlank() }
+                            else -> null
+                        }
+                        item.contentId to url
+                    }
+                }.awaitAll()
+            }.mapNotNull { (id, url) -> url?.let { id to it } }.toMap()
+
+            if (generation == fetchGeneration) {
+                _uiState.update { it.copy(featuredTextlessPosters = resolved) }
+            }
+        }
     }
 
     // -- Card context-menu actions --

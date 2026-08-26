@@ -48,11 +48,21 @@ fun TopBarIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     isActive: Boolean = false,
+    glassState: HazeState? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Surface(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.then(
+            if (glassState != null) {
+                Modifier
+                    .clip(CircleShape)
+                    .topBarGlass(glassState)
+                    .background(Color.Black.copy(alpha = 0.20f))
+            } else {
+                Modifier
+            },
+        ),
         color = if (isActive) MaterialTheme.colorScheme.onSurface else Color.Transparent,
         contentColor = if (isActive) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurface,
         shape = CircleShape,
@@ -71,6 +81,7 @@ fun TopBarIconButton(
 @Composable
 fun TopBarProfileMenu(
     activeProfile: Profile?,
+    glassState: HazeState? = null,
     onRequestsClick: (() -> Unit)?,
     onWatchTogetherClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
@@ -80,7 +91,10 @@ fun TopBarProfileMenu(
 ) {
     var menuExpanded by rememberSaveable { mutableStateOf(false) }
     Box {
-        TopBarIconButton(onClick = { menuExpanded = true }) {
+        TopBarIconButton(
+            onClick = { menuExpanded = true },
+            glassState = glassState,
+        ) {
             if (activeProfile != null) {
                 ProfileAvatar(
                     avatar = activeProfile.avatarRef(),
@@ -131,6 +145,7 @@ fun TabTopBarActions(
     onSwitchServerClick: () -> Unit,
     onSignOutClick: () -> Unit,
     modifier: Modifier = Modifier,
+    actionGlassState: HazeState? = null,
     leadingActions: @Composable () -> Unit = {},
 ) {
     Row(
@@ -139,7 +154,10 @@ fun TabTopBarActions(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leadingActions()
-        TopBarIconButton(onClick = onSearchClick) {
+        TopBarIconButton(
+            onClick = onSearchClick,
+            glassState = actionGlassState,
+        ) {
             Icon(
                 imageVector = Icons.Outlined.Search,
                 contentDescription = "Search",
@@ -147,6 +165,7 @@ fun TabTopBarActions(
         }
         TopBarProfileMenu(
             activeProfile = activeProfile,
+            glassState = actionGlassState,
             onRequestsClick = onRequestsClick,
             onWatchTogetherClick = onWatchTogetherClick,
             onSettingsClick = onSettingsClick,

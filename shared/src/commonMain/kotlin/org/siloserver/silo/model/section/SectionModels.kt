@@ -28,6 +28,7 @@ data class SectionItem(
     val networks: List<String> = emptyList(),
     @SerialName("show_status") val showStatus: String? = null,
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
+    val tagline: String? = null,
     val overview: String? = null,
     @SerialName("item_source") val itemSource: String? = null,
     @SerialName("position_seconds") val positionSeconds: Double? = null,
@@ -82,6 +83,11 @@ data class HomeLayoutResponse(
 data class HomeSectionItemsResponse(
     val section: ResolvedSection? = null,
     val items: List<SectionItem> = emptyList()
+)
+
+@Serializable
+data class TextlessPosterResponse(
+    @SerialName("poster_url") val posterUrl: String? = null,
 )
 
 @Serializable

@@ -7,6 +7,7 @@ import org.siloserver.silo.model.section.HomeSectionItemsResponse
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.LibraryCollectionsResponse
 import org.siloserver.silo.model.section.SectionsResponse
+import org.siloserver.silo.model.section.TextlessPosterResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
@@ -93,6 +94,10 @@ class SectionRepository(
         }
         return request.await()
     }
+
+    /** Best-effort clean portrait art for the phone featured-card treatment. */
+    suspend fun getTextlessPoster(contentId: String): ApiResult<TextlessPosterResponse> =
+        sectionApi.getTextlessPoster(contentId)
 
     /** Fetches a library's resolved sections (offline: last cached sections). */
     suspend fun getLibrarySections(libraryId: Int): ApiResult<SectionsResponse> {

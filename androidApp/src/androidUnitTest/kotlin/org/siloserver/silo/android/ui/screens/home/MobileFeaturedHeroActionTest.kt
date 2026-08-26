@@ -31,10 +31,47 @@ class MobileFeaturedHeroActionTest {
         assertEquals(listOf("play:featured-item:123.0"), events)
     }
 
-    private fun item(type: String, positionSeconds: Double? = null) = SectionItem(
+    @Test
+    fun quotePrefersTaglineAndKeepsItCompact() {
+        val result = featuredQuote(
+            item(
+                type = "movie",
+                tagline = "Every family has its demons, even when the fire has gone out.",
+                overview = "This overview must not win.",
+            ),
+        )
+
+        assertEquals("Every family has its demons", result)
+    }
+
+    @Test
+    fun quoteFallsBackWhenEditorialCopyIsUnavailable() {
+        assertEquals("Ready when you are.", featuredQuote(item(type = "movie")))
+    }
+
+    @Test
+    fun quoteDoesNotCollapseToACharactersNameBeforeAnEarlyComma() {
+        val result = featuredQuote(
+            item(
+                type = "series",
+                overview = "Jack Reacher, a veteran military police investigator, has entered civilian life.",
+            ),
+        )
+
+        assertEquals("Jack Reacher, a veteran military police", result)
+    }
+
+    private fun item(
+        type: String,
+        positionSeconds: Double? = null,
+        tagline: String? = null,
+        overview: String? = null,
+    ) = SectionItem(
         contentId = "featured-item",
         type = type,
         title = "Featured Item",
         positionSeconds = positionSeconds,
+        tagline = tagline,
+        overview = overview,
     )
 }

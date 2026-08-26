@@ -34,6 +34,12 @@ class SectionApi(private val client: HttpClient) {
         client.get("/api/v1/home/sections/$sectionId/items")
     }
 
+    suspend fun getTextlessPoster(contentId: String): ApiResult<TextlessPosterResponse> = safeApiCall {
+        client.get(
+            "/api/v1/catalog/items/${contentId.encodeURLPathPart()}/images/textless-poster",
+        )
+    }
+
     // --- Library Sections ---
 
     suspend fun getLibrarySections(libraryId: Int): ApiResult<SectionsResponse> = safeApiCall {

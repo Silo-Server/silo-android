@@ -1,6 +1,10 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,16 +12,21 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
@@ -29,14 +38,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -45,104 +56,200 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.section.SectionItem
 
+private const val HeroAdvanceMillis = 10_000
+private const val HeroVirtualCycles = 1_000
+private val HeroCardShape = RoundedCornerShape(14.dp)
+private val HeroButtonShape = RoundedCornerShape(8.dp)
+
 /**
- * Full-bleed phone spotlight supplied by the server's featured Home section.
- * Its bottom scrim reaches the page background so the first row grows out of
- * the artwork without a rectangular banner edge.
+ * Phone-only featured cards. The configured top featured row supplies the
+ * cards and the dot count; duplicated virtual pages make swiping endless in
+ * both directions without exposing duplicates to the indicator.
  */
 @Composable
 fun MobileFeaturedHero(
     items: List<SectionItem>,
+    textlessPosterUrls: Map<String, String> = emptyMap(),
     onPlayClick: (String, Double?) -> Unit,
     onInfoClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (items.isEmpty()) return
 
-    val pagerState = rememberPagerState(pageCount = { items.size })
-    val configuration = LocalConfiguration.current
-    val heroHeight = (configuration.screenHeightDp * 0.69f).coerceIn(610f, 740f).dp
+    key(items.map { it.contentId }) {
+        MobileFeaturedHeroContent(
+            items = items,
+            textlessPosterUrls = textlessPosterUrls,
+            onPlayClick = onPlayClick,
+            onInfoClick = onInfoClick,
+            modifier = modifier,
+        )
+    }
+}
 
-    LaunchedEffect(items.size) {
-        if (items.size <= 1) return@LaunchedEffect
-        // Keep one stable loop. Keying this effect to currentPage cancels the
-        // animation as soon as the pager crosses its halfway threshold,
-        // leaving the carousel stranded between two items.
-        while (true) {
-            delay(10_000)
-            pagerState.animateScrollToPage((pagerState.currentPage + 1) % items.size)
+@Composable
+private fun MobileFeaturedHeroContent(
+    items: List<SectionItem>,
+    textlessPosterUrls: Map<String, String>,
+    onPlayClick: (String, Double?) -> Unit,
+    onInfoClick: (String) -> Unit,
+    modifier: Modifier,
+) {
+    val configuration = LocalConfiguration.current
+    val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val headerRunway = statusBar + 56.dp
+    val cardWidth = (configuration.screenWidthDp - 24).dp
+    val cardHeight = ((configuration.screenWidthDp - 24) * 1.10f).coerceIn(372f, 470f).dp
+    val totalHeight = headerRunway + cardHeight + 38.dp
+
+    // An Int.MAX_VALUE pager loses adjacent-page precision once its pixel
+    // offset becomes huge. A centred thousand-cycle ring is functionally
+    // endless to a person while keeping every snap on an exact card boundary.
+    val virtualCount = if (items.size > 1) items.size * HeroVirtualCycles else 1
+    val initialPage = remember(items.size) {
+        if (items.size == 1) 0 else {
+            val middle = virtualCount / 2
+            middle - positiveModulo(middle, items.size)
         }
+    }
+    val pagerState = rememberPagerState(
+        initialPage = initialPage,
+        pageCount = { virtualCount },
+    )
+    val timerProgress = remember(items.size) { Animatable(0f) }
+
+    LaunchedEffect(pagerState, items.size) {
+        snapshotFlow { pagerState.settledPage to pagerState.isScrollInProgress }
+            .collectLatest { (_, scrolling) ->
+                timerProgress.snapTo(0f)
+                if (!scrolling) {
+                    timerProgress.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(HeroAdvanceMillis, easing = LinearEasing),
+                    )
+                }
+            }
+    }
+    LaunchedEffect(pagerState, items.size) {
+        if (items.size <= 1) return@LaunchedEffect
+        while (true) {
+            val page = pagerState.settledPage
+            delay(HeroAdvanceMillis.toLong())
+            // A manual move during the interval starts a fresh ten seconds on
+            // the next loop. Crucially, the auto animation itself is not owned
+            // by a collectLatest block that cancels when scrolling begins.
+            if (!pagerState.isScrollInProgress && pagerState.settledPage == page) {
+                pagerState.animateScrollToPage(page + 1)
+            }
+        }
+    }
+
+    val activeIndex = positiveModulo(pagerState.settledPage, items.size)
+    val activeItem = items[activeIndex]
+    val activeArtwork = preferredArtwork(activeItem, textlessPosterUrls)
+    val background = MaterialTheme.colorScheme.background
+    val dominantColor by rememberDominantColor(activeArtwork, fallback = background)
+    val darkTint = remember(dominantColor) {
+        dominantColor.copy(
+            red = dominantColor.red * 0.46f,
+            green = dominantColor.green * 0.46f,
+            blue = dominantColor.blue * 0.46f,
+        )
     }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(heroHeight)
-            // Keep the blurred cover layer from painting into the LazyColumn's
-            // section gap. The internal gradient supplies the seamless fade.
-            .clipToBounds()
-            .background(MaterialTheme.colorScheme.background),
+            .height(totalHeight)
+            .background(
+                Brush.verticalGradient(
+                    0.00f to background,
+                    0.66f to background,
+                    0.88f to darkTint.copy(alpha = 0.24f),
+                    1.00f to background,
+                ),
+            ),
     ) {
+        // A deliberately dark sampled glow makes the card colour feel present
+        // beyond its edge without turning the Home screen into a neon halo.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = headerRunway - 8.dp)
+                .width(cardWidth + 18.dp)
+                .height(cardHeight + 34.dp)
+                .blur(26.dp)
+                .clip(HeroCardShape)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            darkTint.copy(alpha = 0.38f),
+                            darkTint.copy(alpha = 0.16f),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
+        )
+
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-        ) { page ->
-            SpotlightSlide(
-                item = items[page],
+            contentPadding = PaddingValues(horizontal = 12.dp),
+            pageSpacing = 10.dp,
+            beyondViewportPageCount = 1,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(cardHeight)
+                .offset(y = headerRunway),
+        ) { virtualPage ->
+            val item = items[positiveModulo(virtualPage, items.size)]
+            SpotlightCard(
+                item = item,
+                artworkUrl = preferredArtwork(item, textlessPosterUrls),
                 onPlayClick = onPlayClick,
                 onInfoClick = onInfoClick,
+                modifier = Modifier.fillMaxSize(),
             )
         }
+
+        HeroTimerDots(
+            count = items.size,
+            activeIndex = activeIndex,
+            progress = timerProgress.value.coerceIn(0f, 1f),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = headerRunway + cardHeight + 13.dp),
+        )
     }
 }
 
 @Composable
-private fun SpotlightSlide(
+private fun SpotlightCard(
     item: SectionItem,
+    artworkUrl: String?,
     onPlayClick: (String, Double?) -> Unit,
     onInfoClick: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val background = MaterialTheme.colorScheme.background
     Box(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
+            .clip(HeroCardShape)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, Color.White.copy(alpha = 0.08f), HeroCardShape)
             .clickable { onInfoClick(item.contentId) },
-        contentAlignment = Alignment.BottomStart,
+        contentAlignment = Alignment.BottomCenter,
     ) {
-        val artworkUrl = item.backdropUrl ?: item.posterUrl
-        val artworkHash = item.backdropThumbhash ?: item.posterThumbhash
-
-        // A soft cover layer extends the artwork through the tall phone stage,
-        // while the crisp layer uses only the upper 74%. The shorter crop shows
-        // substantially more of a 16:9 backdrop instead of zooming it until the
-        // subject disappears.
         ThumbhashImage(
             url = artworkUrl,
-            thumbhash = artworkHash,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = 1.08f
-                    scaleY = 1.08f
-                }
-                .blur(26.dp),
-        )
-        ThumbhashImage(
-            url = artworkUrl,
-            thumbhash = artworkHash,
+            thumbhash = item.posterThumbhash ?: item.backdropThumbhash,
             contentDescription = item.title,
             contentScale = ContentScale.Crop,
-            alignment = Alignment.TopCenter,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .fillMaxHeight(0.74f),
+            modifier = Modifier.fillMaxSize(),
         )
 
         Box(
@@ -150,22 +257,10 @@ private fun SpotlightSlide(
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0.00f to Color.Black.copy(alpha = 0.28f),
-                        0.22f to Color.Transparent,
-                        0.50f to Color.Black.copy(alpha = 0.32f),
-                        0.78f to background.copy(alpha = 0.86f),
-                        1.00f to background,
-                    ),
-                ),
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.horizontalGradient(
-                        0.00f to Color.Black.copy(alpha = 0.49f),
-                        0.55f to Color.Black.copy(alpha = 0.14f),
-                        1.00f to Color.Transparent,
+                        0.00f to Color.Black.copy(alpha = 0.05f),
+                        0.46f to Color.Transparent,
+                        0.66f to Color.Black.copy(alpha = 0.48f),
+                        1.00f to Color.Black.copy(alpha = 0.96f),
                     ),
                 ),
         )
@@ -173,9 +268,8 @@ private fun SpotlightSlide(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 34.dp),
-            verticalArrangement = Arrangement.spacedBy(13.dp),
+                .padding(horizontal = 18.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             if (!item.logoUrl.isNullOrBlank()) {
@@ -186,17 +280,16 @@ private fun SpotlightSlide(
                     contentScale = ContentScale.Fit,
                     transparent = true,
                     modifier = Modifier
-                        .height(92.dp)
-                        .widthIn(max = 270.dp)
-                        .align(Alignment.CenterHorizontally),
+                        .height(76.dp)
+                        .widthIn(max = 220.dp),
                 )
             } else {
                 Text(
                     text = item.title,
-                    style = MaterialTheme.typography.displayMedium,
+                    style = MaterialTheme.typography.displaySmall,
                     color = Color.White,
                     fontWeight = FontWeight.Black,
-                    letterSpacing = (-1.2).sp,
+                    letterSpacing = (-1).sp,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
@@ -204,28 +297,25 @@ private fun SpotlightSlide(
                 )
             }
 
+            Text(
+                text = remember(item) { featuredQuote(item) },
+                color = Color.White.copy(alpha = 0.94f),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             val metadata = remember(item) { featuredMetadata(item) }
             if (metadata.isNotEmpty()) {
                 Text(
                     text = metadata.joinToString("  ·  "),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.88f),
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            item.overview?.takeIf { it.isNotBlank() }?.let { overview ->
-                Text(
-                    text = overview,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.82f),
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 21.sp,
-                    maxLines = 3,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(),
@@ -233,19 +323,23 @@ private fun SpotlightSlide(
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
-                    onClick = {
-                        dispatchFeaturedHeroPlay(item, onPlayClick, onInfoClick)
-                    },
-                    shape = RoundedCornerShape(100),
+                    onClick = { dispatchFeaturedHeroPlay(item, onPlayClick, onInfoClick) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(46.dp),
+                    shape = HeroButtonShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color.White,
                         contentColor = Color.Black,
                     ),
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
                 ) {
                     Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(21.dp))
                     Spacer(Modifier.width(6.dp))
@@ -257,17 +351,60 @@ private fun SpotlightSlide(
 
                 Button(
                     onClick = { onInfoClick(item.contentId) },
-                    shape = RoundedCornerShape(100),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(46.dp),
+                    shape = HeroButtonShape,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White.copy(alpha = 0.14f),
+                        containerColor = Color.Black.copy(alpha = 0.48f),
                         contentColor = Color.White,
                     ),
-                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
                 ) {
                     Icon(Icons.Default.Info, null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("More Info", fontWeight = FontWeight.Bold)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroTimerDots(
+    count: Int,
+    activeIndex: Int,
+    progress: Float,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(count) { index ->
+            if (index == activeIndex) {
+                Box(
+                    modifier = Modifier
+                        .width(32.dp)
+                        .height(7.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.24f)),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(progress)
+                            .background(Color.White.copy(alpha = 0.86f)),
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.42f)),
+                )
             }
         }
     }
@@ -290,16 +427,41 @@ internal fun dispatchFeaturedHeroPlay(
     }
 }
 
-private fun featuredMetadata(item: SectionItem): List<String> = buildList {
-    if (item.type.equals("episode", ignoreCase = true)) {
-        if (item.seasonNumber != null && item.episodeNumber != null) {
-            add("S${item.seasonNumber} E${item.episodeNumber}")
-        }
-    } else if (item.year > 0) {
-        add(item.year.toString())
+internal fun featuredQuote(item: SectionItem): String {
+    item.tagline?.trim()?.takeIf { it.isNotEmpty() }?.let { return compactFeaturedQuote(it) }
+    item.overview?.trim()?.takeIf { it.isNotEmpty() }?.let { overview ->
+        val sentenceEnd = overview.indexOfFirst { it == '.' || it == '!' || it == '?' }
+        val sentence = if (sentenceEnd >= 0) overview.substring(0, sentenceEnd + 1) else overview
+        return compactFeaturedQuote(sentence)
     }
-    item.runtime?.takeIf { it > 0 }?.let { add(formatFeaturedRuntime(it)) }
+    return "Ready when you are."
+}
+
+private fun compactFeaturedQuote(value: String): String {
+    val trimmed = value.trim()
+    if (trimmed.length <= 46) return trimmed
+
+    val clauseEnd = trimmed.indexOfFirst { it == ',' || it == ';' }
+    if (clauseEnd in 8..46) {
+        val clause = trimmed.substring(0, clauseEnd).trim()
+        if (clause.split(Regex("\\s+")).size >= 3) return clause
+    }
+
+    val words = mutableListOf<String>()
+    for (word in trimmed.split(Regex("\\s+")).take(6)) {
+        if ((words + word).joinToString(" ").length > 46) break
+        words += word
+    }
+    return words.joinToString(" ").trim(' ', '.', ',', ';', ':', '!', '?')
+        .ifEmpty { "Ready when you are." }
+}
+
+private fun featuredMetadata(item: SectionItem): List<String> = buildList {
+    (item.ratingImdb ?: item.ratingTmdb)?.takeIf { it > 0.0 }?.let {
+        add("★ ${"%.1f".format(it)}")
+    }
     addAll(item.genres.filter { it.isNotBlank() }.take(2))
+    item.runtime?.takeIf { it > 0 }?.let { add(formatFeaturedRuntime(it)) }
     item.contentRating?.takeIf { it.isNotBlank() }?.let { add(it.uppercase()) }
 }
 
@@ -308,3 +470,14 @@ private fun formatFeaturedRuntime(minutes: Int): String {
     val remainder = minutes % 60
     return if (remainder == 0) "${minutes / 60}h" else "${minutes / 60}h ${remainder}m"
 }
+
+private fun preferredArtwork(
+    item: SectionItem,
+    textlessPosterUrls: Map<String, String>,
+): String? = textlessPosterUrls[item.contentId]
+    ?.takeIf { it.isNotBlank() }
+    ?: item.posterUrl?.takeIf { it.isNotBlank() }
+    ?: item.backdropUrl?.takeIf { it.isNotBlank() }
+
+private fun positiveModulo(value: Int, modulus: Int): Int =
+    ((value % modulus) + modulus) % modulus

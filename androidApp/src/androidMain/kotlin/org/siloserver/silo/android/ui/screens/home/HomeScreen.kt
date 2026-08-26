@@ -212,6 +212,7 @@ fun HomeScreen(
                             item(key = "featured:${featuredSection.id}", contentType = "featured-hero") {
                                 MobileFeaturedHero(
                                     items = featuredSection.items,
+                                    textlessPosterUrls = state.featuredTextlessPosters,
                                     onPlayClick = onPlayClick,
                                     onInfoClick = onItemClick,
                                 )
@@ -389,6 +390,7 @@ private fun HomeFloatingChrome(
             // Trailing: remote-control + search + profile menu cluster.
             TabTopBarActions(
                 modifier = Modifier.align(Alignment.CenterEnd),
+                actionGlassState = hazeState,
                 activeProfile = activeProfile,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
@@ -412,6 +414,7 @@ private fun HomeFloatingChrome(
                                 }
                             },
                             isActive = isRemoteControlActive,
+                            glassState = hazeState,
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.SettingsRemote,
