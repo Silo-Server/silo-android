@@ -18,42 +18,33 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.section.SectionItem
 
@@ -74,7 +65,6 @@ fun MobileFeaturedHero(
     val pagerState = rememberPagerState(pageCount = { items.size })
     val configuration = LocalConfiguration.current
     val heroHeight = (configuration.screenHeightDp * 0.69f).coerceIn(610f, 740f).dp
-    val carouselScope = rememberCoroutineScope()
 
     LaunchedEffect(items.size) {
         if (items.size <= 1) return@LaunchedEffect
@@ -105,40 +95,6 @@ fun MobileFeaturedHero(
                 onPlayClick = onPlayClick,
                 onInfoClick = onInfoClick,
             )
-        }
-
-        if (items.size > 1) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp)
-                    .padding(bottom = 82.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                HeroCircleButton(
-                    onClick = {
-                        val target = (pagerState.currentPage - 1 + items.size) % items.size
-                        carouselScope.launch {
-                            pagerState.animateScrollToPage(target)
-                        }
-                    },
-                    contentDescription = "Previous featured item",
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, null, tint = Color.White)
-                }
-                HeroCircleButton(
-                    onClick = {
-                        val target = (pagerState.currentPage + 1) % items.size
-                        carouselScope.launch {
-                            pagerState.animateScrollToPage(target)
-                        }
-                    },
-                    contentDescription = "Next featured item",
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Color.White)
-                }
-            }
         }
     }
 }
@@ -311,24 +267,6 @@ private fun SpotlightSlide(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun HeroCircleButton(
-    onClick: () -> Unit,
-    contentDescription: String,
-    content: @Composable () -> Unit,
-) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .semantics { this.contentDescription = contentDescription }
-            .background(Color.Black.copy(alpha = 0.34f)),
-    ) {
-        Box(contentAlignment = Alignment.Center) { content() }
     }
 }
 

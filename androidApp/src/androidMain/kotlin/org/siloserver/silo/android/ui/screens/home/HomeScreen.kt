@@ -71,7 +71,7 @@ import org.siloserver.silo.common.ui.components.LocalImagePresentationDeferral
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.profile.Profile
-import org.siloserver.silo.model.section.splitFeatured
+import org.siloserver.silo.model.section.splitTopFeatured
 import org.siloserver.silo.viewmodel.HomeViewModel
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.koin.compose.viewmodel.koinViewModel
@@ -116,10 +116,10 @@ fun HomeScreen(
     var presentedPairingTarget by remember { mutableStateOf<CompanionPairingTarget?>(null) }
     var dismissedPairingSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val sections = state.sections
-    val featuredSplit = remember(sections) { sections.splitFeatured() }
+    val featuredSplit = remember(sections) { sections.splitTopFeatured() }
     val featuredSection = featuredSplit.featured
-    // The featured section is rendered once as the phone spotlight and never
-    // repeated in the row feed.
+    // Only an explicitly featured top row is rendered as the phone spotlight.
+    // Featured rows farther down remain in the feed in their configured order.
     val regularSections = remember(featuredSplit.rest) {
         featuredSplit.rest.filter { it.items.isNotEmpty() }
     }
