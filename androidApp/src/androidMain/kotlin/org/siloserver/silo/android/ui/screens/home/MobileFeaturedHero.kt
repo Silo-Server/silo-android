@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,10 +43,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -123,6 +123,10 @@ private fun MobileFeaturedHeroContent(
         pageCount = { virtualCount },
     )
     val timerProgress = remember(items.size) { Animatable(0f) }
+    // Keep the ten-second progress animation in the render phase. Reading the
+    // Animatable from the parent composition would recompose the entire hero
+    // every frame, including the pager and its full-size artwork.
+    val timerProgressProvider = remember(timerProgress) { { timerProgress.value } }
 
     LaunchedEffect(pagerState, items.size) {
         snapshotFlow { pagerState.settledPage to pagerState.isScrollInProgress }
@@ -176,15 +180,15 @@ private fun MobileFeaturedHeroContent(
                 ),
             ),
     ) {
-        // A deliberately dark sampled glow makes the card colour feel present
-        // beyond its edge without turning the Home screen into a neon halo.
+        // A deliberately dark sampled radial gradient makes the card colour
+        // feel present beyond its edge. The gradient supplies its own soft edge;
+        // avoiding a card-sized runtime blur keeps real devices smooth.
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(y = headerRunway - 8.dp)
                 .width(cardWidth + 18.dp)
                 .height(cardHeight + 34.dp)
-                .blur(26.dp)
                 .clip(HeroCardShape)
                 .background(
                     Brush.radialGradient(
@@ -220,7 +224,7 @@ private fun MobileFeaturedHeroContent(
         HeroTimerDots(
             count = items.size,
             activeIndex = activeIndex,
-            progress = timerProgress.value.coerceIn(0f, 1f),
+            progress = timerProgressProvider,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(y = headerRunway + cardHeight + 13.dp),
@@ -374,7 +378,7 @@ private fun SpotlightCard(
 private fun HeroTimerDots(
     count: Int,
     activeIndex: Int,
-    progress: Float,
+    progress: () -> Float,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -393,8 +397,11 @@ private fun HeroTimerDots(
                 ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(progress)
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                transformOrigin = TransformOrigin(0f, 0.5f)
+                                scaleX = progress().coerceIn(0f, 1f)
+                            }
                             .background(Color.White.copy(alpha = 0.86f)),
                     )
                 }
