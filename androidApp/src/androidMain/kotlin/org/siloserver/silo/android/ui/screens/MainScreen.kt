@@ -23,7 +23,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -47,8 +46,6 @@ import org.siloserver.silo.android.ui.navigation.tabForRoute
 import org.siloserver.silo.android.ui.navigation.tabSwitchNavOptions
 import org.siloserver.silo.android.ui.navigation.bottomMostTabRoute
 import org.siloserver.silo.android.ui.navigation.fallbackMobileTab
-import org.siloserver.silo.android.ui.navigation.scopedLocalDownloadBytes
-import org.siloserver.silo.android.ui.navigation.shouldShowDownloadsTab
 import org.siloserver.silo.android.ui.navigation.visibleMobileTabs
 import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
 import org.siloserver.silo.android.ui.screens.home.HomeScreen
@@ -64,17 +61,12 @@ import org.siloserver.silo.android.ui.screens.recommendations.headerTitle
 import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherMenuEntrySheet
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
-import org.siloserver.silo.model.navigation.MediaMode
-import org.siloserver.silo.model.navigation.MediaModeCapabilities
-import org.siloserver.silo.model.navigation.mobileMediaModeCapabilities
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.network.ServerReachabilityStatus
-import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
-import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
@@ -133,14 +125,6 @@ fun MainScreen(
     // reacts by scrolling back to the top.
     var homeScrollToTopTick by remember { mutableStateOf(0) }
 
-    // Downloads tab visibility: show whenever EITHER the server says there
-    // are records OR we have bytes on disk. The on-disk check is what makes
-    // the tab survive airplane mode — `repository.refresh()` returns an
-    // empty list when offline, but the downloaded files are still there
-    // and we want the user to reach them.
-    val personalDataRepository: PersonalDataRepository = koinInject()
-    val downloadsRepository: org.siloserver.silo.repository.DownloadsRepository = koinInject()
-    val downloadStorage: org.siloserver.silo.common.downloads.DownloadStorage = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
     val authRepository: AuthRepository = koinInject()
     val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
@@ -150,45 +134,10 @@ fun MainScreen(
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val reachabilityScope = rememberCoroutineScope()
     val activeEntry by serverRegistry.activeEntry.collectAsState()
-    val mediaCapabilities by produceState(
-        initialValue = MediaModeCapabilities(
-            listOf(
-                MediaMode.Video,
-                MediaMode.Audio,
-                MediaMode.Reading,
-            ),
-        ),
-        personalDataRepository,
-    ) {
-        value = when (val result = personalDataRepository.listUserLibraries()) {
-            is ApiResult.Success -> result.data.mobileMediaModeCapabilities()
-            else -> value
-        }
-    }
-    val downloadRecords by downloadsRepository.records.collectAsState()
-    val activeScopeLocalBytes by produceState(
-        initialValue = 0L,
-        downloadRecords,
-        activeEntry?.id,
-        activeEntry?.profileId,
-        headerState.activeProfile?.id,
-    ) {
-        value = scopedLocalDownloadBytes(
-            storage = downloadStorage,
-            serverId = activeEntry?.id,
-            profileId = activeEntry?.profileId ?: headerState.activeProfile?.id,
-        )
-    }
-    val visibleTabs = remember(mediaCapabilities, downloadRecords, activeScopeLocalBytes) {
-        val hasAnyDownload = shouldShowDownloadsTab(
-            serverRecordCount = downloadRecords.size,
-            activeScopeLocalBytes = activeScopeLocalBytes,
-        )
-        visibleMobileTabs(
-            capabilities = mediaCapabilities,
-            showDownloads = hasAnyDownload,
-        )
-    }
+    // Keep the mobile shell stable while profile capabilities and local
+    // download records hydrate. DownloadsScreen handles empty/unavailable
+    // states without adding or removing a bottom-navigation destination.
+    val visibleTabs = remember { visibleMobileTabs() }
 
     // The shared top bar floats over content; its real height is the status-bar
     // inset plus the fixed bar body. Offset tab content by that so the bar can't
