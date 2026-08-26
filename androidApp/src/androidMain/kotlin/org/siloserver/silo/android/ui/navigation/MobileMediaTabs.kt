@@ -1,22 +1,18 @@
 package org.siloserver.silo.android.ui.navigation
 
-import org.siloserver.silo.model.navigation.MediaModeCapabilities
-
 val Tab.isUtilityTab: Boolean
     get() = this == Tab.Downloads
 
-// Apple-aligned shell: Home · Libraries · For You · Calendar, plus a Downloads
-// tab only when the user has downloads. There is no per-media-type tab —
-// library content (video / audio / reading) is reached through the Libraries picker.
-fun visibleMobileTabs(
-    @Suppress("UNUSED_PARAMETER") capabilities: MediaModeCapabilities,
-    showDownloads: Boolean,
-): List<Tab> = buildList {
+// Apple-aligned shell: Home · Libraries · For You · Calendar · Downloads.
+// Downloads is a stable destination from the first frame; its screen owns the
+// empty and unavailable states instead of making the navigation bar reflow
+// after capability or local-record hydration completes.
+fun visibleMobileTabs(): List<Tab> = buildList {
     add(Tab.Home)
     add(Tab.Libraries)
     add(Tab.ForYou)
     add(Tab.Calendar)
-    if (showDownloads) add(Tab.Downloads)
+    add(Tab.Downloads)
 }
 
 fun fallbackMobileTab(

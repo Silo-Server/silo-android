@@ -26,13 +26,6 @@ class MobileDownloadVisibilityTest {
     }
 
     @Test
-    fun `download tab visibility uses records or active scoped local bytes`() {
-        assertFalse(shouldShowDownloadsTab(serverRecordCount = 0, activeScopeLocalBytes = 0L))
-        assertTrue(shouldShowDownloadsTab(serverRecordCount = 1, activeScopeLocalBytes = 0L))
-        assertTrue(shouldShowDownloadsTab(serverRecordCount = 0, activeScopeLocalBytes = 1L))
-    }
-
-    @Test
     fun `startup routes to downloads when local media exists and server cannot be used`() {
         assertFalse(
             shouldStartOnDownloads(
