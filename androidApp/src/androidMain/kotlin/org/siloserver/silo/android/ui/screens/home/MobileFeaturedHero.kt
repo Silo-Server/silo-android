@@ -142,16 +142,16 @@ private fun MobileFeaturedHeroContent(
     }
     LaunchedEffect(pagerState, items.size) {
         if (items.size <= 1) return@LaunchedEffect
-        while (true) {
-            val page = pagerState.settledPage
-            delay(HeroAdvanceMillis.toLong())
-            // A manual move during the interval starts a fresh ten seconds on
-            // the next loop. Crucially, the auto animation itself is not owned
-            // by a collectLatest block that cancels when scrolling begins.
-            if (!pagerState.isScrollInProgress && pagerState.settledPage == page) {
-                pagerState.animateScrollToPage(page + 1)
+        snapshotFlow { pagerState.settledPage }
+            .collectLatest { page ->
+                delay(HeroAdvanceMillis.toLong())
+                // A newly settled manual page cancels this delay and starts a
+                // fresh interval. Observe only settledPage: collecting the
+                // scrolling flag here would cancel our own auto animation.
+                if (!pagerState.isScrollInProgress && pagerState.settledPage == page) {
+                    pagerState.animateScrollToPage(page + 1)
+                }
             }
-        }
     }
 
     val activeIndex = positiveModulo(pagerState.settledPage, items.size)
