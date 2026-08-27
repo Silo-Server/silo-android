@@ -156,16 +156,17 @@ internal class MobileVideoPlaybackStarter(
 
             // The playback-focused /watch response currently omits artwork.
             // Detail screens cache the full catalog item before playback in the
-            // normal flow; deep links fall back to one best-effort detail fetch.
-            // Artwork enrichment must never prevent playback from starting.
+            // normal flow. Keep this fallback cache-only so optional artwork can
+            // never add a network request to, or prevent, playback startup.
+            val cachedDetail = runCatching {
+                catalogRepository.getCachedItemDetail(request.contentId)
+            }.onFailure { error ->
+                Log.w(TAG, "Could not read cached playback artwork", error)
+            }.getOrNull()
             val artworkUrl = watchDetail.backdropUrl?.takeIf { it.isNotBlank() }
                 ?: watchDetail.posterUrl?.takeIf { it.isNotBlank() }
-                ?: (catalogRepository.getItemDetailForPrefetch(request.contentId) as? ApiResult.Success)
-                    ?.data
-                    ?.let { detail ->
-                        detail.backdropUrl?.takeIf { it.isNotBlank() }
-                            ?: detail.posterUrl?.takeIf { it.isNotBlank() }
-                    }
+                ?: cachedDetail?.backdropUrl?.takeIf { it.isNotBlank() }
+                ?: cachedDetail?.posterUrl?.takeIf { it.isNotBlank() }
 
             val serverUrl = playbackSessionManager.getServerUrl()
             val preferredQuality = request.preferredQualityOverride
