@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Shield Playback"
+  short_description: "Verify playback paths on an NVIDIA Shield"
+  default_prompt: "Use $test-shield-playback to launch a title on the Shield and verify video, audio, and display output."
