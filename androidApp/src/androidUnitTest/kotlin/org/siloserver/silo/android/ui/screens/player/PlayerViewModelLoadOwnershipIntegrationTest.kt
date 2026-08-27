@@ -60,6 +60,7 @@ import org.siloserver.silo.common.downloads.LegacyDownloadImporter
 import org.siloserver.silo.common.downloads.OfflineMediaResolver
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.player.AudioCapabilityManager
+import org.siloserver.silo.common.player.FinalPlaybackPosition
 import org.siloserver.silo.common.player.FinalPlaybackPositionWriter
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
@@ -93,6 +94,7 @@ import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
@@ -270,6 +272,78 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun exitDuringInPlaceReloadWritesPreviousItemNotTheLoadingTarget() =
+        runTest(dispatcher) {
+            val starter = DeferredNonCooperativeStarter()
+            val written = mutableListOf<FinalPlaybackPosition>()
+            val fixture = playerViewModel(starter, backgroundScope, written)
+            val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+            try {
+                fixture.viewModel.loadContent(contentId = "episode-a", preferredFileId = 11)
+                starter.awaitRequestCount(1)
+                starter.complete(
+                    0,
+                    ready(starter.request(0), "session-a").copy(
+                        startPositionSeconds = 123.0,
+                        sourceStartPositionSeconds = 123.0,
+                    ),
+                )
+                fixture.viewModel.awaitState {
+                    it.contentId == "episode-a" &&
+                        it.sessionId == "session-a" &&
+                        !it.isLoading &&
+                        it.position == 123.0
+                }
+
+                fixture.viewModel.loadContent(contentId = "episode-b", preferredFileId = 22)
+                starter.awaitRequestCount(2)
+                fixture.viewModel.awaitState { it.contentId == "episode-b" && it.isLoading }
+                assertEquals(123.0, fixture.viewModel.uiState.value.position)
+                assertEquals(11, fixture.viewModel.uiState.value.mediaFileId)
+
+                fixture.viewModel.onExit()
+                advanceUntilIdle()
+
+                assertEquals(listOf("episode-a"), written.map { it.contentId })
+                assertEquals(listOf(11), written.map { it.fileId })
+                assertEquals(listOf(123.0), written.map { it.positionSeconds })
+            } finally {
+                store.clear()
+            }
+        }
+
+    @Test
+    fun exitAfterReadyStillWritesCurrentProgress() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val written = mutableListOf<FinalPlaybackPosition>()
+        val fixture = playerViewModel(starter, backgroundScope, written)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            fixture.viewModel.loadContent(contentId = "movie", preferredFileId = 8)
+            starter.awaitRequestCount(1)
+            starter.complete(
+                0,
+                ready(starter.request(0), "movie-session").copy(
+                    startPositionSeconds = 45.0,
+                    sourceStartPositionSeconds = 45.0,
+                ),
+            )
+            fixture.viewModel.awaitState {
+                it.contentId == "movie" && it.sessionId == "movie-session" && !it.isLoading
+            }
+
+            fixture.viewModel.onExit()
+            advanceUntilIdle()
+
+            assertEquals(listOf("movie"), written.map { it.contentId })
+            assertEquals(listOf(8), written.map { it.fileId })
+            assertEquals(listOf(45.0), written.map { it.positionSeconds })
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun clearDuringDeferredLoadRejectsAndStopsLateReady() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
@@ -291,6 +365,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     private fun playerViewModel(
         starter: DeferredNonCooperativeStarter,
         scope: CoroutineScope,
+        finalPositionWrites: MutableList<FinalPlaybackPosition>? = null,
     ): PlayerFixture {
         val client = noOpClient()
         val tokenManager = FakeTokenManager()
@@ -334,8 +409,19 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                 userItemStatePort = NoOpUserItemStatePort,
                 finalPlaybackPositionWriter = FinalPlaybackPositionWriter(
                     scope = scope,
-                    scopeProvider = { null },
-                    write = {},
+                    scopeProvider = {
+                        if (finalPositionWrites == null) {
+                            null
+                        } else {
+                            AuthScopeSnapshot(
+                                serverId = SERVER_ID,
+                                profileId = PROFILE_ID,
+                                serverUrl = "https://silo.test",
+                                profileToken = "token",
+                            )
+                        }
+                    },
+                    write = { snapshot -> finalPositionWrites?.add(snapshot) },
                 ),
             ),
             manager = manager,
