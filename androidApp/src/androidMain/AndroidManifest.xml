@@ -101,6 +101,14 @@
             </intent-filter>
         </service>
 
+        <!-- Phone-only Media3 projection of playback controlled on a Silo TV.
+             It is started explicitly, so it does not compete with the local
+             playback service as the package's media-button cold-start target. -->
+        <service
+            android:name=".cast.SiloCastMediaSessionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <service
             android:name=".push.SiloFirebaseMessagingService"
             android:exported="false">

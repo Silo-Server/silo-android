@@ -124,6 +124,7 @@ class SiloPlaybackService : MediaSessionService() {
     private val subtitleOffsetHolder: SubtitleOffsetHolder by inject()
 
     private var mediaSession: MediaSession? = null
+    private var mediaSessionBitmapLoader: SiloMediaSessionBitmapLoader? = null
     private lateinit var scope: CoroutineScope
     private var positionJob: Job? = null
     private var audioSyncJob: Job? = null
@@ -168,7 +169,11 @@ class SiloPlaybackService : MediaSessionService() {
                 "extension on classpath = ${FfmpegAudioSupport.isAvailable()}",
         )
 
-        mediaSession = MediaSession.Builder(this, player).build()
+        val bitmapLoader = SiloMediaSessionBitmapLoader(this)
+        mediaSessionBitmapLoader = bitmapLoader
+        mediaSession = MediaSession.Builder(this, player)
+            .setBitmapLoader(bitmapLoader)
+            .build()
 
         positionJob = scope.launch {
             while (isActive) {
@@ -350,6 +355,8 @@ class SiloPlaybackService : MediaSessionService() {
             release()
         }
         mediaSession = null
+        mediaSessionBitmapLoader?.close()
+        mediaSessionBitmapLoader = null
         activePlayer = null
         activePlayerHolder.set(null)
         val count = playerInstanceCount.decrementAndGet()

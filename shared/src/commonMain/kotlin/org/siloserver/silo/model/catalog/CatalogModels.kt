@@ -507,11 +507,9 @@ data class WatchDetail(
     @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
     @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
     @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,
-    // Presigned image URLs — match the server's ItemDetail response
-    // (silo-server/internal/catalog/detail.go:100-104). Consumed by the
-    // phone player's Now Playing lock-screen metadata; TV side reads
-    // them too for the same purpose when the MediaSession-driven
-    // notification surfaces (system media controls).
+    // Optional forward-compatible artwork. Current servers expose these on
+    // ItemDetail rather than WatchDetail, so playback clients must fall back
+    // to the full catalog detail when these fields are absent.
     @SerialName("poster_url") val posterUrl: String? = null,
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,

@@ -72,6 +72,14 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
         }.onFailure {
             android.util.Log.w("SiloApplication", "SiloCast foreground starter init failed", it)
         }
+        runCatching {
+            org.siloserver.silo.android.cast.SiloCastMediaSessionStarter(
+                context = this@SiloApplication,
+                controller = koinApp.koin.get(),
+            ).start()
+        }.onFailure {
+            android.util.Log.w("SiloApplication", "SiloCast media-session starter init failed", it)
+        }
         // Configuration.Provider wasn't reliably picked up by WM's androidx.startup
         // auto-init (the auto-init seemed to win the race, leaving WM with its
         // default reflection-based WorkerFactory). Force-initialise explicitly

@@ -274,8 +274,8 @@ class TvVideoPlaybackStarter(
                 container = readyV3.plan.stream.container ?: effectiveVersion?.container,
                 title = watchDetail.title,
                 subtitle = null,
-                artworkUrl = watchDetail.posterUrl?.takeIf { it.isNotBlank() }
-                    ?: watchDetail.backdropUrl?.takeIf { it.isNotBlank() },
+                artworkUrl = watchDetail.backdropUrl?.takeIf { it.isNotBlank() }
+                    ?: watchDetail.posterUrl?.takeIf { it.isNotBlank() },
                 startPositionSeconds = playerStartPos,
                 sourceStartPositionSeconds = sourceStartPos,
                 serverUrl = serverUrl,

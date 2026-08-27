@@ -154,6 +154,19 @@ internal class MobileVideoPlaybackStarter(
                 )
             }
 
+            // The playback-focused /watch response currently omits artwork.
+            // Detail screens cache the full catalog item before playback in the
+            // normal flow; deep links fall back to one best-effort detail fetch.
+            // Artwork enrichment must never prevent playback from starting.
+            val artworkUrl = watchDetail.backdropUrl?.takeIf { it.isNotBlank() }
+                ?: watchDetail.posterUrl?.takeIf { it.isNotBlank() }
+                ?: (catalogRepository.getItemDetailForPrefetch(request.contentId) as? ApiResult.Success)
+                    ?.data
+                    ?.let { detail ->
+                        detail.backdropUrl?.takeIf { it.isNotBlank() }
+                            ?: detail.posterUrl?.takeIf { it.isNotBlank() }
+                    }
+
             val serverUrl = playbackSessionManager.getServerUrl()
             val preferredQuality = request.preferredQualityOverride
                 ?: playerSettingsStore.preferredQualityFlow.first()
@@ -363,8 +376,10 @@ internal class MobileVideoPlaybackStarter(
                 container = readyV3.plan.stream.container ?: effectiveVersion?.container,
                 title = watchDetail.title,
                 subtitle = buildSubtitle(watchDetail).takeIf { it.isNotBlank() },
-                artworkUrl = watchDetail.posterUrl?.takeIf { it.isNotBlank() }
-                    ?: watchDetail.backdropUrl?.takeIf { it.isNotBlank() },
+                // Android's system media controls give artwork a wide canvas.
+                // Prefer the title backdrop there; portrait posters remain the
+                // fallback for catalog entries that do not have one.
+                artworkUrl = artworkUrl,
                 startPositionSeconds = playerStartPos,
                 sourceStartPositionSeconds = sourceStartPos,
                 serverUrl = serverUrl,
