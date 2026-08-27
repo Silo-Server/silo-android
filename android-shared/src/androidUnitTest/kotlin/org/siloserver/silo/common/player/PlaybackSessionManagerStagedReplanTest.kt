@@ -171,6 +171,42 @@ class PlaybackSessionManagerStagedReplanTest {
         ).data
 
         assertEquals("11", staged.outputContextId)
+        assertEquals(
+            listOf(basePlan().planAttemptKey),
+            harness.replanBodies.single()["attempted_plan_keys"]!!.jsonArray
+                .map { it.jsonPrimitive.content },
+        )
+    }
+
+    @Test
+    fun materialOutputRouteChangeRestartsFallbackHistory() = runTest {
+        val harness = Harness(
+            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+        )
+        harness.start()
+
+        assertIs<ApiResult.Success<StagedVideoReplan>>(
+            harness.manager.stageActiveVideoSessionReplan(
+                classification = "output_route_changed",
+                positionSeconds = 42.0,
+                audioTrackIndex = 0,
+                subtitleTrackIndex = 4,
+                clientPlaybackContext = ClientPlaybackContext(
+                    formFactor = "tv",
+                    appVersion = "test",
+                    output = PlaybackOutputContext(
+                        outputContextId = "11",
+                        sinkType = "hdmi",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(
+            emptyList(),
+            harness.replanBodies.single()["attempted_plan_keys"]!!.jsonArray
+                .map { it.jsonPrimitive.content },
+        )
     }
 
     @Test
