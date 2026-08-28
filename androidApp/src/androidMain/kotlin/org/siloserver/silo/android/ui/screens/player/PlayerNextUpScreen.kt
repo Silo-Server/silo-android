@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Canvas
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 
 /**
@@ -86,10 +88,12 @@ fun PlayerNextUpScreen(
                 ),
             ),
     ) {
+        val pageScrollState = rememberScrollState()
+        DeferImagePresentationWhileScrolling(pageScrollState) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(pageScrollState)
                 .padding(
                     horizontal = 24.dp,
                     vertical = if (compactTabletop) 12.dp else 24.dp,
@@ -226,7 +230,9 @@ fun PlayerNextUpScreen(
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val onDeckState = rememberLazyListState()
+                    DeferImagePresentationWhileScrolling(onDeckState) {
+                    LazyRow(state = onDeckState, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(onDeckItems, key = { it.contentId }) { item ->
                             OnDeckCard(
                                 item = item,
@@ -234,8 +240,10 @@ fun PlayerNextUpScreen(
                             )
                         }
                     }
+                    }
                 }
             }
+        }
         }
     }
 }

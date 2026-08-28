@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.repository.NotificationsRepository
 import kotlinx.coroutines.launch
@@ -137,7 +138,8 @@ fun InboxScreen(
                     title = "You're all caught up",
                     subtitle = "New episode and request notifications will show up here.",
                 )
-                else -> LazyColumn(
+                else -> DeferImagePresentationWhileScrolling(listState) {
+                LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -168,6 +170,7 @@ fun InboxScreen(
                             }
                         }
                     }
+                }
                 }
             }
         }

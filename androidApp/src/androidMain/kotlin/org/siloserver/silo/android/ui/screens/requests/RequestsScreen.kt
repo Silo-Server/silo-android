@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
@@ -97,7 +99,10 @@ fun RequestsScreen(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
+                    val feedState = rememberLazyListState()
+                    DeferImagePresentationWhileScrolling(feedState) {
                     LazyColumn(
+                        state = feedState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -157,6 +162,7 @@ fun RequestsScreen(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }
@@ -278,7 +284,10 @@ private fun RequestMediaRow(
     onMediaClick: (RequestMediaResult) -> Unit,
     onLibraryItemClick: (String) -> Unit,
 ) {
+    val rowState = rememberLazyListState()
+    DeferImagePresentationWhileScrolling(rowState) {
     LazyRow(
+        state = rowState,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(end = 16.dp),
     ) {
@@ -299,6 +308,7 @@ private fun RequestMediaRow(
                 },
             )
         }
+    }
     }
 }
 

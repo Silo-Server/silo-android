@@ -21,7 +21,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -61,6 +63,7 @@ import org.siloserver.silo.android.ui.screens.browse.CatalogViewDensity
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesSubtab
 import org.siloserver.silo.android.ui.screens.libraries.LibraryBrowseSort
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.navigation.ReadingFormatFilter
 import org.siloserver.silo.model.profile.Profile
@@ -393,7 +396,10 @@ private fun ReadingRecommendedTab(
             )
         }
         else -> {
+            val listState = rememberLazyListState()
+            DeferImagePresentationWhileScrolling(listState) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(top = ReadingContentTopPadding, bottom = 96.dp),
@@ -409,6 +415,7 @@ private fun ReadingRecommendedTab(
                         onItemClick = onItemClick,
                     )
                 }
+            }
             }
         }
     }
@@ -547,7 +554,10 @@ private fun ReadingCollectionsTab(
             )
         }
         else -> {
+            val gridState = rememberLazyGridState()
+            DeferImagePresentationWhileScrolling(gridState) {
             LazyVerticalGrid(
+                state = gridState,
                 columns = GridCells.Adaptive(minSize = 140.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -564,6 +574,7 @@ private fun ReadingCollectionsTab(
                         onClick = { onCollectionClick(collection.id) },
                     )
                 }
+            }
             }
         }
     }

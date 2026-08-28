@@ -63,6 +63,7 @@ import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.overlays.OverlayDataExtractor
 
@@ -99,8 +100,10 @@ fun CatalogGrid(
     val gridState = rememberLazyGridState()
     val cardWidth = viewDensity.minCardWidth
 
-    // Trigger load more when scrolled near bottom
-    val shouldLoadMore by remember {
+    // Trigger load more when scrolled near bottom. Keyed on the flags: a
+    // keyless remember would freeze their first-composition values inside the
+    // derived lambda (they are plain params, not snapshot state).
+    val shouldLoadMore by remember(hasMore, isLoadingMore) {
         derivedStateOf {
             val lastVisibleItem = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             val totalItems = gridState.layoutInfo.totalItemsCount
@@ -115,6 +118,7 @@ fun CatalogGrid(
     }
 
     Box(modifier = modifier) {
+        DeferImagePresentationWhileScrolling(gridState) {
         LazyVerticalGrid(
             // iOS phone: adaptive poster grid, 110pt minimum card width, 12pt
             // column spacing, 16pt row spacing, 16pt horizontal page padding.
@@ -172,6 +176,7 @@ fun CatalogGrid(
                     }
                 }
             }
+        }
         }
 
         onNamePrefixSelected?.let { onSelected ->

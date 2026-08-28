@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -22,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.screens.requests.RequestMediaCard
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
@@ -76,7 +78,10 @@ fun RequestSearchSection(
         )
         when {
             visibleResults.isNotEmpty() -> {
+                val rowState = rememberLazyListState()
+                DeferImagePresentationWhileScrolling(rowState) {
                 LazyRow(
+                    state = rowState,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(end = 16.dp),
                 ) {
@@ -97,6 +102,7 @@ fun RequestSearchSection(
                             },
                         )
                     }
+                }
                 }
             }
             state.isLoading -> RequestSearchFeedback("Checking requestable titles...", showProgress = true)

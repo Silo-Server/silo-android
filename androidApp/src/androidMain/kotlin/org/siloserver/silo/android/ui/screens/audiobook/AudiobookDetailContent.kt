@@ -58,6 +58,8 @@ import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.ebook.MediaRelatedContent
 import org.siloserver.silo.model.ebook.MediaRelatedItem
 import org.siloserver.silo.model.ebook.MediaSeriesGroup
+import androidx.compose.foundation.lazy.rememberLazyListState
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 
 /**
  * Phone audiobook detail. Cover + author + narrator above, then the
@@ -141,7 +143,10 @@ fun AudiobookDetailContent(
     var chaptersExpanded by remember { mutableStateOf(true) }
     // Clear the status bar / camera cutout so the cover isn't tucked under it.
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val feedState = rememberLazyListState()
+    DeferImagePresentationWhileScrolling(feedState) {
     LazyColumn(
+        state = feedState,
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
@@ -392,6 +397,7 @@ fun AudiobookDetailContent(
                 }
             }
         }
+    }
     }
 }
 

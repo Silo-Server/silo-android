@@ -2,35 +2,22 @@ package org.siloserver.silo.network
 
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
-import okhttp3.ConnectionPool
-import okhttp3.Dispatcher
-import java.util.concurrent.TimeUnit
 
 /**
  * Android platform HttpClient using the OkHttp engine.
  *
- * The app fans out many small REST calls per screen — e.g. a library's
- * Recommended view resolves one `/sections/{id}/items` request per section
- * (10–12 of them) and the Home grid does the same. OkHttp's default
- * [Dispatcher] caps concurrency at 64 total / **5 per host**, so a 10–12 way
- * fan-out to a single server runs in 2–3 sequential waves instead of in
- * parallel, multiplying the wall-clock time the loading spinner is visible.
- *
- * We raise the per-host ceiling so the fan-out runs in one wave, and keep a
- * larger keep-alive [ConnectionPool] so those parallel requests reuse warm TLS
- * connections rather than renegotiating.
+ * Concurrency tuning and the shared connection pool live in [SiloOkHttp]; the
+ * dispatcher is built fresh per client because Ktor's OkHttp engine derives a
+ * new `OkHttpClient` for each Ktor client (force-resetting the dispatcher in
+ * the process), and per-client dispatchers keep API, diagnostics, and image
+ * traffic from queueing behind each other.
  */
 actual fun createPlatformHttpClient(): HttpClient {
     return HttpClient(OkHttp) {
         engine {
             config {
-                dispatcher(
-                    Dispatcher().apply {
-                        maxRequests = 64
-                        maxRequestsPerHost = 16
-                    },
-                )
-                connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+                dispatcher(SiloOkHttp.newDispatcher())
+                connectionPool(SiloOkHttp.connectionPool)
             }
         }
     }

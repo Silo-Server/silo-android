@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
@@ -58,6 +59,7 @@ import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
 import org.siloserver.silo.android.ui.components.MediaRowsSkeleton
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -231,7 +233,10 @@ fun RecommendationsScreen(
                     onRefresh = { viewModel.refresh() },
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    val listState = rememberLazyListState()
+                    DeferImagePresentationWhileScrolling(listState) {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         // Content starts under the header glass and keeps room for
                         // the floating bottom nav while preserving iOS section
@@ -258,6 +263,7 @@ fun RecommendationsScreen(
                                 onItemClick = onItemClick,
                             )
                         }
+                    }
                     }
                 }
                 else -> SavedListGrid(

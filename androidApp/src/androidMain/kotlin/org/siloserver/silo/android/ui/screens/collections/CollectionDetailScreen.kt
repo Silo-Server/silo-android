@@ -34,6 +34,7 @@ import org.siloserver.silo.android.ui.components.LoadingIndicator
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.personal.MediaGridItem
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,6 +101,7 @@ fun CollectionDetailScreen(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
+                    DeferImagePresentationWhileScrolling(gridState) {
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
                         state = gridState,
@@ -132,6 +134,7 @@ fun CollectionDetailScreen(
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

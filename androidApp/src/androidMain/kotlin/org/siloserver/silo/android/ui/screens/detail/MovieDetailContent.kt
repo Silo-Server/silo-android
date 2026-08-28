@@ -46,6 +46,8 @@ import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
+import androidx.compose.foundation.lazy.rememberLazyListState
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 
 /**
  * Phone movie / episode detail. Cinematic backdrop hero up top, then a
@@ -132,7 +134,10 @@ fun MovieDetailContent(
 
     // iOS below-fold section spacing is 36 (hero→first section 32). Use 36
     // uniformly — the closest single-value match to the iOS column rhythm.
+    val feedState = rememberLazyListState()
+    DeferImagePresentationWhileScrolling(feedState) {
     LazyColumn(
+        state = feedState,
         modifier = modifier
             .fillMaxSize()
             .background(SiloBackground)
@@ -360,6 +365,7 @@ fun MovieDetailContent(
         item(contentType = "detail-spacer") {
             Spacer(modifier = Modifier.height(40.dp))
         }
+    }
     }
 
     if (showVersionPicker) {

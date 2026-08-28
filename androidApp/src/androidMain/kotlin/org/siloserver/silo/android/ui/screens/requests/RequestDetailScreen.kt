@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Info
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaResult
@@ -117,7 +119,10 @@ private fun RequestDetailContent(
     onLibraryItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val listState = rememberLazyListState()
+    DeferImagePresentationWhileScrolling(listState) {
     LazyColumn(
+        state = listState,
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -246,7 +251,10 @@ private fun RequestDetailContent(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
+                    val recRowState = rememberLazyListState()
+                    DeferImagePresentationWhileScrolling(recRowState) {
                     LazyRow(
+                        state = recRowState,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         contentPadding = PaddingValues(horizontal = 16.dp),
                     ) {
@@ -260,9 +268,11 @@ private fun RequestDetailContent(
                             )
                         }
                     }
+                    }
                 }
             }
         }
+    }
     }
 }
 

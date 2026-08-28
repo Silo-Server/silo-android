@@ -36,7 +36,11 @@ kotlin {
 
             // Image loading
             implementation(libs.coil.compose)
-            implementation(libs.coil.network.ktor)
+            implementation(libs.coil.network.okhttp)
+
+            // Ktor client (DownloadWorker streaming, diagnostics upload).
+            // Previously satisfied transitively by coil-network-ktor3.
+            implementation(libs.ktor.client.core)
 
             // Media3 player infrastructure
             implementation(libs.media3.exoplayer)

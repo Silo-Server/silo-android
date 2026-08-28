@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -23,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.canCancel
 import org.siloserver.silo.viewmodel.MyRequestsViewModel
@@ -62,7 +64,10 @@ fun MyRequestsScreen(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
+                    val listState = rememberLazyListState()
+                    DeferImagePresentationWhileScrolling(listState) {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -111,6 +116,7 @@ fun MyRequestsScreen(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }
