@@ -284,6 +284,14 @@ class SiloCastController(
         clock.setOptimisticPlaying(!isPlaying(), nowMs())
     }
 
+    /** Idempotent transport command used by Android system media controls. */
+    fun setPlaying(playing: Boolean) {
+        sendControl(
+            if (playing) SiloCastControlCommand.play() else SiloCastControlCommand.pause(),
+        )
+        clock.setOptimisticPlaying(playing, nowMs())
+    }
+
     fun seek(seconds: Double) {
         sendControl(SiloCastControlCommand.seek(seconds))
         clock.setOptimisticTime(seconds, nowMs())

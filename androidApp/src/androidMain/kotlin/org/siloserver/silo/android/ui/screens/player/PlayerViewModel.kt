@@ -370,8 +370,8 @@ class PlayerViewModel(
         val subtitle: String = "",
         /**
          * Artwork URL used for the Now Playing lock-screen / Bluetooth /
-         * notification surface. Sourced from `WatchDetail.posterUrl` with
-         * `backdropUrl` fallback. Threaded into MediaItem.MediaMetadata so
+         * notification surface. Sourced from `WatchDetail.backdropUrl` with
+         * `posterUrl` fallback. Threaded into MediaItem.MediaMetadata so
          * the MediaSession publishes it to the OS. Mirrors iOS phone's
          * `NowPlayingController.setArtworkURL`.
          */
@@ -4268,8 +4268,8 @@ class PlayerViewModel(
             sessionPosition = 0.0,
             detailPosition = detailPos,
         )
-        val artworkUrl = watchDetail?.posterUrl?.takeIf { url -> url.isNotBlank() }
-            ?: watchDetail?.backdropUrl?.takeIf { url -> url.isNotBlank() }
+        val artworkUrl = watchDetail?.backdropUrl?.takeIf { url -> url.isNotBlank() }
+            ?: watchDetail?.posterUrl?.takeIf { url -> url.isNotBlank() }
             ?: sidecar.posterUrl?.takeIf { url -> url.isNotBlank() }
 
         val published = loadOwners.runIfOwned(loadOwner) {
