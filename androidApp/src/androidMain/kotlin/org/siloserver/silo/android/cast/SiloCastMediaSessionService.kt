@@ -59,9 +59,16 @@ class SiloCastMediaSessionService : MediaSessionService() {
         player = SiloCastRemotePlayer(Looper.getMainLooper(), controller)
         val bitmapLoader = SiloMediaSessionBitmapLoader(this)
         mediaSessionBitmapLoader = bitmapLoader
-        mediaSession = MediaSession.Builder(this, player)
+        val session = MediaSession.Builder(this, player)
             .setBitmapLoader(bitmapLoader)
             .build()
+        mediaSession = session
+        // Started explicitly rather than by a MediaController bind, so the
+        // session is never returned from onGetSession unless we register it.
+        // Without addSession, Media3 never shows a notification or calls
+        // startForeground() — and a startForegroundService() from the starter
+        // would then be killed by the platform watchdog.
+        addSession(session)
 
         stateJob = scope.launch {
             controller.state.collect { state ->
