@@ -6,8 +6,6 @@ import androidx.work.WorkManager
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
-import coil3.disk.DiskCache
-import coil3.request.crossfade
 import org.siloserver.silo.common.di.playerInfraModule
 import org.siloserver.silo.common.di.playerModule
 import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
@@ -17,9 +15,9 @@ import org.siloserver.silo.di.sharedModules
 import org.siloserver.silo.tv.di.androidTvModule
 import org.siloserver.silo.tv.watchnext.TvWorkerFactory
 import kotlinx.coroutines.launch
-import okio.Path.Companion.toOkioPath
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
+import org.siloserver.silo.common.images.buildSiloImageLoader
 
 /**
  * Implements `Configuration.Provider` rather than installing Koin's
@@ -109,18 +107,7 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
                 .build()
         }
 
-    /**
-     * Tunes the shared Coil image loader with a generous on-disk artwork cache
-     * so posters/backdrops survive between sessions. Mirrors the phone app.
-     */
+    /** Coil setup is shared with the phone app — see [buildSiloImageLoader]. */
     override fun newImageLoader(context: PlatformContext): ImageLoader =
-        ImageLoader.Builder(context)
-            .crossfade(true)
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache").toOkioPath())
-                    .maxSizeBytes(512L * 1024 * 1024)
-                    .build()
-            }
-            .build()
+        buildSiloImageLoader(context, cacheDir)
 }

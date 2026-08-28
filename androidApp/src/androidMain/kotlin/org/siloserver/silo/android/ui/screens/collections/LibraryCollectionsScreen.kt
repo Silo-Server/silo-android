@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CollectionsBookmark
@@ -43,6 +44,7 @@ import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.LibraryCollectionsResponse
@@ -233,8 +235,11 @@ fun LibraryCollectionsScreen(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
+                    val gridState = rememberLazyGridState()
+                    DeferImagePresentationWhileScrolling(gridState) {
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+                        state = gridState,
                         contentPadding = PaddingValues(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
                         verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
@@ -265,6 +270,7 @@ fun LibraryCollectionsScreen(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }

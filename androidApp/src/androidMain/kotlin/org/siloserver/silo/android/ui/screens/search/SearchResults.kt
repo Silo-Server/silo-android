@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.BrowseItem
 
 /**
@@ -65,8 +66,10 @@ fun SearchResults(
         }
     }
 
-    // Trigger load more when scrolled near bottom
-    val shouldLoadMore by remember {
+    // Trigger load more when scrolled near bottom. Keyed on the flags: a
+    // keyless remember would freeze their first-composition values inside the
+    // derived lambda (they are plain params, not snapshot state).
+    val shouldLoadMore by remember(hasMore, isSearching) {
         derivedStateOf {
             val lastVisible = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             val totalItems = gridState.layoutInfo.totalItemsCount
@@ -78,6 +81,7 @@ fun SearchResults(
         if (shouldLoadMore) onLoadMore()
     }
 
+    DeferImagePresentationWhileScrolling(gridState) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
         state = gridState,
@@ -139,5 +143,6 @@ fun SearchResults(
                 }
             }
         }
+    }
     }
 }

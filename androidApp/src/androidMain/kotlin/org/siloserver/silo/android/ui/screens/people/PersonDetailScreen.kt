@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.border
@@ -58,6 +59,7 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.SiloSurfaceVariant
 import org.siloserver.silo.android.ui.theme.PillShape
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.Person
@@ -159,8 +161,11 @@ private fun PersonDetailContent(
     onLoadMore: () -> Unit,
     onItemClick: (String) -> Unit,
 ) {
+    val gridState = rememberLazyGridState()
+    DeferImagePresentationWhileScrolling(gridState) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 110.dp),
+        state = gridState,
         contentPadding = PaddingValues(
             start = SafePadding,
             end = SafePadding,
@@ -250,6 +255,7 @@ private fun PersonDetailContent(
                 }
             }
         }
+    }
     }
 }
 

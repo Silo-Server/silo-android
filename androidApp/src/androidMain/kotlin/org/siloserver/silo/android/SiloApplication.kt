@@ -9,8 +9,6 @@ import androidx.work.WorkManager
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
-import coil3.disk.DiskCache
-import coil3.request.crossfade
 import org.siloserver.silo.android.di.androidModule
 import org.siloserver.silo.android.downloads.AppWorkerFactory
 import org.siloserver.silo.android.notifications.NotificationsForegroundStarter
@@ -23,9 +21,9 @@ import org.siloserver.silo.common.diagnostics.diagnosticsModule
 import org.siloserver.silo.common.downloads.DownloadWorker
 import org.siloserver.silo.di.sharedModules
 import kotlinx.coroutines.launch
-import okio.Path.Companion.toOkioPath
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
+import org.siloserver.silo.common.images.buildSiloImageLoader
 
 /**
  * Implements `Configuration.Provider` rather than calling
@@ -159,22 +157,9 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
                 .build()
         }
 
-    /**
-     * Tunes the shared Coil image loader: a generous on-disk artwork cache so
-     * posters/backdrops survive between sessions (Coil's default disk cap is
-     * small — 2% of free space, capped at 250MB). Memory cache and network
-     * stack stay at Coil's heap-proportional defaults.
-     */
+    /** Coil setup is shared with the TV app — see [buildSiloImageLoader]. */
     override fun newImageLoader(context: PlatformContext): ImageLoader =
-        ImageLoader.Builder(context)
-            .crossfade(true)
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache").toOkioPath())
-                    .maxSizeBytes(512L * 1024 * 1024)
-                    .build()
-            }
-            .build()
+        buildSiloImageLoader(context, cacheDir)
 
     /**
      * Channel for offline download progress / completion notifications.

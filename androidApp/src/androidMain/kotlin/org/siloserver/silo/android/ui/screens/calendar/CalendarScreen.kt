@@ -76,6 +76,7 @@ import dev.chrisbanes.haze.rememberHazeState
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.common.calendar.localDisplayAirTime
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.calendar.CalendarBadge
 import org.siloserver.silo.model.calendar.CalendarFilter
@@ -176,6 +177,7 @@ fun CalendarScreen(
             },
         ) {
             if (cardHeightPx > 0) {
+                DeferImagePresentationWhileScrolling(listState) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -223,6 +225,7 @@ fun CalendarScreen(
                             )
                         }
                     }
+                }
                 }
             }
         }
@@ -639,13 +642,17 @@ private fun DayShelf(
                 )
             }
         } else {
+            val rowState = rememberLazyListState()
+            DeferImagePresentationWhileScrolling(rowState) {
             LazyRow(
+                state = rowState,
                 horizontalArrangement = Arrangement.spacedBy(Spacing), // iOS cardSpacing = spacing
                 contentPadding = PaddingValues(horizontal = SafePadding),
             ) {
                 items(items, key = { it.contentId }) { item ->
                     CalendarEventCard(item = item, onClick = { onItemClick(item.detailContentId) })
                 }
+            }
             }
         }
     }

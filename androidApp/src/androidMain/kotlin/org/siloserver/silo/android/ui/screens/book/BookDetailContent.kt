@@ -51,6 +51,8 @@ import org.siloserver.silo.model.ebook.bookFormatFromEbookVersion
 import org.siloserver.silo.model.ebook.ebookFormatDisplayName
 import org.siloserver.silo.model.ebook.ebookFormatSupport
 import org.siloserver.silo.model.ebook.isSupportedEbookVersion
+import androidx.compose.foundation.lazy.rememberLazyListState
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 
 /**
  * Phone book detail. Tall cover on the left (2:3 like a movie poster
@@ -137,7 +139,10 @@ fun BookDetailContent(
     // Clear the status bar / camera cutout so the cover + title aren't tucked
     // under it (matches the audiobook detail).
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val feedState = rememberLazyListState()
+    DeferImagePresentationWhileScrolling(feedState) {
     LazyColumn(
+        state = feedState,
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
@@ -374,6 +379,7 @@ fun BookDetailContent(
                 )
             }
         }
+    }
     }
 }
 

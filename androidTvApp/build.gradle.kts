@@ -113,7 +113,7 @@ kotlin {
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.coil.compose)
-            implementation(libs.coil.network.ktor)
+            implementation(libs.coil.network.okhttp)
             implementation(libs.media3.exoplayer)
             implementation(libs.media3.exoplayer.hls)
             implementation(libs.media3.datasource.okhttp)
