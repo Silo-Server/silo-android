@@ -811,7 +811,13 @@ fun TvSkylineSectionFeed(
                             itemSpacing = TvSkylineItemSpacing,
                             rowTopPadding = TvSkylineRowCardVerticalPadding,
                             rowBottomPadding = TvSkylineRowCardVerticalPadding,
-                            posterWidth = RowDimens.DensePosterWidth,
+                            // Standard poster size, not Dense: issue #163 --
+                            // dense cards (88x132) packed 9 per row but read as
+                            // too small on a 10-ft TV screen, with rating/progress
+                            // overlays hard to make out. The larger card trades
+                            // row density (~6-7 visible instead of 9) for
+                            // legibility, matching Emby/Wholphin's balance.
+                            posterWidth = RowDimens.PosterWidth,
                             firstItemFocusRequester = resolvedFirstRowFocusRequester
                                 .takeIf { isFirstRow },
                             rowContainerFocusRequester = when {
@@ -879,8 +885,13 @@ private val TvSkylineRowCardVerticalPadding = 7.dp
 /** tvOS rowBandBottomInset 20pt maps to 10dp. */
 private val TvSkylineRowBandBottomInset = 10.dp
 
-/** Portion of the screen reserved for the row stack. */
-private const val TvSkylineRowBandHeightFraction = 0.50f
+/**
+ * Portion of the screen reserved for the row stack. Raised from 0.50 alongside
+ * the switch from [RowDimens.DensePosterWidth] to [RowDimens.PosterWidth]
+ * (issue #163): the taller standard-size poster needs more room to clear the
+ * band without clipping the next row's peek.
+ */
+private const val TvSkylineRowBandHeightFraction = 0.58f
 
 /** Gap between the marquee block and the top of the row band. */
 private val TvSkylineMarqueeBottomGap = 4.dp

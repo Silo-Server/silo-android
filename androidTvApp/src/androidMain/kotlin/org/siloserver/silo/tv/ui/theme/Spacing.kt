@@ -165,10 +165,6 @@ object RowDimens {
     val PosterHeight = 195.dp
     val PosterWidth = 130.dp
 
-    /** Dense Skyline Home/Browse poster — tvOS `densePosterCardWidth` 176pt → 88dp. */
-    val DensePosterHeight = 132.dp
-    val DensePosterWidth = 88.dp
-
     /** 16:9 episode/backdrop card — tvOS 360×200pt → 180×100dp. */
     val BackdropHeight = 100.dp
     val BackdropWidth = 180.dp
