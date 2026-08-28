@@ -39,6 +39,7 @@ import org.siloserver.silo.common.cast.SiloCastFrameBuffer
 import org.siloserver.silo.common.cast.SiloCastNsdAdvertiser
 import org.siloserver.silo.common.lan.SiloCastTls
 import org.siloserver.silo.common.lan.SiloCastTlsSession
+import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ServerRegistry
 
 /**
@@ -92,6 +93,7 @@ class TvSiloCastReceiver(
      *  register — they belong to the previous epoch. */
     private var sessionEpoch: Long = 0
     private var activePlayer: ActivePlayer? = null
+    private val volumeTracker = SiloCastVolumeTracker()
     private val launchRequestChannel = Channel<SiloCastLaunchRequest>(capacity = 1)
     val launchRequests: Flow<SiloCastLaunchRequest> = launchRequestChannel.receiveAsFlow()
     private var pendingPlayerIdentityGeneration: String? = null
@@ -229,6 +231,19 @@ class TvSiloCastReceiver(
     fun disconnectRemoteControl() {
         closePreviousController()
     }
+
+    internal fun recordPlayerVolume(volume: Double) {
+        volumeTracker.recordVolume(volume)
+    }
+
+    internal fun recordPlayerMuted(isMuted: Boolean, currentVolume: Double?) {
+        volumeTracker.recordMuted(isMuted, currentVolume)
+    }
+
+    internal fun retainedPlayerVolume(): Double = volumeTracker.retainedAudibleVolume()
+
+    internal fun resolvePlayerVolume(currentVolume: Double?): SiloCastVolumeState =
+        volumeTracker.resolve(currentVolume)
 
     private suspend fun acceptLoop(socket: ServerSocket) {
         while (true) {
@@ -374,7 +389,7 @@ class TvSiloCastReceiver(
                 val activeServerId = identityManager.activeIdentity?.serverId
                     ?: serverRegistry.activeServerId.value
                 val offered = message.hello.serverId
-                session.isAuthorized = !offered.isNullOrEmpty() && activeServerId != null && offered == activeServerId
+                session.isAuthorized = AndroidServerRegistry.serverIdsMatch(offered, activeServerId)
                 DiagnosticsCastLogger.event(
                     if (session.isAuthorized) "TV cast controller authorized" else "TV cast handoff required",
                 )
@@ -496,7 +511,11 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
-                if (message.launch.serverId != identityManager.activeIdentity?.serverId) {
+                if (!AndroidServerRegistry.serverIdsMatch(
+                        message.launch.serverId,
+                        identityManager.activeIdentity?.serverId,
+                    )
+                ) {
                     session.send(
                         SiloCastMessage.Error(
                             SiloCastError(
@@ -581,7 +600,10 @@ class TvSiloCastReceiver(
             refreshAdvertisement()
             val session = activeSession
             if (session != null) {
-                session.isAuthorized = session.controllerServerId == serverRegistry.activeServerId.value
+                session.isAuthorized = AndroidServerRegistry.serverIdsMatch(
+                    session.controllerServerId,
+                    serverRegistry.activeServerId.value,
+                )
                 if (session.isAuthorized) {
                     session.send(SiloCastMessage.State(currentState()))
                     refreshStandbyState()
