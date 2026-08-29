@@ -830,7 +830,20 @@ fun TvSkylineSectionFeed(
                             // moved horizontally can otherwise sit outside the
                             // composed window, leaving the requester unattached
                             // and every retry doomed.
-                            restoreFocusRequest = if (isReturnRow) returnRestoreRequest else 0,
+                            //
+                            // Gated on a ladder being IN FLIGHT, not on the row
+                            // merely being the return row: the pending target is
+                            // re-armed by every focus move and the counter
+                            // outlives its ladder, so an ungated request
+                            // re-fired the row's instant restore scrollToItem on
+                            // every focus move after a detail round trip —
+                            // cancelling the rail pin's animated glide. Ordinary
+                            // row rendering must never move the row.
+                            restoreFocusRequest = if (isReturnRow && restorationsInFlight > 0) {
+                                returnRestoreRequest
+                            } else {
+                                0
+                            },
                             restoreFocusRequester = detailReturnItemFocusRequester
                                 .takeIf { isReturnRow },
                             onItemFocusedAtIndex = { item, itemIndex ->
