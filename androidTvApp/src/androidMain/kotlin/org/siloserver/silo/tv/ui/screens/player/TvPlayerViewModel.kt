@@ -1775,6 +1775,15 @@ class TvPlayerViewModel(
      */
     fun onTransportMountApplied(nonce: Long) {
         if (transportMountGate.applied(nonce)) {
+            // The mounted item was replaced. Facts from the previous
+            // transport's window must not be mapped through the new plan's
+            // timeline offset — that can overstate the new extent and turn a
+            // target the new transport cannot serve into a silent,
+            // wrong-position native seek. The next poll tick (≤500ms)
+            // repopulates from the mounted item; until then the hint is
+            // absent, which at worst costs an unnecessary reanchor.
+            playerWindowIsSeekable = false
+            playerWindowEndPlayerMs = -1L
             pendingNativeSeekAfterMount?.let { targetSeconds ->
                 pendingNativeSeekAfterMount = null
                 // Re-evaluate against the plan that actually won the load;
@@ -2696,10 +2705,20 @@ class TvPlayerViewModel(
      * Mounted-transport facts from the screen's 500ms poll (the VM stays free
      * of MediaController references — the screen owns the player, the same
      * split as [onPositionChanged]). Read by [mountedSeekableSourceRange] at
-     * seek-commit time; a slightly stale window end only ever costs an
+     * seek-commit time. Two staleness rules keep the hint honest:
+     *
+     * - Reports are dropped while [transportMountGate] is suppressing: they
+     *   describe the OLD MediaItem, and mapping them through the new plan's
+     *   timeline offset would overstate the new transport's extent.
+     * - [onTransportMountApplied] clears the facts when a mount wins, so
+     *   until the next poll tick reads the new item the hint is absent and
+     *   ambiguous targets fall back to a server reanchor.
+     *
+     * Within one mounted item a slightly stale window end only ever costs an
      * unnecessary reanchor, never a wrongly-native seek.
      */
     fun onPlayerWindowChanged(isSeekable: Boolean, windowEndPlayerMs: Long) {
+        if (transportMountGate.suppressPositionReports) return
         playerWindowIsSeekable = isSeekable
         playerWindowEndPlayerMs = windowEndPlayerMs
     }
