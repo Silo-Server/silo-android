@@ -73,6 +73,29 @@ internal fun tvPlayerRemoteKeyAction(
             else -> TvPlayerRemoteKeyAction.ConsumeOnly
         }
 
+    // Dedicated transport seek keys (the Shield remote's rewind/fast-forward
+    // buttons, Bluetooth and IR seek keys). Unlike Left/Right these are never
+    // focus navigation, so they skip in every surface state and deliberately
+    // ignore `dpadHorizontalSeek`. Mapping them here is also what makes the
+    // FIRST press seek: left unmapped, the player bridge's null-action branch
+    // only reveals the transport controls and swallows the event, so the user
+    // must press twice. UP halves and auto-repeats are consumed so the system
+    // media-key fallback can't seek a second time (same contract as
+    // PlayPause above).
+    KeyEvent.KEYCODE_MEDIA_REWIND,
+    KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD,
+    -> when {
+        action == KeyEvent.ACTION_DOWN && repeatCount == 0 -> TvPlayerRemoteKeyAction.SkipBack
+        else -> TvPlayerRemoteKeyAction.ConsumeOnly
+    }
+
+    KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+    KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD,
+    -> when {
+        action == KeyEvent.ACTION_DOWN && repeatCount == 0 -> TvPlayerRemoteKeyAction.SkipForward
+        else -> TvPlayerRemoteKeyAction.ConsumeOnly
+    }
+
     KeyEvent.KEYCODE_MENU,
     KeyEvent.KEYCODE_SETTINGS,
     -> if (action == KeyEvent.ACTION_UP) TvPlayerRemoteKeyAction.OpenSettingsHud else null
