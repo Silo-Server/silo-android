@@ -53,6 +53,7 @@ import org.siloserver.silo.android.ui.components.MediaCardContextMenu
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.WatchedBadge
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
@@ -250,6 +251,7 @@ private fun PersonalMediaGridContent(
             ) {
                 // contentPadding goes inside the grid so items scroll edge to
                 // edge under any chrome the caller reserved space for.
+                DeferImagePresentationWhileScrolling(gridState) {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
                     state = gridState,
@@ -292,6 +294,7 @@ private fun PersonalMediaGridContent(
                             }
                         }
                     }
+                }
                 }
             }
         }

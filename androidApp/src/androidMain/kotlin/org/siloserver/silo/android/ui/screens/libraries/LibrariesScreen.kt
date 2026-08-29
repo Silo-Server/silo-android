@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -108,6 +109,7 @@ import org.siloserver.silo.catalog.filter.CatalogFacet
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
 import org.siloserver.silo.common.ui.components.avatarRef
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
@@ -965,6 +967,7 @@ private fun RecommendedTabContent(
             // another row, kept in the order the server configured it.
             // iOS `LibraryRecommendedView`: LazyVStack(spacing: largePadding = 24)
             // between section rows.
+            DeferImagePresentationWhileScrolling(listState) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
@@ -988,6 +991,7 @@ private fun RecommendedTabContent(
                 item {
                     Spacer(modifier = Modifier.height(24.dp + LocalBottomChromeInset.current))
                 }
+            }
             }
         }
     }
@@ -1191,8 +1195,11 @@ private fun CollectionsTabContent(
             // iOS `LibraryCollectionsView`: adaptive poster grid with shared
             // column/row spacing and 16pt padding insets. Follows the Library
             // grid's view density so both tabs show the same column count.
+            val gridState = rememberLazyGridState()
+            DeferImagePresentationWhileScrolling(gridState) {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(state.catalogDensity.minCardWidth),
+                state = gridState,
                 horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
                 verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
                 modifier = Modifier.fillMaxSize(),
@@ -1213,6 +1220,7 @@ private fun CollectionsTabContent(
                         onClick = { onCollectionClick(collection.id) },
                     )
                 }
+            }
             }
         }
     }

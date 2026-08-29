@@ -118,7 +118,10 @@ kotlin {
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.coil.compose)
             implementation(libs.haze)
-            implementation(libs.coil.network.ktor)
+            implementation(libs.coil.network.okhttp)
+            // Ktor client (download worker wiring). Previously satisfied
+            // transitively by coil-network-ktor3.
+            implementation(libs.ktor.client.core)
             implementation(libs.jsoup)
             implementation(libs.media3.exoplayer)
             implementation(libs.media3.exoplayer.hls)

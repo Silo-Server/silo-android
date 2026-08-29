@@ -34,7 +34,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -67,7 +66,7 @@ import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingBottomOver
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.pairing.CompanionPairingStatus
 import org.siloserver.silo.common.pairing.CompanionPairingTarget
-import org.siloserver.silo.common.ui.components.LocalImagePresentationDeferral
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.profile.Profile
@@ -126,12 +125,6 @@ fun HomeScreen(
     val hasHomeContent = featuredSection != null || regularSections.isNotEmpty()
 
     val listState = rememberLazyListState()
-    // Pass the State object down without reading it here, so starting/stopping a
-    // gesture does not recompose the whole Home screen. Individual unloaded
-    // images observe it only to release a decoded result once scrolling stops.
-    val deferNewArtworkPresentation = remember(listState) {
-        derivedStateOf { listState.isScrollInProgress }
-    }
     LaunchedEffect(scrollToTopTick) {
         if (scrollToTopTick > 0) listState.animateScrollToItem(0)
     }
@@ -201,9 +194,9 @@ fun HomeScreen(
                     .hazeSource(chromeHaze)
                     .background(MaterialTheme.colorScheme.background),
             ) {
-                CompositionLocalProvider(
-                    LocalImagePresentationDeferral provides deferNewArtworkPresentation,
-                ) {
+                // Feed-scoped: unloaded images hold their thumbhash until the
+                // vertical fling settles (rows add their own horizontal gate).
+                DeferImagePresentationWhileScrolling(listState) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),

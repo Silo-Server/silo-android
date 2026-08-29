@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
@@ -28,6 +29,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
@@ -175,8 +177,13 @@ fun MediaRow(
         val rowViewConfiguration = remember(baseViewConfiguration) {
             HorizontalBiasViewConfiguration(baseViewConfiguration)
         }
+        // A row fling defers artwork presentation just like the parent feed's
+        // vertical fling (the helper ORs in any deferral already in scope).
+        val rowState = rememberLazyListState()
+        DeferImagePresentationWhileScrolling(rowState) {
         CompositionLocalProvider(LocalViewConfiguration provides rowViewConfiguration) {
         LazyRow(
+            state = rowState,
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -230,6 +237,7 @@ fun MediaRow(
                 }
                 }
             }
+        }
         }
         }
     }

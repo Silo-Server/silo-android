@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -61,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.LoadingIndicator
 import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -157,7 +159,10 @@ fun DownloadsScreen(
                     .fillMaxSize()
                     .padding(padding),
             ) {
+                val listState = rememberLazyListState()
+                DeferImagePresentationWhileScrolling(listState) {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp + LocalBottomChromeInset.current),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -245,6 +250,7 @@ fun DownloadsScreen(
                             Spacer(modifier = Modifier.height(72.dp))
                         }
                     }
+                }
                 }
 
                 if (isSelecting && selectedEntryIds.isNotEmpty()) {

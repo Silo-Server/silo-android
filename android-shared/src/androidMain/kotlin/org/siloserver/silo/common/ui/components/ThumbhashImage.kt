@@ -4,11 +4,14 @@ import android.util.Base64
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -40,6 +43,32 @@ private val DefaultPlaceholderColor = Color(0xFF1A1D27)
  * without recomposing its entire subtree whenever motion starts or stops.
  */
 val LocalImagePresentationDeferral = staticCompositionLocalOf<State<Boolean>?> { null }
+
+/**
+ * Provides [LocalImagePresentationDeferral] to [content] from
+ * [scrollableState]'s motion, OR-combined with any deferral already in scope —
+ * so a horizontal row nested in a vertical feed defers while either axis is
+ * moving. Wrap the scroll container whose cells render [ThumbhashImage]s;
+ * requests and decodes keep running during the gesture, only the first
+ * presentation of freshly decoded artwork waits for the scroll to settle
+ * (memory-cache hits still present immediately, keeping scroll-back instant).
+ *
+ * [scrollableState] MUST be the same instance driving the wrapped container
+ * (`state = ...` on the LazyRow/LazyColumn/grid, or the `verticalScroll`
+ * ScrollState). Passing a state no container drives compiles fine but the
+ * gate never opens/closes — deferral silently does nothing.
+ */
+@Composable
+fun DeferImagePresentationWhileScrolling(
+    scrollableState: ScrollableState,
+    content: @Composable () -> Unit,
+) {
+    val parent = LocalImagePresentationDeferral.current
+    val combined = remember(scrollableState, parent) {
+        derivedStateOf { parent?.value == true || scrollableState.isScrollInProgress }
+    }
+    CompositionLocalProvider(LocalImagePresentationDeferral provides combined, content = content)
+}
 
 /**
  * Process-wide cache of decoded ThumbHash placeholders, keyed by base64 hash.

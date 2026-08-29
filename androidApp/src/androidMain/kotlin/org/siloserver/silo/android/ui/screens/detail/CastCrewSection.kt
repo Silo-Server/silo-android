@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.CastMember
 import org.siloserver.silo.model.catalog.CrewMember
@@ -44,7 +46,10 @@ fun CastCrewSection(
     if (cast.isEmpty()) return
 
     // iOS PhoneCastRail: cardSpacing 14, cardWidth 96, photo 76.
+    val rowState = rememberLazyListState()
+    DeferImagePresentationWhileScrolling(rowState) {
     LazyRow(
+        state = rowState,
         contentPadding = PaddingValues(horizontal = SafePadding),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         modifier = modifier.fillMaxWidth(),
@@ -62,6 +67,7 @@ fun CastCrewSection(
                 onClick = member.personId?.let { id -> { onPersonClick(id) } },
             )
         }
+    }
     }
 }
 

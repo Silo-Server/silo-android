@@ -34,6 +34,8 @@ import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
+import androidx.compose.foundation.lazy.rememberLazyListState
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 
 /**
  * Phone series detail. Cinematic backdrop hero up top, then a scrollable
@@ -93,7 +95,10 @@ fun SeriesDetailContent(
 
     // iOS below-fold section spacing is 36 (hero→first section 32). Use 36
     // uniformly — the closest single-value match to the iOS column rhythm.
+    val feedState = rememberLazyListState()
+    DeferImagePresentationWhileScrolling(feedState) {
     LazyColumn(
+        state = feedState,
         modifier = modifier
             .fillMaxSize()
             .background(SiloBackground)
@@ -280,6 +285,7 @@ fun SeriesDetailContent(
         item(contentType = "detail-spacer") {
             Spacer(modifier = Modifier.height(40.dp))
         }
+    }
     }
 
     if (showRatingSheet) {

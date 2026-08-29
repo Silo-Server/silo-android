@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.MediaCard
+import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.ItemDetail
 
 /**
@@ -46,7 +48,10 @@ private fun SimilarRailContent(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val rowState = rememberLazyListState()
+    DeferImagePresentationWhileScrolling(rowState) {
     LazyRow(
+        state = rowState,
         contentPadding = PaddingValues(horizontal = SafePadding),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         modifier = modifier.fillMaxWidth(),
@@ -69,5 +74,6 @@ private fun SimilarRailContent(
                 sharedContentId = item.contentId,
             )
         }
+    }
     }
 }
