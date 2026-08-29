@@ -160,4 +160,44 @@ class PlaybackTimelineSeekPolicyTest {
         val reanchor = assertIs<PlaybackSeekDecision.ServerReanchor>(decision)
         assertEquals(ServerReanchorReason.InvalidTimelineMapping, reanchor.reason)
     }
+
+    @Test
+    fun mountedExtentHintAllowsNativeSeekInsideAnOpenWindow() {
+        val decision = PlaybackTimeline(
+            timelineOffsetSeconds = 120.0,
+            canSeekAnywhere = false,
+            seekWindowStartSeconds = 120.0,
+            seekRestoration = "source_position",
+        ).decideSeek(150.0, mountedSeekableSourceRange = 120.0..240.0)
+
+        val native = assertIs<PlaybackSeekDecision.NativeSeek>(decision)
+        assertEquals(30.0, native.targetPlayerPositionSeconds)
+        assertEquals(PlaybackSeekRestoration.SourcePosition, native.restoration)
+    }
+
+    @Test
+    fun mountedExtentHintDoesNotCoverTargetsBeyondTheProvedExtent() {
+        val decision = PlaybackTimeline(
+            timelineOffsetSeconds = 120.0,
+            canSeekAnywhere = false,
+            seekWindowStartSeconds = 120.0,
+            seekRestoration = "source_position",
+        ).decideSeek(300.0, mountedSeekableSourceRange = 120.0..240.0)
+
+        val reanchor = assertIs<PlaybackSeekDecision.ServerReanchor>(decision)
+        assertEquals(ServerReanchorReason.UnknownSeekWindow, reanchor.reason)
+    }
+
+    @Test
+    fun mountedExtentHintCannotRescueTargetsOutsideThePublishedWindow() {
+        val decision = PlaybackTimeline(
+            timelineOffsetSeconds = 120.0,
+            canSeekAnywhere = false,
+            seekWindowStartSeconds = 120.0,
+            seekRestoration = "source_position",
+        ).decideSeek(60.0, mountedSeekableSourceRange = 0.0..240.0)
+
+        val reanchor = assertIs<PlaybackSeekDecision.ServerReanchor>(decision)
+        assertEquals(ServerReanchorReason.OutsideSeekWindow, reanchor.reason)
+    }
 }

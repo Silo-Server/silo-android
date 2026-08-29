@@ -931,6 +931,13 @@ class TvPlayerViewModel(
     private var seekSequence = 0L
     private var activeSeekId: Long? = null
     private var hasRenderedFirstFrame = false
+    // Mounted-transport extent reported by the screen's position poll: whether
+    // the current Media3 window is seekable and how far it reaches in
+    // player-local time (-1 = unknown/unset). Feeds
+    // [mountedSeekableSourceRange] so decideSeek can ride the mounted content
+    // for quick skips instead of re-anchoring through the server.
+    private var playerWindowIsSeekable = false
+    private var playerWindowEndPlayerMs = -1L
 
     data class UiState(
         val isLoading: Boolean = true,
@@ -2685,6 +2692,18 @@ class TvPlayerViewModel(
         )?.index
     }
 
+    /**
+     * Mounted-transport facts from the screen's 500ms poll (the VM stays free
+     * of MediaController references — the screen owns the player, the same
+     * split as [onPositionChanged]). Read by [mountedSeekableSourceRange] at
+     * seek-commit time; a slightly stale window end only ever costs an
+     * unnecessary reanchor, never a wrongly-native seek.
+     */
+    fun onPlayerWindowChanged(isSeekable: Boolean, windowEndPlayerMs: Long) {
+        playerWindowIsSeekable = isSeekable
+        playerWindowEndPlayerMs = windowEndPlayerMs
+    }
+
     fun onPositionChanged(positionMs: Long, durationMs: Long) {
         if (positionMs < 0) return
         // A new recovery response updates the source/player timeline before Compose can run the
@@ -3136,7 +3155,13 @@ class TvPlayerViewModel(
             )
             return
         }
-        when (val decision = state.playbackPlan?.timeline?.decideSeek(targetSourceSec)) {
+        val mountedSeekableSourceRange = mountedSeekableSourceRange(state)
+        when (
+            val decision = state.playbackPlan?.timeline?.decideSeek(
+                targetSourceSec,
+                mountedSeekableSourceRange,
+            )
+        ) {
             is PlaybackSeekDecision.ServerReanchor -> {
                 Log.i(
                     TAG,
@@ -3150,12 +3175,33 @@ class TvPlayerViewModel(
                     TAG,
                     "seek_commit seek_id=$activeSeekId action=native " +
                         "target_source_seconds=$targetSourceSec " +
-                        "target_player_seconds=${decision.targetPlayerPositionSeconds}",
+                        "target_player_seconds=${decision.targetPlayerPositionSeconds}" +
+                        (mountedSeekableSourceRange?.let {
+                            " mounted_source_range=${it.start}..${it.endInclusive}"
+                        } ?: ""),
                 )
                 seekRequestChannel.trySend(decision.targetPlayerPositionSeconds)
             }
             null -> seekRequestChannel.trySend(targetSourceSec)
         }
+    }
+
+    /**
+     * Source-time extent the currently mounted transport provably covers, or
+     * null when that cannot be proven. Derived from the Media3 window the
+     * screen polls: a seekable window with a known length can serve any
+     * position it spans as a plain `Player.seekTo`. That covers append-only
+     * (growing) HLS manifests — whose window end is the produced head — and
+     * completed/indexed streams, while a growing progressive copy remux has
+     * no known length and stays excluded. This is what lets quick skips ride
+     * already-mounted content instead of re-anchoring through the server.
+     */
+    private fun mountedSeekableSourceRange(state: UiState): ClosedRange<Double>? {
+        val timeline = state.playbackPlan?.timeline ?: return null
+        if (!playerWindowIsSeekable || playerWindowEndPlayerMs < 0) return null
+        val endSourceSec = timeline.sourcePositionForPlayer(playerWindowEndPlayerMs / 1000.0)
+            ?: return null
+        return timeline.timelineOffsetSeconds..endSourceSec
     }
 
     private fun startSeekReanchor(
