@@ -233,6 +233,8 @@ android {
     buildTypes {
         debug {
             buildConfigField("String", "RELEASE_CHANNEL", "\"dev\"")
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
         release {
             buildConfigField("String", "RELEASE_CHANNEL", "\"${siloReleaseChannel.get()}\"")
