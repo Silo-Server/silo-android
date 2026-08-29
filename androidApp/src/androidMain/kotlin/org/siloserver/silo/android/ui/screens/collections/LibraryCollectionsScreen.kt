@@ -44,6 +44,7 @@ import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.section.LibraryCollection
@@ -238,7 +239,7 @@ fun LibraryCollectionsScreen(
                     val gridState = rememberLazyGridState()
                     DeferImagePresentationWhileScrolling(gridState) {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+                        columns = GridCells.Adaptive(MediaGridDefaults.scaledPosterGridMinWidth),
                         state = gridState,
                         contentPadding = PaddingValues(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
@@ -283,6 +284,10 @@ private fun LibraryCollectionCard(
     collection: LibraryCollection,
     onClick: () -> Unit,
 ) {
+    // Caption gating mirrors CollectionsView.swift: the name line follows
+    // showsTitle, the type line showsMetadata. The count badge sits on the
+    // artwork, so it stays either way.
+    val caption = LocalCardPresentation.current.caption
     val countLabel = collection.itemCount?.takeIf { it > 0 }?.toString() ?: "Smart"
     val typeLabel = when {
         collection.kind == "user_collections" -> "User collection"
@@ -340,20 +345,24 @@ private fun LibraryCollectionCard(
             )
         }
 
-        Text(
-            text = collection.name,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (caption.showsTitle) {
+            Text(
+                text = collection.name,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
 
-        Text(
-            text = typeLabel,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (caption.showsMetadata) {
+            Text(
+                text = typeLabel,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }

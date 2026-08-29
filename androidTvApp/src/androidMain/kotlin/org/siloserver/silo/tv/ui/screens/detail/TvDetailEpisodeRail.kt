@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
@@ -70,6 +71,7 @@ import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.ProgressFill
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.capsuleCaps
+import org.siloserver.silo.tv.ui.theme.cardScaled
 
 /**
  * Horizontal rail of episode cards for the series/season/episode detail
@@ -192,8 +194,9 @@ private fun TvDetailEpisodeCard(
     onSetFavorite: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val cardWidth = 230.dp
-    val stillHeight = 130.dp
+    val cardWidth = 230.dp.cardScaled()
+    val stillHeight = 130.dp.cardScaled()
+    val caption = LocalCardPresentation.current.caption
     val cornerRadius = 5.dp
     val shape = RoundedCornerShape(cornerRadius)
 
@@ -321,65 +324,71 @@ private fun TvDetailEpisodeCard(
 
         // Keep the hierarchy scannable at TV distance: episode number, title,
         // air date/runtime, then synopsis. Each kind of information owns a
-        // stable line instead of competing in one dense eyebrow.
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Text(
-                    text = "EPISODE ${episode.episodeNumber}",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.0.sp,
-                    color = SiloOnSurface.copy(alpha = 0.7f),
-                    maxLines = 1,
-                )
-                if (isCurrent) {
-                    NowViewingTag()
+        // stable line instead of competing in one dense eyebrow. Artwork-only
+        // drops the block entirely (tvOS `TVEpisodeRail`); the card has no
+        // fixed height, so the rail shrinks to the still.
+        if (caption.showsTitle) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Text(
+                        text = "EPISODE ${episode.episodeNumber}",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.0.sp,
+                        color = SiloOnSurface.copy(alpha = 0.7f),
+                        maxLines = 1,
+                    )
+                    if (isCurrent) {
+                        NowViewingTag()
+                    }
                 }
-            }
 
-            Text(
-                text = episode.title ?: "Episode ${episode.episodeNumber}",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = when {
-                    isCurrent -> SiloOnSurface
-                    isFocused -> SiloOnSurface
-                    else -> SiloOnSurface.copy(alpha = 0.92f)
-                },
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-
-            episodeMetadataLine(episode)?.let { metadata ->
                 Text(
-                    text = metadata,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = SiloOnSurface.copy(alpha = 0.75f),
-                    maxLines = 1,
+                    text = episode.title ?: "Episode ${episode.episodeNumber}",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = when {
+                        isCurrent -> SiloOnSurface
+                        isFocused -> SiloOnSurface
+                        else -> SiloOnSurface.copy(alpha = 0.92f)
+                    },
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
 
-            // tvOS uses lineLimit(3, reservesSpace: true): always reserve
-            // exactly 3 text lines (minLines/maxLines rather than a fixed dp
-            // clamp so accessibility text scaling can't clip glyphs), and
-            // render even when there is no overview so every card keeps
-            // identical vertical metrics.
-            Text(
-                text = episode.overview?.takeIf { it.isNotBlank() }.orEmpty(),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Normal,
-                color = SiloSecondaryText,
-                minLines = 3,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 20.sp,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+                if (caption.showsMetadata) {
+                    episodeMetadataLine(episode)?.let { metadata ->
+                        Text(
+                            text = metadata,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = SiloOnSurface.copy(alpha = 0.75f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+
+                    // tvOS uses lineLimit(3, reservesSpace: true): always reserve
+                    // exactly 3 text lines (minLines/maxLines rather than a fixed dp
+                    // clamp so accessibility text scaling can't clip glyphs), and
+                    // render even when there is no overview so every card keeps
+                    // identical vertical metrics.
+                    Text(
+                        text = episode.overview?.takeIf { it.isNotBlank() }.orEmpty(),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = SiloSecondaryText,
+                        minLines = 3,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 20.sp,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
         }
     }
 }

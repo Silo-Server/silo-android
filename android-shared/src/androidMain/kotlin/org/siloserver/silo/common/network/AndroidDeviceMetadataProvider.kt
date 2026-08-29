@@ -25,6 +25,7 @@ class AndroidDeviceMetadataProvider(
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val cachedClientName: String by lazy { clientNameFor(platform) }
     private val cachedClientVersion: String? by lazy { appVersionName() }
+    private val cachedClientFamily: String by lazy { clientFamilyFor(platform) }
 
     override suspend fun current(): SiloDeviceMetadata {
         val deviceId = prefs.getString(KEY_DEVICE_ID, null) ?: UUID.randomUUID().toString().also { generated ->
@@ -43,6 +44,7 @@ class AndroidDeviceMetadataProvider(
             clientVersion = cachedClientVersion,
             clientBuild = buildIdentity.reportedBuildNumber,
             clientChannel = buildIdentity.reportedChannel,
+            clientFamily = cachedClientFamily,
         )
     }
 
@@ -51,6 +53,26 @@ class AndroidDeviceMetadataProvider(
             "android-tv" -> "Silo Android TV"
             "android" -> "Silo Android"
             else -> "Silo Android"
+        }
+
+    /**
+     * Closed `X-Silo-Client-Family` identity for `profile_client`-scoped
+     * settings. Rides the platform string each app already passes in, so the
+     * TV build is `tv` and the phone build splits mobile/tablet on the same
+     * sw600dp line the platform's resource system uses. Computed once per
+     * process deliberately: the family must not follow a foldable's posture
+     * mid-session, or a preference written as `tablet` would resolve as
+     * `mobile` after folding.
+     */
+    private fun clientFamilyFor(platform: String): String =
+        when (platform) {
+            "android-tv" -> "tv"
+            else ->
+                if (context.resources.configuration.smallestScreenWidthDp >= 600) {
+                    "tablet"
+                } else {
+                    "mobile"
+                }
         }
 
     @Suppress("DEPRECATION")

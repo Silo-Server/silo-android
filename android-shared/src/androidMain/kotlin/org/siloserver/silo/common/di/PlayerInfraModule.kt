@@ -9,6 +9,8 @@ import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackSessionTracker
 import org.siloserver.silo.common.player.SleepTimerController
 import org.siloserver.silo.common.settings.AndroidPlayerSettingsStore
+import org.siloserver.silo.common.settings.CardPresentationStore
+import org.siloserver.silo.common.settings.DefaultCardPresentationStore
 import org.siloserver.silo.common.settings.DefaultLibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.DefaultOverlayPrefsStore
 import org.siloserver.silo.common.settings.DefaultServerSettingsFlusher
@@ -126,9 +128,24 @@ val playerInfraModule = module {
         )
     }
 
+    // Card-presentation preference (poster size + captions). Same lifetime
+    // rationale as the overlay store; the extra lambdas feed the last-known
+    // SharedPreferences cache identity (server|profile|family|device).
+    single<CardPresentationStore> {
+        DefaultCardPresentationStore(
+            context = androidContext(),
+            repository = get<SettingsRepository>(),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
+            getServerUrl = { get<TokenManager>().getServerUrl() },
+            getDeviceMetadata = { get<DeviceMetadataProvider>().current() },
+        )
+    }
+
     single {
         ServerDrivenConfigRefresher(
             overlayPrefsStore = get(),
+            cardPresentationStore = get(),
             libraryPlaybackPrefsStore = get(),
             playerSettingsStore = get(),
             hasAuthenticatedProfile = {

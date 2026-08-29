@@ -108,6 +108,7 @@ import org.siloserver.silo.catalog.filter.BrowseFacetMediaType
 import org.siloserver.silo.catalog.filter.CatalogFacet
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
@@ -1198,7 +1199,10 @@ private fun CollectionsTabContent(
             val gridState = rememberLazyGridState()
             DeferImagePresentationWhileScrolling(gridState) {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(state.catalogDensity.minCardWidth),
+                columns = GridCells.Adaptive(
+                    state.catalogDensity.minCardWidth *
+                        LocalCardPresentation.current.posterSize.posterScale,
+                ),
                 state = gridState,
                 horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
                 verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
@@ -1234,7 +1238,9 @@ private fun InlineLibraryCollectionCard(
     // iOS `LibraryCollectionCard`: VStack(spacing: 6) of a 2:3.3 poster
     // (smallCornerRadius = 6) carrying a bottom-trailing count badge, a
     // siloCaption (12) name (2 lines), and a siloSmall (11) secondary
-    // type label.
+    // type label. The two text lines follow the caption preference
+    // (showsTitle / showsMetadata); the count badge rides the artwork.
+    val caption = LocalCardPresentation.current.caption
     Column(
         modifier = Modifier.clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1265,20 +1271,24 @@ private fun InlineLibraryCollectionCard(
                     .padding(horizontal = 8.dp, vertical = 5.dp),
             )
         }
-        Text(
-            text = collection.name,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = collection.itemCount?.let { "$it items" } ?: "Collection",
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (caption.showsTitle) {
+            Text(
+                text = collection.name,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (caption.showsMetadata) {
+            Text(
+                text = collection.itemCount?.let { "$it items" } ?: "Collection",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

@@ -32,6 +32,7 @@ import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 import org.siloserver.silo.android.ui.navigation.heroSharedKeyPrefix
 import org.siloserver.silo.android.ui.navigation.heroSource
 import java.util.UUID
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
@@ -46,6 +47,16 @@ object MediaGridDefaults {
     val PosterGridMinWidth = 104.dp
     val PosterGridHorizontalSpacing = 12.dp
     val PosterGridVerticalSpacing = 16.dp
+
+    /**
+     * [PosterGridMinWidth] scaled by the card-presentation poster size.
+     * Adaptive grids scale the *minimum* cell width, so the preference
+     * shifts the column count rather than the card width (a smaller min
+     * width fits more columns).
+     */
+    val scaledPosterGridMinWidth: Dp
+        @Composable get() =
+            PosterGridMinWidth * LocalCardPresentation.current.posterSize.posterScale
 }
 
 /**
@@ -69,7 +80,7 @@ fun MediaCard(
     progress: Float? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    width: Dp = 120.dp,
+    width: Dp = 120.dp * LocalCardPresentation.current.posterSize.posterScale,
     artworkAspectRatio: Float = 2f / 3.3f,
     overlay: OverlayData? = null,
     actions: MediaCardActions = MediaCardActions(),
@@ -165,18 +176,21 @@ fun MediaCard(
             }
         }
 
-        // iOS titleText: .siloSubheadline (14sp), 2 lines.
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        val cardCaption = LocalCardPresentation.current.caption
+        if (cardCaption.showsTitle) {
+            // iOS titleText: .siloSubheadline (14sp), 2 lines.
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         val caption = subtitle ?: year?.takeIf { it > 0 }?.toString()
-        if (caption != null) {
+        if (cardCaption.showsMetadata && caption != null) {
             // iOS yearText: .siloCaption (12sp) at secondary text.
             Text(
                 text = caption,

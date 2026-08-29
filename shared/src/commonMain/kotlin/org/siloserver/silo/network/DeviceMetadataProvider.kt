@@ -17,6 +17,14 @@ data class SiloDeviceMetadata(
      * Opaque to the server, which stores it as reported.
      */
     val clientChannel: String? = null,
+    /**
+     * Closed like-client identity for `profile_client`-scoped settings —
+     * one of "tv", "mobile", "tablet", "desktop", "web" (lower-case exact;
+     * the server never derives it from the platform string). Null skips the
+     * `X-Silo-Client-Family` header, which drops the like-client resolution
+     * layer server-side.
+     */
+    val clientFamily: String? = null,
 )
 
 interface DeviceMetadataProvider {

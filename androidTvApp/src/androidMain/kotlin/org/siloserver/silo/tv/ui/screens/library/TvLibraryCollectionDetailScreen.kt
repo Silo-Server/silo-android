@@ -31,6 +31,7 @@ import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
@@ -104,7 +105,7 @@ fun TvLibraryCollectionDetailScreen(
             hasMore = state.hasMore,
             onItemClick = onItemClick,
             onLoadMore = viewModel::loadMore,
-            fixedColumnCount = 6,
+            fixedColumnCount = tvPresetGridColumns(6),
             contentPadding = PaddingValues(
                 start = Spacing.safeArea,
                 top = Spacing.xxl,

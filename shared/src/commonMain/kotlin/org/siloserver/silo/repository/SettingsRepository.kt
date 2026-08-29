@@ -105,6 +105,64 @@ class SettingsRepository(
             else -> result
         }
 
+    /**
+     * Write one like-client value (`scope=profile_client`) — the preference
+     * that roams among this profile's devices of the same client family. The
+     * family half of the identity rides the `X-Silo-Client-Family` header the
+     * auth interceptor attaches; see [setProfileValue] for the mutation-id
+     * contract.
+     */
+    suspend fun setProfileClientValue(
+        key: String,
+        value: JsonElement,
+        mutationId: String = newSettingMutationId(),
+    ): ApiResult<StoredSettingValue> =
+        settingsApi.putValue(
+            key = key,
+            scope = SettingScopeIdentity.profileClient(),
+            value = value,
+            mutationId = mutationId,
+        )
+
+    suspend fun clearProfileClientValue(key: String): ApiResult<Unit> =
+        treatMissingAsCleared(
+            settingsApi.deleteValue(key, SettingScopeIdentity.profileClient()),
+        )
+
+    /**
+     * Write one device-override value (`scope=profile_device`) — this profile
+     * on this device only. The device half of the identity rides the
+     * `X-Silo-Device-Id` header.
+     */
+    suspend fun setProfileDeviceValue(
+        key: String,
+        value: JsonElement,
+        mutationId: String = newSettingMutationId(),
+    ): ApiResult<StoredSettingValue> =
+        settingsApi.putValue(
+            key = key,
+            scope = SettingScopeIdentity.profileDevice(),
+            value = value,
+            mutationId = mutationId,
+        )
+
+    suspend fun clearProfileDeviceValue(key: String): ApiResult<Unit> =
+        treatMissingAsCleared(
+            settingsApi.deleteValue(key, SettingScopeIdentity.profileDevice()),
+        )
+
+    /**
+     * 404 on a DELETE means nothing was stored there, which is the state the
+     * caller asked for, so it reports success rather than an error the UI
+     * would have to special-case.
+     */
+    private fun treatMissingAsCleared(result: ApiResult<Unit>): ApiResult<Unit> =
+        when (result) {
+            is ApiResult.Error ->
+                if (result.code == 404) ApiResult.Success(Unit) else result
+            else -> result
+        }
+
     suspend fun getEffectiveSubtitleAppearance(): ApiResult<EffectiveSubtitleAppearance> =
         settingsApi.getEffectiveSubtitleAppearance()
 

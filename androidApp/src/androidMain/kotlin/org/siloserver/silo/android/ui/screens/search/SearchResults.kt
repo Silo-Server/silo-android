@@ -81,9 +81,10 @@ fun SearchResults(
         if (shouldLoadMore) onLoadMore()
     }
 
+    val gridCellMinWidth = MediaGridDefaults.scaledPosterGridMinWidth
     DeferImagePresentationWhileScrolling(gridState) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+        columns = GridCells.Adaptive(gridCellMinWidth),
         state = gridState,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),
@@ -116,7 +117,7 @@ fun SearchResults(
                 type = item.type,
                 userState = userState,
                 onClick = { onItemClick(item.contentId) },
-                width = MediaGridDefaults.PosterGridMinWidth,
+                width = gridCellMinWidth,
                 overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
                 actions = actions,
             )

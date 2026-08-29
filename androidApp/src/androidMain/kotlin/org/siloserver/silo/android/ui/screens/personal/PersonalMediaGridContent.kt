@@ -53,6 +53,7 @@ import org.siloserver.silo.android.ui.components.MediaCardContextMenu
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.WatchedBadge
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.overlays.CardOverlayVariant
@@ -253,7 +254,7 @@ private fun PersonalMediaGridContent(
                 // edge under any chrome the caller reserved space for.
                 DeferImagePresentationWhileScrolling(gridState) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+                    columns = GridCells.Adaptive(MediaGridDefaults.scaledPosterGridMinWidth),
                     state = gridState,
                     contentPadding = PaddingValues(
                         start = 16.dp + contentPadding.calculateStartPadding(layoutDirection),
@@ -350,17 +351,20 @@ fun MediaGridItem(
             }
         }
 
-        androidx.compose.material3.Text(
-            text = item.title,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-            minLines = 2,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+        val cardCaption = LocalCardPresentation.current.caption
+        if (cardCaption.showsTitle) {
+            androidx.compose.material3.Text(
+                text = item.title,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                minLines = 2,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
 
-        if (item.year > 0) {
+        if (cardCaption.showsMetadata && item.year > 0) {
             androidx.compose.material3.Text(
                 text = item.year.toString(),
                 fontSize = 12.sp,

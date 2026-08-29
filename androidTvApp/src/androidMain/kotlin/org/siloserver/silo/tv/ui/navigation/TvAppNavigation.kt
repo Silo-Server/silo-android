@@ -56,8 +56,10 @@ import org.siloserver.silo.tv.ui.screens.watchtogether.tvWatchTogetherDestinatio
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.WatchTogetherEntryTarget
 import org.siloserver.silo.watchtogether.watchTogetherEntryTarget
+import org.siloserver.silo.common.cards.ProvideCardPresentation
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
+import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
@@ -335,6 +337,7 @@ fun TvAppNavigation(
     val authRepository: AuthRepository = koinInject()
     val profileRepository: ProfileRepository = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
+    val cardPresentationStore: CardPresentationStore = koinInject()
     val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore = koinInject()
     val watchNextSeeder: WatchNextSeeder = koinInject()
     val siloCastReceiver: TvSiloCastReceiver = koinInject()
@@ -547,6 +550,7 @@ fun TvAppNavigation(
     }
 
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
+    ProvideCardPresentation(store = cardPresentationStore, sessionKey = overlaySessionKey) {
     Box(modifier = Modifier.fillMaxSize()) {
     NavHost(
         navController = navController,
@@ -634,6 +638,7 @@ fun TvAppNavigation(
                     if (destination == TvServerSwitchDestination.Home) {
                         libraryPlaybackPrefsStore.clear()
                         overlayPrefsStore.clear()
+                        cardPresentationStore.clear()
                         watchNextSeeder.clear()
                         watchNextSeeder.seedNow()
                         watchNextSeeder.enqueuePeriodic()
@@ -793,6 +798,7 @@ fun TvAppNavigation(
                         tokenManager.clearTokens()
                         libraryPlaybackPrefsStore.clear()
                         overlayPrefsStore.clear()
+                        cardPresentationStore.clear()
                         // Drop our Watch Next rows + cancel the periodic refresh so
                         // the launcher doesn't keep showing the signed-out user's
                         // progress.
@@ -818,6 +824,7 @@ fun TvAppNavigation(
                         // switch-profile path.
                         libraryPlaybackPrefsStore.clear()
                         overlayPrefsStore.clear()
+                        cardPresentationStore.clear()
                         // Clear the previous profile's Watch Next rows before
                         // landing on the picker; the new profile will re-seed
                         // via [onProfileSelected].
@@ -1302,6 +1309,7 @@ fun TvAppNavigation(
             onDontSend = { diagnosticsViewModel.declinePrompt(prompt) },
             allowAlwaysSend = diagnosticsState.allowsAutomaticUpload,
         )
+    }
     }
     }
     }
