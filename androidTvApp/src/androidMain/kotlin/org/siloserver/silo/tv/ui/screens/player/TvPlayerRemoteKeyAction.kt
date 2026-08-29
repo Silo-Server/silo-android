@@ -25,6 +25,24 @@ internal enum class TvPlayerRemoteKeyAction {
     ConsumeOnly,
 }
 
+/**
+ * Maps one remote key event onto the player's intent vocabulary, or null when
+ * the key is not ours (focus navigation and unhandled keys fall through).
+ *
+ * Media play/pause acts on the first DOWN and consumes UP halves and
+ * auto-repeats so the system media-key fallback cannot act on them twice.
+ * Left/Right quick-skip only while [dpadHorizontalSeek] allows it — with a
+ * focus-owning surface (transport overlay, HUD, Up Next) up, they belong to
+ * Compose focus navigation. The dedicated transport seek keys
+ * (rewind/fast-forward/skip) are never focus navigation, so they skip in
+ * every surface state and deliberately ignore [dpadHorizontalSeek]. Down
+ * focuses the transport, or opens the playback HUD from clean playback when
+ * [dpadDownOpensHud] is set; Menu/Settings open the settings HUD on key UP.
+ *
+ * A null action is what lets the player bridge reveal the controls for an
+ * unknown key from clean playback and swallow the press — so every key that
+ * must act on the FIRST press has to be mapped here.
+ */
 internal fun tvPlayerRemoteKeyAction(
     keyCode: Int,
     action: Int,

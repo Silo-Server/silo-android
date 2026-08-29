@@ -3147,6 +3147,17 @@ class TvPlayerViewModel(
         if (activeSeekId == null) activeSeekId = ++seekSequence
     }
 
+    /**
+     * Commits a settled seek target (source time) onto the active transport.
+     *
+     * Routing ladder: with no session/plan yet the target parks in
+     * [pendingNativeSeekAfterMount] until the mount wins; with seek recovery
+     * or a mount in flight it queues as a reanchor; otherwise
+     * [decideSeek][org.siloserver.silo.common.player.seek.decideSeek] picks
+     * between a native `Player.seekTo` (fed the mounted transport's proven
+     * extent from [mountedSeekableSourceRange]) and a protocol-V3 server
+     * reanchor. A missing plan timeline falls through to a raw player seek.
+     */
     private fun executeSeekTarget(targetSourceSec: Double) {
         val state = _uiState.value
         if (transportMountGate.suppressPositionReports &&

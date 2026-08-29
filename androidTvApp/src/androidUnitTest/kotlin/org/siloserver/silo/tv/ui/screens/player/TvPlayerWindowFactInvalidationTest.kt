@@ -17,6 +17,7 @@ class TvPlayerWindowFactInvalidationTest {
         "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/player/TvPlayerViewModel.kt",
     ).readText()
 
+    /** Old-item window facts recorded during a handoff would map through the new plan's offset. */
     @Test
     fun `window facts are not recorded while a transport handoff suppresses reports`() {
         val body = viewModelSource
@@ -29,6 +30,7 @@ class TvPlayerWindowFactInvalidationTest {
         )
     }
 
+    /** The queued after-mount seek is evaluated at maximal staleness; the reset must precede it. */
     @Test
     fun `a won mount clears the window facts before re-evaluating queued seeks`() {
         val body = viewModelSource

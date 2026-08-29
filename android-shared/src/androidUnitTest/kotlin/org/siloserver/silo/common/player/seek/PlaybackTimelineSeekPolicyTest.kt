@@ -161,6 +161,7 @@ class PlaybackTimelineSeekPolicyTest {
         assertEquals(ServerReanchorReason.InvalidTimelineMapping, reanchor.reason)
     }
 
+    /** An open server window cannot override a proven mounted extent: targets inside it seek natively. */
     @Test
     fun mountedExtentHintAllowsNativeSeekInsideAnOpenWindow() {
         val decision = PlaybackTimeline(
@@ -175,6 +176,7 @@ class PlaybackTimelineSeekPolicyTest {
         assertEquals(PlaybackSeekRestoration.SourcePosition, native.restoration)
     }
 
+    /** Beyond the mounted extent the hint proves nothing, so the conservative server reanchor applies. */
     @Test
     fun mountedExtentHintDoesNotCoverTargetsBeyondTheProvedExtent() {
         val decision = PlaybackTimeline(
@@ -188,6 +190,7 @@ class PlaybackTimelineSeekPolicyTest {
         assertEquals(ServerReanchorReason.UnknownSeekWindow, reanchor.reason)
     }
 
+    /** The hint never overrides published window bounds: below the window start still reanchors. */
     @Test
     fun mountedExtentHintCannotRescueTargetsOutsideThePublishedWindow() {
         val decision = PlaybackTimeline(

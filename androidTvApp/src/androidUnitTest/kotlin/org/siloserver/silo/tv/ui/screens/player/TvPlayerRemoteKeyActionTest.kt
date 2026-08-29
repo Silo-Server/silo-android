@@ -170,6 +170,7 @@ class TvPlayerRemoteKeyActionTest {
         )
     }
 
+    /** Unmapped keys only reveal controls on first press; these must skip, with repeats/UP consumed. */
     @Test
     fun mediaSeekKeysSkipOnTheFirstPressAndSwallowTheRest() {
         // First press must SKIP — unmapped, the player bridge only reveals
@@ -209,6 +210,7 @@ class TvPlayerRemoteKeyActionTest {
         }
     }
 
+    /** Media transport keys are never focus navigation, so dpadHorizontalSeek gating must not silence them. */
     @Test
     fun mediaSeekKeysSkipEvenWhenTheIdleOverlayOwnsFocus() {
         // Media transport keys are never focus navigation, so they are not
