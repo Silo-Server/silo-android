@@ -3,7 +3,6 @@ package org.siloserver.silo.android.cast
 import android.content.Context
 import android.content.Intent
 import androidx.annotation.OptIn
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -21,10 +20,18 @@ import kotlinx.coroutines.launch
  * foregrounded, then leaves Media3 to maintain its foreground lifetime after
  * the Activity moves to the background.
  *
- * Android 12+ rejects a new foreground-service start from the background. A
- * TV may begin a new title while the phone is backgrounded, so those starts
- * are deliberately deferred until [onStart]. An already-running service keeps
- * receiving controller state directly and does not need to be started again.
+ * Never call [android.content.Context.startForegroundService] from here.
+ * Media3's [androidx.media3.session.MediaSessionService] promotes to a
+ * foreground service itself once [SiloCastMediaSessionService] has added its
+ * session and the projected player is user-engaged. Arming the platform
+ * start-foreground watchdog before that happens crashes the process with
+ * `RemoteServiceException` / `ForegroundServiceDidNotStartInTimeException`.
+ *
+ * Android 12+ also rejects a new foreground-service start from the
+ * background. A TV may begin a new title while the phone is backgrounded, so
+ * those starts are deliberately deferred until [onStart]. An already-running
+ * service keeps receiving controller state directly and does not need to be
+ * started again.
  */
 class SiloCastMediaSessionStarter(
     context: Context,
@@ -65,8 +72,6 @@ class SiloCastMediaSessionStarter(
                 RemoteMediaServiceAction.None -> Unit
                 RemoteMediaServiceAction.Stop -> appContext.stopService(intent)
                 RemoteMediaServiceAction.Start -> appContext.startService(intent)
-                RemoteMediaServiceAction.StartForeground ->
-                    ContextCompat.startForegroundService(appContext, intent)
             }
         }.onFailure { error ->
             android.util.Log.w(TAG, "Could not apply Remote Control media-service action $action", error)
@@ -80,14 +85,12 @@ class SiloCastMediaSessionStarter(
 
 internal data class RemoteServiceState(
     val hasMedia: Boolean,
-    val needsForegroundStart: Boolean,
 )
 
 internal enum class RemoteMediaServiceAction {
     None,
     Stop,
     Start,
-    StartForeground,
 }
 
 internal fun resolveRemoteMediaServiceAction(
@@ -96,16 +99,8 @@ internal fun resolveRemoteMediaServiceAction(
 ): RemoteMediaServiceAction = when {
     !state.hasMedia -> RemoteMediaServiceAction.Stop
     !appForeground -> RemoteMediaServiceAction.None
-    state.needsForegroundStart -> RemoteMediaServiceAction.StartForeground
     else -> RemoteMediaServiceAction.Start
 }
 
-private fun SiloCastControllerState.toRemoteServiceState(): RemoteServiceState {
-    val playback = playbackState
-    return RemoteServiceState(
-        hasMedia = !playback?.contentId.isNullOrBlank(),
-        needsForegroundStart = playback?.let {
-            it.isPlaying || it.isLoading || it.isBuffering
-        } == true,
-    )
-}
+private fun SiloCastControllerState.toRemoteServiceState(): RemoteServiceState =
+    RemoteServiceState(hasMedia = !playbackState?.contentId.isNullOrBlank())
