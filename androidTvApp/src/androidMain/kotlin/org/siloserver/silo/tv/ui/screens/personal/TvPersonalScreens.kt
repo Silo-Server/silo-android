@@ -51,6 +51,7 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.sectionEyebrow
 import org.siloserver.silo.tv.ui.theme.tvPageContentPadding
 import org.siloserver.silo.tv.ui.theme.tvPageStartPadding
+import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
 import org.siloserver.silo.viewmodel.FavoritesViewModel
 import org.siloserver.silo.viewmodel.HistoryViewModel
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
@@ -404,7 +405,7 @@ private fun PersonalGrid(
                     // Match every other catalog grid (browse/person/collections):
                     // the adaptive default rendered ~5 oversized columns here
                     // (QA 2026-07-08).
-                    fixedColumnCount = 6,
+                    fixedColumnCount = tvPresetGridColumns(6),
                     gridState = gridState,
                     restoreItemIndex = restoration.requesterItemIndex,
                     restoreItemFocusRequester = restoreItemFocusRequester,
@@ -507,7 +508,7 @@ private fun PersonalInlineGrid(
                 top = Spacing.md,
                 bottom = Spacing.xl,
             ),
-            fixedColumnCount = 6,
+            fixedColumnCount = tvPresetGridColumns(6),
             firstItemFocusRequester = firstItemFocusRequester.takeIf { !listIsEmpty },
             header = {
                 PersonalControlHeader(

@@ -53,6 +53,7 @@ import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvFilterSheet
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -290,6 +291,7 @@ private fun BrowseGrid(
     // so here isLoading only drives the load-more footer. loadMoreThreshold is
     // expressed in items (rows-from-end * column count) to preserve the prior
     // trigger distance.
+    val browseColumns = tvPresetGridColumns(BrowseGridColumns)
     TvCatalogGrid(
         items = state.items,
         isLoading = state.loadingMore,
@@ -297,8 +299,8 @@ private fun BrowseGrid(
         onItemClick = onItemClick,
         onLoadMore = onLoadMore,
         modifier = Modifier.fillMaxSize(),
-        fixedColumnCount = BrowseGridColumns,
-        loadMoreThreshold = BrowseGridLoadMoreRowsThreshold * BrowseGridColumns,
+        fixedColumnCount = browseColumns,
+        loadMoreThreshold = BrowseGridLoadMoreRowsThreshold * browseColumns,
         contentPadding = PaddingValues(
             start = Spacing.safeArea,
             top = TvTopMenuLayout.contentTopInset,

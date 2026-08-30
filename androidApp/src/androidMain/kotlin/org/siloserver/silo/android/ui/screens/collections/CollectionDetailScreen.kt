@@ -103,7 +103,7 @@ fun CollectionDetailScreen(
                 ) {
                     DeferImagePresentationWhileScrolling(gridState) {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(MediaGridDefaults.PosterGridMinWidth),
+                        columns = GridCells.Adaptive(MediaGridDefaults.scaledPosterGridMinWidth),
                         state = gridState,
                         contentPadding = PaddingValues(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),

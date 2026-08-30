@@ -2,6 +2,9 @@ package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.settings.CardPresentationSource
+import org.siloserver.silo.common.settings.CardPresentationStore
+import org.siloserver.silo.common.settings.CardPresentationUiState
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
@@ -10,6 +13,10 @@ import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
+import org.siloserver.silo.model.settings.CardCaption
+import org.siloserver.silo.model.settings.CardPosterSize
+import org.siloserver.silo.model.settings.CardPresentation
+import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
@@ -97,6 +104,10 @@ data class SettingsUiState(
     val subtitleMode: SubtitleMode = SubtitleMode.AUTO,
     val showForcedSubtitles: Boolean = true,
 
+    // Media cards: the effective `ui.card_presentation` value plus where it
+    // resolved from and whether the server supports the key at all.
+    val cardPresentation: CardPresentationUiState = CardPresentationUiState(),
+
     // Notifications (in-app). Section is hidden entirely unless the server
     // reports in-app notifications are enabled AND preferences load.
     val notificationsAvailable: Boolean = false,
@@ -114,6 +125,7 @@ class SettingsViewModel(
     private val overlayPrefsStore: OverlayPrefsStore,
     private val notificationsRepository: NotificationsRepository,
     private val profileSettings: ProfileSettingsController,
+    private val cardPresentationStore: CardPresentationStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -124,6 +136,7 @@ class SettingsViewModel(
         observePlayerSettings()
         observePlaybackBehaviorSettings()
         observeNotifications()
+        observeCardPresentation()
     }
 
     private fun loadUserInfo() {
@@ -320,6 +333,65 @@ class SettingsViewModel(
         viewModelScope.launch { notificationsRepository.loadPreferences() }
     }
 
+    // -- Media cards --
+
+    private fun observeCardPresentation() {
+        cardPresentationStore.state.onEach { state ->
+            _uiState.update { it.copy(cardPresentation = state) }
+        }.launchIn(viewModelScope)
+        // The provider above the nav graph hydrates too, but this screen can
+        // be reached before any card rendered — make hydration unconditional.
+        viewModelScope.launch { cardPresentationStore.hydrateIfNeeded() }
+    }
+
+    fun setCardPreset(preset: CardPresentationPreset) {
+        setCardPresentation(preset.presentation)
+    }
+
+    fun setCardPosterSize(size: CardPosterSize) {
+        setCardPresentation(
+            _uiState.value.cardPresentation.presentation.copy(posterSize = size),
+        )
+    }
+
+    fun setCardCaption(caption: CardCaption) {
+        setCardPresentation(
+            _uiState.value.cardPresentation.presentation.copy(caption = caption),
+        )
+    }
+
+    /**
+     * Optimistic write through the store — at `profile_device` while the
+     * device override is active, else at `profile_client` so the choice roams
+     * among this profile's like devices (Apple/web parity).
+     */
+    private fun setCardPresentation(presentation: CardPresentation) {
+        val deviceOnly =
+            _uiState.value.cardPresentation.source == CardPresentationSource.DeviceOverride
+        cardPresentationStore.set(presentation, deviceOnly = deviceOnly)
+    }
+
+    /**
+     * "Only this device": ON pins the current presentation at
+     * `profile_device`; OFF deletes that row so resolution falls back to the
+     * client-family value.
+     */
+    fun setCardDeviceOnly(enabled: Boolean) {
+        if (enabled) {
+            cardPresentationStore.set(
+                _uiState.value.cardPresentation.presentation,
+                deviceOnly = true,
+            )
+        } else {
+            viewModelScope.launch { cardPresentationStore.clearDeviceOverride() }
+        }
+    }
+
+    /** Deletes the `profile_client` row so the profile-wide value applies. */
+    fun useCardProfileDefault() {
+        viewModelScope.launch { cardPresentationStore.useProfileDefault() }
+    }
+
     fun setNotificationsEnabled(value: Boolean) {
         updateNotificationPreferences(NotificationPreferencesUpdate(enabled = value))
     }
@@ -357,6 +429,7 @@ class SettingsViewModel(
             // stale rows flash before the fresh fetch lands.
             libraryPlaybackPrefsStore.clear()
             overlayPrefsStore.clear()
+            cardPresentationStore.clear()
             _uiState.update { it.copy(loggedOut = true) }
         }
     }

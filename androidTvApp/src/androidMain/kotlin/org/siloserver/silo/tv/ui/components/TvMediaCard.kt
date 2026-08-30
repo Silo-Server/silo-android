@@ -40,6 +40,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
@@ -48,6 +49,7 @@ import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.ProgressFill
 import org.siloserver.silo.tv.ui.theme.RowDimens
+import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 
@@ -75,7 +77,7 @@ fun TvMediaCard(
     userState: MediaItemUserState? = null,
     progress: Float? = null,
     mediaType: String? = null,
-    width: Dp = TvCardWidth,
+    width: Dp = tvCardWidth(),
     fillWidth: Boolean = false,
     artworkAspectRatio: Float? = null,
     focusRequester: FocusRequester? = null,
@@ -84,6 +86,7 @@ fun TvMediaCard(
     actions: TvMediaCardActions = TvMediaCardActions(),
 ) {
     val overlayState = LocalCardOverlayUiState.current
+    val caption = LocalCardPresentation.current.caption
     val effectiveAspectRatio = artworkAspectRatio
         ?: tvArtworkAspectRatioForMediaType(mediaType)
         ?: (2f / 3f)
@@ -194,36 +197,38 @@ fun TvMediaCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(11.dp))
+        if (caption.showsTitle) {
+            Spacer(modifier = Modifier.height(11.dp))
 
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall.copy(
-                fontSize = 15.5.sp,
-                lineHeight = 18.5.sp,
-            ),
-            color = if (isFocused) {
-                Color.White
-            } else {
-                Color.White.copy(alpha = 0.78f)
-            },
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Start,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        if (year != null && year > 0) {
             Text(
-                text = year.toString(),
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 14.sp,
-                    lineHeight = 18.sp,
+                text = title,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = 15.5.sp,
+                    lineHeight = 18.5.sp,
                 ),
-                color = Color.White.copy(alpha = 0.70f),
+                color = if (isFocused) {
+                    Color.White
+                } else {
+                    Color.White.copy(alpha = 0.78f)
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Start,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            if (caption.showsMetadata && year != null && year > 0) {
+                Text(
+                    text = year.toString(),
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
+                    ),
+                    color = Color.White.copy(alpha = 0.70f),
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
 
     }
@@ -234,6 +239,10 @@ fun TvMediaCard(
  * that to Android TV as 130×195dp.
  */
 val TvCardWidth: Dp = RowDimens.PosterWidth
+
+/** [TvCardWidth] scaled by the active poster-size preference. */
+@Composable
+fun tvCardWidth(): Dp = TvCardWidth.cardScaled()
 
 /** Optical scale for wide TV thumbnails; poster cards scale from their actual width. */
 const val TvCardOverlayScale: Float = 0.7f

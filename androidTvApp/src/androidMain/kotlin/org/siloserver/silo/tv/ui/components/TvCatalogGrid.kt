@@ -41,6 +41,7 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.rememberTvGridBringIntoViewSpec
 import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 
@@ -211,8 +212,12 @@ fun TvCatalogGrid(
     ) {
     LazyVerticalGrid(
         state = resolvedGridState,
+        // Adaptive grids honor the card-presentation poster size by scaling
+        // the min cell width (smaller min → more columns); every caller passes
+        // an unscaled base. Fixed callers shift their column count instead
+        // (tvPresetGridColumns) before passing it in.
         columns = fixedColumnCount?.let { GridCells.Fixed(it) }
-            ?: GridCells.Adaptive(minSize = minCellWidth),
+            ?: GridCells.Adaptive(minSize = minCellWidth.cardScaled()),
         horizontalArrangement = Arrangement.spacedBy(horizontalSpacing),
         verticalArrangement = Arrangement.spacedBy(verticalSpacing),
         contentPadding = contentPadding,

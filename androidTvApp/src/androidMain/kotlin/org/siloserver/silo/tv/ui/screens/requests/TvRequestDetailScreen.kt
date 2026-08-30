@@ -41,6 +41,7 @@ import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.SiloBlue
+import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.sectionEyebrow
 import org.siloserver.silo.viewmodel.RequestDetailViewModel
 import org.koin.compose.viewmodel.koinViewModel
@@ -170,7 +171,7 @@ private fun RequestDetailContent(
                     contentDescription = detail.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(RowDimens.PosterWidth, RowDimens.PosterHeight)
+                        .size(RowDimens.PosterWidth.cardScaled(), RowDimens.PosterHeight.cardScaled())
                         .clip(RoundedCornerShape(10.dp)),
                 )
             }

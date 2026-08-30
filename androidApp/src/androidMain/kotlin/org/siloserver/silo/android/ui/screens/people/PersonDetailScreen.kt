@@ -59,6 +59,7 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.SiloSurfaceVariant
 import org.siloserver.silo.android.ui.theme.PillShape
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -164,7 +165,10 @@ private fun PersonDetailContent(
     val gridState = rememberLazyGridState()
     DeferImagePresentationWhileScrolling(gridState) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 110.dp),
+        // Filmography cards only — the person portrait keeps its fixed size.
+        columns = GridCells.Adaptive(
+            minSize = 110.dp * LocalCardPresentation.current.posterSize.posterScale,
+        ),
         state = gridState,
         contentPadding = PaddingValues(
             start = SafePadding,

@@ -37,6 +37,7 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
@@ -44,6 +45,7 @@ import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.tv.ui.theme.ProgressFill
 import org.siloserver.silo.tv.ui.theme.ProgressTrack
 import org.siloserver.silo.tv.ui.theme.RowDimens
+import org.siloserver.silo.tv.ui.theme.cardScaled
 import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 
 /**
@@ -67,7 +69,7 @@ fun TvEpisodeCard(
     seasonNumber: Int? = null,
     episodeNumber: Int? = null,
     progress: Float? = null,
-    width: Dp = TvEpisodeCardWidth,
+    width: Dp = tvEpisodeCardWidth(),
     focusRequester: FocusRequester? = null,
     cardModifier: Modifier = Modifier,
     userState: org.siloserver.silo.model.catalog.MediaItemUserState? = null,
@@ -75,6 +77,7 @@ fun TvEpisodeCard(
     actions: TvMediaCardActions = TvMediaCardActions(),
 ) {
     val overlayState = LocalCardOverlayUiState.current
+    val caption = LocalCardPresentation.current.caption
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
@@ -178,38 +181,40 @@ fun TvEpisodeCard(
             }
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 7.dp),
-            horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = seriesTitle ?: title,
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontSize = 15.5.sp,
-                    lineHeight = 18.5.sp,
-                ),
-                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            val secondaryLine = if (seriesTitle != null) title else year?.toString()
-            if (secondaryLine != null) {
+        if (caption.showsTitle) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 7.dp),
+                horizontalAlignment = Alignment.Start,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
-                    text = secondaryLine,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = 14.sp,
-                        lineHeight = 18.sp,
+                    text = seriesTitle ?: title,
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontSize = 15.5.sp,
+                        lineHeight = 18.5.sp,
                     ),
-                    color = Color.White.copy(alpha = 0.75f),
+                    color = if (isFocused) Color.White else Color.White.copy(alpha = 0.78f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                val secondaryLine = if (seriesTitle != null) title else year?.toString()
+                if (caption.showsMetadata && secondaryLine != null) {
+                    Text(
+                        text = secondaryLine,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 14.sp,
+                            lineHeight = 18.sp,
+                        ),
+                        color = Color.White.copy(alpha = 0.75f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
 
@@ -228,6 +233,10 @@ private fun formatEpisodeTag(season: Int?, episode: Int?): String? {
  * that to Android TV as 180×100dp.
  */
 val TvEpisodeCardWidth: Dp = RowDimens.BackdropWidth
+
+/** [TvEpisodeCardWidth] scaled by the active poster-size preference. */
+@Composable
+fun tvEpisodeCardWidth(): Dp = TvEpisodeCardWidth.cardScaled()
 
 /** Hoisted so every card shares one instance instead of allocating a shape per composition. */
 private val TvEpisodeCardShape = RoundedCornerShape(8.dp)

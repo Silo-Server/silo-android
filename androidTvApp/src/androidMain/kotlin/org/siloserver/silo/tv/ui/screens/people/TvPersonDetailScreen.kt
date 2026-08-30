@@ -77,6 +77,7 @@ import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
 import java.time.LocalDate
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -257,7 +258,7 @@ private fun TvPersonDetailContent(
             },
             modifier = Modifier.fillMaxSize(),
             gridState = gridState,
-            fixedColumnCount = PersonGridColumns,
+            fixedColumnCount = tvPresetGridColumns(PersonGridColumns),
             // tvOS `TVPersonDetailContent`: 48pt page top, 72pt bottom, 40pt grid
             // column spacing, 48pt header → filmography gap (all halved to dp).
             contentPadding = PaddingValues(

@@ -88,6 +88,12 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.network.clientVersionLabel
+import org.siloserver.silo.common.settings.CardPresentationSource
+import org.siloserver.silo.common.settings.CardPresentationSupport
+import org.siloserver.silo.model.settings.CardCaption
+import org.siloserver.silo.model.settings.CardPosterSize
+import org.siloserver.silo.model.settings.CardPresentation
+import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
@@ -267,6 +273,9 @@ fun TvSettingsScreen(
         onMetadataLanguageChanged = viewModel::onMetadataLanguageChanged,
         metadataLanguageEnabled = metadataAiStatus.enabled && metadataAiStatus.onView != org.siloserver.silo.model.metadata.MetadataAiOnView.Off,
         onShowForcedSubtitlesChanged = viewModel::onShowForcedSubtitlesChanged,
+        onCardPresentationChanged = viewModel::onCardPresentationSelected,
+        onCardPresentationDeviceOnlyChanged = viewModel::onCardPresentationDeviceOnlyChanged,
+        onUseProfileCardDefault = viewModel::onUseProfileCardDefault,
         onSubtitleFontSizeChanged = viewModel::setSubtitleFontSize,
         onSubtitleFontFamilyChanged = viewModel::setSubtitleFontFamily,
         onSubtitleFontColorChanged = viewModel::setSubtitleFontColor,
@@ -405,6 +414,9 @@ private fun SettingsSplitLayout(
     onMetadataLanguageChanged: (String) -> Unit,
     metadataLanguageEnabled: Boolean,
     onShowForcedSubtitlesChanged: (Boolean) -> Unit,
+    onCardPresentationChanged: (CardPresentation) -> Unit,
+    onCardPresentationDeviceOnlyChanged: (Boolean) -> Unit,
+    onUseProfileCardDefault: () -> Unit,
     onSubtitleFontSizeChanged: (SubtitleFontSizePreset) -> Unit,
     onSubtitleFontFamilyChanged: (String) -> Unit,
     onSubtitleFontColorChanged: (String) -> Unit,
@@ -477,6 +489,9 @@ private fun SettingsSplitLayout(
             onMetadataLanguageChanged = onMetadataLanguageChanged,
             metadataLanguageEnabled = metadataLanguageEnabled,
             onShowForcedSubtitlesChanged = onShowForcedSubtitlesChanged,
+            onCardPresentationChanged = onCardPresentationChanged,
+            onCardPresentationDeviceOnlyChanged = onCardPresentationDeviceOnlyChanged,
+            onUseProfileCardDefault = onUseProfileCardDefault,
             onSubtitleFontSizeChanged = onSubtitleFontSizeChanged,
             onSubtitleFontFamilyChanged = onSubtitleFontFamilyChanged,
             onSubtitleFontColorChanged = onSubtitleFontColorChanged,
@@ -739,6 +754,9 @@ private fun SettingsDetailPane(
     onMetadataLanguageChanged: (String) -> Unit,
     metadataLanguageEnabled: Boolean,
     onShowForcedSubtitlesChanged: (Boolean) -> Unit,
+    onCardPresentationChanged: (CardPresentation) -> Unit,
+    onCardPresentationDeviceOnlyChanged: (Boolean) -> Unit,
+    onUseProfileCardDefault: () -> Unit,
     onSubtitleFontSizeChanged: (SubtitleFontSizePreset) -> Unit,
     onSubtitleFontFamilyChanged: (String) -> Unit,
     onSubtitleFontColorChanged: (String) -> Unit,
@@ -779,6 +797,9 @@ private fun SettingsDetailPane(
                 state = state,
                 firstFocusRequester = detailFocusRequester,
                 onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
+                onCardPresentationChanged = onCardPresentationChanged,
+                onCardPresentationDeviceOnlyChanged = onCardPresentationDeviceOnlyChanged,
+                onUseProfileCardDefault = onUseProfileCardDefault,
             )
             TvSettingsCategory.Playback -> TvPlaybackSettingsPane(
                 state = state,
@@ -847,7 +868,12 @@ private fun TvGeneralSettingsPane(
     state: TvSettingsViewModel.UiState,
     firstFocusRequester: FocusRequester,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onCardPresentationChanged: (CardPresentation) -> Unit,
+    onCardPresentationDeviceOnlyChanged: (Boolean) -> Unit,
+    onUseProfileCardDefault: () -> Unit,
 ) {
+    var activeCardPicker by remember { mutableStateOf<CardPresentationPicker?>(null) }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -869,13 +895,115 @@ private fun TvGeneralSettingsPane(
                 )
             }
         }
+        item {
+            // tvOS General → CARDS & POSTERS parity, backed by the
+            // server-driven `ui.card_presentation` setting. Unknown support
+            // (offline probe) keeps the controls up over the cached value;
+            // only a confirmed too-old server hides them.
+            SettingsGroup(title = "Cards & Posters") {
+                if (state.cardPresentationSupport == CardPresentationSupport.Unsupported) {
+                    SettingsFooterText(
+                        text = "Update your Silo server to customize media cards.",
+                    )
+                } else {
+                    SettingsValueRow(
+                        label = "Preset",
+                        value = state.cardPresentation.preset?.displayName ?: "Custom",
+                        onClick = { activeCardPicker = CardPresentationPicker.Preset },
+                    )
+                    SettingsValueRow(
+                        label = "Poster Size",
+                        value = state.cardPresentation.posterSize.displayName,
+                        onClick = { activeCardPicker = CardPresentationPicker.PosterSize },
+                    )
+                    SettingsValueRow(
+                        label = "Captions",
+                        value = state.cardPresentation.caption.displayName,
+                        onClick = { activeCardPicker = CardPresentationPicker.Captions },
+                    )
+                    SettingsToggleRow(
+                        label = "Only This Device",
+                        checked = state.cardPresentationSource ==
+                            CardPresentationSource.DeviceOverride,
+                        onCheckedChange = onCardPresentationDeviceOnlyChanged,
+                    )
+                    if (state.cardPresentationSource == CardPresentationSource.ClientFamily) {
+                        SettingsActionRow(
+                            label = "Use Profile Default",
+                            onClick = onUseProfileCardDefault,
+                        )
+                    }
+                    SettingsFooterText(
+                        text = "Choices sync with other TVs signed into this profile " +
+                            "unless \"Only This Device\" is on.",
+                    )
+                }
+            }
+        }
         // No Library group — tvOS parity: Apple's TVSettingsView has no such
         // section (it is iOS-only). On TV these destinations live in the
         // For You dropdown (Watchlist/Favorites), the profile menu
         // (Watchlist/Favorites/History), Home (Browse), and each library's
         // cascade (Collections). (QA 2026-07-08.)
     }
+
+    when (activeCardPicker) {
+        CardPresentationPicker.Preset -> TvSettingsPickerSheet(
+            title = "Preset",
+            // Synthetic "Custom" appears only while the current pair matches
+            // no preset; it is a label for the state, not a choice.
+            options = buildList {
+                CardPresentationPreset.entries.forEach {
+                    add(PickerOption(it.name, it.displayName))
+                }
+                if (state.cardPresentation.preset == null) {
+                    add(PickerOption(CustomCardPresetId, "Custom"))
+                }
+            },
+            selectedId = state.cardPresentation.preset?.name ?: CustomCardPresetId,
+            onSelect = { id ->
+                CardPresentationPreset.entries.firstOrNull { it.name == id }
+                    ?.let { onCardPresentationChanged(it.presentation) }
+                activeCardPicker = null
+            },
+            onDismiss = { activeCardPicker = null },
+        )
+        CardPresentationPicker.PosterSize -> TvSettingsPickerSheet(
+            title = "Poster Size",
+            options = CardPosterSize.entries.map { PickerOption(it.raw, it.displayName) },
+            selectedId = state.cardPresentation.posterSize.raw,
+            onSelect = { id ->
+                CardPosterSize.fromRaw(id)?.let {
+                    onCardPresentationChanged(state.cardPresentation.copy(posterSize = it))
+                }
+                activeCardPicker = null
+            },
+            onDismiss = { activeCardPicker = null },
+        )
+        CardPresentationPicker.Captions -> TvSettingsPickerSheet(
+            title = "Captions",
+            options = CardCaption.entries.map { PickerOption(it.raw, it.displayName) },
+            selectedId = state.cardPresentation.caption.raw,
+            onSelect = { id ->
+                CardCaption.fromRaw(id)?.let {
+                    onCardPresentationChanged(state.cardPresentation.copy(caption = it))
+                }
+                activeCardPicker = null
+            },
+            onDismiss = { activeCardPicker = null },
+        )
+        null -> Unit
+    }
 }
+
+private enum class CardPresentationPicker {
+    Preset,
+    PosterSize,
+    Captions,
+}
+
+/** Picker id for the synthetic "Custom" preset row (never on the wire). */
+private const val CustomCardPresetId = "custom"
 
 @Composable
 private fun TvPlaybackSettingsPane(

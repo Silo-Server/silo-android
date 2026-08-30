@@ -86,8 +86,10 @@ import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsRe
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsSettingsScreen
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
+import org.siloserver.silo.common.cards.ProvideCardPresentation
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
+import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.network.TokenManager
 import org.koin.compose.koinInject
@@ -128,7 +130,12 @@ fun AppNavigation(
     val tokenManager: TokenManager = koinInject()
     val serverRegistry: org.siloserver.silo.network.ServerRegistry = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
+    val cardPresentationStore: CardPresentationStore = koinInject()
     val siloCastController: SiloCastController = koinInject()
+    // Lives as long as the nav host, so work started from a destination that is
+    // popped in the same gesture (re-hydrating after a profile switch) is not
+    // cancelled with that destination's own scope.
+    val navScope = rememberCoroutineScope()
     val diagnosticsViewModel = koinViewModel<DiagnosticsViewModel>()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
     var activePlayerTargetProvider by remember {
@@ -275,6 +282,7 @@ fun AppNavigation(
     }
 
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
+    ProvideCardPresentation(store = cardPresentationStore, sessionKey = overlaySessionKey) {
     // Shared-element host: lets a tapped poster morph into the item-detail
     // backdrop. The scope is published via CompositionLocal so deep descendants
     // (a poster card, the detail hero) can opt in without threading it through
@@ -553,6 +561,13 @@ fun AppNavigation(
                         ServerSwitchDestination.ProfileSelection -> Route.ProfileSelection.route
                         ServerSwitchDestination.Login -> Route.Login.route
                     }
+                    // Overlays and card presentation are cached per profile on
+                    // the old server. Drop them so the new server's shell can't
+                    // render — or write back — the previous identity's values;
+                    // the providers above re-hydrate for the new session.
+                    // Parity with the TV shell's server-switch path.
+                    overlayPrefsStore.clear()
+                    cardPresentationStore.clear()
                     navController.navigate(target) {
                         popUpTo(0) { inclusive = true }
                         launchSingleTop = true
@@ -566,6 +581,16 @@ fun AppNavigation(
         composable(Route.ProfileSelection.route) {
             ProfileSelectionScreen(
                 onNavigateToHome = {
+                    // The switch-profile paths dropped the per-profile card
+                    // caches; re-hydrate for the profile just picked. The
+                    // providers above the graph only re-run when the profile id
+                    // itself changes, so re-selecting the SAME profile would
+                    // otherwise render cleared (default) cards until the next
+                    // foreground refresh. Idempotent when they already ran.
+                    navScope.launch {
+                        overlayPrefsStore.hydrateIfNeeded()
+                        cardPresentationStore.hydrateIfNeeded()
+                    }
                     // Route through the tour gate: OnboardingTourScreen checks
                     // server-side state and immediately hands off to Home when
                     // the profile has already completed or skipped the tour.
@@ -684,7 +709,13 @@ fun AppNavigation(
                 onPairDevice = {
                     navController.navigate(Route.PairDevice().route)
                 },
-                onSwitchProfile = { navController.navigate(Route.ProfileSelection.route) },
+                onSwitchProfile = {
+                    // Leave the shell first, then drop the per-profile caches
+                    // (see the profile-menu path in MainScreen).
+                    navController.navigate(Route.ProfileSelection.route)
+                    overlayPrefsStore.clear()
+                    cardPresentationStore.clear()
+                },
                 onNavigateToWatchlist = { navController.navigate(Route.Watchlist.route) },
                 onNavigateToFavorites = { navController.navigate(Route.Favorites.route) },
                 onNavigateToHistory = { navController.navigate(Route.History.route) },
@@ -1196,6 +1227,7 @@ fun AppNavigation(
                     .padding(bottom = if (currentRoute in tabRoutes) 80.dp else 0.dp),
             )
         }
+    }
     }
     }
     }

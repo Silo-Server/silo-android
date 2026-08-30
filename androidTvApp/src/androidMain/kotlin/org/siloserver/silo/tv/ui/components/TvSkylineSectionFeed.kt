@@ -39,6 +39,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -54,7 +55,9 @@ import org.siloserver.silo.tv.ui.focus.keyedBooleanSaver
 import org.siloserver.silo.tv.ui.focus.keyedIntSaver
 import org.siloserver.silo.tv.ui.focus.resolveTvReturnTarget
 import org.siloserver.silo.tv.ui.focus.toTvReturnSections
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.tv.ui.theme.RowDimens
@@ -761,7 +764,9 @@ fun TvSkylineSectionFeed(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background),
         ) {
-            val bandHeight = maxHeight * TvSkylineRowBandHeightFraction
+            val presentation = LocalCardPresentation.current
+            val bandHeight = tvSkylineRowBandHeight(presentation)
+                .coerceAtMost(maxHeight * TvSkylineRowBandMaxFraction)
             val trailingPreviewPadding = (bandHeight - TvSkylineRowBandBottomInset).coerceAtLeast(0.dp)
 
             // Base content changes drive matching 240 ms backdrop and copy
@@ -832,7 +837,8 @@ fun TvSkylineSectionFeed(
                             itemSpacing = TvSkylineItemSpacing,
                             rowTopPadding = TvSkylineRowCardVerticalPadding,
                             rowBottomPadding = TvSkylineRowCardVerticalPadding,
-                            posterWidth = RowDimens.DensePosterWidth,
+                            posterWidth = RowDimens.DensePosterWidth *
+                                presentation.posterSize.posterScale,
                             firstItemFocusRequester = resolvedFirstRowFocusRequester
                                 .takeIf { isFirstRow },
                             rowContainerFocusRequester = when {
@@ -913,8 +919,33 @@ private val TvSkylineRowCardVerticalPadding = 7.dp
 /** tvOS rowBandBottomInset 20pt maps to 10dp. */
 private val TvSkylineRowBandBottomInset = 10.dp
 
-/** Portion of the screen reserved for the row stack. */
-private const val TvSkylineRowBandHeightFraction = 0.50f
+// The band is sized from what its first row actually needs — section header,
+// card at the scaled dense-poster height, and whichever caption lines the
+// card-presentation preference shows — plus a peek of the next section. The
+// previous fixed 0.50 fraction clipped `large` cards against the marquee and
+// wasted marquee room under artwork-only captions. At the standard preset
+// this derivation reproduces the old 270dp band on a 540dp-tall layout.
+private val TvSkylineRowHeaderHeight = 26.dp // TvSectionHeader: 22sp title line + 4dp bottom pad
+private val TvSkylineRowHeaderGap = 12.dp // TvMediaRow header→rail spacing
+private val TvSkylineCaptionTitleHeight = 30.dp // TvMediaCard: 11dp spacer + 18.5sp title line
+private val TvSkylineCaptionMetadataHeight = 18.dp // TvMediaCard: 18sp year line
+private val TvSkylineRowPreviewPeek = 24.dp // sliver of the next section's header
+
+/** The band never pushes the marquee below ~40% of the screen. */
+private const val TvSkylineRowBandMaxFraction = 0.58f
+
+private fun tvSkylineRowBandHeight(presentation: CardPresentation): Dp {
+    val cardHeight = RowDimens.DensePosterWidth * presentation.posterSize.posterScale * 3f / 2f
+    val captionHeight = when {
+        !presentation.caption.showsTitle -> 0.dp
+        presentation.caption.showsMetadata ->
+            TvSkylineCaptionTitleHeight + TvSkylineCaptionMetadataHeight
+        else -> TvSkylineCaptionTitleHeight
+    }
+    return TvSkylineRowHeaderHeight + TvSkylineRowHeaderGap +
+        TvSkylineRowCardVerticalPadding * 2 + cardHeight + captionHeight +
+        TvSkylineRowPreviewSpacing + TvSkylineRowPreviewPeek
+}
 
 /** Gap between the marquee block and the top of the row band. */
 private val TvSkylineMarqueeBottomGap = 4.dp

@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +29,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
+import org.siloserver.silo.common.cards.LocalCardPresentation
 
 private val ShimmerHighlight = Color.White.copy(alpha = 0.06f)
 
@@ -79,8 +81,10 @@ fun Modifier.skeleton(
 fun MediaRowSkeleton(
     progress: Float,
     modifier: Modifier = Modifier,
-    posterWidth: Dp = 120.dp,
-    posterHeight: Dp = 180.dp,
+    // Scaled like MediaCard's default so the placeholder boxes match the
+    // real cards that replace them (height follows the 2:3 aspect).
+    posterWidth: Dp = 120.dp * LocalCardPresentation.current.posterSize.posterScale,
+    posterHeight: Dp = posterWidth * 1.5f,
     count: Int = 5,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -109,36 +113,51 @@ fun MediaRowSkeleton(
 }
 
 /**
- * Skeleton for a poster grid: fixed rows of poster-shaped boxes that fill the
- * width. Used for catalog / browse / "similar" loading states so the grid is
- * laid out from frame one and only the pixels resolve in.
+ * Skeleton for a poster grid: rows of poster-shaped boxes that fill the width.
+ * Used for catalog / browse / "similar" loading states so the grid is laid out
+ * from frame one and only the pixels resolve in.
+ *
+ * The column count is derived the way `GridCells.Adaptive` derives it, from
+ * [minCellWidth] — scaled by the card-presentation poster size like the real
+ * grids — so the placeholder breaks into the same number of columns the cards
+ * will land in instead of reflowing on the first frame of real content.
  */
 @Composable
 fun PosterGridSkeleton(
     progress: Float,
     modifier: Modifier = Modifier,
-    columns: Int = 3,
+    minCellWidth: Dp = MediaGridDefaults.scaledPosterGridMinWidth,
     rows: Int = 4,
     posterAspect: Float = 2f / 3.3f,
 ) {
-    Column(
-        modifier = modifier.fillMaxWidth().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        repeat(rows) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                repeat(columns) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .aspectRatio(posterAspect)
-                            .skeleton(progress),
-                    )
+    val spacing = MediaGridDefaults.PosterGridHorizontalSpacing
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val available = (maxWidth - GridSkeletonInset * 2).coerceAtLeast(0.dp)
+        val columns = ((available + spacing) / (minCellWidth + spacing))
+            .toInt()
+            .coerceAtLeast(1)
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(GridSkeletonInset),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            repeat(rows) {
+                Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                    repeat(columns) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .aspectRatio(posterAspect)
+                                .skeleton(progress),
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+/** Matches the 16dp content padding of the grids this skeleton stands in for. */
+private val GridSkeletonInset = 16.dp
 
 /**
  * Loading skeleton for a media detail page: a hero band, a couple of title /

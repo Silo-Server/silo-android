@@ -71,6 +71,8 @@ import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.network.ServerReachabilityStatus
+import org.siloserver.silo.common.settings.CardPresentationStore
+import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
@@ -146,6 +148,8 @@ fun MainScreen(
     val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: MetadataAiFeatureStore = koinInject()
+    val overlayPrefsStore: OverlayPrefsStore = koinInject()
+    val cardPresentationStore: CardPresentationStore = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val reachabilityScope = rememberCoroutineScope()
@@ -262,11 +266,30 @@ fun MainScreen(
             authRepository.logout()
             requestsFeatureStore.reset()
             metadataAiFeatureStore.reset()
+            // Per-profile card caches, same teardown the Settings sign-out
+            // does — otherwise the next user's shell renders (and can write
+            // back) the previous profile's overlays and card presentation.
+            overlayPrefsStore.clear()
+            cardPresentationStore.clear()
             navController.navigate(Route.Login.route) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
             }
         }
+    }
+
+    /**
+     * Profile-menu "Switch Profile". Overlays and card presentation are cached
+     * per profile and the app never backgrounds during an in-app switch, so
+     * drop them here or the next profile keeps rendering — and writing back —
+     * the previous one's values. Navigate first: clearing while the shell is
+     * still composed repaints it with default cards behind the picker (the
+     * TV shell's switch-profile path takes the same order).
+     */
+    fun switchProfileFromMenu() {
+        navController.navigate(Route.ProfileSelection.route)
+        overlayPrefsStore.clear()
+        cardPresentationStore.clear()
     }
     val requestsMenuAction: (() -> Unit)? = if (requestsEnabled) {
         { navController.navigate(Route.Requests.route) }
@@ -377,9 +400,7 @@ fun MainScreen(
                             onRequestsClick = requestsMenuAction,
                             onWatchTogetherClick = watchTogetherMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
-                            onSwitchProfileClick = {
-                                navController.navigate(Route.ProfileSelection.route)
-                            },
+                            onSwitchProfileClick = ::switchProfileFromMenu,
                             onSwitchServerClick = {
                                 navController.navigate(Route.ServerList.route)
                             },
@@ -401,9 +422,7 @@ fun MainScreen(
                             onRequestsClick = requestsMenuAction,
                             onWatchTogetherClick = watchTogetherMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
-                            onSwitchProfileClick = {
-                                navController.navigate(Route.ProfileSelection.route)
-                            },
+                            onSwitchProfileClick = ::switchProfileFromMenu,
                             onSwitchServerClick = {
                                 navController.navigate(Route.ServerList.route)
                             },
@@ -435,9 +454,7 @@ fun MainScreen(
                                     onRequestsClick = requestsMenuAction,
                                     onWatchTogetherClick = watchTogetherMenuAction,
                                     onSettingsClick = { navController.navigate(Route.Settings.route) },
-                                    onSwitchProfileClick = {
-                                        navController.navigate(Route.ProfileSelection.route)
-                                    },
+                                    onSwitchProfileClick = ::switchProfileFromMenu,
                                     onSwitchServerClick = {
                                         navController.navigate(Route.ServerList.route)
                                     },
@@ -496,9 +513,7 @@ fun MainScreen(
                     onRequestsClick = requestsMenuAction,
                     onWatchTogetherClick = watchTogetherMenuAction,
                     onSettingsClick = { navController.navigate(Route.Settings.route) },
-                    onSwitchProfileClick = {
-                        navController.navigate(Route.ProfileSelection.route)
-                    },
+                    onSwitchProfileClick = ::switchProfileFromMenu,
                     onSwitchServerClick = {
                         navController.navigate(Route.ServerList.route)
                     },
