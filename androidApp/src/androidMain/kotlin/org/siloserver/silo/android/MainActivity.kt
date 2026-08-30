@@ -1,6 +1,7 @@
 package org.siloserver.silo.android
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.res.Configuration
 import android.content.pm.PackageManager
@@ -225,6 +226,7 @@ class MainActivity : ComponentActivity() {
      * volume HUD. Repeated ACTION_DOWN events intentionally remain individual
      * remote steps when the user holds a button.
      */
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val step = when (event.keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> 1

@@ -62,6 +62,7 @@ class SiloCastMediaSessionService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, player)
             .setBitmapLoader(bitmapLoader)
             .build()
+            .also(::addSession)
 
         stateJob = scope.launch {
             controller.state.collect { state ->
@@ -118,7 +119,10 @@ class SiloCastMediaSessionService : MediaSessionService() {
         stateJob?.cancel()
         artworkJob?.cancel()
         scope.cancel()
-        mediaSession?.release()
+        mediaSession?.let { session ->
+            removeSession(session)
+            session.release()
+        }
         mediaSession = null
         mediaSessionBitmapLoader?.close()
         mediaSessionBitmapLoader = null

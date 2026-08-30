@@ -4,7 +4,7 @@ import java.util.ArrayDeque
 import kotlin.math.abs
 
 /**
- * Holds locally requested absolute volume levels until the TV acknowledges
+ * Holds locally requested volume and mute values until the TV acknowledges
  * them in order.
  *
  * SiloCast sends absolute values and the TV answers every command with a full
@@ -14,35 +14,66 @@ import kotlin.math.abs
  * snapshot cannot acknowledge the second request while the first is pending.
  */
 internal class RemoteVolumeReconciler {
-    private data class PendingRequest(
+    private data class PendingVolumeRequest(
         val volume: Double,
         val requestedAtMs: Long,
     )
 
-    private val pending = ArrayDeque<PendingRequest>()
+    private data class PendingMuteRequest(
+        val isMuted: Boolean,
+        val requestedAtMs: Long,
+    )
+
+    private val pendingVolumes = ArrayDeque<PendingVolumeRequest>()
+    private val pendingMutes = ArrayDeque<PendingMuteRequest>()
 
     fun requested(volume: Double, atMs: Long) {
-        pending.addLast(PendingRequest(volume = volume, requestedAtMs = atMs))
+        pendingVolumes.addLast(PendingVolumeRequest(volume = volume, requestedAtMs = atMs))
+    }
+
+    fun requestedMuted(isMuted: Boolean, atMs: Long) {
+        pendingMutes.addLast(PendingMuteRequest(isMuted = isMuted, requestedAtMs = atMs))
+    }
+
+    fun clearVolume() {
+        pendingVolumes.clear()
     }
 
     fun clear() {
-        pending.clear()
+        pendingVolumes.clear()
+        pendingMutes.clear()
     }
 
     fun reconcile(inbound: Double, atMs: Long): Double {
-        val latest = pending.peekLast() ?: return inbound
+        val latest = pendingVolumes.peekLast() ?: return inbound
         if (atMs - latest.requestedAtMs >= WINDOW_MS) {
-            pending.clear()
+            pendingVolumes.clear()
             return inbound
         }
 
-        val earliest = pending.peekFirst()
+        val earliest = pendingVolumes.peekFirst()
         if (earliest != null && abs(inbound - earliest.volume) < TOLERANCE) {
-            pending.removeFirst()
-            return pending.peekLast()?.volume ?: inbound
+            pendingVolumes.removeFirst()
+            return pendingVolumes.peekLast()?.volume ?: inbound
         }
 
         return latest.volume
+    }
+
+    fun reconcileMuted(inbound: Boolean, atMs: Long): Boolean {
+        val latest = pendingMutes.peekLast() ?: return inbound
+        if (atMs - latest.requestedAtMs >= WINDOW_MS) {
+            pendingMutes.clear()
+            return inbound
+        }
+
+        val earliest = pendingMutes.peekFirst()
+        if (earliest != null && inbound == earliest.isMuted) {
+            pendingMutes.removeFirst()
+            return pendingMutes.peekLast()?.isMuted ?: inbound
+        }
+
+        return latest.isMuted
     }
 
     private companion object {

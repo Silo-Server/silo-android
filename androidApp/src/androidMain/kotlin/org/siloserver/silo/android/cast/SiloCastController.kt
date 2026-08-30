@@ -371,7 +371,9 @@ class SiloCastController(
 
     fun setMuted(muted: Boolean) {
         synchronized(volumeStateLock) {
-            volumeReconciler.clear()
+            val now = nowMs()
+            volumeReconciler.clearVolume()
+            volumeReconciler.requestedMuted(muted, now)
             _state.update { state ->
                 state.copy(playbackState = state.playbackState?.copy(isMuted = muted))
             }
@@ -400,7 +402,9 @@ class SiloCastController(
 
             if (playback.isMuted && step < 0) return true
             if (playback.isMuted) {
-                volumeReconciler.clear()
+                val now = nowMs()
+                volumeReconciler.clearVolume()
+                volumeReconciler.requestedMuted(isMuted = false, atMs = now)
                 _state.update { state ->
                     state.copy(playbackState = state.playbackState?.copy(isMuted = false))
                 }
@@ -905,6 +909,7 @@ class SiloCastController(
                     } else {
                         message.state.copy(
                             volume = volumeReconciler.reconcile(message.state.volume, now),
+                            isMuted = volumeReconciler.reconcileMuted(message.state.isMuted, now),
                         )
                     }
                     _state.update {
@@ -978,6 +983,11 @@ class SiloCastController(
     private fun teardownTransportLocked() {
         // Invalidate queued controls before closing or replacing the stream.
         controlTransport = null
+        synchronized(volumeStateLock) {
+            // Requests queued for this socket can no longer be acknowledged.
+            // Let the replacement session's first state become authoritative.
+            volumeReconciler.clear()
+        }
         runCatching { session?.close() }
         session = null
         output = null
