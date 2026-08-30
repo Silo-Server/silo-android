@@ -1,14 +1,58 @@
 package org.siloserver.silo.common.player
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.siloserver.silo.common.network.SiloClientBuildIdentity
+import org.siloserver.silo.libass.LibassBridge
 import org.siloserver.silo.model.playback.HdrCapabilities
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
+import org.siloserver.silo.model.playback.ClientCodecCapabilities
+import org.siloserver.silo.model.playback.DELIVERY_CLASS_HLS
+import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
+import org.siloserver.silo.model.playback.DELIVERY_CLASS_PROGRESSIVE
+import org.siloserver.silo.model.playback.NATIVE_HLS_PLAYBACK_V1_FEATURE
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
 class PlaybackCapabilityDetectorDolbyVisionTest {
+
+    @Test
+    fun phoneAndTvAdvertiseNativeHlsOnlyOnMedia3HlsDelivery() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        listOf("mobile", "tv").forEach { formFactor ->
+            val playbackContext = detector.detectPlaybackContext(
+                formFactor = formFactor,
+                appVersion = "test",
+                capabilities = ClientCodecCapabilities(),
+            )
+
+            assertTrue(
+                NATIVE_HLS_PLAYBACK_V1_FEATURE in playbackContext.deliveries.getValue(DELIVERY_CLASS_HLS).features,
+                "$formFactor must identify its local Media3 HLS pipeline",
+            )
+            assertFalse(
+                NATIVE_HLS_PLAYBACK_V1_FEATURE in playbackContext.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP).features,
+                "$formFactor must not apply the HLS sample-entry contract to original HTTP",
+            )
+            assertFalse(
+                NATIVE_HLS_PLAYBACK_V1_FEATURE in playbackContext.deliveries.getValue(DELIVERY_CLASS_PROGRESSIVE).features,
+                "$formFactor must not apply the HLS sample-entry contract to progressive delivery",
+            )
+        }
+    }
 
     @Test
     fun profile8DirectPlayRequiresAValidatedNativeOutputRoute() {
