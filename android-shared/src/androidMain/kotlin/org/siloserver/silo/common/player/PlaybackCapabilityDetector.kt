@@ -28,6 +28,7 @@ import org.siloserver.silo.model.playback.CLIENT_SURFACE_RECOVERY
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
 import org.siloserver.silo.model.playback.CLIENT_DV_TRANSFORM_RECIPE_VERSION
+import org.siloserver.silo.model.playback.NATIVE_HLS_PLAYBACK_V1_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDeviceContext
 import org.siloserver.silo.model.playback.PlaybackTransformationExecutor
 import org.siloserver.silo.model.playback.PlaybackTransformationV3
@@ -411,6 +412,11 @@ class PlaybackCapabilityDetector(
                     ),
                     features = buildList {
                         addAll(listOf("hls", "track_switching", "buffer_reporting"))
+                        // This delivery is consumed by Media3's native HLS
+                        // pipeline, not a MediaSource implementation such as
+                        // hls.js. The server can therefore use the hvc1/dvh1
+                        // sample-entry recipes that Media3 accepts.
+                        add(NATIVE_HLS_PLAYBACK_V1_FEATURE)
                         add(CLIENT_DV8_HDR10_PLUS_SANITIZER)
                         add(CLIENT_POST_RESUME_VIDEO_RECOVERY)
                         add(CLIENT_SURFACE_RECOVERY)
