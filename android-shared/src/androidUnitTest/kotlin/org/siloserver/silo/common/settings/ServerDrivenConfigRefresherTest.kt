@@ -21,10 +21,12 @@ class ServerDrivenConfigRefresherTest {
     @Test
     fun `refreshIfStale skips when no authenticated profile is active`() = runTest {
         val overlay = FakeOverlayPrefsStore()
+        val cards = FakeCardPresentationStore()
         val library = FakeLibraryPlaybackPrefsStore()
         val player = FakePlayerSettingsStore()
         val refresher = ServerDrivenConfigRefresher(
             overlayPrefsStore = overlay,
+            cardPresentationStore = cards,
             libraryPlaybackPrefsStore = library,
             playerSettingsStore = player,
             hasAuthenticatedProfile = { false },
@@ -35,6 +37,7 @@ class ServerDrivenConfigRefresherTest {
 
         assertFalse(refreshed)
         assertEquals(0, overlay.refreshCalls)
+        assertEquals(0, cards.refreshCalls)
         assertEquals(0, library.refreshCalls)
         assertEquals(0, player.refreshCalls)
     }
@@ -42,10 +45,12 @@ class ServerDrivenConfigRefresherTest {
     @Test
     fun `refreshIfStale refreshes all server-driven stores on first foreground`() = runTest {
         val overlay = FakeOverlayPrefsStore()
+        val cards = FakeCardPresentationStore()
         val library = FakeLibraryPlaybackPrefsStore()
         val player = FakePlayerSettingsStore()
         val refresher = ServerDrivenConfigRefresher(
             overlayPrefsStore = overlay,
+            cardPresentationStore = cards,
             libraryPlaybackPrefsStore = library,
             playerSettingsStore = player,
             hasAuthenticatedProfile = { true },
@@ -56,6 +61,7 @@ class ServerDrivenConfigRefresherTest {
 
         assertTrue(refreshed)
         assertEquals(1, overlay.refreshCalls)
+        assertEquals(1, cards.refreshCalls)
         assertEquals(1, library.refreshCalls)
         assertEquals(1, player.refreshCalls)
     }
@@ -64,10 +70,12 @@ class ServerDrivenConfigRefresherTest {
     fun `refreshIfStale throttles repeated foreground refreshes`() = runTest {
         var now = 1_000L
         val overlay = FakeOverlayPrefsStore()
+        val cards = FakeCardPresentationStore()
         val library = FakeLibraryPlaybackPrefsStore()
         val player = FakePlayerSettingsStore()
         val refresher = ServerDrivenConfigRefresher(
             overlayPrefsStore = overlay,
+            cardPresentationStore = cards,
             libraryPlaybackPrefsStore = library,
             playerSettingsStore = player,
             hasAuthenticatedProfile = { true },
@@ -81,6 +89,7 @@ class ServerDrivenConfigRefresherTest {
         assertTrue(refresher.refreshIfStale(minIntervalMs = 30_000L))
 
         assertEquals(2, overlay.refreshCalls)
+        assertEquals(2, cards.refreshCalls)
         assertEquals(2, library.refreshCalls)
         assertEquals(2, player.refreshCalls)
     }
@@ -88,10 +97,12 @@ class ServerDrivenConfigRefresherTest {
     @Test
     fun `forceRefresh bypasses throttle for reconnect edge`() = runTest {
         val overlay = FakeOverlayPrefsStore()
+        val cards = FakeCardPresentationStore()
         val library = FakeLibraryPlaybackPrefsStore()
         val player = FakePlayerSettingsStore()
         val refresher = ServerDrivenConfigRefresher(
             overlayPrefsStore = overlay,
+            cardPresentationStore = cards,
             libraryPlaybackPrefsStore = library,
             playerSettingsStore = player,
             hasAuthenticatedProfile = { true },
@@ -102,6 +113,7 @@ class ServerDrivenConfigRefresherTest {
         assertTrue(refresher.forceRefresh())
 
         assertEquals(2, overlay.refreshCalls)
+        assertEquals(2, cards.refreshCalls)
         assertEquals(2, library.refreshCalls)
         assertEquals(2, player.refreshCalls)
     }
@@ -121,6 +133,25 @@ private class FakeOverlayPrefsStore : OverlayPrefsStore {
     }
     override fun setPrefs(next: CardOverlayPrefs) = Unit
     override suspend fun resetToDefaults() = Unit
+    override fun clear() = Unit
+}
+
+private class FakeCardPresentationStore : CardPresentationStore {
+    override val state: StateFlow<CardPresentationUiState> = MutableStateFlow(CardPresentationUiState())
+    override val isLoading: StateFlow<Boolean> = MutableStateFlow(false)
+    override val lastError: StateFlow<String?> = MutableStateFlow(null)
+    var refreshCalls = 0
+
+    override suspend fun hydrateIfNeeded() = Unit
+    override suspend fun refresh() {
+        refreshCalls++
+    }
+    override fun set(
+        presentation: org.siloserver.silo.model.settings.CardPresentation,
+        deviceOnly: Boolean,
+    ) = Unit
+    override suspend fun clearDeviceOverride() = Unit
+    override suspend fun useProfileDefault() = Unit
     override fun clear() = Unit
 }
 

@@ -3,9 +3,13 @@ package org.siloserver.silo.tv.ui.screens.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.settings.CardPresentationSource
+import org.siloserver.silo.common.settings.CardPresentationStore
+import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
@@ -52,6 +56,7 @@ class TvSettingsViewModel(
     private val playerSettingsStore: PlayerSettingsStore,
     private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
     private val overlayPrefsStore: OverlayPrefsStore,
+    private val cardPresentationStore: CardPresentationStore,
     private val legacyTvPrefsMigration: LegacyTvPrefsMigration,
     private val profileSettings: ProfileSettingsController,
     private val tvLibraryScopeStore: org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore? = null,
@@ -109,6 +114,12 @@ class TvSettingsViewModel(
         // Seconds before the end of an episode to surface the Up-Next prompt
         // (0 = at the very end). Mirrors tvOS `nextUpPromptSeconds`.
         val nextUpPromptSeconds: Int = 10,
+        // Cards & Posters (`ui.card_presentation`), mirrored from
+        // CardPresentationStore. Source drives the "Only This Device" toggle
+        // and the "Use Profile Default" action; support gates the whole group.
+        val cardPresentation: CardPresentation = CardPresentation.DEFAULT,
+        val cardPresentationSource: CardPresentationSource = CardPresentationSource.Unknown,
+        val cardPresentationSupport: CardPresentationSupport = CardPresentationSupport.Unknown,
         val navAction: NavAction? = null,
     )
 
@@ -119,6 +130,7 @@ class TvSettingsViewModel(
         loadUser()
         loadSettings()
         observePlayerSettings()
+        observeCardPresentation()
     }
 
     /**
@@ -203,6 +215,10 @@ class TvSettingsViewModel(
             // The store writes them to its DataStore; observePlayerSettings()
             // mirrors them into _uiState.
             playerSettingsStore.refreshFromServer()
+
+            // Idempotent — the nav-level ProvideCardPresentation usually got
+            // here first; this covers a cold open straight into Settings.
+            cardPresentationStore.hydrateIfNeeded()
 
             loadProfileSettings()
         }
@@ -375,6 +391,50 @@ class TvSettingsViewModel(
                 _uiState.update { it.copy(effectiveSubtitleAppearance = appearance) }
             }
         }
+    }
+
+    /** Mirror the card-presentation store into UI state (single source of truth). */
+    private fun observeCardPresentation() {
+        viewModelScope.launch {
+            cardPresentationStore.state.collect { cardState ->
+                _uiState.update {
+                    it.copy(
+                        cardPresentation = cardState.presentation,
+                        cardPresentationSource = cardState.source,
+                        cardPresentationSupport = cardState.support,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Apply a new card presentation. The store is optimistic (cards resize
+     * immediately through LocalCardPresentation) and rolls back on failure.
+     * While the "Only This Device" override is active the edit stays at
+     * `profile_device`; otherwise it roams at `profile_client`.
+     */
+    fun onCardPresentationSelected(presentation: CardPresentation) {
+        val deviceOnly =
+            _uiState.value.cardPresentationSource == CardPresentationSource.DeviceOverride
+        cardPresentationStore.set(presentation, deviceOnly = deviceOnly)
+    }
+
+    /**
+     * "Only This Device": ON copies the current value to `profile_device`;
+     * OFF deletes that row so resolution falls back to the family value.
+     */
+    fun onCardPresentationDeviceOnlyChanged(enabled: Boolean) {
+        if (enabled) {
+            cardPresentationStore.set(_uiState.value.cardPresentation, deviceOnly = true)
+        } else {
+            viewModelScope.launch { cardPresentationStore.clearDeviceOverride() }
+        }
+    }
+
+    /** Drop the `profile_client` value so this TV follows the profile default. */
+    fun onUseProfileCardDefault() {
+        viewModelScope.launch { cardPresentationStore.useProfileDefault() }
     }
 
     /**
@@ -612,6 +672,7 @@ class TvSettingsViewModel(
             // `PlaybackPrefsStore.clear()` in the sign-out path.
             libraryPlaybackPrefsStore.clear()
             overlayPrefsStore.clear()
+            cardPresentationStore.clear()
             _uiState.update { it.copy(navAction = NavAction.SIGNED_OUT) }
         }
     }

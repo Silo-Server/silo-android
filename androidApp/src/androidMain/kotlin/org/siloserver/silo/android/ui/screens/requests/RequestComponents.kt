@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestMediaResult
@@ -48,9 +49,12 @@ fun RequestMediaCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Caption gating mirrors RequestMediaCard.swift: showsTitle wraps the
+    // whole caption block, showsMetadata the type/year line inside it.
+    val cardPresentation = LocalCardPresentation.current
     Column(
         modifier = modifier
-            .width(132.dp)
+            .width(132.dp * cardPresentation.posterSize.posterScale)
             .clickable(onClick = onClick),
     ) {
         Box(
@@ -74,18 +78,24 @@ fun RequestMediaCard(
                     .padding(6.dp),
             )
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = item.title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        RequestMetaLine(
-            mediaType = item.mediaType,
-            year = item.year,
-        )
+        if (cardPresentation.caption.showsTitle) {
+            // The spacer belongs to the caption: artwork-only cards must not
+            // leave a gap under the poster.
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (cardPresentation.caption.showsMetadata) {
+                RequestMetaLine(
+                    mediaType = item.mediaType,
+                    year = item.year,
+                )
+            }
+        }
     }
 }
 

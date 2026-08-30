@@ -432,7 +432,7 @@ val androidModule = module {
             tmdbId = args.second,
         )
     }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get()) }

@@ -272,6 +272,17 @@ fun SettingsScreen(
                 }
             }
 
+            item {
+                MediaCardsSettings(
+                    state = state.cardPresentation,
+                    onPresetSelected = viewModel::setCardPreset,
+                    onPosterSizeSelected = viewModel::setCardPosterSize,
+                    onCaptionSelected = viewModel::setCardCaption,
+                    onDeviceOnlyChanged = viewModel::setCardDeviceOnly,
+                    onUseProfileDefault = viewModel::useCardProfileDefault,
+                )
+            }
+
             if (state.notificationsAvailable) {
                 item {
                     SettingsSection(title = "Notifications") {

@@ -16,13 +16,14 @@ import kotlinx.serialization.json.JsonNull
  */
 
 /**
- * The five scopes an explicit value can live at, in the server's wire
+ * The six scopes an explicit value can live at, in the server's wire
  * spelling. Kept as an enum for request construction only — response fields
  * stay raw strings so a server that adds a scope cannot break deserialization.
  */
 enum class SettingScope(val wire: String) {
     ACCOUNT("account"),
     PROFILE("profile"),
+    PROFILE_CLIENT("profile_client"),
     PROFILE_DEVICE("profile_device"),
     PROFILE_LIBRARY("profile_library"),
     PROFILE_SERIES("profile_series"),
@@ -66,6 +67,15 @@ data class SettingScopeIdentity(
 
         fun profile(): SettingScopeIdentity = SettingScopeIdentity(SettingScope.PROFILE)
 
+        /**
+         * Like-client scope: the value roams among devices of the same client
+         * family. Only `scope` travels in the query — the family half of the
+         * identity comes from the `X-Silo-Client-Family` header the auth
+         * interceptor attaches, never from a query parameter.
+         */
+        fun profileClient(): SettingScopeIdentity =
+            SettingScopeIdentity(SettingScope.PROFILE_CLIENT)
+
         fun profileDevice(): SettingScopeIdentity =
             SettingScopeIdentity(SettingScope.PROFILE_DEVICE)
 
@@ -90,6 +100,7 @@ data class SettingsContractCapabilities(
     @SerialName("contract_etag") val contractEtag: String = "",
     @SerialName("definition_count") val definitionCount: Int = 0,
     val scopes: List<String> = emptyList(),
+    @SerialName("client_families") val clientFamilies: List<String> = emptyList(),
     @SerialName("supports_batched_effective") val supportsBatchedEffective: Boolean = false,
     @SerialName("supports_idempotent_writes") val supportsIdempotentWrites: Boolean = false,
 )
