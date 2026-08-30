@@ -11,6 +11,7 @@ import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.model.playback.validateForMedia3
 import org.siloserver.silo.model.playback.PlaybackFailureV3
 import org.siloserver.silo.model.playback.PlaybackPlanV3
+import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.ProgressPersistenceV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
@@ -62,6 +63,24 @@ data class StagedVideoReplan(
      */
     val outputContextId: String?,
 )
+
+/**
+ * Whether two output snapshots can produce different playback recipes.
+ *
+ * The opaque context id is provenance, not a capability. Spatializer state is
+ * also excluded because the server does not route on it and Android may toggle
+ * it as a consequence of remounting the player. A callback that changes only
+ * those fields must not erase the failed-plan history and reopen a fallback
+ * route that just failed.
+ */
+internal fun PlaybackOutputContext.hasSamePlanningRouteAs(other: PlaybackOutputContext): Boolean =
+    copy(
+        outputContextId = null,
+        audioPassthrough = audioPassthrough?.copy(spatializerEnabled = false),
+    ) == other.copy(
+        outputContextId = null,
+        audioPassthrough = other.audioPassthrough?.copy(spatializerEnabled = false),
+    )
 
 /**
  * Manages the playback session lifecycle: creation, progress reporting,
@@ -826,9 +845,17 @@ open class PlaybackSessionManager(
         // An intent operation is a user's choice, not a failure: the previous
         // route stays eligible, so no attempt history is sent and the attempt
         // counter restarts. `output_route_changed` is still failure-shaped —
-        // the route the client was using genuinely stopped working — so it
-        // keeps the legacy classification path while resetting the same state.
-        val invalidation = intent || classification in USER_INVALIDATION_CLASSIFICATIONS
+        // the route the client was using genuinely stopped working — but its
+        // history restarts only when planning-relevant output capabilities
+        // changed. Android may advance an opaque context generation during a
+        // player remount; reopening failed plans for that callback creates an
+        // endless direct/remux/transcode cycle.
+        val materiallyChangedOutputRoute = classification == "output_route_changed" &&
+            !active.context.output.hasSamePlanningRouteAs(currentContext.output)
+        val invalidation = intent || (
+            classification in USER_INVALIDATION_CLASSIFICATIONS &&
+                (classification != "output_route_changed" || materiallyChangedOutputRoute)
+        )
         val attemptedKeys = if (invalidation) {
             emptyList()
         } else {
