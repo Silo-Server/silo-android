@@ -1356,6 +1356,34 @@ class DiagnosticsCoordinatorTest {
     }
 
     @Test
+    fun priorIncidentCollectionPrecedesEnablingCurrentRunBreadcrumbs() = runTest {
+        val events = mutableListOf<String>()
+        val capture = RecordingCaptureController().apply {
+            onPersistentBreadcrumbsChanged = { enabled ->
+                if (enabled) events += "breadcrumbs-enabled"
+            }
+        }
+        val fixture = fixture(
+            identity = MutableIdentityResolver(ADULT_A),
+            transitions = DefaultIdentityTransitionBarrier(),
+            capture = capture,
+            scope = backgroundScope,
+            actorDispatcher = UnconfinedTestDispatcher(testScheduler),
+            incidentCollectorFactory = {
+                DiagnosticsIncidentCollector { _, _ ->
+                    events += "incidents-collected"
+                    emptyList()
+                }
+            },
+        )
+
+        fixture.coordinator.start()
+        fixture.coordinator.refresh()
+
+        assertTrue(events.indexOf("incidents-collected") in 0 until events.indexOf("breadcrumbs-enabled"), events.toString())
+    }
+
+    @Test
     fun detachedRawGenerationCleanupFailureKeepsActorClosedUntilRetrySucceeds() = runTest {
         val capture = RecordingCaptureController().apply {
             hasPersistentEvidence = true
@@ -1798,6 +1826,7 @@ class DiagnosticsCoordinatorTest {
         var purgeFailuresRemaining = 0
         var reconciliationFailuresRemaining = 0
         var captureNowCalls = 0
+        var onPersistentBreadcrumbsChanged: ((Boolean) -> Unit)? = null
         var captureNowAction: suspend (DiagnosticsCaptureContext) -> PendingReport? = { null }
         private var nextGeneration = 0L
 
@@ -1836,6 +1865,7 @@ class DiagnosticsCoordinatorTest {
 
         override suspend fun setPersistentBreadcrumbs(context: DiagnosticsCaptureContext?, enabled: Boolean) {
             persistentBreadcrumbsEnabled = context != null && enabled
+            onPersistentBreadcrumbsChanged?.invoke(persistentBreadcrumbsEnabled)
             if (persistentBreadcrumbsEnabled) hasPersistentEvidence = true
         }
 

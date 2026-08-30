@@ -363,7 +363,7 @@ val androidModule = module {
             castPlaybackPreparer = get(),
         )
     }
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get()) }
     viewModel { MainHeaderViewModel(get()) }
     viewModel {
         LibrariesViewModel(

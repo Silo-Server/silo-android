@@ -2,6 +2,8 @@ package org.siloserver.silo.common.diagnostics
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class DiagnosticsPerformanceRecorderTest {
     @Test
@@ -37,5 +39,39 @@ class DiagnosticsPerformanceRecorderTest {
 
         assertEquals(60_000, snapshot.worstFrameMs)
         assertEquals(60_000, snapshot.longestMainThreadStallMs)
+    }
+
+    @Test
+    fun resourceCheckpointsAreRateLimitedPerSurfaceAndCause() {
+        val cadence = DiagnosticsCheckpointCadence(intervalMs = 30_000)
+
+        assertTrue(
+            cadence.shouldEmit(
+                DiagnosticsListSurface.PHONE_HOME,
+                DiagnosticsResourceCheckpointCause.LIST_READY,
+                nowMs = 100_000,
+            ),
+        )
+        assertFalse(
+            cadence.shouldEmit(
+                DiagnosticsListSurface.PHONE_HOME,
+                DiagnosticsResourceCheckpointCause.LIST_READY,
+                nowMs = 129_999,
+            ),
+        )
+        assertTrue(
+            cadence.shouldEmit(
+                DiagnosticsListSurface.PHONE_HOME,
+                DiagnosticsResourceCheckpointCause.SCROLL_START,
+                nowMs = 100_001,
+            ),
+        )
+        assertTrue(
+            cadence.shouldEmit(
+                DiagnosticsListSurface.PHONE_HOME,
+                DiagnosticsResourceCheckpointCause.LIST_READY,
+                nowMs = 130_000,
+            ),
+        )
     }
 }

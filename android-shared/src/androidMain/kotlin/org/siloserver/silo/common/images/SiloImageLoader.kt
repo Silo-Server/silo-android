@@ -1,12 +1,23 @@
 package org.siloserver.silo.common.images
 
 import coil3.ImageLoader
+import coil3.EventListener
 import coil3.PlatformContext
+import coil3.decode.DataSource
+import coil3.decode.Decoder
 import coil3.disk.DiskCache
+import coil3.fetch.Fetcher
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.ErrorResult
+import coil3.request.ImageRequest
+import coil3.request.Options
+import coil3.request.SuccessResult
 import coil3.request.crossfade
 import okio.Path.Companion.toOkioPath
 import org.siloserver.silo.network.SiloOkHttp
+import org.siloserver.silo.common.diagnostics.DiagnosticsImageHealth
+import org.siloserver.silo.common.diagnostics.DiagnosticsImageSource
+import org.siloserver.silo.common.diagnostics.DiagnosticsImageStage
 import java.io.File
 
 /**
@@ -25,6 +36,7 @@ import java.io.File
 fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader =
     ImageLoader.Builder(context)
         .crossfade(true)
+        .eventListenerFactory { DiagnosticsImageEventListener() }
         .components {
             add(OkHttpNetworkFetcherFactory(callFactory = { SiloOkHttp.imageClient }))
         }
@@ -35,3 +47,28 @@ fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader 
                 .build()
         }
         .build()
+
+private class DiagnosticsImageEventListener : EventListener() {
+    private var stage = DiagnosticsImageStage.UNKNOWN
+
+    override fun fetchStart(request: ImageRequest, fetcher: Fetcher, options: Options) {
+        stage = DiagnosticsImageStage.FETCH
+    }
+
+    override fun decodeStart(request: ImageRequest, decoder: Decoder, options: Options) {
+        stage = DiagnosticsImageStage.DECODE
+    }
+
+    override fun onSuccess(request: ImageRequest, result: SuccessResult) {
+        val source = when (result.dataSource) {
+            DataSource.MEMORY_CACHE, DataSource.MEMORY -> DiagnosticsImageSource.MEMORY
+            DataSource.DISK -> DiagnosticsImageSource.DISK
+            DataSource.NETWORK -> DiagnosticsImageSource.NETWORK
+        }
+        DiagnosticsImageHealth.success(source)
+    }
+
+    override fun onError(request: ImageRequest, result: ErrorResult) {
+        DiagnosticsImageHealth.failure(stage, result.throwable)
+    }
+}

@@ -5,6 +5,10 @@ import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.siloserver.silo.viewmodel.HomeLoadObservation
+import org.siloserver.silo.viewmodel.HomeLoadOutcome
+import org.siloserver.silo.viewmodel.HomeLoadSource
+import org.siloserver.silo.viewmodel.HomeLoadTrigger
 
 class DiagnosticsInstrumentationTest {
     @AfterTest
@@ -144,5 +148,137 @@ class DiagnosticsInstrumentationTest {
         assertTrue(line.contains("slow_frame_count"), line)
         assertTrue(line.contains("process_pss_mb"), line)
         assertFalse(line.contains("view_text"), line)
+    }
+
+    @Test
+    fun homeBreadcrumbsContainOnlyBoundedStateAndRegion() {
+        val lines = mutableListOf<String>()
+        SiloLog.installSink { lines += it }
+
+        DiagnosticsHomeLogger.content(DiagnosticsHomeContentState.READY)
+        DiagnosticsHomeLogger.scroll(scrolling = true, DiagnosticsHomeScrollRegion.CONTENT)
+
+        assertEquals(2, lines.size)
+        assertTrue(lines[0].contains("home content state changed"), lines[0])
+        assertTrue(lines[0].contains("\"outcome\":\"ready\""), lines[0])
+        assertTrue(lines[1].contains("home scroll state changed"), lines[1])
+        assertTrue(lines[1].contains("\"outcome\":\"scrolling\""), lines[1])
+        assertTrue(lines[1].contains("\"reason\":\"content\""), lines[1])
+        assertFalse(lines.any { it.contains("title", ignoreCase = true) })
+        assertFalse(lines.any { it.contains("content_id", ignoreCase = true) })
+    }
+
+    @Test
+    fun listIntegrityBucketsCountsWithoutLoggingKeys() {
+        val lines = mutableListOf<String>()
+        SiloLog.installSink { lines += it }
+        val snapshot = DiagnosticsListSnapshot.fromKeys(
+            keys = listOf("private-section-a", "private-section-a", "private-section-b"),
+            rowKeys = listOf(
+                listOf("private-title-a", "private-title-a"),
+                listOf("private-title-b"),
+            ),
+            fullyResolved = false,
+        )
+
+        DiagnosticsListLogger.snapshot(DiagnosticsListSurface.PHONE_HOME, snapshot)
+
+        assertEquals(3, lines.size)
+        assertTrue(lines[0].contains("duplicate_keys_one"), lines[0])
+        assertTrue(lines[0].contains("items_2_4"), lines[0])
+        assertTrue(lines[1].contains("duplicate_rows_one"), lines[1])
+        assertTrue(lines[2].contains("\"outcome\":\"partial\""), lines[2])
+        assertFalse(lines.any { it.contains("private-section") || it.contains("private-title") })
+    }
+
+    @Test
+    fun librarySurfaceLabelsDoNotResemblePrivateLibraryIdentifiers() {
+        val lines = mutableListOf<String>()
+        SiloLog.installSink { lines += it }
+        val snapshot = DiagnosticsListSnapshot.fromKeys(listOf("private-title"))
+
+        listOf(
+            DiagnosticsListSurface.PHONE_LIBRARY_RECOMMENDED,
+            DiagnosticsListSurface.TV_LIBRARY_RECOMMENDED,
+        ).forEach { surface ->
+            DiagnosticsListLogger.snapshot(surface, snapshot)
+            DiagnosticsResourceLogger.checkpoint(
+                surface = surface,
+                cause = DiagnosticsResourceCheckpointCause.LIST_READY,
+                resources = DiagnosticsResourceSnapshot(82, 140, lowMemory = false, thermalStatus = 1),
+            )
+        }
+
+        assertTrue(lines.any { it.contains("phone_lib_rec_list") }, lines.joinToString("\n"))
+        assertTrue(lines.any { it.contains("tv_lib_rec_list") }, lines.joinToString("\n"))
+        assertFalse(lines.any { it.contains("library_recommended") }, lines.joinToString("\n"))
+        assertFalse(lines.any { it.contains("private-title") }, lines.joinToString("\n"))
+    }
+
+    @Test
+    fun reusableKeyLoggerStaysSilentWhenHealthyAndNeverLogsTheDuplicateKey() {
+        val lines = mutableListOf<String>()
+        SiloLog.installSink { lines += it }
+
+        DiagnosticsKeyAnomalyLogger.snapshot(
+            DiagnosticsKeyCollection.PHONE_MEDIA_ROW,
+            DiagnosticsListSnapshot.fromKeys(listOf("one", "two")),
+        )
+        DiagnosticsKeyAnomalyLogger.snapshot(
+            DiagnosticsKeyCollection.PHONE_MEDIA_ROW,
+            DiagnosticsListSnapshot.fromKeys(listOf("private-title-id", "private-title-id")),
+        )
+
+        assertEquals(1, lines.size)
+        assertTrue(lines.single().contains("duplicate_one"), lines.single())
+        assertFalse(lines.single().contains("private-title-id"), lines.single())
+    }
+
+    @Test
+    fun scrollContextAllowListsSectionTypesAndBucketsTheOrdinal() {
+        assertEquals(
+            "content:row_3_4:recently_added",
+            homeScrollReason(DiagnosticsHomeScrollRegion.CONTENT, 3, "Recently Added"),
+        )
+        assertEquals(
+            "content:row_17_plus:unknown",
+            homeScrollReason(DiagnosticsHomeScrollRegion.CONTENT, 42, "Private Shelf Name"),
+        )
+    }
+
+    @Test
+    fun homeLoadAndResourceCheckpointsContainOnlyAggregateEvidence() {
+        val lines = mutableListOf<String>()
+        SiloLog.installSink { lines += it }
+
+        DiagnosticsHomeLoadObserver.completed(
+            HomeLoadObservation(
+                trigger = HomeLoadTrigger.INITIAL,
+                source = HomeLoadSource.NETWORK,
+                outcome = HomeLoadOutcome.PARTIAL,
+                durationMs = 1_234,
+                sectionCount = 9,
+            ),
+        )
+        DiagnosticsResourceLogger.checkpoint(
+            surface = DiagnosticsListSurface.PHONE_HOME,
+            cause = DiagnosticsResourceCheckpointCause.SCROLL_START,
+            resources = DiagnosticsResourceSnapshot(
+                javaHeapMb = 173,
+                processPssMb = 419,
+                lowMemory = false,
+                thermalStatus = 2,
+            ),
+        )
+
+        assertTrue(lines[0].contains("home_network_initial"), lines[0])
+        assertTrue(lines[0].contains("\"duration_ms\":1234"), lines[0])
+        assertTrue(lines[0].contains("sections_9_16"), lines[0])
+        assertTrue(lines[1].contains("unique_section_keys"), lines[1])
+        assertTrue(lines[1].contains("unique_item_rows"), lines[1])
+        assertTrue(lines[2].contains("thermal_elevated"), lines[2])
+        assertTrue(lines[2].contains("heap_128_255_pss_256_511"), lines[2])
+        assertFalse(lines[2].contains("173"), lines[2])
+        assertFalse(lines[2].contains("419"), lines[2])
     }
 }

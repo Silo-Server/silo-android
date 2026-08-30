@@ -172,10 +172,12 @@ class DiagnosticsBundleBuilderTest {
         val playbackLine = """{"ts":"2026-08-11T00:00:00Z","run":"run-1","lvl":"I","cat":"playback","tag":"Player","msg":"stats playback_session_id=private-playback-correlation","attrs":{"decoder":"c2.android.avc","buffered_ms":1200,"failure_code":"source-private"}}"""
         val lifecycleLine = """{"ts":"2026-08-11T00:00:01Z","run":"run-1","lvl":"I","cat":"lifecycle","tag":"Lifecycle","msg":"performance","attrs":{"state":"foreground","p95_frame_ms":22,"startup_first_frame_ms":400}}"""
         val focusLine = """{"ts":"2026-08-11T00:00:02Z","run":"run-1","lvl":"I","cat":"focus","tag":"Focus","msg":"moved","attrs":{"target":"send","action":"enter","route":"private-route"}}"""
+        val homeContentLine = """{"ts":"2026-08-11T00:00:03Z","run":"run-1","lvl":"I","cat":"lifecycle","tag":"HomeScreen","msg":"home content state changed","attrs":{"phase":"home_content","outcome":"ready"}}"""
+        val homeScrollLine = """{"ts":"2026-08-11T00:00:04Z","run":"run-1","lvl":"I","cat":"lifecycle","tag":"HomeScreen","msg":"home scroll state changed","attrs":{"phase":"home_scroll","outcome":"scrolling","reason":"content"}}"""
         val artifacts = mapOf(
             "device.json" to "{}".encodeToByteArray(),
             "logs.jsonl" to "$playbackLine\n$lifecycleLine\n".encodeToByteArray(),
-            "breadcrumbs.jsonl" to "$focusLine\n".encodeToByteArray(),
+            "breadcrumbs.jsonl" to "$focusLine\n$homeContentLine\n$homeScrollLine\n".encodeToByteArray(),
             "crash/tombstone.pb" to "opaque-private-native-trace".encodeToByteArray(),
         )
 
@@ -186,9 +188,8 @@ class DiagnosticsBundleBuilderTest {
         val hostedEntries = untar(gunzip(hosted.bytes)).associateBy(TarEntry::name)
         val hostedLogs = hostedEntries.getValue("logs.jsonl").bytes.decodeToString()
             .lineSequence().filter(String::isNotBlank).map { Json.parseToJsonElement(it).jsonObject }.toList()
-        val hostedBreadcrumb = Json.parseToJsonElement(
-            hostedEntries.getValue("breadcrumbs.jsonl").bytes.decodeToString().trim(),
-        ).jsonObject
+        val hostedBreadcrumbs = hostedEntries.getValue("breadcrumbs.jsonl").bytes.decodeToString()
+            .lineSequence().filter(String::isNotBlank).map { Json.parseToJsonElement(it).jsonObject }.toList()
 
         assertEquals(
             "android-c2-platform-decoder",
@@ -199,7 +200,15 @@ class DiagnosticsBundleBuilderTest {
         assertFalse(hostedLogs[0].getValue("msg").jsonPrimitive.content.contains("private-playback-correlation"))
         assertTrue(hostedLogs[0].getValue("msg").jsonPrimitive.content.contains("[redacted_private_id]"))
         assertEquals(setOf("state"), hostedLogs[1].getValue("attrs").jsonObject.keys)
-        assertEquals(setOf("target", "action"), hostedBreadcrumb.getValue("attrs").jsonObject.keys)
+        assertEquals(setOf("target", "action"), hostedBreadcrumbs[0].getValue("attrs").jsonObject.keys)
+        assertEquals(
+            mapOf("phase" to "home_content", "outcome" to "ready"),
+            hostedBreadcrumbs[1].getValue("attrs").jsonObject.mapValues { it.value.jsonPrimitive.content },
+        )
+        assertEquals(
+            mapOf("phase" to "home_scroll", "outcome" to "scrolling", "reason" to "content"),
+            hostedBreadcrumbs[2].getValue("attrs").jsonObject.mapValues { it.value.jsonPrimitive.content },
+        )
         assertFalse(hostedEntries.containsKey("crash/tombstone.pb"))
         assertFalse(hosted.manifest.archive.entries.contains("crash/tombstone.pb"))
 

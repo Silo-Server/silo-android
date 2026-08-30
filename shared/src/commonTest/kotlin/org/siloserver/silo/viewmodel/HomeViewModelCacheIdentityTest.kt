@@ -30,6 +30,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModelCacheIdentityTest {
@@ -81,6 +82,39 @@ class HomeViewModelCacheIdentityTest {
         viewModel.uiState.first { !it.isLoading }
 
         assertEquals(null, cache.sections)
+    }
+
+    @Test
+    fun homeReportsCacheAndNetworkProvenanceWithoutContentMetadata() = runTest(dispatcher) {
+        val client = HttpClient(
+            MockEngine {
+                respond(
+                    """{"sections":[{"id":"private-section","section_type":"row","title":"Private Title","items":[]}]}""",
+                    HttpStatusCode.OK,
+                    headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+        }
+        val observations = mutableListOf<HomeLoadObservation>()
+        val viewModel = HomeViewModel(
+            sectionRepository = SectionRepository(SectionApi(client)),
+            mediaActions = mediaActions(),
+            diagnostics = HomeDiagnosticsObserver(observations::add),
+        )
+
+        viewModel.uiState.first { !it.isLoading }
+
+        assertEquals(
+            listOf(HomeLoadOutcome.MISS, HomeLoadOutcome.SUCCESS),
+            observations.map(HomeLoadObservation::outcome),
+        )
+        assertEquals(listOf(HomeLoadSource.CACHE, HomeLoadSource.NETWORK), observations.map { it.source })
+        assertTrue(observations.all { it.durationMs >= 0 })
+        // The repository removes empty rows during hydration; diagnostics see
+        // only the aggregate resolved count, never the private row metadata.
+        assertEquals(listOf(0, 0), observations.map { it.sectionCount })
     }
 
     private class RecordingHomeCache : HomeCachePort {

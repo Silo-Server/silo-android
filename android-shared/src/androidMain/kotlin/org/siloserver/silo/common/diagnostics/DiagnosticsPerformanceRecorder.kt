@@ -17,6 +17,7 @@ import android.view.Window
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 data class PerformanceWindowSnapshot(
     val frameCount: Long,
@@ -108,6 +109,51 @@ interface DiagnosticsPerformanceCapture {
     }
 }
 
+enum class DiagnosticsResourceCheckpointCause(internal val wireValue: String) {
+    LIST_READY("list_ready"),
+    SCROLL_START("scroll_start"),
+}
+
+object DiagnosticsResourceCheckpoints {
+    private val handler = AtomicReference<(DiagnosticsListSurface, DiagnosticsResourceCheckpointCause) -> Unit>(
+        { _, _ -> },
+    )
+
+    internal fun install(value: (DiagnosticsListSurface, DiagnosticsResourceCheckpointCause) -> Unit) {
+        handler.set(value)
+    }
+
+    fun request(
+        surface: DiagnosticsListSurface,
+        cause: DiagnosticsResourceCheckpointCause = DiagnosticsResourceCheckpointCause.LIST_READY,
+    ) {
+        handler.get().invoke(surface, cause)
+    }
+}
+
+internal class DiagnosticsCheckpointCadence(
+    private val intervalMs: Long = 30_000,
+) {
+    private val lastEmissionByKey = mutableMapOf<String, Long>()
+
+    init {
+        require(intervalMs > 0)
+    }
+
+    @Synchronized
+    fun shouldEmit(
+        surface: DiagnosticsListSurface,
+        cause: DiagnosticsResourceCheckpointCause,
+        nowMs: Long,
+    ): Boolean {
+        val key = "${surface.wireValue}:${cause.wireValue}"
+        val previous = lastEmissionByKey[key]
+        if (previous != null && nowMs >= previous && nowMs - previous < intervalMs) return false
+        lastEmissionByKey[key] = nowMs
+        return true
+    }
+}
+
 class AndroidDiagnosticsPerformanceRecorder(
     private val application: Application,
     private val nowElapsedMs: () -> Long = SystemClock::elapsedRealtime,
@@ -124,6 +170,7 @@ class AndroidDiagnosticsPerformanceRecorder(
     private var resumedActivity = WeakReference<Activity>(null)
     private var attachedWindow: Window? = null
     private val startupReported = AtomicBoolean(false)
+    private val checkpointCadence = DiagnosticsCheckpointCadence()
     private var heartbeatExpectedMs = 0L
 
     private val frameListener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
@@ -148,7 +195,10 @@ class AndroidDiagnosticsPerformanceRecorder(
     }
 
     fun install() {
-        if (installed.compareAndSet(false, true)) application.registerActivityLifecycleCallbacks(this)
+        if (installed.compareAndSet(false, true)) {
+            application.registerActivityLifecycleCallbacks(this)
+            DiagnosticsResourceCheckpoints.install(::requestResourceCheckpoint)
+        }
     }
 
     override fun setDetailedCaptureEnabled(enabled: Boolean) {
@@ -218,6 +268,17 @@ class AndroidDiagnosticsPerformanceRecorder(
         DiagnosticsPerformanceLogger.snapshot(frameSnapshot, memory, startup)
     }
 
+    private fun requestResourceCheckpoint(
+        surface: DiagnosticsListSurface,
+        cause: DiagnosticsResourceCheckpointCause,
+    ) {
+        val now = nowElapsedMs()
+        if (!checkpointCadence.shouldEmit(surface, cause, now)) return
+        worker.post {
+            DiagnosticsResourceLogger.checkpoint(surface, cause, memorySnapshot())
+        }
+    }
+
     private fun memorySnapshot(): DiagnosticsResourceSnapshot {
         val runtime = Runtime.getRuntime()
         val javaHeapMb = ((runtime.totalMemory() - runtime.freeMemory()) / BYTES_PER_MIB).coerceAtLeast(0)
@@ -254,3 +315,39 @@ data class DiagnosticsResourceSnapshot(
     val lowMemory: Boolean,
     val thermalStatus: Int?,
 )
+
+object DiagnosticsResourceLogger {
+    fun checkpoint(
+        surface: DiagnosticsListSurface,
+        cause: DiagnosticsResourceCheckpointCause,
+        resources: DiagnosticsResourceSnapshot,
+    ) = SiloLog.breadcrumb(
+        org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory.LIFECYCLE,
+        "AppResources",
+        "resource pressure checkpoint",
+        mapOf(
+            "phase" to SiloLogAttribute.Text("resource_pressure"),
+            "outcome" to SiloLogAttribute.Text(resourceOutcome(resources)),
+            "reason" to SiloLogAttribute.Text(
+                "${surface.wireValue}_${cause.wireValue}_" +
+                    "heap_${memoryBucket(resources.javaHeapMb)}_pss_${memoryBucket(resources.processPssMb)}",
+            ),
+        ),
+    )
+}
+
+private fun resourceOutcome(resources: DiagnosticsResourceSnapshot): String = when {
+    resources.lowMemory -> "low_memory"
+    (resources.thermalStatus ?: 0) >= 4 -> "thermal_severe"
+    (resources.thermalStatus ?: 0) >= 2 -> "thermal_elevated"
+    else -> "normal"
+}
+
+internal fun memoryBucket(valueMb: Long): String = when (valueMb.coerceAtLeast(0)) {
+    in 0..63 -> "0_63"
+    in 64..127 -> "64_127"
+    in 128..255 -> "128_255"
+    in 256..511 -> "256_511"
+    in 512..1_023 -> "512_1023"
+    else -> "1024_plus"
+}

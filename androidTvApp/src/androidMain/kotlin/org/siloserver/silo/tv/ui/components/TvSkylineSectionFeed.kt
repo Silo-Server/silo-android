@@ -69,6 +69,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
+import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
 
 /**
  * Android TV port of tvOS `TVSkylineSectionFeed`: shared by Home and library
@@ -126,6 +129,24 @@ fun TvSkylineSectionFeed(
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
 ) {
     val rows = remember(sections) { sections.filter { it.items.isNotEmpty() } }
+    val diagnosticsSurface = when {
+        surfaceKey == "home" -> DiagnosticsListSurface.TV_HOME
+        surfaceKey == "for_you" -> DiagnosticsListSurface.TV_FOR_YOU
+        surfaceKey.startsWith("library-") -> DiagnosticsListSurface.TV_LIBRARY_RECOMMENDED
+        else -> null
+    }
+    val diagnosticsListSnapshot = remember(rows, sectionsComplete) {
+        DiagnosticsListSnapshot.fromKeys(
+            keys = rows.map { it.id },
+            rowKeys = rows.map { section -> section.items.map { it.contentId } },
+            fullyResolved = sectionsComplete,
+        )
+    }
+    LaunchedEffect(diagnosticsSurface, diagnosticsListSnapshot) {
+        diagnosticsSurface?.let { surface ->
+            DiagnosticsListLogger.snapshot(surface, diagnosticsListSnapshot)
+        }
+    }
     val tintState = rememberAmbientBackdropTintState()
     val context = LocalContext.current
 
