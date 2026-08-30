@@ -360,10 +360,7 @@ class SiloCastController(
         val clamped = volume.coerceIn(0.0, 1.0)
         synchronized(volumeStateLock) {
             if (_state.value.playbackState != null) {
-                volumeReconciler.requested(clamped, nowMs())
-                _state.update { state ->
-                    state.copy(playbackState = state.playbackState?.copy(volume = clamped))
-                }
+                applyOptimisticVolumeLocked(clamped, nowMs())
             }
             sendControl(SiloCastControlCommand.setVolume(clamped))
         }
@@ -413,13 +410,28 @@ class SiloCastController(
 
             val next = (playback.volume + step.toDouble() / VOLUME_STEPS).coerceIn(0.0, 1.0)
             if (next != playback.volume) {
-                volumeReconciler.requested(next, nowMs())
-                _state.update { state ->
-                    state.copy(playbackState = state.playbackState?.copy(volume = next))
-                }
+                applyOptimisticVolumeLocked(next, nowMs())
                 sendControl(SiloCastControlCommand.setVolume(next))
             }
             return true
+        }
+    }
+
+    /** Must be called while holding [volumeStateLock]. */
+    private fun applyOptimisticVolumeLocked(volume: Double, atMs: Long) {
+        val playback = _state.value.playbackState ?: return
+        val isMuted = volume <= SILENT_VOLUME
+        volumeReconciler.requested(volume, atMs)
+        if (playback.isMuted != isMuted) {
+            volumeReconciler.requestedMuted(isMuted, atMs)
+        }
+        _state.update { state ->
+            state.copy(
+                playbackState = state.playbackState?.copy(
+                    volume = volume,
+                    isMuted = isMuted,
+                ),
+            )
         }
     }
 
@@ -1074,5 +1086,6 @@ class SiloCastController(
         const val AUTO_RESUME_SCAN_STEP_MS = 500L
         const val AUTO_RESUME_CONFIRM_TIMEOUT_MS = 6_000L
         const val VOLUME_STEPS = 16.0
+        const val SILENT_VOLUME = 0.001
     }
 }
