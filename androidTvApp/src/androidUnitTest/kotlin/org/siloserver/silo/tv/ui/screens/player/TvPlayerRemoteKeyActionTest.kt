@@ -170,6 +170,66 @@ class TvPlayerRemoteKeyActionTest {
         )
     }
 
+    /** Unmapped keys only reveal controls on first press; these must skip, with repeats/UP consumed. */
+    @Test
+    fun mediaSeekKeysSkipOnTheFirstPressAndSwallowTheRest() {
+        // First press must SKIP — unmapped, the player bridge only reveals
+        // the transport for an unknown key and the user has to press twice.
+        listOf(
+            KeyEvent.KEYCODE_MEDIA_REWIND to TvPlayerRemoteKeyAction.SkipBack,
+            KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD to TvPlayerRemoteKeyAction.SkipBack,
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD to TvPlayerRemoteKeyAction.SkipForward,
+            KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD to TvPlayerRemoteKeyAction.SkipForward,
+        ).forEach { (keyCode, expectedSkip) ->
+            assertEquals(
+                expectedSkip,
+                tvPlayerRemoteKeyAction(
+                    keyCode = keyCode,
+                    action = KeyEvent.ACTION_DOWN,
+                    repeatCount = 0,
+                ),
+            )
+            // Auto-repeat and the UP half are consumed so the system
+            // media-key fallback can't seek a second time.
+            assertEquals(
+                TvPlayerRemoteKeyAction.ConsumeOnly,
+                tvPlayerRemoteKeyAction(
+                    keyCode = keyCode,
+                    action = KeyEvent.ACTION_DOWN,
+                    repeatCount = 1,
+                ),
+            )
+            assertEquals(
+                TvPlayerRemoteKeyAction.ConsumeOnly,
+                tvPlayerRemoteKeyAction(
+                    keyCode = keyCode,
+                    action = KeyEvent.ACTION_UP,
+                    repeatCount = 0,
+                ),
+            )
+        }
+    }
+
+    /** Media transport keys are never focus navigation, so dpadHorizontalSeek gating must not silence them. */
+    @Test
+    fun mediaSeekKeysSkipEvenWhenTheIdleOverlayOwnsFocus() {
+        // Media transport keys are never focus navigation, so they are not
+        // gated by dpadHorizontalSeek the way Left/Right are.
+        listOf(
+            KeyEvent.KEYCODE_MEDIA_REWIND to TvPlayerRemoteKeyAction.SkipBack,
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD to TvPlayerRemoteKeyAction.SkipForward,
+        ).forEach { (keyCode, expectedSkip) ->
+            assertEquals(
+                expectedSkip,
+                tvPlayerIdleOverlayRemoteKeyAction(
+                    keyCode = keyCode,
+                    action = KeyEvent.ACTION_DOWN,
+                    repeatCount = 0,
+                ),
+            )
+        }
+    }
+
     @Test
     fun visibleIdleOverlayLeftAndRightFallThroughToFocusNavigation() {
         // With the transport overlay visible, Left/Right must reach Compose

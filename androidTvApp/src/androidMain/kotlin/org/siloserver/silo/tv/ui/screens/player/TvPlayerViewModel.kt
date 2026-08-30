@@ -931,6 +931,13 @@ class TvPlayerViewModel(
     private var seekSequence = 0L
     private var activeSeekId: Long? = null
     private var hasRenderedFirstFrame = false
+    // Mounted-transport extent reported by the screen's position poll: whether
+    // the current Media3 window is seekable and how far it reaches in
+    // player-local time (-1 = unknown/unset). Feeds
+    // [mountedSeekableSourceRange] so decideSeek can ride the mounted content
+    // for quick skips instead of re-anchoring through the server.
+    private var playerWindowIsSeekable = false
+    private var playerWindowEndPlayerMs = -1L
 
     data class UiState(
         val isLoading: Boolean = true,
@@ -1768,6 +1775,15 @@ class TvPlayerViewModel(
      */
     fun onTransportMountApplied(nonce: Long) {
         if (transportMountGate.applied(nonce)) {
+            // The mounted item was replaced. Facts from the previous
+            // transport's window must not be mapped through the new plan's
+            // timeline offset — that can overstate the new extent and turn a
+            // target the new transport cannot serve into a silent,
+            // wrong-position native seek. The next poll tick (≤500ms)
+            // repopulates from the mounted item; until then the hint is
+            // absent, which at worst costs an unnecessary reanchor.
+            playerWindowIsSeekable = false
+            playerWindowEndPlayerMs = -1L
             pendingNativeSeekAfterMount?.let { targetSeconds ->
                 pendingNativeSeekAfterMount = null
                 // Re-evaluate against the plan that actually won the load;
@@ -2685,6 +2701,28 @@ class TvPlayerViewModel(
         )?.index
     }
 
+    /**
+     * Mounted-transport facts from the screen's 500ms poll (the VM stays free
+     * of MediaController references — the screen owns the player, the same
+     * split as [onPositionChanged]). Read by [mountedSeekableSourceRange] at
+     * seek-commit time. Two staleness rules keep the hint honest:
+     *
+     * - Reports are dropped while [transportMountGate] is suppressing: they
+     *   describe the OLD MediaItem, and mapping them through the new plan's
+     *   timeline offset would overstate the new transport's extent.
+     * - [onTransportMountApplied] clears the facts when a mount wins, so
+     *   until the next poll tick reads the new item the hint is absent and
+     *   ambiguous targets fall back to a server reanchor.
+     *
+     * Within one mounted item a slightly stale window end only ever costs an
+     * unnecessary reanchor, never a wrongly-native seek.
+     */
+    fun onPlayerWindowChanged(isSeekable: Boolean, windowEndPlayerMs: Long) {
+        if (transportMountGate.suppressPositionReports) return
+        playerWindowIsSeekable = isSeekable
+        playerWindowEndPlayerMs = windowEndPlayerMs
+    }
+
     fun onPositionChanged(positionMs: Long, durationMs: Long) {
         if (positionMs < 0) return
         // A new recovery response updates the source/player timeline before Compose can run the
@@ -3109,6 +3147,17 @@ class TvPlayerViewModel(
         if (activeSeekId == null) activeSeekId = ++seekSequence
     }
 
+    /**
+     * Commits a settled seek target (source time) onto the active transport.
+     *
+     * Routing ladder: with no session/plan yet the target parks in
+     * [pendingNativeSeekAfterMount] until the mount wins; with seek recovery
+     * or a mount in flight it queues as a reanchor; otherwise
+     * [decideSeek][org.siloserver.silo.common.player.seek.decideSeek] picks
+     * between a native `Player.seekTo` (fed the mounted transport's proven
+     * extent from [mountedSeekableSourceRange]) and a protocol-V3 server
+     * reanchor. A missing plan timeline falls through to a raw player seek.
+     */
     private fun executeSeekTarget(targetSourceSec: Double) {
         val state = _uiState.value
         if (transportMountGate.suppressPositionReports &&
@@ -3136,7 +3185,13 @@ class TvPlayerViewModel(
             )
             return
         }
-        when (val decision = state.playbackPlan?.timeline?.decideSeek(targetSourceSec)) {
+        val mountedSeekableSourceRange = mountedSeekableSourceRange(state)
+        when (
+            val decision = state.playbackPlan?.timeline?.decideSeek(
+                targetSourceSec,
+                mountedSeekableSourceRange,
+            )
+        ) {
             is PlaybackSeekDecision.ServerReanchor -> {
                 Log.i(
                     TAG,
@@ -3150,12 +3205,33 @@ class TvPlayerViewModel(
                     TAG,
                     "seek_commit seek_id=$activeSeekId action=native " +
                         "target_source_seconds=$targetSourceSec " +
-                        "target_player_seconds=${decision.targetPlayerPositionSeconds}",
+                        "target_player_seconds=${decision.targetPlayerPositionSeconds}" +
+                        (mountedSeekableSourceRange?.let {
+                            " mounted_source_range=${it.start}..${it.endInclusive}"
+                        } ?: ""),
                 )
                 seekRequestChannel.trySend(decision.targetPlayerPositionSeconds)
             }
             null -> seekRequestChannel.trySend(targetSourceSec)
         }
+    }
+
+    /**
+     * Source-time extent the currently mounted transport provably covers, or
+     * null when that cannot be proven. Derived from the Media3 window the
+     * screen polls: a seekable window with a known length can serve any
+     * position it spans as a plain `Player.seekTo`. That covers append-only
+     * (growing) HLS manifests — whose window end is the produced head — and
+     * completed/indexed streams, while a growing progressive copy remux has
+     * no known length and stays excluded. This is what lets quick skips ride
+     * already-mounted content instead of re-anchoring through the server.
+     */
+    private fun mountedSeekableSourceRange(state: UiState): ClosedRange<Double>? {
+        val timeline = state.playbackPlan?.timeline ?: return null
+        if (!playerWindowIsSeekable || playerWindowEndPlayerMs < 0) return null
+        val endSourceSec = timeline.sourcePositionForPlayer(playerWindowEndPlayerMs / 1000.0)
+            ?: return null
+        return timeline.timelineOffsetSeconds..endSourceSec
     }
 
     private fun startSeekReanchor(

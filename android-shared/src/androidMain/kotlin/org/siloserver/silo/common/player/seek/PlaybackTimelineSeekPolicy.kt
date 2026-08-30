@@ -143,9 +143,19 @@ fun PlaybackTimeline.seekRestorationMode(): PlaybackSeekRestoration = when (seek
  * [PlaybackTimeline.canSeekAnywhere] is false. With no complete window, the
  * server's explicit `can_seek_anywhere` claim is required; a false claim plus
  * an absent or partial window is deliberately treated as unknown and reanchored.
- * Known bounds remain authoritative even when `can_seek_anywhere` is true.
+ * Known bounds remain authoritative even when `canSeekAnywhere` is true.
+ *
+ * Exception: the caller may prove local seekability itself by passing
+ * [mountedSeekableSourceRange] — the source-time extent the currently mounted
+ * transport provably covers (e.g. an append-only HLS manifest's produced head,
+ * or a stream the player reports as seekable with a known length). A target
+ * inside that extent is a plain `Player.seekTo` even when the published window
+ * is open-ended; only targets the mounted transport cannot serve reanchor.
  */
-fun PlaybackTimeline.decideSeek(targetSourcePositionSeconds: Double): PlaybackSeekDecision {
+fun PlaybackTimeline.decideSeek(
+    targetSourcePositionSeconds: Double,
+    mountedSeekableSourceRange: ClosedRange<Double>? = null,
+): PlaybackSeekDecision {
     require(targetSourcePositionSeconds.isFinite() && targetSourcePositionSeconds >= 0.0) {
         "Seek target must be a finite, non-negative source position."
     }
@@ -175,11 +185,13 @@ fun PlaybackTimeline.decideSeek(targetSourcePositionSeconds: Double): PlaybackSe
         )
     }
     if (!window.complete && !canSeekAnywhere) {
-        return PlaybackSeekDecision.ServerReanchor(
-            targetSourcePositionSeconds = targetSourcePositionSeconds,
-            restoration = restoration,
-            reason = ServerReanchorReason.UnknownSeekWindow,
-        )
+        if (mountedSeekableSourceRange?.contains(targetSourcePositionSeconds) != true) {
+            return PlaybackSeekDecision.ServerReanchor(
+                targetSourcePositionSeconds = targetSourcePositionSeconds,
+                restoration = restoration,
+                reason = ServerReanchorReason.UnknownSeekWindow,
+            )
+        }
     }
 
     val playerPosition = playerPositionForSource(targetSourcePositionSeconds)

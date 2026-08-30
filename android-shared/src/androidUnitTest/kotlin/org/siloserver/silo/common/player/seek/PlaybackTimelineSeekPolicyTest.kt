@@ -160,4 +160,47 @@ class PlaybackTimelineSeekPolicyTest {
         val reanchor = assertIs<PlaybackSeekDecision.ServerReanchor>(decision)
         assertEquals(ServerReanchorReason.InvalidTimelineMapping, reanchor.reason)
     }
+
+    /** An open server window cannot override a proven mounted extent: targets inside it seek natively. */
+    @Test
+    fun mountedExtentHintAllowsNativeSeekInsideAnOpenWindow() {
+        val decision = PlaybackTimeline(
+            timelineOffsetSeconds = 120.0,
+            canSeekAnywhere = false,
+            seekWindowStartSeconds = 120.0,
+            seekRestoration = "source_position",
+        ).decideSeek(150.0, mountedSeekableSourceRange = 120.0..240.0)
+
+        val native = assertIs<PlaybackSeekDecision.NativeSeek>(decision)
+        assertEquals(30.0, native.targetPlayerPositionSeconds)
+        assertEquals(PlaybackSeekRestoration.SourcePosition, native.restoration)
+    }
+
+    /** Beyond the mounted extent the hint proves nothing, so the conservative server reanchor applies. */
+    @Test
+    fun mountedExtentHintDoesNotCoverTargetsBeyondTheProvedExtent() {
+        val decision = PlaybackTimeline(
+            timelineOffsetSeconds = 120.0,
+            canSeekAnywhere = false,
+            seekWindowStartSeconds = 120.0,
+            seekRestoration = "source_position",
+        ).decideSeek(300.0, mountedSeekableSourceRange = 120.0..240.0)
+
+        val reanchor = assertIs<PlaybackSeekDecision.ServerReanchor>(decision)
+        assertEquals(ServerReanchorReason.UnknownSeekWindow, reanchor.reason)
+    }
+
+    /** The hint never overrides published window bounds: below the window start still reanchors. */
+    @Test
+    fun mountedExtentHintCannotRescueTargetsOutsideThePublishedWindow() {
+        val decision = PlaybackTimeline(
+            timelineOffsetSeconds = 120.0,
+            canSeekAnywhere = false,
+            seekWindowStartSeconds = 120.0,
+            seekRestoration = "source_position",
+        ).decideSeek(60.0, mountedSeekableSourceRange = 0.0..240.0)
+
+        val reanchor = assertIs<PlaybackSeekDecision.ServerReanchor>(decision)
+        assertEquals(ServerReanchorReason.OutsideSeekWindow, reanchor.reason)
+    }
 }

@@ -77,6 +77,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import androidx.media3.common.Timeline
 import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -1544,17 +1545,35 @@ fun TvPlayerScreen(
     // Position polling — lifecycle-bounded so it doesn't outlive the screen.
     LaunchedEffect(mediaController, state.sessionId, lifecycleOwner) {
         val controller = mediaController ?: return@LaunchedEffect
+        val timelineWindow = Timeline.Window()
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive && state.sessionId != null) {
                 viewModel.onPositionChanged(
                     controller.currentPosition,
                     controller.duration.coerceAtLeast(0L),
                 )
+                // Mounted-transport extent for the VM's native-first seek
+                // decision (see TvPlayerViewModel.mountedSeekableSourceRange).
+                // A seekable window with a known length can serve any target
+                // it spans without a server reanchor.
+                if (!controller.currentTimeline.isEmpty) {
+                    controller.currentTimeline.getWindow(
+                        controller.currentMediaItemIndex,
+                        timelineWindow,
+                    )
+                    viewModel.onPlayerWindowChanged(
+                        isSeekable = timelineWindow.isSeekable,
+                        windowEndPlayerMs = if (timelineWindow.durationUs != C.TIME_UNSET) {
+                            timelineWindow.durationUs / 1000
+                        } else {
+                            -1L
+                        },
+                    )
+                }
                 delay(500)
             }
         }
     }
-
     LaunchedEffect(
         mediaController,
         state.sessionId,
