@@ -40,6 +40,7 @@ import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.cast.SiloCastLaunchRequest
 import org.siloserver.silo.cast.SiloCastProtocol
 import org.siloserver.silo.common.cast.SiloCastTarget
+import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ServerRegistry
 
 /**
@@ -87,7 +88,9 @@ fun SiloCastTargetPickerSheet(
     val displayedTargets = if (launchRequest != null) {
         state.targets
     } else {
-        state.targets.filter { it.serverId != null && it.serverId == activeServerId }
+        state.targets.filter {
+            AndroidServerRegistry.serverIdsMatch(it.serverId, activeServerId)
+        }
     }
 
     ModalBottomSheet(
@@ -204,6 +207,7 @@ private fun TargetRow(
 ) {
     val needsUpdate = target.version < SiloCastProtocol.version
     val enabled = !needsUpdate
+    val targetsActiveServer = AndroidServerRegistry.serverIdsMatch(target.serverId, activeServerId)
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -238,9 +242,9 @@ private fun TargetRow(
                     "Update Silo on this TV to use your profile" to MaterialTheme.colorScheme.onSurfaceVariant
                 target.isPlaying ->
                     "Playing now" to MaterialTheme.colorScheme.primary
-                target.serverId != null && target.serverId == activeServerId && target.serverName != null ->
+                targetsActiveServer && target.serverName != null ->
                     target.serverName!! to MaterialTheme.colorScheme.onSurfaceVariant
-                target.serverId != null && target.serverId != activeServerId ->
+                target.serverId != null && !targetsActiveServer ->
                     "Will temporarily use your server" to MaterialTheme.colorScheme.onSurfaceVariant
                 else -> null
             }
