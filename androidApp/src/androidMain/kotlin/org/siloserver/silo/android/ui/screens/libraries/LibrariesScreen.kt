@@ -54,6 +54,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -110,6 +111,9 @@ import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
+import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
+import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
@@ -941,6 +945,20 @@ private fun RecommendedTabContent(
     onItemClick: (String) -> Unit,
     onRetry: () -> Unit,
 ) {
+    val diagnosticsListSnapshot = remember(state.sections) {
+        DiagnosticsListSnapshot.fromKeys(
+            keys = state.sections.map { it.id },
+            rowKeys = state.sections.map { section -> section.items.map { it.contentId } },
+        )
+    }
+    LaunchedEffect(diagnosticsListSnapshot, state.isLoadingSections) {
+        if (!state.isLoadingSections && state.sections.isNotEmpty()) {
+            DiagnosticsListLogger.snapshot(
+                DiagnosticsListSurface.PHONE_LIBRARY_RECOMMENDED,
+                diagnosticsListSnapshot,
+            )
+        }
+    }
     when {
         state.isLoadingSections && state.sections.isEmpty() -> {
             MediaRowsSkeleton(

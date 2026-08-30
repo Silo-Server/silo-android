@@ -372,6 +372,7 @@ class ExitInfoCollector(
         run: DiagnosticsRunRecord,
         fingerprint: String,
     ): PendingReport? {
+        val exceptionCode = classifyJvmFailure(marker.throwableType, marker.stack)
         val redactor = DiagnosticsRedactor(
             sensitiveValues = redactionTokens().filter(String::isNotEmpty).toSet(),
         )
@@ -388,18 +389,26 @@ class ExitInfoCollector(
             processName = null,
             pid = null,
             status = null,
+            exceptionCode = exceptionCode.wireValue,
         )
         artifacts[CRASH_STACK_FILE] = safeStack.encodeToByteArray()
         sanitizedLogBytes(marker.logLines, redactor)?.let { artifacts[LOGS_FILE] = it }
+        val captureSessionId = requireNotNull(marker.captureSessionId) {
+            "a matched JVM crash marker must identify its capture session"
+        }
+        runCatching { breadcrumbs.linesForRun(captureSessionId, run.identityKey()) }
+            .getOrDefault(emptyList())
+            .let { lines -> sanitizedLogBytes(lines, redactor) }
+            ?.let { artifacts[BREADCRUMBS_FILE] = it }
         val manifest = manifest(
             reportType = DiagnosticsReportType.CRASH,
             crashSource = DiagnosticsCrashSource.UEH,
             provenance = DiagnosticsCrashProvenance.PRE_FAILURE,
             capturedAtEpochMs = marker.occurredAtEpochMs,
-            captureSessionId = marker.captureSessionId ?: run.captureSessionId,
+            captureSessionId = captureSessionId,
             profileId = run.profileId,
             binding = binding,
-            summary = safeThrowableType,
+            summary = "${safeThrowableType.ifBlank { "Android JVM crash" }} [${exceptionCode.wireValue}]",
             stackExcerpt = safeStack.truncateUtf8ForExit(MAX_STACK_EXCERPT_BYTES),
             thread = safeThreadName,
             foreground = marker.foreground,
@@ -450,6 +459,9 @@ class ExitInfoCollector(
         val classification = classify(exit.reason) ?: return null
         val trace = collected.trace
         val binding = run.pendingBinding()
+        val redactor = DiagnosticsRedactor(
+            sensitiveValues = redactionTokens().filter(String::isNotEmpty).toSet(),
+        )
         val artifacts = linkedMapOf<String, ByteArray>()
         artifacts[DEVICE_FILE] = deviceSnapshotBytes() ?: fallbackDeviceSnapshot(exit.timestampMs)
         artifacts[CRASH_SUMMARY_FILE] = crashSummaryBytes(
@@ -460,17 +472,14 @@ class ExitInfoCollector(
         )
         runCatching { breadcrumbs.linesForRun(run.captureSessionId, run.identityKey()) }
             .getOrDefault(emptyList())
-            .takeIf(List<String>::isNotEmpty)?.let { lines ->
-            artifacts[BREADCRUMBS_FILE] = (lines.joinToString("\n") + "\n").encodeToByteArray()
-        }
+            .let { lines -> sanitizedLogBytes(lines, redactor) }
+            ?.let { artifacts[BREADCRUMBS_FILE] = it }
         var stackExcerpt: String? = null
         when {
             classification.reportType == DiagnosticsReportType.NATIVE_CRASH && trace != null ->
                 artifacts[CRASH_TOMBSTONE_FILE] = trace
             trace != null -> {
-                val text = strictUtf8(trace)?.let {
-                    DiagnosticsRedactor(sensitiveValues = redactionTokens().filter(String::isNotEmpty).toSet()).sanitize(it)
-                } ?: REDACTION_FAILURE_SENTINEL
+                val text = strictUtf8(trace)?.let(redactor::sanitize) ?: REDACTION_FAILURE_SENTINEL
                 val bytes = text.truncateUtf8ForExit(MAX_TEXT_TRACE_BYTES).encodeToByteArray()
                 artifacts[CRASH_STACK_FILE] = bytes
                 stackExcerpt = text.truncateUtf8ForExit(MAX_STACK_EXCERPT_BYTES)
@@ -635,6 +644,53 @@ private fun classify(reason: Int): ExitInfoCollector.ExitClassification? = when 
     else -> null
 }
 
+internal enum class DiagnosticsJvmFailureCode(internal val wireValue: String) {
+    DUPLICATE_LAZY_KEY("duplicate_lazy_key"),
+    INVALID_LAYOUT_CONSTRAINTS("invalid_layout_constraints"),
+    INVALID_SCROLL_POSITION("invalid_scroll_position"),
+    IMAGE_PIPELINE("image_pipeline"),
+    OUT_OF_MEMORY("out_of_memory"),
+    STACK_OVERFLOW("stack_overflow"),
+    ILLEGAL_ARGUMENT_OTHER("illegal_argument_other"),
+    ILLEGAL_STATE_OTHER("illegal_state_other"),
+    NULL_POINTER("null_pointer"),
+    UNKNOWN("unknown"),
+}
+
+/** Classifies raw marker text locally; only the fixed code is persisted or uploaded. */
+internal fun classifyJvmFailure(
+    throwableType: String,
+    rawStack: String,
+): DiagnosticsJvmFailureCode {
+    val type = throwableType.lowercase(Locale.ROOT)
+    val stack = rawStack.take(MAX_CLASSIFICATION_TEXT_CHARS).lowercase(Locale.ROOT)
+    return when {
+        "outofmemoryerror" in type -> DiagnosticsJvmFailureCode.OUT_OF_MEMORY
+        "stackoverflowerror" in type -> DiagnosticsJvmFailureCode.STACK_OVERFLOW
+        ("lazycolumn" in stack || "lazyrow" in stack || "lazygrid" in stack) &&
+            ("was already used" in stack || "duplicate key" in stack) ->
+            DiagnosticsJvmFailureCode.DUPLICATE_LAZY_KEY
+        "constraints" in stack && (
+            "can't represent" in stack ||
+                "cannot represent" in stack ||
+                "must be non-negative" in stack ||
+                "is out of range" in stack
+            ) -> DiagnosticsJvmFailureCode.INVALID_LAYOUT_CONSTRAINTS
+        "scroll" in stack && (
+            "index should be non-negative" in stack ||
+                "index must be non-negative" in stack ||
+                "offset should be non-negative" in stack ||
+                "offset must be non-negative" in stack
+            ) -> DiagnosticsJvmFailureCode.INVALID_SCROLL_POSITION
+        ("coil3." in stack || "coil." in stack) && ("decode" in stack || "image" in stack) ->
+            DiagnosticsJvmFailureCode.IMAGE_PIPELINE
+        "illegalargumentexception" in type -> DiagnosticsJvmFailureCode.ILLEGAL_ARGUMENT_OTHER
+        "illegalstateexception" in type -> DiagnosticsJvmFailureCode.ILLEGAL_STATE_OTHER
+        "nullpointerexception" in type -> DiagnosticsJvmFailureCode.NULL_POINTER
+        else -> DiagnosticsJvmFailureCode.UNKNOWN
+    }
+}
+
 private fun exitFingerprint(exit: ExitInfoCollector.CollectedExit): String {
     val record = exit.record
     val traceHash = exit.trace?.let(::sha256Hex).orEmpty()
@@ -656,15 +712,24 @@ private fun strictUtf8(bytes: ByteArray): String? = runCatching {
         .toString()
 }.getOrNull()
 
-private fun crashSummaryBytes(kind: String, processName: String?, pid: Int?, status: Int?): ByteArray =
+private fun crashSummaryBytes(
+    kind: String,
+    processName: String?,
+    pid: Int?,
+    status: Int?,
+    exceptionCode: String? = null,
+): ByteArray =
     Json.encodeToString(
         buildJsonObject {
             put("kind", kind)
+            exceptionCode?.let { put("exception_code", it) }
             processName?.let { put("process_hash", sha256Hex(it.encodeToByteArray()).take(32)) }
             pid?.let { put("pid", it) }
             status?.let { put("status", it) }
         },
     ).encodeToByteArray()
+
+private const val MAX_CLASSIFICATION_TEXT_CHARS = 64 * 1_024
 
 private fun fallbackDeviceSnapshot(capturedAtEpochMs: Long): ByteArray = Json.encodeToString(
     buildJsonObject {

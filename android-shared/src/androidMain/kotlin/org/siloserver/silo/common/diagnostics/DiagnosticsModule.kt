@@ -30,6 +30,7 @@ private val HOSTED_DIAGNOSTICS_HTTP = named("hosted-diagnostics-http")
 
 val diagnosticsModule = module {
     single<NetworkDiagnosticsObserver> { DiagnosticsNetworkLogger }
+    single<org.siloserver.silo.viewmodel.HomeDiagnosticsObserver> { DiagnosticsHomeLoadObserver }
     single<DataStore<Preferences>>(DIAGNOSTICS_DATA_STORE) {
         PreferenceDataStoreFactory.create(
             produceFile = { androidContext().preferencesDataStoreFile("silo_diagnostics") },

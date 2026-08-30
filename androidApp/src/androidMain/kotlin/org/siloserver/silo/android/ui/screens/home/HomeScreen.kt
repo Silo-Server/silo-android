@@ -40,7 +40,9 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +58,7 @@ import org.siloserver.silo.android.ui.components.topBarGlass
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.MediaRowSkeleton
@@ -64,6 +67,12 @@ import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel
 import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingBottomOverlay
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
+import org.siloserver.silo.common.diagnostics.DiagnosticsHomeContentState
+import org.siloserver.silo.common.diagnostics.DiagnosticsHomeLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsHomeScrollRegion
+import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
+import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
 import org.siloserver.silo.common.pairing.CompanionPairingStatus
 import org.siloserver.silo.common.pairing.CompanionPairingTarget
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
@@ -122,10 +131,54 @@ fun HomeScreen(
     val regularSections = remember(sections) {
         sections.filter { it.items.isNotEmpty() }
     }
+    val diagnosticsContentState = when {
+        state.isLoading && regularSections.isEmpty() -> DiagnosticsHomeContentState.LOADING
+        state.error != null && regularSections.isEmpty() -> DiagnosticsHomeContentState.ERROR
+        regularSections.isEmpty() -> DiagnosticsHomeContentState.EMPTY
+        else -> DiagnosticsHomeContentState.READY
+    }
+    LaunchedEffect(diagnosticsContentState) {
+        DiagnosticsHomeLogger.content(diagnosticsContentState)
+    }
+    val diagnosticsListSnapshot = remember(regularSections, state.sectionsFullyResolved) {
+        DiagnosticsListSnapshot.fromKeys(
+            keys = regularSections.map { it.id },
+            rowKeys = regularSections.map { section -> section.items.map { it.contentId } },
+            fullyResolved = state.sectionsFullyResolved,
+        )
+    }
+    LaunchedEffect(diagnosticsListSnapshot, diagnosticsContentState) {
+        if (diagnosticsContentState == DiagnosticsHomeContentState.READY) {
+            DiagnosticsListLogger.snapshot(DiagnosticsListSurface.PHONE_HOME, diagnosticsListSnapshot)
+        }
+    }
 
     val listState = rememberLazyListState()
+    val currentDiagnosticsSections by rememberUpdatedState(regularSections)
     LaunchedEffect(scrollToTopTick) {
         if (scrollToTopTick > 0) listState.animateScrollToItem(0)
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }
+            .distinctUntilChanged()
+            .collect { scrolling ->
+                val currentSections = currentDiagnosticsSections
+                val sectionCount = currentSections.size
+                val firstVisibleItem = listState.firstVisibleItemIndex
+                val visibleRowOrdinal = (firstVisibleItem - 1).takeIf(currentSections.indices::contains)
+                val region = when {
+                    sectionCount == 0 -> DiagnosticsHomeScrollRegion.UNKNOWN
+                    firstVisibleItem <= 1 -> DiagnosticsHomeScrollRegion.TOP
+                    firstVisibleItem >= sectionCount -> DiagnosticsHomeScrollRegion.END
+                    else -> DiagnosticsHomeScrollRegion.CONTENT
+                }
+                DiagnosticsHomeLogger.scroll(
+                    scrolling = scrolling,
+                    region = region,
+                    visibleRowOrdinal = visibleRowOrdinal,
+                    rawSectionType = visibleRowOrdinal?.let { currentSections[it].sectionType },
+                )
+            }
     }
     LaunchedEffect(companionTargets, companionStatus, dismissedPairingSessions) {
         if (companionStatus is CompanionPairingStatus.Idle) {
@@ -435,4 +488,3 @@ private fun HomeFloatingChrome(
 
 /** How far the Home chrome's glass runs past its action row to feather out. */
 private val HomeChromeFeatherExtension = 40.dp
-

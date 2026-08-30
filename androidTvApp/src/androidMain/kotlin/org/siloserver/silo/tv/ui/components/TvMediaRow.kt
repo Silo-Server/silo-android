@@ -32,6 +32,9 @@ import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
+import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 
 /** Visual style of cards inside a [TvMediaRow]. */
 enum class TvRowStyle { Poster, Backdrop }
@@ -118,6 +121,15 @@ fun TvMediaRow(
     onRowFocusChanged: ((Boolean) -> Unit)? = null,
     cardActions: (SectionItem) -> TvMediaCardActions = { TvMediaCardActions() },
 ) {
+    val diagnosticsKeySnapshot = remember(items) {
+        DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
+    }
+    LaunchedEffect(diagnosticsKeySnapshot) {
+        DiagnosticsKeyAnomalyLogger.snapshot(
+            DiagnosticsKeyCollection.TV_MEDIA_ROW,
+            diagnosticsKeySnapshot,
+        )
+    }
     if (items.isEmpty()) return
     val rowState = rememberLazyListState()
     val rowItems = remember(items, showProgress, style, cardLayout) {

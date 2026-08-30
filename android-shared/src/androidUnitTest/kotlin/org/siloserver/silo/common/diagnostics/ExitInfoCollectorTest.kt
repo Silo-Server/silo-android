@@ -84,7 +84,7 @@ class ExitInfoCollectorTest {
 
     @Test
     fun anrIncludesPersistedBreadcrumbsFromTheExitedRun() = runTest {
-        val breadcrumb = "{\"run\":\"capture-1\",\"msg\":\"foreground\"}"
+        val breadcrumb = """{"ts":"2026-07-22T00:00:01Z","run":"capture-1","lvl":"I","cat":"lifecycle","tag":"AppLifecycle","msg":"foreground secret-token"}"""
         val fixture = fixture(
             records = listOf(exit(reason = AndroidExitReason.ANR, trace = "main blocked".encodeToByteArray())),
             breadcrumbs = DiagnosticsBreadcrumbSource { captureSessionId, _ ->
@@ -94,12 +94,15 @@ class ExitInfoCollectorTest {
 
         val report = fixture.collector.collect().single()
 
-        assertEquals("$breadcrumb\n", report.directory.resolve("breadcrumbs.jsonl").readText())
+        val persisted = report.directory.resolve("breadcrumbs.jsonl").readText()
+        assertFalse(persisted.contains("secret-token"))
+        assertTrue(persisted.contains("foreground [REDACTED]"), persisted)
         assertTrue("breadcrumbs.jsonl" in report.manifest.archive.entries)
     }
 
     @Test
     fun matchingJvmMarkerWinsOverDuplicateExitRecord() = runTest {
+        val breadcrumb = """{"ts":"2026-07-22T00:00:01Z","run":"capture-1","lvl":"I","cat":"lifecycle","tag":"HomeScreen","msg":"home scroll state changed secret-token","attrs":{"phase":"home_scroll","outcome":"scrolling","reason":"content"}}"""
         val marker = JvmCrashMarkerRecord(
             occurredAtEpochMs = EXIT_AT,
             threadName = "main-secret-token",
@@ -124,6 +127,9 @@ class ExitInfoCollectorTest {
         val fixture = fixture(
             records = listOf(exit(reason = AndroidExitReason.JVM_CRASH, timestampMs = EXIT_AT + 100)),
             markers = markers,
+            breadcrumbs = DiagnosticsBreadcrumbSource { captureSessionId, _ ->
+                if (captureSessionId == "capture-1") listOf(breadcrumb) else emptyList()
+            },
         )
 
         val reports = fixture.collector.collect()
@@ -131,14 +137,44 @@ class ExitInfoCollectorTest {
         assertEquals(1, reports.size)
         assertEquals(DiagnosticsCrashSource.UEH, reports.single().manifest.crash?.source)
         assertFalse(reports.single().manifest.crash?.summary.orEmpty().contains("secret-token"))
+        assertTrue(reports.single().manifest.crash?.summary.orEmpty().contains("illegal_state_other"))
         assertFalse(reports.single().manifest.crash?.thread.orEmpty().contains("secret-token"))
         assertFalse(reports.single().directory.resolve("crash/stack.txt").readText().contains("secret-token"))
         assertTrue(reports.single().directory.resolve("crash/stack.txt").readText().contains("[REDACTED]"))
         assertFalse(reports.single().directory.resolve("logs.jsonl").readText().contains("secret-token"))
         assertTrue(reports.single().directory.resolve("logs.jsonl").readText().contains("[REDACTED]"))
+        val breadcrumbs = reports.single().directory.resolve("breadcrumbs.jsonl").readText()
+        assertFalse(breadcrumbs.contains("secret-token"))
+        assertTrue(breadcrumbs.contains("[REDACTED]"))
+        assertTrue(breadcrumbs.contains("home scroll state changed"))
+        assertTrue("breadcrumbs.jsonl" in reports.single().manifest.archive.entries)
+        val crashSummary = reports.single().directory.resolve("crash/summary.json").readText()
+        assertTrue(crashSummary.contains("\"exception_code\":\"illegal_state_other\""), crashSummary)
+        assertFalse(crashSummary.contains("secret-token"), crashSummary)
         assertEquals(listOf(marker), markers.deleted)
         assertTrue(fixture.collector.collect().isEmpty())
         assertEquals(1, fixture.store.list(BINDING).size)
+    }
+
+    @Test
+    fun jvmCrashClassificationUsesRawMessageOnlyToProduceAFixedCode() {
+        val duplicate = classifyJvmFailure(
+            throwableType = "java.lang.IllegalArgumentException",
+            rawStack = """java.lang.IllegalArgumentException: Key \"private-title-123\" was already used. If you are using LazyColumn/Row, use a unique key.""",
+        )
+        val constraints = classifyJvmFailure(
+            throwableType = "java.lang.IllegalArgumentException",
+            rawStack = "java.lang.IllegalArgumentException: Can't represent width in Constraints",
+        )
+        val scroll = classifyJvmFailure(
+            throwableType = "java.lang.IllegalArgumentException",
+            rawStack = "java.lang.IllegalArgumentException: scroll index should be non-negative",
+        )
+
+        assertEquals(DiagnosticsJvmFailureCode.DUPLICATE_LAZY_KEY, duplicate)
+        assertEquals(DiagnosticsJvmFailureCode.INVALID_LAYOUT_CONSTRAINTS, constraints)
+        assertEquals(DiagnosticsJvmFailureCode.INVALID_SCROLL_POSITION, scroll)
+        assertFalse(duplicate.wireValue.contains("private-title-123"))
     }
 
     @Test

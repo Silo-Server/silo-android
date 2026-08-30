@@ -443,6 +443,8 @@ class DefaultDiagnosticsCoordinator(
                     // identity mutation either waits and purges this work, or wins first and
                     // prevents this block from running.
                     runtimePublisher.publish(liveCaptureContext)
+                    // Collect the previous process before enabling this process's journal:
+                    // false -> true rotates persistent breadcrumbs and removes the prior run.
                     incidentCollector.collect(liveCaptureContext, consent.mode)
                     capture.setDebugLogging(
                         liveCaptureContext,
