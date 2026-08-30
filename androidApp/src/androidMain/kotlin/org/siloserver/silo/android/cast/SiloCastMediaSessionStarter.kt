@@ -3,7 +3,6 @@ package org.siloserver.silo.android.cast
 import android.content.Context
 import android.content.Intent
 import androidx.annotation.OptIn
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -64,9 +63,10 @@ class SiloCastMediaSessionStarter(
             when (action) {
                 RemoteMediaServiceAction.None -> Unit
                 RemoteMediaServiceAction.Stop -> appContext.stopService(intent)
+                // Media3 promotes an ongoing session itself. Launching with
+                // startForegroundService here arms the platform watchdog
+                // before Media3 has decided that a notification is needed.
                 RemoteMediaServiceAction.Start -> appContext.startService(intent)
-                RemoteMediaServiceAction.StartForeground ->
-                    ContextCompat.startForegroundService(appContext, intent)
             }
         }.onFailure { error ->
             android.util.Log.w(TAG, "Could not apply Remote Control media-service action $action", error)
@@ -80,14 +80,12 @@ class SiloCastMediaSessionStarter(
 
 internal data class RemoteServiceState(
     val hasMedia: Boolean,
-    val needsForegroundStart: Boolean,
 )
 
 internal enum class RemoteMediaServiceAction {
     None,
     Stop,
     Start,
-    StartForeground,
 }
 
 internal fun resolveRemoteMediaServiceAction(
@@ -96,16 +94,9 @@ internal fun resolveRemoteMediaServiceAction(
 ): RemoteMediaServiceAction = when {
     !state.hasMedia -> RemoteMediaServiceAction.Stop
     !appForeground -> RemoteMediaServiceAction.None
-    state.needsForegroundStart -> RemoteMediaServiceAction.StartForeground
     else -> RemoteMediaServiceAction.Start
 }
 
-private fun SiloCastControllerState.toRemoteServiceState(): RemoteServiceState {
-    val playback = playbackState
-    return RemoteServiceState(
-        hasMedia = !playback?.contentId.isNullOrBlank(),
-        needsForegroundStart = playback?.let {
-            it.isPlaying || it.isLoading || it.isBuffering
-        } == true,
-    )
-}
+private fun SiloCastControllerState.toRemoteServiceState(): RemoteServiceState = RemoteServiceState(
+    hasMedia = !playbackState?.contentId.isNullOrBlank(),
+)

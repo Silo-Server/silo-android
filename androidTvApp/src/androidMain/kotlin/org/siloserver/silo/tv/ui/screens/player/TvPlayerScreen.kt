@@ -140,6 +140,7 @@ import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.player.DolbyVisionDetection
 import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
 import org.siloserver.silo.tv.R
+import org.siloserver.silo.tv.cast.SiloCastVolumeState
 import org.siloserver.silo.tv.cast.TvSiloCastPlayerAdapter
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
@@ -477,10 +478,6 @@ fun TvPlayerScreen(
     val latestSiloCastMediaController by rememberUpdatedState(mediaController)
     val latestSiloCastSessionPlayer by rememberUpdatedState(sessionPlayer)
     DisposableEffect(siloCastReceiver, viewModel, contentId) {
-        var lastAudibleRemoteVolume = latestSiloCastMediaController
-            ?.volume
-            ?.takeIf { it > 0.001f }
-            ?: 1f
         val adapter = TvSiloCastPlayerAdapter(
             play = {
                 // Watch Together is authoritative for transport: suppress
@@ -531,29 +528,31 @@ fun TvPlayerScreen(
                 )
             },
             setVolume = { volume ->
-                val next = volume.toFloat().coerceIn(0f, 1f)
-                if (next > 0.001f) lastAudibleRemoteVolume = next
-                latestSiloCastMediaController?.volume = next
+                latestSiloCastMediaController?.let { controller ->
+                    val next = volume.toFloat().coerceIn(0f, 1f)
+                    siloCastReceiver.recordPlayerVolume(next.toDouble())
+                    controller.volume = next
+                }
             },
             setMuted = { muted ->
-                val controller = latestSiloCastMediaController
-                if (muted) {
-                    controller?.volume?.takeIf { it > 0.001f }?.let { lastAudibleRemoteVolume = it }
-                    controller?.volume = 0f
-                } else {
-                    controller?.volume = lastAudibleRemoteVolume
+                latestSiloCastMediaController?.let { controller ->
+                    siloCastReceiver.recordPlayerMuted(muted, controller.volume.toDouble())
+                    controller.volume = if (muted) 0f else siloCastReceiver.retainedPlayerVolume().toFloat()
                 }
             },
             playNext = viewModel::playNextEpisodeNow,
         )
         val registration = siloCastReceiver.registerPlayer(adapter) {
+            val volumeState = siloCastReceiver.resolvePlayerVolume(
+                currentVolume = latestSiloCastMediaController?.volume?.toDouble(),
+            )
             viewModel.uiState.value.toSiloCastPlaybackState(
                 contentId = contentId,
                 playbackSpeed = latestSiloCastPlaybackSpeed,
                 hdrEnabled = latestSiloCastHdrEnabled,
                 subtitleDelayMs = latestSiloCastSubtitleDelayMs,
                 subtitleAppearance = latestSiloCastSubtitleAppearance,
-                volume = latestSiloCastMediaController?.volume?.toDouble() ?: 1.0,
+                volumeState = volumeState,
             )
         }
         onDispose { registration.close() }
@@ -3341,7 +3340,7 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
     hdrEnabled: Boolean,
     subtitleDelayMs: Int,
     subtitleAppearance: SubtitleAppearance,
-    volume: Double,
+    volumeState: SiloCastVolumeState,
 ): SiloCastPlaybackState {
     val activeQualityId = videoQualities.firstOrNull { it.isSelected }?.id ?: VIDEO_QUALITY_AUTO_ID
     return SiloCastPlaybackState(
@@ -3373,8 +3372,8 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
         subtitlePosition = subtitleAppearance.position.toSiloCastPositionValue(),
         supportsSubtitleDelay = true,
         supportsSubtitlePosition = true,
-        volume = volume.coerceIn(0.0, 1.0),
-        isMuted = volume <= 0.001,
+        volume = volumeState.volume,
+        isMuted = volumeState.isMuted,
         hasNextEpisode = nextEpisode != null,
         nextEpisodeTitle = nextEpisode?.title,
         error = error,

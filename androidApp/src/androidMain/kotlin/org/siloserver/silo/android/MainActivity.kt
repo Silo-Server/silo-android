@@ -1,11 +1,13 @@
 package org.siloserver.silo.android
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -31,6 +33,7 @@ import androidx.lifecycle.lifecycleScope
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
 import org.siloserver.silo.android.downloads.LEGACY_PUBLIC_DOWNLOAD_PERMISSION
 import org.siloserver.silo.android.downloads.hasLegacyPublicDownloadPermission
+import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.push.PushNotificationPresenter
 import org.siloserver.silo.android.ui.navigation.AppNavigation
 import org.siloserver.silo.android.ui.navigation.ExternalRouteRequest
@@ -213,6 +216,30 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * While the full Remote Control owns volume, consume both halves of each
+     * hardware-key event so Android neither changes local volume nor shows its
+     * volume HUD. Repeated ACTION_DOWN events intentionally remain individual
+     * remote steps when the user holds a button.
+     */
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val step = when (event.keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> 1
+            KeyEvent.KEYCODE_VOLUME_DOWN -> -1
+            else -> return super.dispatchKeyEvent(event)
+        }
+        val controller = get<SiloCastController>(SiloCastController::class.java)
+        return when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                controller.stepVolumeOptimistic(step) || super.dispatchKeyEvent(event)
+            }
+            else -> {
+                controller.shouldInterceptHardwareVolumeKeys() || super.dispatchKeyEvent(event)
             }
         }
     }
