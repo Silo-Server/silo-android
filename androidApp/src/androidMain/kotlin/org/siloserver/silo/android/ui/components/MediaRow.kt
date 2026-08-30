@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.runtime.remember
@@ -30,6 +31,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
+import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
+import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
@@ -68,6 +72,15 @@ fun MediaRow(
     modifier: Modifier = Modifier,
     cardActions: (SectionItem) -> MediaCardActions = { MediaCardActions() },
 ) {
+    val diagnosticsKeySnapshot = remember(items) {
+        DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
+    }
+    LaunchedEffect(diagnosticsKeySnapshot) {
+        DiagnosticsKeyAnomalyLogger.snapshot(
+            DiagnosticsKeyCollection.PHONE_MEDIA_ROW,
+            diagnosticsKeySnapshot,
+        )
+    }
     val rowItems = remember(items, showProgress, cardStyle) {
         items.map { item ->
             val pos = item.positionSeconds

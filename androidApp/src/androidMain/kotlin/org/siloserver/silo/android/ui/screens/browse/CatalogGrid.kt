@@ -64,6 +64,9 @@ import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
+import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
+import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.overlays.OverlayDataExtractor
 
@@ -99,6 +102,15 @@ fun CatalogGrid(
 ) {
     val gridState = rememberLazyGridState()
     val cardWidth = viewDensity.minCardWidth
+    val diagnosticsKeySnapshot = remember(items) {
+        DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
+    }
+    LaunchedEffect(diagnosticsKeySnapshot) {
+        DiagnosticsKeyAnomalyLogger.snapshot(
+            DiagnosticsKeyCollection.PHONE_CATALOG_GRID,
+            diagnosticsKeySnapshot,
+        )
+    }
 
     // Trigger load more when scrolled near bottom. Keyed on the flags: a
     // keyless remember would freeze their first-composition values inside the
