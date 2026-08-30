@@ -20,6 +20,7 @@ const val CLIENT_VIDEO_TRANSFORMATIONS_FEATURE = "client_video_transformations_v
 const val DEVICE_QUIRKS_V3_FEATURE = "device_quirks_v1"
 const val SEEK_REANCHOR_V3_FEATURE = "seek_reanchor_v1"
 const val DIRECT_STREAM_RESUME_V1_FEATURE = "direct_stream_resume_v1"
+const val NATIVE_HLS_PLAYBACK_V1_FEATURE = "native_hls_playback_v1"
 
 /**
  * How a capability list was obtained. The server validates strictly against
