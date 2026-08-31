@@ -237,7 +237,7 @@ should start as an issue.
 Active design work lives in `docs/superpowers/specs/` with phased plans in `docs/superpowers/plans/`. Current gaps include:
 
 - **Audiobook polish** — the phone and TV players have chapter-aware UI, speed, bookmarks, and sleep timers. Remaining work includes skip-silence, volume normalization, rich notification polish, Android Auto, and a phone widget.
-- **Ebook reader enhancements** — in-text search and highlights and notes, with coordinated server work where the shared contract changes.
+- **Ebook reader enhancements** — in-text search, highlights, and notes, with coordinated server work where the shared contract changes.
 - **Admin management (users/sessions/logs/scans), Watch Together** — code/design work exists, but these are not currently exposed to users in the Android apps and need product/navigation decisions before being treated as live features.
 
 Known gaps the docs track: TV has no reader/ebooks and no downloads management by design; admin surfaces, session management, and Watch Together are not accessible on either Android surface today.
