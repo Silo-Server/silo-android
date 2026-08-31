@@ -87,7 +87,15 @@ class ProfileSelectionViewModel(
                 // Leaving a scope behind for an empty grid is stale metadata
                 // that a later selection could be qualified against.
                 gridScope = null
-                _uiState.update { it.copy(isLoading = false, profiles = emptyList(), canManageProfiles = false) }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        profiles = emptyList(),
+                        canManageProfiles = false,
+                        isManageMode = false,
+                        deleteDialogProfile = null,
+                    )
+                }
                 return@launch
             }
 
@@ -106,6 +114,8 @@ class ProfileSelectionViewModel(
                             profiles = result.data,
                             activeProfileId = activeId,
                             canManageProfiles = isAdmin,
+                            isManageMode = if (isAdmin) it.isManageMode else false,
+                            deleteDialogProfile = if (isAdmin) it.deleteDialogProfile else null,
                         )
                     }
                 }
@@ -129,6 +139,7 @@ class ProfileSelectionViewModel(
     }
 
     fun toggleManageMode() {
+        if (!_uiState.value.canManageProfiles) return
         _uiState.update { it.copy(isManageMode = !it.isManageMode) }
     }
 
@@ -232,6 +243,7 @@ class ProfileSelectionViewModel(
 
     /** Manage-mode delete tap — opens the confirmation dialog. */
     fun requestDeleteProfile(profile: Profile) {
+        if (!_uiState.value.canManageProfiles) return
         _uiState.update { it.copy(deleteDialogProfile = profile) }
     }
 

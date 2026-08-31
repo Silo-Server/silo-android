@@ -79,7 +79,15 @@ class TvProfileSelectionViewModel(
             if (!profileRepository.identityScopeUnchanged(scope)) {
                 // The displayed grid is gone, so its scope must go with it.
                 gridScope = null
-                _uiState.update { it.copy(isLoading = false, profiles = emptyList(), canManageProfiles = false) }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        profiles = emptyList(),
+                        canManageProfiles = false,
+                        isManageMode = false,
+                        deleteCandidate = null,
+                    )
+                }
                 return@launch
             }
             when (val result = listed) {
@@ -94,6 +102,8 @@ class TvProfileSelectionViewModel(
                             isLoading = false,
                             profiles = result.data,
                             canManageProfiles = isAdmin,
+                            isManageMode = if (isAdmin) it.isManageMode else false,
+                            deleteCandidate = if (isAdmin) it.deleteCandidate else null,
                         )
                     }
                 }
@@ -115,6 +125,7 @@ class TvProfileSelectionViewModel(
     }
 
     fun toggleManageMode() {
+        if (!_uiState.value.canManageProfiles) return
         _uiState.update {
             it.copy(
                 isManageMode = !it.isManageMode,
@@ -245,6 +256,7 @@ class TvProfileSelectionViewModel(
 
     /** Opens the delete confirmation for [profile] (manage mode). */
     fun requestDelete(profile: Profile) {
+        if (!_uiState.value.canManageProfiles) return
         _uiState.update { it.copy(deleteCandidate = profile) }
     }
 

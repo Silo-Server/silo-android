@@ -100,6 +100,26 @@ class TvProfileSelectionAdminGateTest {
         assertFalse(viewModel.uiState.value.canManageProfiles)
     }
 
+    @Test
+    fun `non-admin cannot toggle manage mode or request delete on TV`() = runTest {
+        val authRepo = createAuthRepository(
+            userJson = """{"id":2,"username":"alice","email":"alice@example.com","role":"user"}""",
+        )
+        val profile = Profile(id = "p1", name = "Alice Profile")
+        val profileRepo = createProfileRepository(listOf(profile))
+        val viewModel = TvProfileSelectionViewModel(
+            profileRepository = profileRepo,
+            authRepository = authRepo,
+        )
+        advanceUntilIdle()
+
+        viewModel.toggleManageMode()
+        assertFalse(viewModel.uiState.value.isManageMode)
+
+        viewModel.requestDelete(profile)
+        assertFalse(viewModel.uiState.value.deleteCandidate != null)
+    }
+
     private fun createAuthRepository(
         userJson: String?,
         status: HttpStatusCode = HttpStatusCode.OK,
