@@ -33,12 +33,9 @@ google-services.json
 *.jks
 *.keystore
 
-# Local tooling state — but checked-in project skills under .claude/skills/
-# are shared with the repo. Per-machine skill config (device registries,
-# server endpoints) stays local via the *.local.md convention.
-.claude/*
-!.claude/skills/
-.claude/skills/**/*.local.md
+# Local agent/tooling state
+/.agents/
+/.claude/
 .codex/
 .cursor/
 .worktrees/
