@@ -193,6 +193,7 @@ fun ProfileSelectionScreen(
 
                 ProfileFlow(
                     profiles = state.profiles,
+                    canAddProfile = state.canManageProfiles,
                     isManageMode = state.isManageMode,
                     onProfileTap = { viewModel.onProfileTapped(it) },
                     onProfileEdit = { onNavigateToEditProfile(it.id) },
@@ -200,15 +201,17 @@ fun ProfileSelectionScreen(
                     onAddProfile = onNavigateToCreateProfile,
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                if (state.canManageProfiles) {
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                TextButton(onClick = viewModel::toggleManageMode) {
-                    Text(
-                        text = if (state.isManageMode) "Done" else "Manage Profiles",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = AuthColors.OnBackground,
-                    )
+                    TextButton(onClick = viewModel::toggleManageMode) {
+                        Text(
+                            text = if (state.isManageMode) "Done" else "Manage Profiles",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = AuthColors.OnBackground,
+                        )
+                    }
                 }
             }
         }
@@ -225,6 +228,7 @@ fun ProfileSelectionScreen(
 @Composable
 private fun ProfileFlow(
     profiles: List<Profile>,
+    canAddProfile: Boolean,
     isManageMode: Boolean,
     onProfileTap: (Profile) -> Unit,
     onProfileEdit: (Profile) -> Unit,
@@ -246,7 +250,9 @@ private fun ProfileFlow(
                 onDelete = { onProfileDelete(profile) },
             )
         }
-        AddProfileCard(onClick = onAddProfile)
+        if (canAddProfile) {
+            AddProfileCard(onClick = onAddProfile)
+        }
     }
 }
 
