@@ -4,9 +4,9 @@ Android **phone** and **Android TV** clients for the [Silo](https://github.com/S
 
 Built as a Kotlin Multiplatform project: one shared business-logic core, two Jetpack Compose apps (touch + 10-foot TV). This branch uses the full Silo namespace cut: Kotlin packages live under `org.siloserver.silo`, and both apps share a single application ID `org.siloserver.silo` so they publish as one Google Play listing (Play routes each build by manifest feature filtering). Installs under legacy IDs do not upgrade in place; users should expect a fresh app install, sign-in, and offline media download.
 
-> **Status:** WIP (`v0.2.x`). The architecture is solid and the feature surface is broad; some areas are intentionally "bones-level" and under active redesign (see [Roadmap](#roadmap)).
+> **Status:** WIP (`v0.3.x`). Silo Android is pre-1.0 and some areas remain under active development (see [Roadmap](#roadmap)).
 >
-> **Current exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v1/requests/status`), and reached from the profile menu and search — matching the Apple clients. The admin stats dashboard is live for acting admins via Settings (Apple's dashboard design). The richer admin screens (users/sessions/logs/scans) and Watch Together remain inaccessible.
+> **Current exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v1/requests/status`), and reached from the profile menu and search — matching the Apple clients. Admin surfaces, session management, and Watch Together are not exposed in the Android clients.
 
 ---
 
@@ -20,8 +20,9 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 - [Getting started](#getting-started)
 - [Testing](#testing)
 - [Conventions](#conventions)
+- [Contributing](#contributing)
 - [Roadmap](#roadmap)
-- [License](#license)
+- [License & trademarks](#license--trademarks)
 
 ---
 
@@ -78,12 +79,12 @@ WorkManager-backed downloads of video, audiobooks, and books to public device st
 
 ### 📚 Library, browse & discovery (phone + TV)
 - **Phone navigation** — Home, Libraries, For You, Calendar, and Downloads when the active profile has downloads. Video / Audio / Reading are library modes, not bottom-nav tabs.
-- **TV navigation** — Home, visible media-type tabs derived from server libraries (Movies/TV/Music/Audiobooks), and Calendar. Reading/ebooks are intentionally excluded from TV.
+- **TV navigation** — Home, visible media-type tabs derived from server libraries (Movies/TV/Music/Audiobooks), For You, and Calendar. Reading/ebooks are intentionally excluded from TV.
 - **Home** with Continue Watching, Recently Added/Released, and server-curated recommendation rows.
 - **Browse** with genre/rating filters, sorting, and infinite-scroll grids; **collections** are browse-only in the Android clients, while collection authoring/management remains web-only.
 - **Item detail** for movies and series includes seasons → episodes, multi-version files, cast/crew, local download controls, and phone-to-TV playback handoff.
 - **Search** scoped by media type, debounced and paginated.
-- **Requests** — live on phone and TV behind the server's `requests_enabled` flag (profile menu + search). **Admin** — stats dashboard only, role-gated in Settings. **Not exposed** — full admin management and Watch Together are not reachable app surfaces today.
+- **Requests** — live on phone and TV behind the server's `requests_enabled` flag (profile menu + search). **Not exposed** — admin surfaces, session management, and Watch Together are not reachable app surfaces today.
 
 ### 📖 Reading & 🎧 Audio
 - **Ebook reader (phone only)** — EPUB, PDF, CBZ (comics), TXT/Markdown, FB2/FBZ, plus MOBI/AZW/AZW3 when the server can convert to EPUB; CBR and unsupported originals can be downloaded/opened externally. Themes, text size, margins, table of contents, bookmarks, and progress are supported.
@@ -93,7 +94,7 @@ WorkManager-backed downloads of video, audiobooks, and books to public device st
 Android phone can discover SiloCast receivers on the local network, launch movies/episodes on TV with the selected file/track/resume context, and act as a lightweight remote for play/pause, seek, quality, audio, and subtitle changes. TV advertises the local SiloCast receiver only while authenticated and foregrounded. The channel is TLS-PSK and wire-compatible with the Apple clients' SiloControl protocol (same `_silocast._tcp` service, hello/serverId authorization, heartbeat), so Android phones can cast to Apple TVs and iPhones to Android TVs.
 
 ### 🔔 Personalization & engagement (phone + TV)
-Multiple **household profiles** per account (PINs, child profiles, content-rating limits, per-profile language/subtitle prefs), favorites & watchlist, ratings, a release **calendar**, and an in-app **notifications inbox** with realtime updates. Android push has a guarded client-side registration/data-message path, but real FCM delivery requires server provider support plus Firebase configuration in the phone app. TV mirrors continue-watching into the system **Watch Next** row.
+Multiple **household profiles** per account (PINs, child profiles, content-rating limits, per-profile language/subtitle prefs), favorites & watchlist, ratings, a release **calendar**, and an in-app **notifications inbox** with realtime updates. Android push uses Silo's content-free push relay when the server and app are configured for FCM. TV mirrors continue-watching into the system **Watch Next** row.
 
 ### 🌐 Multi-server & accounts (phone + TV)
 Add and switch between multiple Silo servers (encrypted per-server token slots), use username/password or device/QR sign-in, and manage household profiles. Admin screens are not currently exposed in the Android apps.
@@ -148,7 +149,7 @@ Three library layers under two app shells. Dependencies only point downward.
 `sharedModules()` (network + repositories) is combined with the player and Android modules at app startup. The Android apps override the in-memory `TokenManager`/`ServerRegistry` with persistent implementations. ViewModels are resolved with `koinViewModel()`; nav arguments flow in through Koin parameters / `SavedStateHandle`.
 
 ### Navigation & boot
-Each app computes a start destination from registry/token/profile/offline state (`ServerSetup → Login → ProfileSelection → main`), then runs a Compose nav graph. The phone uses an Apple-aligned bottom shell (`Home`, `Libraries`, `For You`, `Calendar`, and conditional `Downloads`). The TV uses a tvOS-aligned top menu (`Home`, available media-type tabs, `Calendar`, plus search/profile actions). Deep links handle device pairing through `silo://device?...` and supported HTTPS `/device` or `/auth/device` URLs.
+Each app computes a start destination from registry/token/profile/offline state (`ServerSetup → Login → ProfileSelection → main`), then runs a Compose nav graph. The phone uses an Apple-aligned bottom shell (`Home`, `Libraries`, `For You`, `Calendar`, and conditional `Downloads`). The TV uses a tvOS-aligned top menu (`Home`, available media-type tabs, `For You`, `Calendar`, plus search/profile actions). Deep links handle device pairing through `silo://device?...` and supported HTTPS `/device` or `/auth/device` URLs.
 
 ### Playback pipeline
 The UI never owns the player directly — a `MediaController` drives the shared `SiloPlaybackService` (a Media3 `MediaSessionService`), so there is exactly one player and system session. For video, `PlaybackSessionManager` sends protocol-v3 capabilities and executes the server's direct/remux/transcode plan; classified failures and track/output changes use the v3 replan endpoint. `PlaybackSessionLifecycle` owns progress and outage handling. Offline playback bypasses the server through a local `file://` URI. The normative contract is in [`docs/playback`](docs/playback/README.md).
@@ -217,24 +218,29 @@ On first launch, point the app at your Silo server URL, sign in, and pick a prof
 
 ## Conventions
 
-- **Kotlin** with `gofmt`-equivalent cleanliness via the project's lint/format setup; keep packages lowercase and focused.
+- **Kotlin** formatted consistently with the surrounding source; keep packages lowercase and focused, and keep Android lint clean.
 - **Shared first** — put platform-agnostic logic (models, networking, view-model logic, pure algorithms) in `shared`; keep Android-only concerns in `android-shared`; keep each app's module to its UI. New non-UI behavior that both apps need belongs in a shared module, not duplicated per app.
 - **Compose** screens are thin; logic lives in ViewModels (testable in `commonTest` where possible).
 - Design specs and implementation plans for larger efforts live under `docs/superpowers/{specs,plans}/`.
 - This is part of a multi-repo Silo workspace — client-visible API/auth/playback changes often need coordinated work in `silo-server` (and the sibling `silo-apple` clients).
 
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Features,
+navigation or behavior changes, large refactors, and shared contract changes
+should start as an issue.
+
 ---
 
 ## Roadmap
 
-Active design work lives in `docs/superpowers/specs/` with phased plans in `docs/superpowers/plans/`. Notable in-flight items:
+Active design work lives in `docs/superpowers/specs/` with phased plans in `docs/superpowers/plans/`. Current gaps include:
 
 - **Audiobook polish** — the phone and TV players have chapter-aware UI, speed, bookmarks, and sleep timers. Remaining work includes skip-silence, volume normalization, rich notification polish, Android Auto, and a phone widget.
-- **Ebook reader enhancements** — real paginated EPUB (page turns), in-text search, highlights & notes (with a coordinated server change), font/brightness controls, and reading-time estimates across all server formats.
-- **Picture-in-Picture** — not yet implemented on phone.
+- **Ebook reader enhancements** — in-text search, highlights, and notes, with coordinated server work where the shared contract changes.
 - **Admin management (users/sessions/logs/scans), Watch Together** — code/design work exists, but these are not currently exposed to users in the Android apps and need product/navigation decisions before being treated as live features.
 
-Known gaps the docs track: TV has no reader/ebooks and no downloads management by design; Requests/Admin/Watch Together are not accessible on either Android surface today.
+Known gaps the docs track: TV has no reader/ebooks and no downloads management by design; admin surfaces, session management, and Watch Together are not accessible on either Android surface today.
 
 ---
 
