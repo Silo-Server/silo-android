@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
+import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Tracks
@@ -52,6 +53,7 @@ import org.siloserver.silo.libass.LibassBridge
  *   and narrowly scoped device output quirks.
  * - Populate `audioPassthrough` from the live [AudioCapabilityManager] state.
  */
+@OptIn(UnstableApi::class)
 class PlaybackCapabilityDetector(
     private val context: Context,
     private val audioCapabilityManager: AudioCapabilityManager,
@@ -754,6 +756,7 @@ internal data class PlatformAudioDecodeCapability(
  * there is nothing to compare against, and refusing on that basis would reject
  * tracks that play fine.
  */
+@OptIn(UnstableApi::class)
 internal fun canDecodeAudio(
     mime: String,
     channelCount: Int,

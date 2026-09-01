@@ -6,12 +6,15 @@ import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.extractor.TrackOutput
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
 class DolbyVisionProfile7TransformerTest {
     @Test
     fun profile81ConvertsRpuAndDropsEnhancementLayer() {
