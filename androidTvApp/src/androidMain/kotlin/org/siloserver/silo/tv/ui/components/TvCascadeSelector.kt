@@ -241,6 +241,11 @@ fun TvCascadeSelector(
             pill != TvLibraryPill.Collections || anchorHasCollections
         }
     }
+    val visiblePillRequesters = stableIdentityValues(
+        ids = pills,
+        valuesById = pillRequesters,
+        create = ::FocusRequester,
+    )
 
     // Scroll state for the lazy (libraries.size > 6) level-1 list, so focus
     // entry can scroll the current-scope row into composition before focusing.
@@ -323,7 +328,7 @@ fun TvCascadeSelector(
             ) {
                 CascadePanelHeader(anchorLibrary.name.uppercase())
                 pills.forEach { pill ->
-                    val requester = pillRequesters.getOrPut(pill) { FocusRequester() }
+                    val requester = visiblePillRequesters.getValue(pill)
                     CascadeSectionRow(
                         pill = pill,
                         entersPanel = entersPanel,
@@ -461,7 +466,7 @@ fun TvCascadeSelector(
             ) {
                 CascadeFlyoutHeader(anchorLibrary.name)
                 pills.forEach { pill ->
-                    val requester = pillRequesters.getOrPut(pill) { FocusRequester() }
+                    val requester = visiblePillRequesters.getValue(pill)
                     CascadeSectionRow(
                         pill = pill,
                         entersPanel = entersPanel,

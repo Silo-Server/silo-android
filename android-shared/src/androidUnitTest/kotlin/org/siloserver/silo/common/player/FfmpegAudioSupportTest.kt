@@ -19,7 +19,7 @@ class FfmpegAudioSupportTest {
         // Order matters only for log readability — the consumer dedup-merges
         // with platform codecs via `distinct()`.
         assertEquals(
-            listOf("ac3", "eac3", "eac3_joc", "truehd", "dts", "dts_hd"),
+            listOf("ac3", "eac3", "eac3_joc", "truehd", "dts", "dts_hd", "alac"),
             FfmpegAudioSupport.codecShortCodes,
         )
     }
@@ -33,7 +33,9 @@ class FfmpegAudioSupportTest {
                 MimeTypes.AUDIO_E_AC3_JOC,
                 MimeTypes.AUDIO_TRUEHD,
                 MimeTypes.AUDIO_DTS,
+                MimeTypes.AUDIO_DTS_EXPRESS,
                 MimeTypes.AUDIO_DTS_HD,
+                MimeTypes.AUDIO_ALAC,
             ),
             FfmpegAudioSupport.mimeTypes,
         )
@@ -45,5 +47,45 @@ class FfmpegAudioSupportTest {
         // --enable-decoder=ac4 and updating scripts/build-ffmpeg-aar.sh.
         assertTrue(MimeTypes.AUDIO_AC4 !in FfmpegAudioSupport.mimeTypes)
         assertTrue("ac4" !in FfmpegAudioSupport.codecShortCodes)
+    }
+
+    @Test
+    fun `runtime codec advertisement contains only native-supported decoders`() {
+        val supported = setOf(MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_HD)
+
+        assertEquals(
+            listOf("dts", "dts_hd"),
+            FfmpegAudioSupport.supportedCodecShortCodes { it in supported },
+        )
+        assertEquals(
+            supported,
+            FfmpegAudioSupport.supportedMimeTypes { it in supported },
+        )
+    }
+
+    @Test
+    fun `DTS Express aliases to the server DTS codec and ALAC stays distinct`() {
+        val supported = setOf(MimeTypes.AUDIO_DTS_EXPRESS, MimeTypes.AUDIO_ALAC)
+
+        assertEquals(
+            listOf("dts", "alac"),
+            FfmpegAudioSupport.supportedCodecShortCodes { it in supported },
+        )
+        assertEquals(
+            supported,
+            FfmpegAudioSupport.supportedMimeTypes { it in supported },
+        )
+    }
+
+    @Test
+    fun `native load failure advertises no FFmpeg codecs`() {
+        assertEquals(
+            emptyList(),
+            FfmpegAudioSupport.supportedCodecShortCodes { false },
+        )
+        assertEquals(
+            emptySet(),
+            FfmpegAudioSupport.supportedMimeTypes { false },
+        )
     }
 }

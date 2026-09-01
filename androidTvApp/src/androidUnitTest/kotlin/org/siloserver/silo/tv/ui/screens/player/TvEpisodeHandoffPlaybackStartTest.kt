@@ -8,8 +8,10 @@ import org.siloserver.silo.common.player.video.EpisodeSelectionHandoff
 import org.siloserver.silo.common.player.video.EpisodeSourceIntent
 import org.siloserver.silo.common.player.video.EpisodeSubtitleIntent
 import org.siloserver.silo.common.player.video.EpisodeSubtitleMode
+import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.playback.audioTrackFingerprint
 
 class TvEpisodeHandoffPlaybackStartTest {
     @Test
@@ -177,6 +179,22 @@ class TvEpisodeHandoffPlaybackStartTest {
                 requestedSubtitleTrackIndex = 4,
             ),
         )
+    }
+
+    @Test
+    fun tvAudioPrecedenceIsManualThenCarryThenPerFileThenLanguage() {
+        val tracks = listOf(
+            AudioTrack(codec = "aac", language = "eng", title = "English"),
+            AudioTrack(codec = "truehd", language = "jpn", title = "Japanese"),
+            AudioTrack(codec = "eac3", language = "fra", title = "French"),
+        )
+        val durable = audioTrackFingerprint(tracks[1])
+
+        assertEquals(0, resolveTvInitialAudioTrackIndex(0, 2, false, tracks, durable, "fr"))
+        assertEquals(2, resolveTvInitialAudioTrackIndex(null, 2, false, tracks, durable, "fr"))
+        assertEquals(1, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr"))
+        assertEquals(2, resolveTvInitialAudioTrackIndex(null, null, false, tracks, null, "fr"))
+        assertNull(resolveTvInitialAudioTrackIndex(null, null, true, tracks, durable, "fr"))
     }
 
     private fun handoff(

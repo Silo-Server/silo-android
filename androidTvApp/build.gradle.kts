@@ -120,7 +120,6 @@ kotlin {
             implementation(libs.media3.ui)
             implementation(libs.media3.session)
             implementation(libs.media3.common.ktx)
-            implementation(libs.media3.ui.compose)
             implementation(libs.kotlinx.coroutines.android)
             implementation(libs.kotlinx.serialization.json)
 

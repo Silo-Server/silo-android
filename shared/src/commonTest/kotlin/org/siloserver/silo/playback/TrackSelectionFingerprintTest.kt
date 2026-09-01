@@ -65,6 +65,35 @@ class TrackSelectionFingerprintTest {
     }
 
     @Test
+    fun canonicalLanguageCoversTheWholeIso6392Table() {
+        assertEquals("it", canonicalSubtitleLanguage("ita"))
+        assertEquals("ko", canonicalSubtitleLanguage("kor"))
+        assertEquals("pt", canonicalSubtitleLanguage("por"))
+        assertEquals("ru", canonicalSubtitleLanguage("rus"))
+        assertEquals("pl", canonicalSubtitleLanguage("pol"))
+        assertEquals("zh", canonicalSubtitleLanguage("chi"))
+        assertEquals("zh", canonicalSubtitleLanguage("zho"))
+        assertEquals("zh", canonicalSubtitleLanguage("zh-Hans"))
+        assertEquals("en", canonicalSubtitleLanguage("en-US"))
+        assertNull(canonicalSubtitleLanguage("und"))
+        assertEquals("xyz", canonicalSubtitleLanguage("xyz"))
+    }
+
+    @Test
+    fun preferredAudioLanguageUsesAliasesAndTheMatchingDefaultTrack() {
+        val tracks = listOf(
+            AudioTrack(index = 4, codec = "aac", language = "eng", title = "Commentary"),
+            AudioTrack(index = 9, codec = "truehd", language = "en-US", title = "Main", isDefault = true),
+            AudioTrack(index = 12, codec = "eac3", language = "jpn", title = "Japanese"),
+        )
+
+        assertEquals(1, resolvePreferredAudioTrackOrdinal(tracks, "en"))
+        assertEquals(2, resolvePreferredAudioTrackOrdinal(tracks, "ja-JP"))
+        assertNull(resolvePreferredAudioTrackOrdinal(tracks, "fr"))
+        assertNull(resolvePreferredAudioTrackOrdinal(tracks, ""))
+    }
+
+    @Test
     fun resolvesSubtitleOffAndTrackFingerprints() {
         val tracks = listOf(
             SubtitleTrack(index = 0, codec = "srt", language = "eng", title = "English"),

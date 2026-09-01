@@ -14,6 +14,7 @@ import org.siloserver.silo.model.playback.DELIVERY_CLASS_HLS
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_PROGRESSIVE
 import org.siloserver.silo.model.playback.NATIVE_HLS_PLAYBACK_V1_FEATURE
+import org.siloserver.silo.model.playback.CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -50,6 +51,41 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
             assertFalse(
                 NATIVE_HLS_PLAYBACK_V1_FEATURE in playbackContext.deliveries.getValue(DELIVERY_CLASS_PROGRESSIVE).features,
                 "$formFactor must not apply the HLS sample-entry contract to progressive delivery",
+            )
+        }
+    }
+
+    @Test
+    fun phoneAndTvScopeSourceAudioSelectionClaimToOriginalHttp() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        listOf("mobile", "tv").forEach { formFactor ->
+            val playbackContext = detector.detectPlaybackContext(
+                formFactor = formFactor,
+                appVersion = "test",
+                capabilities = ClientCodecCapabilities(),
+            )
+
+            assertTrue(
+                CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM in playbackContext.deliveries
+                    .getValue(DELIVERY_CLASS_ORIGINAL_HTTP).validatedClaims,
+                "$formFactor must prove source-track selection on original HTTP",
+            )
+            assertFalse(
+                CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM in playbackContext.deliveries
+                    .getValue(DELIVERY_CLASS_HLS).validatedClaims,
+                "$formFactor must not leak the original-file claim into HLS",
+            )
+            assertFalse(
+                CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM in playbackContext.deliveries
+                    .getValue(DELIVERY_CLASS_PROGRESSIVE).validatedClaims,
+                "$formFactor must not leak the original-file claim into progressive delivery",
             )
         }
     }

@@ -47,14 +47,14 @@ object TrackSelectionPresets {
      * Shield-class devices use Media3's software-timed PCM path even though the
      * hardware A/V-sync path is available.
      *
-     * [ffmpegAvailable] defaults to probing the runtime classpath via
+     * [ffmpegAvailable] defaults to probing the runtime JNI extension via
      * [FfmpegAudioSupport.isAvailable]; tests override it directly. When
      * true, the preferred-MIME list widens to include FFmpeg-reachable
      * audio codecs (TrueHD, DTS-HD, etc.) regardless of passthrough
      * support — the platform renderer still wins selection on
      * passthrough-capable routes because its `supportsFormat` score beats
-     * FFmpeg's. TV route planning no longer advertises extension-only decode,
-     * so FFmpeg remains here for forced-original and runtime recovery only.
+     * FFmpeg's. If FFmpeg is selected, Media3 automatically uses its
+     * non-tunneled PCM path while leaving hardware video decode intact.
      *
      * Deliberately NO preferred TEXT language. On TV the subtitle transaction
      * adapter is the single owner of subtitle selection: it resolves a typed
@@ -109,7 +109,7 @@ object TrackSelectionPresets {
      *
      * [ffmpegAvailable] behaves as in [buildTvParameters] — widens the
      * preferred-MIME list to include FFmpeg-reachable codecs when the
-     * extension is on the classpath.
+     * native extension is available for the current ABI.
      */
     fun buildPhoneParameters(
         context: Context,
@@ -179,11 +179,16 @@ object TrackSelectionPresets {
     internal fun buildTvAudioMimePreferences(
         caps: AudioPassthroughCapabilities,
         ffmpegAvailable: Boolean,
+        ffmpegMimeTypes: Set<String> = if (ffmpegAvailable) {
+            FfmpegAudioSupport.supportedMimeTypes()
+        } else {
+            emptySet()
+        },
     ): List<String> {
         // Union of MIMEs the sink can passthrough + MIMEs FFmpeg can decode
         // locally. Announcing a codec neither route can reach just burns a
         // failed selection attempt, so we filter down to the union.
-        val reachable = reachableAudioMimes(caps, ffmpegAvailable)
+        val reachable = reachableAudioMimes(caps, ffmpegMimeTypes)
         return TV_DESIRED_ORDER.filter { it in reachable }
     }
 
@@ -191,6 +196,11 @@ object TrackSelectionPresets {
         caps: AudioPassthroughCapabilities,
         spatializerOn: Boolean,
         ffmpegAvailable: Boolean,
+        ffmpegMimeTypes: Set<String> = if (ffmpegAvailable) {
+            FfmpegAudioSupport.supportedMimeTypes()
+        } else {
+            emptySet()
+        },
     ): List<String> {
         // Same union-and-filter pattern as TV, but phone ordering biases
         // toward renderer-decoded codecs since phones almost never do
@@ -203,7 +213,7 @@ object TrackSelectionPresets {
         // streams. JOC metadata decoded via FFmpeg produces PCM — the
         // spatializer can still render it positionally even without native
         // Atmos passthrough.
-        val reachable = reachableAudioMimes(caps, ffmpegAvailable)
+        val reachable = reachableAudioMimes(caps, ffmpegMimeTypes)
         val desired = buildList {
             if (spatializerOn) {
                 add(MimeTypes.AUDIO_E_AC3_JOC)
@@ -213,6 +223,8 @@ object TrackSelectionPresets {
             add(MimeTypes.AUDIO_TRUEHD)
             add(MimeTypes.AUDIO_DTS_HD)
             add(MimeTypes.AUDIO_DTS)
+            add(MimeTypes.AUDIO_DTS_EXPRESS)
+            add(MimeTypes.AUDIO_ALAC)
             add(MimeTypes.AUDIO_AC3)
             add(MimeTypes.AUDIO_AAC)
         }
@@ -392,31 +404,31 @@ object TrackSelectionPresets {
 
     /**
      * MIMEs playable on this device — union of passthrough-reachable codecs
-     * and, when the FFmpeg audio extension is on the classpath, the
+     * and, when the FFmpeg audio extension loads for this ABI, the
      * FFmpeg-decodable codecs. AAC is always included (every Android
      * device has an AAC decoder).
      */
     private fun reachableAudioMimes(
         caps: AudioPassthroughCapabilities,
-        ffmpegAvailable: Boolean,
+        ffmpegMimeTypes: Set<String>,
     ): Set<String> {
         val result = mutableSetOf(MimeTypes.AUDIO_AAC)
         caps.passthroughCodecs.forEach { code ->
-            passthroughCodeToMime(code)?.let(result::add)
+            result += passthroughCodeToMimes(code)
         }
-        if (ffmpegAvailable) result += FfmpegAudioSupport.mimeTypes
+        result += ffmpegMimeTypes
         return result
     }
 
-    private fun passthroughCodeToMime(code: String): String? = when (code) {
-        "eac3_joc" -> MimeTypes.AUDIO_E_AC3_JOC
-        "truehd"   -> MimeTypes.AUDIO_TRUEHD
-        "ac4"      -> MimeTypes.AUDIO_AC4
-        "eac3"     -> MimeTypes.AUDIO_E_AC3
-        "dts_hd"   -> MimeTypes.AUDIO_DTS_HD
-        "dts"      -> MimeTypes.AUDIO_DTS
-        "ac3"      -> MimeTypes.AUDIO_AC3
-        else       -> null
+    private fun passthroughCodeToMimes(code: String): Set<String> = when (code) {
+        "eac3_joc" -> setOf(MimeTypes.AUDIO_E_AC3_JOC)
+        "truehd"   -> setOf(MimeTypes.AUDIO_TRUEHD)
+        "ac4"      -> setOf(MimeTypes.AUDIO_AC4)
+        "eac3"     -> setOf(MimeTypes.AUDIO_E_AC3)
+        "dts_hd"   -> setOf(MimeTypes.AUDIO_DTS_HD)
+        "dts"      -> setOf(MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_EXPRESS)
+        "ac3"      -> setOf(MimeTypes.AUDIO_AC3)
+        else       -> emptySet()
     }
 
     /**
@@ -431,6 +443,8 @@ object TrackSelectionPresets {
         MimeTypes.AUDIO_DTS_HD,
         MimeTypes.AUDIO_AC4,
         MimeTypes.AUDIO_DTS,
+        MimeTypes.AUDIO_DTS_EXPRESS,
+        MimeTypes.AUDIO_ALAC,
         MimeTypes.AUDIO_AC3,
         MimeTypes.AUDIO_AAC,
     )

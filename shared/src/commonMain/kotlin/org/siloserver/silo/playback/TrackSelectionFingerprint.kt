@@ -221,6 +221,28 @@ fun resolveAudioTrackOrdinal(
         .takeIf { it >= 0 }
 }
 
+/**
+ * Resolves the automatic audio-language setting onto the selected file's
+ * catalog index before the playback plan is requested.
+ *
+ * Media3 still receives the language as a track-selector preference, but the
+ * server must see the same ordinal so it evaluates the codec and channel
+ * requirements of the track the player will actually select. When duplicate
+ * rows share a language, prefer the file's default and otherwise keep catalog
+ * order deterministic.
+ */
+fun resolvePreferredAudioTrackOrdinal(
+    tracks: List<AudioTrack>,
+    preferredLanguage: String?,
+): Int? {
+    val preferred = canonicalSubtitleLanguage(preferredLanguage) ?: return null
+    val matches = tracks.withIndex().filter { (_, track) ->
+        canonicalSubtitleLanguage(track.language) == preferred
+    }
+    return matches.firstOrNull { (_, track) -> track.isDefault }?.index
+        ?: matches.firstOrNull()?.index
+}
+
 fun resolveSubtitleTrackOrdinal(
     tracks: List<SubtitleTrack>,
     fingerprint: String?,

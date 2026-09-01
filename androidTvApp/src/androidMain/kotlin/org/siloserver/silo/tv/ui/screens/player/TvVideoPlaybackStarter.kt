@@ -19,6 +19,7 @@ import org.siloserver.silo.common.player.video.ResolvedEpisodeSelection
 import org.siloserver.silo.common.player.video.resolveEpisodeSourceIntent
 import org.siloserver.silo.common.player.video.EpisodeAudioCandidate
 import org.siloserver.silo.common.player.video.EpisodeAudioIntent
+import org.siloserver.silo.common.player.video.EpisodeAudioMode
 import org.siloserver.silo.common.player.video.resolveEpisodeAudioIntent
 import org.siloserver.silo.common.player.video.resolveEpisodeSubtitleIntent
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
@@ -34,9 +35,12 @@ import org.siloserver.silo.model.playback.resolvePlaybackStartRequestPosition
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
+import org.siloserver.silo.playback.resolveAudioTrackOrdinal
+import org.siloserver.silo.playback.resolvePreferredAudioTrackOrdinal
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ProfileRepository
+import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.tv.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -50,6 +54,7 @@ class TvVideoPlaybackStarter(
     private val playerSettingsStore: PlayerSettingsStore,
     private val sessionLifecycle: PlaybackSessionLifecycle,
     private val reachabilityMonitor: ServerReachabilityMonitor,
+    private val userItemStatePort: UserItemStatePort,
 ) : VideoPlaybackStarter {
 
     override suspend fun start(request: VideoPlaybackStartRequest): VideoPlaybackStartResult {
@@ -109,8 +114,32 @@ class TvVideoPlaybackStarter(
                     "No active profile selected",
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_ACTIVE_PROFILE,
                 )
-            val preferredAudioLanguage = playerSettingsStore.audioLanguageFlow
+            val configuredAudioLanguage = playerSettingsStore.audioLanguageFlow
                 .first().ifBlank { null }
+            val preferredAudioLanguage = configuredAudioLanguage
+                ?: activeProfile?.language.orNullIfBlank()
+            val carriedAudioIndex = resolvedEpisodeSelection.audioTrackIndex
+            val unresolvedCarriedChoice = request.episodeSelectionHandoff
+                ?.audio
+                ?.mode == EpisodeAudioMode.TRACK && carriedAudioIndex == null
+            val durableAudioFingerprint = if (
+                request.audioTrackIndex == null &&
+                carriedAudioIndex == null &&
+                !unresolvedCarriedChoice
+            ) {
+                userItemStatePort.localTrackSelection(request.contentId, version.fileId)
+                    ?.audioFingerprint
+            } else {
+                null
+            }
+            val selectedAudioIndex = resolveTvInitialAudioTrackIndex(
+                requestedAudioIndex = request.audioTrackIndex,
+                carriedAudioIndex = carriedAudioIndex,
+                unresolvedCarriedChoice = unresolvedCarriedChoice,
+                tracks = version.audioTracks.orEmpty(),
+                durableAudioFingerprint = durableAudioFingerprint,
+                preferredAudioLanguage = preferredAudioLanguage,
+            )
             val accessToken = playbackSessionManager.getAccessToken()
                 ?: return failure(
                     request.contentId,
@@ -143,11 +172,8 @@ class TvVideoPlaybackStarter(
                     preferredAudioLanguage = effectivePreferredAudioLanguage,
                     capabilities = capabilities,
                 )
-            val startAudioTrackIndex = resolveTvStartAudioTrackIndex(
-                requestedTitleTrackIndex = request.audioTrackIndex,
-                episodeHandoffTrackIndex = resolvedEpisodeSelection.audioTrackIndex,
-                automaticPreferenceTrackIndex = automaticAudioTrackIndex,
-            )
+            val startAudioTrackIndex = selectedAudioIndex
+                ?: automaticAudioTrackIndex.takeUnless { unresolvedCarriedChoice }
             // Skip-back-on-resume — see MobileVideoPlaybackStarter for the rationale.
             // Suppressed for Start Over / retry (request flag) and Watch Together
             // (roomId); the one rewound value drives both the server seek and the
@@ -303,6 +329,7 @@ class TvVideoPlaybackStarter(
                 serverUrl = serverUrl,
                 accessToken = accessToken,
                 mediaFileId = effectiveFileId,
+                audioTrackIndex = resolved.audioTrackIndex,
                 // Protocol v3 source duration is authoritative. Unknown stays
                 // unknown; catalog/player runtimes must not fill this field.
                 durationSeconds = resolved.durationSeconds,
@@ -359,6 +386,21 @@ class TvVideoPlaybackStarter(
     private companion object {
         const val TAG = "TvVideoPlaybackStarter"
     }
+}
+
+internal fun resolveTvInitialAudioTrackIndex(
+    requestedAudioIndex: Int?,
+    carriedAudioIndex: Int?,
+    unresolvedCarriedChoice: Boolean,
+    tracks: List<org.siloserver.silo.model.catalog.AudioTrack>,
+    durableAudioFingerprint: String?,
+    preferredAudioLanguage: String?,
+): Int? {
+    requestedAudioIndex?.let { return it }
+    carriedAudioIndex?.let { return it }
+    if (unresolvedCarriedChoice) return null
+    return resolveAudioTrackOrdinal(tracks, durableAudioFingerprint)
+        ?: resolvePreferredAudioTrackOrdinal(tracks, preferredAudioLanguage)
 }
 
 internal fun resolveTvSourceStartPosition(

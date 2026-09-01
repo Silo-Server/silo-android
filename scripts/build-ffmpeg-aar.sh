@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# build-ffmpeg-aar.sh — Produce media3-decoder-ffmpeg-1.10.1.aar from source.
+# build-ffmpeg-aar.sh — Produce media3-decoder-ffmpeg-1.11.0.aar from source.
 #
-# Output: android-shared/libs/media3-decoder-ffmpeg-1.10.1.aar
+# Output: android-shared/libs/media3-decoder-ffmpeg-1.11.0.aar
 #
 # Why this script exists:
 #   Google never publishes the Media3 decoder_ffmpeg extension as a binary
@@ -13,35 +13,40 @@
 #   android-shared/libs/ and consumed as a local file dependency.
 #
 # Build design:
-#   * Pinned to Media3 tag `1.10.1` and FFmpeg tag `n6.0`. The
-#     libraries/decoder_ffmpeg/README.md in Media3 1.10.1 recommends
+#   * Pinned to Media3 tag `1.11.0` and FFmpeg tag `n6.0`. The
+#     libraries/decoder_ffmpeg/README.md in Media3 1.11.0 recommends
 #     FFmpeg 6.0 specifically — n7.x has ABI changes that break the JNI
 #     glue.
 #   * LGPL-only. No --enable-gpl. Every codec we want is in the LGPL
 #     subset of FFmpeg.
 #   * Decoders restricted to the minimum set covering the codecs the
 #     client advertises via PlaybackCapabilityDetector:
-#       ac3 eac3 mlp truehd dca
+#       ac3 eac3 mlp truehd dca alac
 #     (eac3 decoder handles E-AC-3 JOC natively; dca decoder handles DTS
 #     core + HRA + MA; mlp + truehd together cover TrueHD. vorbis/opus/
-#     flac are already decoded by AOSP so we don't ship them. ac4 is
+#     flac are already decoded by AOSP so we don't ship them. ALAC is included
+#     because Media3 1.11 added Matroska ALAC extraction but Android does not
+#     guarantee a platform ALAC decoder. ac4 is
 #     skipped per the v1 plan — rare in our library, saves ~400 KB/ABI.)
 #   * ABIs: arm64-v8a, armeabi-v7a, x86_64. 32-bit x86 is skipped — no
 #     target device ships it, and our emulator images are x86_64. The
 #     upstream build_ffmpeg.sh builds all four in one pass; we patch out
 #     the x86 block before running to save ~3 min + ~2 MB of repo bloat.
+#   * The final JNI shared libraries are linked with 16 KB max/common page
+#     sizes. NDK r27 and lower do not enable this automatically, so omitting
+#     the flags makes the extension unloadable on 16 KB-page devices.
 #
 # Required env:
-#   ANDROID_NDK_HOME — path to NDK r26d (26.3.11579264). Older NDKs don't
-#                      produce 16 KB-page-aligned .so files required for
-#                      Android 15+ devices; newer NDKs are untested.
+#   ANDROID_NDK_HOME — path to the reproducibly pinned NDK r26d
+#                      (26.3.11579264). The script adds the linker flags
+#                      required for 16 KB-page-aligned .so files.
 #   JAVA_HOME        — JDK 21
 #
 # Optional env:
 #   WORKDIR          — scratch dir; defaults to a per-run mktemp dir.
 #                      Pass a persistent path to speed up re-runs (keeps
 #                      Media3 + FFmpeg clones warm).
-#   MEDIA3_TAG       — override the pinned `1.10.1`
+#   MEDIA3_TAG       — override the pinned `1.11.0`
 #   FFMPEG_TAG       — override the pinned `n6.0`
 #
 # Usage:
@@ -57,10 +62,10 @@ set -euo pipefail
 # Config
 # ---------------------------------------------------------------------------
 
-MEDIA3_TAG=${MEDIA3_TAG:-1.10.1}
+MEDIA3_TAG=${MEDIA3_TAG:-1.11.0}
 FFMPEG_TAG=${FFMPEG_TAG:-n6.0}
 ANDROID_API_LEVEL=21            # FFmpeg NDK floor; Silo's app minSdk is 24
-ENABLED_DECODERS=(ac3 eac3 mlp truehd dca)
+ENABLED_DECODERS=(ac3 eac3 mlp truehd dca alac)
 
 # If you change this list, also audit:
 #   * android-shared/.../PlaybackCapabilityDetector.kt codec list in Phase 3
@@ -159,7 +164,7 @@ fi
 # ---------------------------------------------------------------------------
 # Patch upstream build_ffmpeg.sh to skip excluded ABIs
 #
-# Upstream 1.10.1 hardcodes four per-ABI blocks (armeabi-v7a / arm64-v8a /
+# Upstream 1.11.0 hardcodes four per-ABI blocks (armeabi-v7a / arm64-v8a /
 # x86 / x86_64). It takes ENABLED_DECODERS as positional args, so the
 # decoder list is handled at invocation time — we only need to patch to
 # skip ABIs. Each block starts with `./configure \` and ends with
@@ -207,22 +212,58 @@ PY
     # libswresample.a error. Inject abiFilters into defaultConfig so CMake
     # only invokes ninja for the ABIs we cross-compiled above.
     KEEP_ABIS=(armeabi-v7a arm64-v8a x86_64)
-    log "Patching decoder_ffmpeg/build.gradle abiFilters to: ${KEEP_ABIS[*]}"
-    python3 - "$EXT_MODULE/build.gradle" "$ndk_version" "${KEEP_ABIS[@]}" <<'PY'
+    if [[ -f "$EXT_MODULE/build.gradle.kts" ]]; then
+        EXT_BUILD_FILE="$EXT_MODULE/build.gradle.kts"
+        EXT_BUILD_DSL=kotlin
+    elif [[ -f "$EXT_MODULE/build.gradle" ]]; then
+        EXT_BUILD_FILE="$EXT_MODULE/build.gradle"
+        EXT_BUILD_DSL=groovy
+    else
+        die "decoder_ffmpeg has no supported Gradle build file"
+    fi
+    log "Patching ${EXT_BUILD_FILE##*/} abiFilters to: ${KEEP_ABIS[*]}"
+    python3 - "$EXT_BUILD_FILE" "$EXT_BUILD_DSL" "$ndk_version" "${KEEP_ABIS[@]}" <<'PY'
 import pathlib, re, sys
 
 script_path = pathlib.Path(sys.argv[1])
-ndk_version = sys.argv[2]
-keep_abis   = sys.argv[3:]
+build_dsl   = sys.argv[2]
+ndk_version = sys.argv[3]
+keep_abis   = sys.argv[4:]
 text        = script_path.read_text()
 
-if "ndkVersion" not in text:
-    text, n = re.subn(
-        r"(android\s*\{\n\s*namespace\s+'androidx\.media3\.decoder\.ffmpeg'\n)",
-        rf"\1    ndkVersion '{ndk_version}'\n",
-        text,
-        count=1,
+if build_dsl == "kotlin":
+    anchor = (
+        r'(android\s*\{\n\s*namespace\s*=\s*'
+        r'"androidx\.media3\.decoder\.ffmpeg"\n)'
     )
+    ndk_line = f'  ndkVersion = "{ndk_version}"\n'
+    snippet = (
+        "  defaultConfig {\n"
+        "    ndk {\n"
+        "      abiFilters += setOf("
+        + ", ".join(f'"{abi}"' for abi in keep_abis)
+        + ")\n"
+        "    }\n"
+        "  }\n\n"
+    )
+else:
+    anchor = (
+        r"(android\s*\{\n\s*namespace\s+"
+        r"'androidx\.media3\.decoder\.ffmpeg'\n)"
+    )
+    ndk_line = f"    ndkVersion '{ndk_version}'\n"
+    snippet = (
+        "    defaultConfig {\n"
+        "        ndk {\n"
+        "            abiFilters "
+        + ", ".join(f"'{abi}'" for abi in keep_abis)
+        + "\n"
+        "        }\n"
+        "    }\n\n"
+    )
+
+if "ndkVersion" not in text:
+    text, n = re.subn(anchor, lambda match: match.group(1) + ndk_line, text, count=1)
     if n != 1:
         sys.stderr.write("Could not pin decoder_ffmpeg ndkVersion.\n")
         sys.exit(2)
@@ -232,22 +273,7 @@ if "abiFilters" in text:
     print(f"  Pinned NDK {ndk_version}; abiFilters already present.")
     sys.exit(0)
 
-snippet = (
-    "    defaultConfig {\n"
-    "        ndk {\n"
-    "            abiFilters "
-    + ", ".join(f"'{a}'" for a in keep_abis)
-    + "\n"
-    "        }\n"
-    "    }\n"
-    "\n"
-)
-new_text, n = re.subn(
-    r"(android\s*\{\n\s*namespace\s+'androidx\.media3\.decoder\.ffmpeg'\n)",
-    r"\1\n" + snippet,
-    text,
-    count=1,
-)
+new_text, n = re.subn(anchor, lambda match: match.group(1) + "\n" + snippet, text, count=1)
 if n != 1:
     sys.stderr.write("Could not find android { namespace ... } to inject abiFilters into.\n")
     sys.exit(2)
@@ -255,6 +281,32 @@ script_path.write_text(new_text)
 print(f"  Pinned NDK {ndk_version} and injected abiFilters into {script_path}")
 PY
 fi
+
+# NDK r27 and lower do not produce 16 KB-aligned shared libraries by
+# default. Patch the final JNI link (not the intermediate static archives)
+# with Android's documented compatibility flags. The CI artifact job
+# independently reads every packaged ELF program header and rejects an
+# alignment below 0x4000.
+CMAKE_FILE="$FFMPEG_MODULE_PATH/jni/CMakeLists.txt"
+python3 - "$CMAKE_FILE" <<'PY'
+import pathlib, sys
+
+cmake_path = pathlib.Path(sys.argv[1])
+text = cmake_path.read_text()
+if "-Wl,-z,max-page-size=16384" not in text:
+    text += """
+
+# Silo: Android 15+ 16 KB-page compatibility for NDK r27 and lower.
+target_link_options(
+        ffmpegJNI
+        PRIVATE "-Wl,-z,max-page-size=16384"
+        PRIVATE "-Wl,-z,common-page-size=16384")
+"""
+    cmake_path.write_text(text)
+    print(f"  Added 16 KB ELF alignment flags to {cmake_path}")
+else:
+    print(f"  16 KB ELF alignment flags already present in {cmake_path}")
+PY
 
 # ---------------------------------------------------------------------------
 # Cross-compile FFmpeg per ABI (upstream script loops internally)

@@ -1,7 +1,9 @@
 package org.siloserver.silo.common.player.audio
 
 import androidx.media3.common.Format
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.ForwardingAudioSink
 
 data class PassthroughSuppressionSnapshot(
     val suppressedFormats: List<String>,
@@ -73,9 +75,17 @@ object PassthroughSuppressionRegistry : PassthroughSuppressionScope {
     )
 }
 
+/**
+ * Extends Media3's [ForwardingAudioSink] rather than using Kotlin interface
+ * delegation. `by delegate` forwards only abstract members; Media3 1.11
+ * made both `configure` overloads default methods that call each other, so a
+ * delegating wrapper never reached the real sink and recursed until
+ * StackOverflowError on the first audio format change.
+ */
+@UnstableApi
 class PassthroughSuppressingAudioSink(
     private val delegate: AudioSink,
-) : AudioSink by delegate {
+) : ForwardingAudioSink(delegate) {
     override fun supportsFormat(format: Format): Boolean =
         getFormatSupport(format) != AudioSink.SINK_FORMAT_UNSUPPORTED
 
