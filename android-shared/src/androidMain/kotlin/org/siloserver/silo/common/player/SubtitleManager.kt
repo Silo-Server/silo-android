@@ -643,7 +643,7 @@ internal const val SUBTITLE_BOTTOM_SCREEN_FRACTION = 0.06f
  * the user's Position preset decides where it lands.
  *
  * Bottom and Lower Third are applied as `SubtitleView.setBottomPaddingFraction`,
- * and Media3 1.10.1's `SubtitlePainter.setupTextLayout` only consults that
+ * and Media3 1.11.0's `SubtitlePainter.setupTextLayout` only consults that
  * fraction when `cue.line == DIMEN_UNSET` — any explicit line wins outright.
  * Every cue from a streamed SRT/VTT sidecar carries WebVTT's default "auto"
  * placement, which the parser materializes as `line = -1` with
@@ -819,7 +819,7 @@ internal fun bitmapCueScaleFor(preset: SubtitleFontSizePreset): Float = when (pr
  * Applies the user's Position and Size to a BITMAP cue by rewriting the cue's
  * own geometry.
  *
- * Media3 1.10.1's `SubtitlePainter.setupBitmapLayout()` derives the destination
+ * Media3 1.11.0's `SubtitlePainter.setupBitmapLayout()` derives the destination
  * rect purely from `position`/`positionAnchor`/`line`/`lineAnchor`/`size`/
  * `bitmapHeight` — the caption style, the fixed text size and the bottom-padding
  * fraction are all read only by the text branch. So for PGS/DVB the appearance
@@ -829,7 +829,7 @@ internal fun bitmapCueScaleFor(preset: SubtitleFontSizePreset): Float = when (pr
  * `PgsParser` and `DvbParser` both emit `position` = left fraction with
  * `ANCHOR_TYPE_START`, `line` = top fraction (`LINE_TYPE_FRACTION`) with
  * `ANCHOR_TYPE_START`, `size` = width fraction and `bitmapHeight` = height
- * fraction (verified against the 1.10.1 sources). This preserves whatever
+ * fraction (verified against the 1.11.0 sources). This preserves whatever
  * anchors the cue carries and re-expresses the same edges through them.
  *
  * Every bitmap cue is re-anchored to the preset, exactly as the text path

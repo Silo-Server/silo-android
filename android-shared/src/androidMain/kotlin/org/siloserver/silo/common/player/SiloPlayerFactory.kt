@@ -39,7 +39,6 @@ import androidx.media3.extractor.text.SubtitleExtractor
 import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
-import org.siloserver.silo.common.BuildConfig
 import org.siloserver.silo.common.player.audio.DelayAudioProcessor
 import org.siloserver.silo.common.player.audio.PassthroughSuppressingAudioSink
 import org.siloserver.silo.common.player.subtitle.OffsetSubtitleParserFactory
@@ -168,12 +167,13 @@ class SiloPlayerFactory(
     ).setSubtitleParserFactory(embeddedSubtitleParserFactory)
 
     fun createPlayer(
-        preferFfmpegAudio: Boolean = BuildConfig.FFMPEG_AUDIO_ENABLED,
+        preferFfmpegAudio: Boolean = FfmpegAudioSupport.isAvailable(),
     ): ExoPlayer {
-        // When the flag is on (default), extension renderers (FFmpeg audio)
-        // follow the platform renderers and fill only codec gaps. This keeps
-        // native passthrough/MediaCodec paths preferred while retaining a
-        // last-resort local decoder for forced-original and recovery cases.
+        // When the build flag is on and the current ABI's JNI library loads,
+        // extension renderers (FFmpeg audio) follow the platform renderers and
+        // fill only codec gaps. This keeps native passthrough/MediaCodec paths
+        // preferred while retaining a last-resort local decoder for
+        // forced-original and recovery cases.
         //
         // When the flag is off (compile-time bisect), we set _MODE_OFF
         // rather than _MODE_ON so extension renderers are *not even

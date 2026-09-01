@@ -262,9 +262,9 @@ no permitted server adaptation                  → adaptation_unavailable
 ```
 
 The platform renderer gets first opportunity; the FFmpeg extension remains a
-decoder fallback. Media3 1.10.1 implements this ordering through
+decoder fallback. Media3 1.11.0 implements this ordering through
 `EXTENSION_RENDERER_MODE_ON`; `PREFER` would place extension renderers first.
-[Pinned AndroidX source](https://github.com/androidx/media/blob/1.10.1/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/DefaultRenderersFactory.java)
+[Pinned AndroidX source](https://github.com/androidx/media/blob/1.11.0/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/DefaultRenderersFactory.java)
 
 When encoded output fails, Android may perform one bounded local recovery in the
 same Media3 engine: suppress the failed encoding/layout, re-prepare or rebuild
@@ -292,7 +292,7 @@ combines it with administrator policy and returns the effective
 | --- | --- |
 | Supported embedded/sidecar text | Render with Media3. |
 | ASS/SSA without required full styling | Render only when `allow_simplified_rendering` applies; otherwise convert or burn in with a warning. |
-| PGS, VobSub, or DVB | Test embedded and sidecar paths separately. Media3 1.10.1 includes parsers, but Silo wiring and fidelity still require fixtures. [Pinned parser source](https://github.com/androidx/media/blob/1.10.1/libraries/extractor/src/main/java/androidx/media3/extractor/text/DefaultSubtitleParserFactory.java#L55-L64) |
+| PGS, VobSub, or DVB | Test embedded and sidecar paths separately. Media3 1.11.0 includes parsers, but Silo wiring and fidelity still require fixtures. [Pinned parser source](https://github.com/androidx/media/blob/1.11.0/libraries/extractor/src/main/java/androidx/media3/extractor/text/DefaultSubtitleParserFactory.java#L55-L64) |
 | Font-attached styled subtitle | Render only when attachment/style fidelity is validated; otherwise convert or burn in. |
 | Concurrent secondary subtitle | Unsupported until a separate implementation and fixture set exist. |
 

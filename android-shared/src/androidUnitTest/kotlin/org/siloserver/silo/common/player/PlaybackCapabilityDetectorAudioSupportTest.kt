@@ -110,6 +110,18 @@ class PlaybackCapabilityDetectorAudioSupportTest {
         )
     }
 
+    @Test
+    fun `a platform DTS HD decoder is valid local decode evidence`() {
+        assertTrue(
+            canDecodeAudio(
+                MimeTypes.AUDIO_DTS_HD,
+                8,
+                listOf(decoder(MimeTypes.AUDIO_DTS_HD, "dts_hd", 8)),
+                ffmpegAvailable = false,
+            ),
+        )
+    }
+
     /**
      * EXTENSION_RENDERER_MODE_ON puts the platform renderer first, but order is
      * only the tie-break: the track selector takes whichever renderer reports
@@ -140,22 +152,45 @@ class PlaybackCapabilityDetectorAudioSupportTest {
         )
     }
 
-    /**
-     * Media3 soft-matches JOC onto a plain E-AC3 decoder
-     * (MediaCodecUtil.getAlternativeCodecMimeType), so refusing it here would
-     * reject content the player would happily have handled.
-     */
     @Test
-    fun `JOC is accepted by a plain E-AC3 decoder, as Media3 does`() {
-        assertTrue(
+    fun `JOC is not inferred from a plain E-AC3 decoder`() {
+        assertFalse(
             platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, sixChannelEac3),
         )
     }
 
     @Test
-    fun `JOC still respects that decoders channel limit`() {
+    fun `an explicit JOC decoder is accepted and respects its channel limit`() {
+        val sixChannelJoc = listOf(decoder(MimeTypes.AUDIO_E_AC3_JOC, "eac3_joc", 6))
+        val stereoOnlyJoc = listOf(decoder(MimeTypes.AUDIO_E_AC3_JOC, "eac3_joc", 2))
+
+        assertTrue(
+            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, sixChannelJoc),
+        )
         assertFalse(
-            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, stereoOnlyEac3),
+            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, stereoOnlyJoc),
+        )
+    }
+
+    @Test
+    fun `advertised decode codecs include runtime FFmpeg support on every form factor`() {
+        assertEquals(
+            listOf("aac", "eac3", "dts", "dts_hd", "truehd"),
+            advertisedAudioDecodeCodecs(
+                platformCodecs = listOf("aac", "eac3"),
+                ffmpegCodecs = listOf("dts", "dts_hd", "truehd"),
+            ),
+        )
+    }
+
+    @Test
+    fun `advertised decode codecs stay distinct and omit unavailable FFmpeg decoders`() {
+        assertEquals(
+            listOf("aac", "eac3"),
+            advertisedAudioDecodeCodecs(
+                platformCodecs = listOf("aac", "eac3", "aac"),
+                ffmpegCodecs = emptyList(),
+            ),
         )
     }
 
@@ -182,7 +217,13 @@ class PlaybackCapabilityDetectorAudioSupportTest {
     fun `codec names map only for MIME types this project tracks`() {
         assertEquals("eac3", platformAudioCodecName(MimeTypes.AUDIO_E_AC3))
         assertEquals("eac3_joc", platformAudioCodecName(MimeTypes.AUDIO_E_AC3_JOC))
-        assertEquals(null, platformAudioCodecName(MimeTypes.AUDIO_DTS_HD))
+        assertEquals("truehd", platformAudioCodecName(MimeTypes.AUDIO_TRUEHD))
+        assertEquals("dts", platformAudioCodecName(MimeTypes.AUDIO_DTS))
+        assertEquals("dts", platformAudioCodecName(MimeTypes.AUDIO_DTS_EXPRESS))
+        assertEquals("dts_hd", platformAudioCodecName(MimeTypes.AUDIO_DTS_HD))
+        assertEquals("ac4", platformAudioCodecName(MimeTypes.AUDIO_AC4))
+        assertEquals("alac", platformAudioCodecName(MimeTypes.AUDIO_ALAC))
+        assertEquals(null, platformAudioCodecName("audio/x-unknown"))
     }
 }
 
