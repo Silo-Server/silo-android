@@ -37,6 +37,18 @@ class TvEpisodeHandoffPlaybackStartTest {
     }
 
     @Test
+    fun episodeHandoffAudioWinsOverAutomaticPlaybackSetting() {
+        assertEquals(
+            1,
+            resolveTvStartAudioTrackIndex(
+                requestedTitleTrackIndex = null,
+                episodeHandoffTrackIndex = 1,
+                automaticPreferenceTrackIndex = 0,
+            ),
+        )
+    }
+
+    @Test
     fun explicitDetailFileIdWinsOverEpisodeHandoff() {
         val resolved = resolveTvPlaybackStartSelection(
             preferredFileId = 1080,

@@ -1,3 +1,5 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package org.siloserver.silo.tv.ui.screens.detail
 
 import androidx.lifecycle.ViewModel
@@ -45,6 +47,7 @@ import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.tv.ui.util.isTvHiddenMediaType
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.viewmodel.applyLocalPlaybackProgress
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,7 +55,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -60,6 +62,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 
 data class TvItemDetailUiState(
     val isLoading: Boolean = true,
@@ -380,7 +383,7 @@ class TvItemDetailViewModel(
             }
         }
         observePreferredQuality()
-        observeAutomaticAudioPolicy()
+        capabilityDetector?.let(::observeAutomaticAudioPolicy)
         if (contentId.isNotBlank()) {
             // Restore this title's pre-play track choices (QA 2026-07-08: a
             // manual subtitle selection reset on every return to the page —
@@ -451,10 +454,9 @@ class TvItemDetailViewModel(
         }
     }
 
-    private fun observeAutomaticAudioPolicy() {
+    private fun observeAutomaticAudioPolicy(detector: PlaybackCapabilityDetector) {
         viewModelScope.launch {
-            val outputRoutes = capabilityDetector?.outputRouteGeneration ?: flowOf(0L)
-            combine(playerSettingsStore.audioLanguageFlow, outputRoutes) { language, _ -> language }
+            combine(playerSettingsStore.audioLanguageFlow, detector.outputRouteGeneration) { language, _ -> language }
                 .collectLatest { settingsLanguage ->
                     val profileLanguage = runCatching {
                         profileRepository.getActiveProfile()?.language
@@ -463,13 +465,13 @@ class TvItemDetailViewModel(
                         settingsLanguage = settingsLanguage,
                         profileLanguage = profileLanguage,
                     )
-                    val capabilities = capabilityDetector?.let { detector ->
-                        runCatching {
+                    val capabilities = runCatching {
+                        withContext(Dispatchers.Default) {
                             detector.detect(
                                 dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot(),
                             )
-                        }.getOrNull()
-                    }
+                        }
+                    }.getOrNull()
                     _uiState.update {
                         it.copy(
                             preferredAudioLanguage = preferredLanguage,

@@ -1153,7 +1153,11 @@ private fun TvDetailPlaybackSelectionSummary(
     state: TvItemDetailUiState,
 ) {
     val usesNextUp = detail.type == "series" || detail.type == "season"
-    val playbackDetail = if (usesNextUp) state.nextUpPlaybackDetail else detail
+    val playbackDetail = if (usesNextUp) {
+        state.nextUpPlaybackDetail.takeIf { state.nextUpTargetReady }
+    } else {
+        detail
+    }
     val versions = playbackDetail?.versions.orEmpty()
     val selectedFileId = (if (usesNextUp) state.selectedNextUpFileId else state.selectedFileId)
         ?.takeIf { fileId -> versions.any { it.fileId == fileId } }
@@ -1769,12 +1773,8 @@ private fun openTvYoutubeTrailer(context: android.content.Context, video: ItemVi
         Intent.ACTION_VIEW,
         Uri.parse("https://www.youtube.com/watch?v=${video.siteKey}"),
     )
-    val intent = if (appIntent.resolveActivity(context.packageManager) != null) {
-        appIntent
-    } else {
-        webIntent
-    }
-    runCatching { context.startActivity(intent) }
+    runCatching { context.startActivity(appIntent) }
+        .recoverCatching { context.startActivity(webIntent) }
         .onFailure {
             Toast.makeText(context, "No app is available to open this trailer", Toast.LENGTH_SHORT).show()
         }

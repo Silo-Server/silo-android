@@ -38,6 +38,8 @@ class TvDetailFocusPolicyTest {
         val episodes = episodesSection.indexOf("TvDetailEpisodeRail(")
 
         assertFalse(source.contains("seriesPlaybackSelector"))
+        assertTrue(seasons >= 0)
+        assertTrue(episodes >= 0)
         assertTrue(seasons < episodes)
         assertTrue(episodesSection.contains("padding(top = SeriesSeasonPickerTopPadding)"))
         assertFalse(source.contains("if (!isSeriesDetail || isShowingSeriesOverview)"))

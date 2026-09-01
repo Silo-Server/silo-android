@@ -97,7 +97,7 @@ internal fun TvDetailHero(
     actions: @Composable () -> Unit,
     playbackSummary: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
-    /** Compact 520pt Series header while the standard 690pt artwork fade continues behind its mode row. */
+    /** Compact 580pt Series header while the standard 690pt artwork fade continues behind its mode row. */
     compactSeries: Boolean = false,
     // Optional description-translation affordance (Apple tvOS parity),
     // rendered as its own focus stop directly under the synopsis.

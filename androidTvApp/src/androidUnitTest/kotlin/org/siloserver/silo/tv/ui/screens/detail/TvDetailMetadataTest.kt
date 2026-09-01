@@ -5,6 +5,7 @@ import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.ItemVideo
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.VideoTrack
 import org.siloserver.silo.model.ebook.MediaPerson
@@ -48,6 +49,36 @@ class TvDetailMetadataTest {
         assertEquals(
             listOf("Specials", "Episode 1"),
             TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+        )
+    }
+
+    @Test
+    fun seriesEditorialOmitsUnknownEpisodeNumber() {
+        val episode = EpisodeListItem(
+            contentId = "special",
+            seasonNumber = 0,
+            episodeNumber = 0,
+        )
+
+        assertEquals(
+            listOf("Specials"),
+            TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+        )
+    }
+
+    @Test
+    fun trailerEntriesDeduplicateProviderKeysUsedByTheRail() {
+        val duplicate = ItemVideo(kind = "trailer", site = "youtube", siteKey = "abc")
+        val detail = ItemDetail(
+            contentId = "m1",
+            type = "movie",
+            title = "Movie",
+            videos = listOf(duplicate, duplicate.copy(name = "Duplicate")),
+        )
+
+        assertEquals(
+            listOf("remote:youtube:abc"),
+            tvDetailTrailerEntries(detail).map { it.key },
         )
     }
 

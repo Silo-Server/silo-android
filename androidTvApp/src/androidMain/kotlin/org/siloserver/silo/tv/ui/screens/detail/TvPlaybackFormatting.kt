@@ -1,3 +1,5 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.common.player.TrackSelectionPresets
@@ -275,9 +277,7 @@ object TvPlaybackFormatting {
         val summary = audioSummary(track, ordinal)
         // Auto shows what it resolved to ("Auto: English · EAC3 · 5.1"); a
         // manual pick shows just the track (tvOS `annotateAuto`). Audio auto
-        // is the file's default/first track — the same signal the player uses
-        // (there is no client-side language audio resolver; the server drives
-        // audio selection), so unlike subtitles this preview needs no prefs.
+        // follows the same language/capability resolution used by playback.
         return if (selectedAudioTrackIndex == null) "Auto: $summary" else summary
     }
 

@@ -82,7 +82,7 @@ internal fun tvDetailTrailerEntries(detail: ItemDetail): List<TvDetailTrailerEnt
         .filter { it.site.equals("youtube", ignoreCase = true) && it.siteKey.isNotBlank() }
         .forEach { add(TvDetailTrailerEntry.Remote(it)) }
     detail.extras.orEmpty().forEach { add(TvDetailTrailerEntry.Local(it)) }
-}
+}.distinctBy(TvDetailTrailerEntry::key)
 
 @Composable
 internal fun TvDetailTrailersSection(

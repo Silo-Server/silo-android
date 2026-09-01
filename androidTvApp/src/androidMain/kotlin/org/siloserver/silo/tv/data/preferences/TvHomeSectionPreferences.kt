@@ -108,8 +108,12 @@ class TvHomeSectionPreferences(
     }
 
     private suspend fun activeAuthority(): Authority? {
-        val profileId = tokenManager.getProfileId()?.takeIf(String::isNotBlank) ?: return null
-        val serverId = tokenManager.getCurrentServerId()?.takeIf(String::isNotBlank)
+        val scope = tokenManager.snapshotCurrentScope()
+        val profileId = (if (scope != null) scope.profileId else tokenManager.getProfileId())
+            ?.takeIf(String::isNotBlank)
+            ?: return null
+        val serverId = (if (scope != null) scope.serverId else tokenManager.getCurrentServerId())
+            ?.takeIf(String::isNotBlank)
             ?: DEFAULT_SERVER_ID
         return Authority(profileId = profileId, serverId = serverId)
     }

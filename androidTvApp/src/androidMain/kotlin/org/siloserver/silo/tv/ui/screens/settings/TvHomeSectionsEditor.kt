@@ -61,6 +61,7 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.tv.data.preferences.TvHomeSectionPreferences
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.screens.home.normalizeTvHomeSections
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
@@ -99,6 +100,7 @@ internal fun TvHomeSectionsEditor(
     val scope = rememberCoroutineScope()
     var isEditing by remember { mutableStateOf(false) }
     var editorHasFocus by remember { mutableStateOf(false) }
+    var focusedMoveControl by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var isClosing by remember { mutableStateOf(false) }
 
     fun close() {
@@ -117,17 +119,18 @@ internal fun TvHomeSectionsEditor(
 
         scope.launch {
             preferences.setOrder(ids)
-            withFrameNanos { }
             val requesters = rowFocusRequesters[section.id] ?: return@launch
-            when (target) {
-                0 -> requesters.moveDown.requestFocus()
-                ids.lastIndex -> requesters.moveUp.requestFocus()
-                else -> if (offset < 0) {
-                    requesters.moveUp.requestFocus()
-                } else {
-                    requesters.moveDown.requestFocus()
-                }
+            val (requester, direction) = when (target) {
+                0 -> requesters.moveDown to 1
+                ids.lastIndex -> requesters.moveUp to -1
+                else -> if (offset < 0) requesters.moveUp to -1 else requesters.moveDown to 1
             }
+            requestFocusUntilObserved(
+                maxAttempts = TvFrameRelocationMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = requester::requestFocus,
+                isFocused = { focusedMoveControl == (section.id to direction) },
+            )
         }
     }
 
@@ -264,6 +267,13 @@ internal fun TvHomeSectionsEditor(
                                     canMoveUp = index > 0,
                                     canMoveDown = index in 0 until arrangedSections.lastIndex,
                                     focusRequesters = rowFocusRequesters.getValue(section.id),
+                                    onMoveFocusChanged = { direction, focused ->
+                                        val control = section.id to direction
+                                        when {
+                                            focused -> focusedMoveControl = control
+                                            focusedMoveControl == control -> focusedMoveControl = null
+                                        }
+                                    },
                                     onMoveUp = { move(section, -1) },
                                     onMoveDown = { move(section, 1) },
                                     onToggleVisibility = {
@@ -335,6 +345,7 @@ private fun HomeSectionEditorRow(
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     focusRequesters: HomeSectionRowFocusRequesters,
+    onMoveFocusChanged: (direction: Int, focused: Boolean) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onToggleVisibility: () -> Unit,
@@ -379,6 +390,7 @@ private fun HomeSectionEditorRow(
                     enabled = canMoveUp,
                     compact = true,
                     focusRequester = focusRequesters.moveUp,
+                    onFocusChanged = { onMoveFocusChanged(-1, it) },
                 )
                 HomeSectionsControlButton(
                     icon = Icons.Filled.KeyboardArrowDown,
@@ -387,6 +399,7 @@ private fun HomeSectionEditorRow(
                     enabled = canMoveDown,
                     compact = true,
                     focusRequester = focusRequesters.moveDown,
+                    onFocusChanged = { onMoveFocusChanged(1, it) },
                 )
             }
             HomeSectionsControlButton(
@@ -413,6 +426,7 @@ private fun HomeSectionsControlButton(
     enabled: Boolean = true,
     compact: Boolean = false,
     focusRequester: FocusRequester? = null,
+    onFocusChanged: ((Boolean) -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(6.dp)
     Surface(
@@ -436,6 +450,9 @@ private fun HomeSectionsControlButton(
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
         modifier = (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .then(onFocusChanged?.let { callback ->
+                Modifier.onFocusChanged { callback(it.isFocused) }
+            } ?: Modifier)
             .then(
                 if (compact) {
                     Modifier.size(38.dp)
