@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -522,6 +523,8 @@ private fun DayCell(
     modifier: Modifier = Modifier,
 ) {
     val localDate = remember(date) { LocalDate.parse(date) }
+    val locale = LocalConfiguration.current.locales[0]
+    val weekdayFormatter = remember(locale) { DateTimeFormatter.ofPattern("EEE", locale) }
     val numberShape = RoundedCornerShape(11.dp)
     Column(
         modifier = modifier
@@ -535,7 +538,7 @@ private fun DayCell(
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Text(
-            text = localDate.format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault())),
+            text = localDate.format(weekdayFormatter),
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
