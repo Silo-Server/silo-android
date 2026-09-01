@@ -1,13 +1,16 @@
 package org.siloserver.silo.tv.ui.components
 
+import java.io.File
 import org.siloserver.silo.model.catalog.OverlaySummary
 import org.siloserver.silo.model.section.SectionItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class TvFocusMarqueeModelTest {
     @Test
-    fun movieHeroPrioritizesEditorialMetadataAndOmitsStreamQuality() {
+    fun movieHeroSeparatesEditorialMetadataFromFormatBadges() {
         val content = TvMarqueeContent.from(
             item = SectionItem(
                 contentId = "movie-1",
@@ -32,6 +35,7 @@ class TvFocusMarqueeModelTest {
             listOf("2016", "1h 56m", "7.9", "Science Fiction"),
             content.metaParts,
         )
+        assertEquals("4K · Dolby Vision · Atmos", content.specLine)
     }
 
     @Test
@@ -57,10 +61,45 @@ class TvFocusMarqueeModelTest {
 
         assertEquals("The Last of Us", content.title)
         assertEquals(listOf("TV-MA"), content.badges)
-        assertEquals(
-            listOf("S1 E3", "Long, Long Time", "1h 16m", "8.6"),
-            content.metaParts,
+        assertEquals(listOf("S1 E3", "Long, Long Time"), content.metaParts)
+        assertEquals("1080P · EAC3", content.specLine)
+    }
+
+    @Test
+    fun homeHeroOmitsEpisodeRuntimeAndRemainingTime() {
+        val content = TvMarqueeContent.from(
+            item = SectionItem(
+                contentId = "episode-progress",
+                type = "episode",
+                title = "Persuader",
+                seriesTitle = "Reacher",
+                seasonNumber = 3,
+                episodeNumber = 1,
+                runtime = 53,
+                positionSeconds = 240.0,
+                durationSeconds = 3_180.0,
+            ),
+            rowTitle = "Continue Watching",
         )
+
+        assertEquals(listOf("S3 E1", "Persuader"), content.metaParts)
+        assertFalse(content.metaParts.any { it.contains("left", ignoreCase = true) })
+        assertFalse(content.metaParts.any { it.contains("min", ignoreCase = true) })
+    }
+
+    @Test
+    fun homeHeroUsesOneOutlinedBadgeStyleForRatingAndFormats() {
+        val source = File(
+            "src/androidMain/kotlin/org/siloserver/silo/tv/ui/components/TvFocusMarquee.kt",
+        ).readText()
+
+        assertTrue(source.contains("content.specLine"))
+        assertTrue(source.contains("?.split(\" · \")"))
+        assertTrue(source.contains("badges.forEach { badge -> MarqueeBadge(badge.uppercase()) }"))
+        assertTrue(source.contains("Color.White.copy(alpha = 0.08f)"))
+        assertTrue(source.contains("Color.White.copy(alpha = 0.24f)"))
+        assertTrue(source.contains("private val MarqueeBadgeSize = 10.5.sp"))
+        assertFalse(source.contains("FontFamily.Monospace"))
     }
 
     @Test

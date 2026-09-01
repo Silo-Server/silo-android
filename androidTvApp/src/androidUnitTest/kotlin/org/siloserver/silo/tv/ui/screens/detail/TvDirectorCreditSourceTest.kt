@@ -14,17 +14,24 @@ class TvDirectorCreditSourceTest {
 
     @Test
     fun tvMovieHeroUsesSharedDirectorCredit() {
-        assertTrue(screen.contains("directorText = movieDirectorCredit(detail)"))
+        assertTrue(screen.contains("val heroCreditText = if (isSeriesDetail)"))
+        assertTrue(screen.contains("movieDirectorCredit(detail).takeIf"))
+        assertTrue(screen.contains("directorText = heroCreditText"))
     }
 
     @Test
-    fun approvedMetadataPrecedesSynopsisAndTvCreditFollowsTranslation() {
-        val metadata = hero.indexOf("MetadataRow(tokens = factsLine")
+    fun approvedMetadataPrecedesSynopsisAndPlaybackFollowsTvCredit() {
+        val metadata = hero.indexOf("MetadataRow(")
         val synopsis = hero.indexOf("overview?.takeIf")
         val translation = hero.indexOf("translation?.invoke()")
         val director = hero.indexOf("directorText?.takeIf")
+        val playback = hero.lastIndexOf("playbackSummary?.invoke()")
         assertTrue(
-            metadata >= 0 && metadata < synopsis && synopsis < translation && translation < director,
+            metadata >= 0 &&
+                metadata < synopsis &&
+                synopsis < translation &&
+                translation < director &&
+                director < playback,
         )
     }
 }

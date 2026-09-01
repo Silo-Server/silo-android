@@ -203,7 +203,7 @@ fun TvSeriesModePicker(
             TvSeriesModeTab(
                 title = "Show",
                 isSelected = isShowingSeriesOverview,
-                onClick = onShowSelected,
+                onActivated = onShowSelected,
                 modifier = if (isShowingSeriesOverview) {
                     Modifier.focusRequester(selectedFocusRequester)
                 } else {
@@ -220,7 +220,7 @@ fun TvSeriesModePicker(
             TvSeriesModeTab(
                 title = tvSeasonPickerLabel(season),
                 isSelected = selected,
-                onClick = { onSeasonSelected(season) },
+                onActivated = { onSeasonSelected(season) },
                 modifier = if (selected) {
                     Modifier.focusRequester(selectedFocusRequester)
                 } else {
@@ -235,7 +235,7 @@ fun TvSeriesModePicker(
 private fun TvSeriesModeTab(
     title: String,
     isSelected: Boolean,
-    onClick: () -> Unit,
+    onActivated: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -286,10 +286,18 @@ private fun TvSeriesModeTab(
             .seriesModeFocusRing(visible = isFocused)
             .background(fill, CircleShape)
             .border(borderWidth, borderColor, CircleShape)
+            // tvOS treats Show and each season as focus-driven modes: moving
+            // laterally updates the page immediately, without an extra Select.
+            // The ViewModel ignores the already-selected season and generation-
+            // guards quick successive loads while the existing selectedIndex
+            // effect keeps the newly focused tab centered.
+            .onFocusChanged { focusState ->
+                if (focusState.isFocused && !isSelected) onActivated()
+            }
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-                onClick = onClick,
+                onClick = onActivated,
             )
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,

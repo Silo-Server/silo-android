@@ -259,11 +259,13 @@ private fun EditorialColumn(
             logoUrl = logoUrl,
         )
 
-        // Editorial identity gets its own line: "Movie · Horror · Thriller"
-        // (or Season/Episode context) must read before year/runtime/playback
-        // information rather than trailing after it on one overlong row.
-        if (sourceTokens.isNotEmpty()) SourceRow(tokens = sourceTokens)
-        val hasMetadata = factsLine.isNotEmpty() || !ratingChip.isNullOrBlank()
+        // Movies keep their separate editorial identity line. The combined
+        // Series page follows tvOS's single metadata line instead: episode date
+        // and runtime, then Season / Episode context, then the rating chip.
+        if (!compactSeries && sourceTokens.isNotEmpty()) SourceRow(tokens = sourceTokens)
+        val hasMetadata = factsLine.isNotEmpty() ||
+            !ratingChip.isNullOrBlank() ||
+            (compactSeries && sourceTokens.isNotEmpty())
         if (compactSeries) {
             // Episode focus may swap a full Show facts row for a shorter date /
             // runtime row. Keep the approved facts baseline and the margin
@@ -276,13 +278,31 @@ private fun EditorialColumn(
                 contentAlignment = Alignment.CenterStart,
             ) {
                 if (hasMetadata) {
-                    MetadataRow(tokens = factsLine, sourceTokens = emptyList(), ratingChip = ratingChip)
+                    MetadataRow(
+                        tokens = factsLine,
+                        sourceTokens = sourceTokens,
+                        ratingChip = ratingChip,
+                        compactRating = true,
+                    )
                 }
             }
         } else if (hasMetadata) {
-            MetadataRow(tokens = factsLine, sourceTokens = emptyList(), ratingChip = ratingChip)
+            // Keep the standard hero's established metadata footprint while
+            // giving movie ratings the same compact tvOS badge used by Series.
+            Box(
+                modifier = Modifier
+                    .height(SERIES_METADATA_SLOT_HEIGHT)
+                    .clipToBounds(),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                MetadataRow(
+                    tokens = factsLine,
+                    sourceTokens = emptyList(),
+                    ratingChip = ratingChip,
+                    compactRating = true,
+                )
+            }
         }
-        playbackSummary?.invoke()
 
         // Synopsis slot — the hero's only text focus stop. A focusable leaf
         // that clamps the overview to the current height budget and, on
@@ -319,20 +339,44 @@ private fun EditorialColumn(
         }
         translation?.invoke()
 
-        // Quiet "Directed by …" credit between the synopsis and the facts row.
-        // 14sp = the ten-foot metadata floor; the 0.62 alpha keeps it reading
-        // as a credit rather than another synopsis line.
-        directorText?.takeIf { it.isNotBlank() }?.let { line ->
-            Text(
-                text = line,
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp,
-                color = Color.White.copy(alpha = 0.62f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        if (compactSeries) {
+            // Keep this slot mounted even while episode data changes so the
+            // playback readout and action row remain completely locked.
+            Box(
+                modifier = Modifier
+                    .height(SERIES_CREDIT_SLOT_HEIGHT)
+                    .clipToBounds(),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                directorText?.takeIf { it.isNotBlank() }?.let { line ->
+                    HeroCreditLine(line)
+                }
+            }
+        } else {
+            directorText?.takeIf { it.isNotBlank() }?.let { line ->
+                HeroCreditLine(line)
+            }
         }
+        // Both movie and Series heroes now share the same footer hierarchy:
+        // synopsis, credit, then Version / Audio / Subtitles directly above
+        // the action row. Reordering these existing children does not change
+        // the standard hero's total measured height.
+        playbackSummary?.invoke()
     }
+}
+
+@Composable
+private fun HeroCreditLine(line: String) {
+    // 14sp = the ten-foot metadata floor; the quieter alpha lets a Starring or
+    // Directed-by line read as supporting credit rather than another synopsis.
+    Text(
+        text = line,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp,
+        color = Color.White.copy(alpha = 0.62f),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 @Composable
@@ -475,6 +519,7 @@ private fun MetadataRow(
     tokens: List<TvHeroFactToken>,
     sourceTokens: List<String>,
     ratingChip: String?,
+    compactRating: Boolean = false,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -531,7 +576,7 @@ private fun MetadataRow(
         }
         ratingChip?.takeIf { it.isNotBlank() }?.let { rating ->
             if (tokens.isNotEmpty() || sourceTokens.isNotEmpty()) MetadataDivider()
-            RatingChip(text = rating)
+            RatingChip(text = rating, compact = compactRating)
         }
     }
 }
@@ -547,7 +592,7 @@ private fun MetadataDivider() {
 }
 
 @Composable
-private fun RatingChip(text: String) {
+private fun RatingChip(text: String, compact: Boolean) {
     Box(
         modifier = Modifier
             .border(
@@ -555,14 +600,18 @@ private fun RatingChip(text: String) {
                 color = Color.White.copy(alpha = 0.7f),
                 shape = RoundedCornerShape(2.5.dp),
             )
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .padding(
+                horizontal = if (compact) 6.dp else 8.dp,
+                vertical = if (compact) 2.dp else 3.dp,
+            ),
     ) {
-        // 14sp floor for 10-ft legibility (tvOS 20pt heavy, tracking 1.0) — audit 2026-07-20.
+        // Compact detail ratings use the tvOS 20pt badge mapped to Android's
+        // half-scale canvas.
         Text(
             text = text,
             fontWeight = FontWeight.Black,
-            fontSize = 14.sp,
-            letterSpacing = 0.5.sp,
+            fontSize = if (compact) 10.5.sp else 14.sp,
+            letterSpacing = if (compact) 0.35.sp else 0.5.sp,
             color = Color.White,
             maxLines = 1,
         )
@@ -590,11 +639,11 @@ private fun splitDisplayTitle(raw: String): Pair<String, String?> {
 
 /** Approved tvOS detail geometry mapped onto Android TV's half-scale canvas. */
 private const val HERO_HEIGHT_FRACTION = 690f / 1080f
-// The action row now remains visible while browsing seasons/episodes. The old
-// 520pt compact height was sized for a header that hid those controls and let
-// the episode hierarchy overlap the selector. 580pt keeps the full hierarchy
-// inside the hero while preserving the 690pt artwork fade behind it.
-private const val SERIES_HERO_HEIGHT_FRACTION = 580f / 1080f
+// The full Series hierarchy (single metadata row, synopsis, fixed Starring and
+// playback readout, then 72pt controls) needs 610pt. This remains compact next
+// to the 690pt movie artwork while keeping the body from painting over the
+// controls or their focus treatment.
+private const val SERIES_HERO_HEIGHT_FRACTION = 610f / 1080f
 private const val ARTWORK_WIDTH_FRACTION = 0.64f
 private const val ARTWORK_HEIGHT_FRACTION = 0.94f
 private val HERO_TOP_INSET = 44.dp
@@ -604,6 +653,7 @@ private val HERO_CONTENT_SPACING = 9.dp
 private val EDITORIAL_SPACING = 7.dp
 private val SERIES_METADATA_SLOT_HEIGHT = 24.dp
 private val SERIES_EPISODE_SYNOPSIS_HEIGHT = 52.dp
+private val SERIES_CREDIT_SLOT_HEIGHT = 18.dp
 
 /**
  * Condensed family for the hero display title. tvOS renders the title in SF

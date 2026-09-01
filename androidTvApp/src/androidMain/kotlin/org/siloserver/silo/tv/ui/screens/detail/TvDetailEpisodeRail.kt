@@ -64,6 +64,7 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
 import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
+import org.siloserver.silo.tv.ui.components.tvEpisodeCardWidth
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
@@ -224,10 +225,15 @@ private fun TvDetailEpisodeCard(
     usesSeriesGeometry: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val cardWidth = (if (usesSeriesGeometry) 240.dp else 230.dp).cardScaled()
-    val stillHeight = (if (usesSeriesGeometry) 135.dp else 130.dp).cardScaled()
+    // The combined Series page uses the exact same card footprint as Home's
+    // Continue Watching rail. Legacy season/episode routes keep their existing
+    // geometry so this targeted parity change cannot disturb those layouts.
+    val cardWidth = if (usesSeriesGeometry) tvEpisodeCardWidth() else 230.dp.cardScaled()
+    val stillHeight = if (usesSeriesGeometry) cardWidth * (9f / 16f) else 130.dp.cardScaled()
+    val eyebrowFontSize = if (usesSeriesGeometry) 11.sp else 14.sp
+    val eyebrowLineHeight = if (usesSeriesGeometry) 14.sp else 17.sp
     val caption = LocalCardPresentation.current.caption
-    val cornerRadius = 5.dp
+    val cornerRadius = if (usesSeriesGeometry) 8.dp else 5.dp
     val shape = RoundedCornerShape(cornerRadius)
 
     val interactionSource = remember { MutableInteractionSource() }
@@ -252,14 +258,16 @@ private fun TvDetailEpisodeCard(
     Column(
         modifier = modifier
             .width(cardWidth)
-            .scale(scale)
+            // Continue Watching lifts only its artwork; keep the inline label
+            // locked while the focused still hovers above it.
+            .then(if (usesSeriesGeometry) Modifier else Modifier.scale(scale))
             .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
                 onLongClick = { menuExpanded = true },
             ),
-        verticalArrangement = Arrangement.spacedBy(9.dp),
+        verticalArrangement = Arrangement.spacedBy(if (usesSeriesGeometry) 7.dp else 9.dp),
     ) {
         TvMediaCardContextMenu(
             expanded = menuExpanded,
@@ -275,8 +283,9 @@ private fun TvDetailEpisodeCard(
             modifier = Modifier
                 .width(cardWidth)
                 .height(stillHeight)
+                .then(if (usesSeriesGeometry) Modifier.scale(scale) else Modifier)
                 .shadow(
-                    elevation = if (isFocused) 18.dp else 8.dp,
+                    elevation = if (isFocused && usesSeriesGeometry) 12.dp else if (isFocused) 18.dp else 8.dp,
                     shape = shape,
                     ambientColor = Color.Black,
                     spotColor = Color.Black,
@@ -352,11 +361,9 @@ private fun TvDetailEpisodeCard(
             }
         }
 
-        // Keep the hierarchy scannable at TV distance: episode number, title,
-        // air date/runtime, then synopsis. Each kind of information owns a
-        // stable line instead of competing in one dense eyebrow. Artwork-only
-        // drops the block entirely (tvOS `TVEpisodeRail`); the card has no
-        // fixed height, so the rail shrinks to the still.
+        // Series keeps the compact tvOS-style single caption line:
+        // "EPISODE 1 · Episode name". Other episode rails retain their richer
+        // title/metadata/synopsis hierarchy.
         if (caption.showsTitle) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(
@@ -365,14 +372,35 @@ private fun TvDetailEpisodeCard(
                 ) {
                     Text(
                         text = "EPISODE ${episode.episodeNumber}",
-                        fontSize = 14.sp,
-                        lineHeight = 17.sp,
+                        fontSize = eyebrowFontSize,
+                        lineHeight = eyebrowLineHeight,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.75.sp,
+                        letterSpacing = if (usesSeriesGeometry) 0.55.sp else 0.75.sp,
                         color = SiloOnSurface.copy(alpha = 0.7f),
                         maxLines = 1,
                     )
-                    if (isCurrent) {
+                    if (hidesEpisodeTitle) {
+                        episode.title?.takeIf { it.isNotBlank() }?.let { inlineTitle ->
+                            Text(
+                                text = "·",
+                                fontSize = eyebrowFontSize,
+                                lineHeight = eyebrowLineHeight,
+                                fontWeight = FontWeight.Bold,
+                                color = SiloOnSurface.copy(alpha = 0.7f),
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = inlineTitle,
+                                modifier = Modifier.weight(1f),
+                                fontSize = 11.5.sp,
+                                lineHeight = eyebrowLineHeight,
+                                fontWeight = FontWeight.SemiBold,
+                                color = SiloOnSurface.copy(alpha = 0.86f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    } else if (isCurrent) {
                         NowViewingTag()
                     }
                 }

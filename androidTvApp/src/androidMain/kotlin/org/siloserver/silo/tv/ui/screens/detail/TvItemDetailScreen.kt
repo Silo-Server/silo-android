@@ -4,6 +4,11 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -104,6 +109,7 @@ import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.ItemVideo
+import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
@@ -156,6 +162,9 @@ fun TvItemDetailScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    var pendingEntrySeasonNumber by rememberSaveable(contentId, seasonNumber) {
+        mutableStateOf(seasonNumber)
+    }
 
     BackHandler(enabled = true) { onBack() }
 
@@ -177,12 +186,24 @@ fun TvItemDetailScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(state.detail?.contentId, seasonNumber, state.seasons, state.selectedSeason) {
+    LaunchedEffect(state.detail?.contentId, pendingEntrySeasonNumber, state.seasons) {
         val detail = state.detail ?: return@LaunchedEffect
-        if (detail.type != "series" || seasonNumber == null) return@LaunchedEffect
-        if (state.selectedSeason == seasonNumber) return@LaunchedEffect
-        if (state.seasons.any { it.seasonNumber == seasonNumber }) {
-            viewModel.onSeasonSelected(seasonNumber)
+        val entrySeason = pendingEntrySeasonNumber ?: return@LaunchedEffect
+        if (detail.type != "series") {
+            pendingEntrySeasonNumber = null
+            return@LaunchedEffect
+        }
+        if (state.selectedSeason == entrySeason) {
+            pendingEntrySeasonNumber = null
+            return@LaunchedEffect
+        }
+        // Wait only until the season list resolves, then consume the route hint
+        // exactly once. Later focus-driven season changes must never bounce back
+        // to the season that originally opened this page.
+        if (state.seasons.isEmpty()) return@LaunchedEffect
+        pendingEntrySeasonNumber = null
+        if (state.seasons.any { it.seasonNumber == entrySeason }) {
+            viewModel.onSeasonSelected(entrySeason)
         }
     }
 
@@ -507,6 +528,14 @@ private fun TvDetailContent(
     val heroOverview = activeSeriesEpisode?.let { episode ->
         activeSeriesPlaybackDetail?.overview ?: episode.overview
     } ?: detail.overview
+    // Always derive the Series credit from the Show itself. Episode focus can
+    // replace the synopsis and playback target, but must never make Starring or
+    // the controls underneath it jump to a different position.
+    val heroCreditText = if (isSeriesDetail) {
+        seriesStarringCredit(detail)
+    } else {
+        movieDirectorCredit(detail).takeIf { activeSeriesEpisode == null }
+    }
     val heroSourceTokens = activeSeriesEpisode?.let(TvDetailMetadata::seriesEpisodeSourceTokens)
         ?: TvDetailMetadata.sourceTokens(detail)
     val heroFactsLine = activeSeriesEpisode?.let { episode ->
@@ -684,7 +713,7 @@ private fun TvDetailContent(
                             overview = heroOverview,
                             tagline = detail.tagline.takeIf { activeSeriesEpisode == null },
                             factsLine = heroFactsLine,
-                            directorText = movieDirectorCredit(detail).takeIf { activeSeriesEpisode == null },
+                            directorText = heroCreditText,
                             translation = translationSlot.takeIf { activeSeriesEpisode == null },
                             compactSeries = isSeriesDetail,
                             playbackSummary = {
@@ -1143,7 +1172,7 @@ private fun TvDetailContent(
 }
 
 /**
- * Quiet, non-pill playback readout directly under the date/runtime facts.
+ * Quiet, non-pill playback readout directly under the fixed credit line.
  * It follows the same selected file and next-up episode state as Play, so a
  * Series episode focus change updates this line and the circular menus together.
  */
@@ -1226,22 +1255,22 @@ private fun TvDetailPlaybackSelectionSummary(
     Row(
         modifier = Modifier.height(TV_PLAYBACK_SUMMARY_HEIGHT),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         TvPlaybackSummaryItem(
             label = "VERSION",
             value = versionValue,
-            valueWidth = TV_PLAYBACK_VERSION_VALUE_WIDTH,
+            itemWidth = TV_PLAYBACK_VERSION_ITEM_WIDTH,
         )
         TvPlaybackSummaryItem(
             label = "AUDIO",
             value = audioValue,
-            valueWidth = TV_PLAYBACK_AUDIO_VALUE_WIDTH,
+            itemWidth = TV_PLAYBACK_AUDIO_ITEM_WIDTH,
         )
         TvPlaybackSummaryItem(
             label = "SUBTITLES",
             value = subtitleValue,
-            valueWidth = TV_PLAYBACK_SUBTITLE_VALUE_WIDTH,
+            itemWidth = TV_PLAYBACK_SUBTITLE_ITEM_WIDTH,
         )
     }
 }
@@ -1250,28 +1279,29 @@ private fun TvDetailPlaybackSelectionSummary(
 private fun TvPlaybackSummaryItem(
     label: String,
     value: String?,
-    valueWidth: androidx.compose.ui.unit.Dp,
+    itemWidth: androidx.compose.ui.unit.Dp,
 ) {
     Row(
+        modifier = Modifier.width(itemWidth),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(
             text = label,
             fontWeight = FontWeight.Bold,
-            fontSize = 14.sp,
-            letterSpacing = 0.65.sp,
+            fontSize = 11.sp,
+            letterSpacing = 0.5.sp,
             color = Color.White.copy(alpha = 0.48f),
             maxLines = 1,
         )
         if (value == null) {
-            TvPlaybackSummarySkeleton(valueWidth)
+            TvPlaybackSummarySkeleton(modifier = Modifier.weight(1f))
         } else {
             Text(
                 text = value,
-                modifier = Modifier.width(valueWidth),
+                modifier = Modifier.weight(1f),
                 fontWeight = FontWeight.Medium,
-                fontSize = 14.sp,
+                fontSize = 11.5.sp,
                 color = Color.White.copy(alpha = 0.82f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1281,10 +1311,9 @@ private fun TvPlaybackSummaryItem(
 }
 
 @Composable
-private fun TvPlaybackSummarySkeleton(width: androidx.compose.ui.unit.Dp) {
+private fun TvPlaybackSummarySkeleton(modifier: Modifier = Modifier) {
     Box(
-        modifier = Modifier
-            .width(width)
+        modifier = modifier
             .height(7.dp)
             .background(
                 color = Color.White.copy(alpha = 0.14f),
@@ -1293,10 +1322,22 @@ private fun TvPlaybackSummarySkeleton(width: androidx.compose.ui.unit.Dp) {
     )
 }
 
-private val TV_PLAYBACK_SUMMARY_HEIGHT = 18.dp
-private val TV_PLAYBACK_VERSION_VALUE_WIDTH = 72.dp
-private val TV_PLAYBACK_AUDIO_VALUE_WIDTH = 104.dp
-private val TV_PLAYBACK_SUBTITLE_VALUE_WIDTH = 116.dp
+private val TV_PLAYBACK_SUMMARY_HEIGHT = 20.dp
+private val TV_PLAYBACK_VERSION_ITEM_WIDTH = 120.dp
+private val TV_PLAYBACK_AUDIO_ITEM_WIDTH = 160.dp
+private val TV_PLAYBACK_SUBTITLE_ITEM_WIDTH = 130.dp
+
+internal fun seriesStarringCredit(detail: ItemDetail): String? {
+    val names = detail.cast
+        .asSequence()
+        .filter { it.name.isNotBlank() }
+        .sortedBy { it.order }
+        .map { it.name.trim() }
+        .distinct()
+        .take(3)
+        .toList()
+    return names.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Starring ")
+}
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -1484,6 +1525,11 @@ private fun HeroActionRow(
                             )
                         }
                     },
+                    // tvOS reserves 340pt for the Series Play/Resume label.
+                    // Android's half-scale canvas maps that to 170dp, keeping
+                    // every circular action on a fixed x-position as episode
+                    // titles and progress state change.
+                    modifier = if (detail.type == "series") Modifier.width(170.dp) else Modifier,
                     focusRequester = playFocus,
                 )
 
@@ -1799,6 +1845,28 @@ private fun watchedUnmarkLabel(detail: ItemDetail): String = when (detail.type) 
 /** Tiny breathing room between the fixed hero controls and the series modes. */
 private val SeriesSeasonPickerTopPadding = 3.dp
 
+private data class SeriesEpisodeRailPage(
+    val seasonNumber: Int,
+    val episodes: List<EpisodeListItem>,
+)
+
+private const val SERIES_EPISODE_CAROUSEL_DURATION_MS = 360
+
+internal fun seriesEpisodeCarouselDirection(
+    fromSeasonNumber: Int,
+    toSeasonNumber: Int,
+    seasons: List<Season>,
+): Int {
+    if (fromSeasonNumber == toSeasonNumber) return 0
+    val fromIndex = seasons.indexOfFirst { it.seasonNumber == fromSeasonNumber }
+    val toIndex = seasons.indexOfFirst { it.seasonNumber == toSeasonNumber }
+    return if (fromIndex >= 0 && toIndex >= 0) {
+        if (toIndex > fromIndex) 1 else -1
+    } else {
+        if (toSeasonNumber > fromSeasonNumber) 1 else -1
+    }
+}
+
 @Composable
 private fun EpisodesSection(
     detail: ItemDetail,
@@ -1883,11 +1951,11 @@ private fun EpisodesSection(
                 .padding(top = if (isSeries && showsSeasonChips) 10.dp else 0.dp),
         ) {
             when {
-                // Spinner while a newly-selected season loads, instead of leaving the
-                // previous season's episodes under the new season header (T15b). The
-                // quiet refreshOnReturn reload does not set episodesLoading, so this
-                // never flashes on returning to the page.
-                state.episodesLoading -> {
+                // The first season still gets a loading indicator. Once a Series rail
+                // exists, retain it until the requested season is ready so the two
+                // complete rails can perform the directional carousel hand-off below.
+                // Non-Series detail routes retain their established spinner behavior.
+                state.episodesLoading && (!isSeries || state.episodes.isEmpty()) -> {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1910,25 +1978,70 @@ private fun EpisodesSection(
                     )
                 }
                 else -> {
-                    TvDetailEpisodeRail(
-                        episodes = state.episodes,
-                        currentContentId = currentEpisodeRailContentId(
-                            detail = detail,
-                            state = state,
-                            entryEpisodeContentId = entryEpisodeContentId,
-                        ),
-                        favoriteStates = state.episodeFavoriteStates,
-                        onEpisodeSelected = onEpisodeSelected,
-                        onEpisodeFocused = onEpisodeFocused.takeIf { isSeries },
-                        onSetWatched = onSetEpisodeWatched,
-                        onSetFavorite = onSetEpisodeFavorite,
-                        // Up returns to the hero only when the season chips aren't above
-                        // the rail (the chips own the Up traversal when present).
-                        onDirectionUp = if (showsSeasonChips) null else onReturnToHero,
-                        hidesEpisodeTitle = isSeries,
-                        usesSeriesGeometry = isSeries,
-                        modifier = Modifier.onSizeChanged { railHeightPx = it.height },
-                    )
+                    val renderEpisodeRail: @Composable (List<EpisodeListItem>) -> Unit = { episodes ->
+                        TvDetailEpisodeRail(
+                            episodes = episodes,
+                            currentContentId = currentEpisodeRailContentId(
+                                detail = detail,
+                                state = state,
+                                entryEpisodeContentId = entryEpisodeContentId,
+                            ),
+                            favoriteStates = state.episodeFavoriteStates,
+                            onEpisodeSelected = onEpisodeSelected,
+                            onEpisodeFocused = onEpisodeFocused.takeIf { isSeries },
+                            onSetWatched = onSetEpisodeWatched,
+                            onSetFavorite = onSetEpisodeFavorite,
+                            // Up returns to the hero only when the season chips aren't above
+                            // the rail (the chips own the Up traversal when present).
+                            onDirectionUp = if (showsSeasonChips) null else onReturnToHero,
+                            hidesEpisodeTitle = isSeries,
+                            usesSeriesGeometry = isSeries,
+                            modifier = Modifier.onSizeChanged { railHeightPx = it.height },
+                        )
+                    }
+
+                    if (isSeries) {
+                        // Retain the outgoing season while the next one loads,
+                        // then move both complete rails as one viewport-wide
+                        // carousel page. Card geometry and each rail's own
+                        // focus/scroll state remain entirely unchanged.
+                        val railPage = SeriesEpisodeRailPage(
+                            seasonNumber = state.episodes.first().seasonNumber,
+                            episodes = state.episodes,
+                        )
+                        AnimatedContent(
+                            targetState = railPage,
+                            contentKey = { it.seasonNumber },
+                            transitionSpec = {
+                                val direction = seriesEpisodeCarouselDirection(
+                                    fromSeasonNumber = initialState.seasonNumber,
+                                    toSeasonNumber = targetState.seasonNumber,
+                                    seasons = state.seasons,
+                                )
+                                (
+                                    slideInHorizontally(
+                                        animationSpec = tween(
+                                            durationMillis = SERIES_EPISODE_CAROUSEL_DURATION_MS,
+                                            easing = FastOutSlowInEasing,
+                                        ),
+                                        initialOffsetX = { width -> width * direction },
+                                    ) togetherWith slideOutHorizontally(
+                                        animationSpec = tween(
+                                            durationMillis = SERIES_EPISODE_CAROUSEL_DURATION_MS,
+                                            easing = FastOutSlowInEasing,
+                                        ),
+                                        targetOffsetX = { width -> -width * direction },
+                                    )
+                                ).using(SizeTransform(clip = false))
+                            },
+                            label = "seriesEpisodeCarousel",
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { page ->
+                            renderEpisodeRail(page.episodes)
+                        }
+                    } else {
+                        renderEpisodeRail(state.episodes)
+                    }
                 }
             }
         }
