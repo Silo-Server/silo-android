@@ -57,7 +57,7 @@ On completion the script prints:
   AAR:      /path/to/android-shared/libs/media3-decoder-ffmpeg-1.11.0.aar
   Size:     12345678 bytes (11.77 MiB)
   SHA-256:  <hex digest>
-  Decoders: ac3 eac3 mlp truehd dca
+  Decoders: ac3 eac3 mlp truehd dca alac
 ```
 
 To confirm the AAR contains the native libs and JNI classes:
@@ -113,6 +113,11 @@ The script passes `ENABLED_DECODERS` as positional args to upstream
 `build_ffmpeg.sh` — no patching of the upstream script is needed for
 decoder changes. ABI exclusions **are** patched into the upstream script
 at build time (its four-ABI blocks are hardcoded).
+
+The pinned set maps AC-3/E-AC-3 to `ac3`/`eac3`, TrueHD to `mlp` and
+`truehd`, DTS core/Express/HRA/MA to `dca`, and ALAC to `alac`. ALAC is kept
+because Media3 1.11 can extract ALAC from Matroska while Android does not
+guarantee a platform decoder for it.
 
 ---
 
