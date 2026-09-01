@@ -207,22 +207,58 @@ PY
     # libswresample.a error. Inject abiFilters into defaultConfig so CMake
     # only invokes ninja for the ABIs we cross-compiled above.
     KEEP_ABIS=(armeabi-v7a arm64-v8a x86_64)
-    log "Patching decoder_ffmpeg/build.gradle abiFilters to: ${KEEP_ABIS[*]}"
-    python3 - "$EXT_MODULE/build.gradle" "$ndk_version" "${KEEP_ABIS[@]}" <<'PY'
+    if [[ -f "$EXT_MODULE/build.gradle.kts" ]]; then
+        EXT_BUILD_FILE="$EXT_MODULE/build.gradle.kts"
+        EXT_BUILD_DSL=kotlin
+    elif [[ -f "$EXT_MODULE/build.gradle" ]]; then
+        EXT_BUILD_FILE="$EXT_MODULE/build.gradle"
+        EXT_BUILD_DSL=groovy
+    else
+        die "decoder_ffmpeg has no supported Gradle build file"
+    fi
+    log "Patching ${EXT_BUILD_FILE##*/} abiFilters to: ${KEEP_ABIS[*]}"
+    python3 - "$EXT_BUILD_FILE" "$EXT_BUILD_DSL" "$ndk_version" "${KEEP_ABIS[@]}" <<'PY'
 import pathlib, re, sys
 
 script_path = pathlib.Path(sys.argv[1])
-ndk_version = sys.argv[2]
-keep_abis   = sys.argv[3:]
+build_dsl   = sys.argv[2]
+ndk_version = sys.argv[3]
+keep_abis   = sys.argv[4:]
 text        = script_path.read_text()
 
-if "ndkVersion" not in text:
-    text, n = re.subn(
-        r"(android\s*\{\n\s*namespace\s+'androidx\.media3\.decoder\.ffmpeg'\n)",
-        rf"\1    ndkVersion '{ndk_version}'\n",
-        text,
-        count=1,
+if build_dsl == "kotlin":
+    anchor = (
+        r'(android\s*\{\n\s*namespace\s*=\s*'
+        r'"androidx\.media3\.decoder\.ffmpeg"\n)'
     )
+    ndk_line = f'  ndkVersion = "{ndk_version}"\n'
+    snippet = (
+        "  defaultConfig {\n"
+        "    ndk {\n"
+        "      abiFilters += setOf("
+        + ", ".join(f'"{abi}"' for abi in keep_abis)
+        + ")\n"
+        "    }\n"
+        "  }\n\n"
+    )
+else:
+    anchor = (
+        r"(android\s*\{\n\s*namespace\s+"
+        r"'androidx\.media3\.decoder\.ffmpeg'\n)"
+    )
+    ndk_line = f"    ndkVersion '{ndk_version}'\n"
+    snippet = (
+        "    defaultConfig {\n"
+        "        ndk {\n"
+        "            abiFilters "
+        + ", ".join(f"'{abi}'" for abi in keep_abis)
+        + "\n"
+        "        }\n"
+        "    }\n\n"
+    )
+
+if "ndkVersion" not in text:
+    text, n = re.subn(anchor, lambda match: match.group(1) + ndk_line, text, count=1)
     if n != 1:
         sys.stderr.write("Could not pin decoder_ffmpeg ndkVersion.\n")
         sys.exit(2)
@@ -232,22 +268,7 @@ if "abiFilters" in text:
     print(f"  Pinned NDK {ndk_version}; abiFilters already present.")
     sys.exit(0)
 
-snippet = (
-    "    defaultConfig {\n"
-    "        ndk {\n"
-    "            abiFilters "
-    + ", ".join(f"'{a}'" for a in keep_abis)
-    + "\n"
-    "        }\n"
-    "    }\n"
-    "\n"
-)
-new_text, n = re.subn(
-    r"(android\s*\{\n\s*namespace\s+'androidx\.media3\.decoder\.ffmpeg'\n)",
-    r"\1\n" + snippet,
-    text,
-    count=1,
-)
+new_text, n = re.subn(anchor, lambda match: match.group(1) + "\n" + snippet, text, count=1)
 if n != 1:
     sys.stderr.write("Could not find android { namespace ... } to inject abiFilters into.\n")
     sys.exit(2)
