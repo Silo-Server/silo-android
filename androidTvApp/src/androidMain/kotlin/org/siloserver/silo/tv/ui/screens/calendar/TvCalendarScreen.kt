@@ -65,6 +65,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -80,7 +81,6 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.transformLatest
@@ -683,6 +683,11 @@ private fun WeekStrip(
     onNextWeek: () -> Unit,
     onToday: () -> Unit,
 ) {
+    val locale = LocalConfiguration.current.locales[0]
+    val monthYearFormatter = remember(locale) {
+        DateTimeFormatter.ofPattern("MMMM yyyy", locale)
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -724,7 +729,7 @@ private fun WeekStrip(
         }
         Spacer(modifier = Modifier.weight(1f))
         Text(
-            text = monthYearLabel(weekDates),
+            text = monthYearLabel(weekDates, monthYearFormatter),
             style = MaterialTheme.typography.titleMedium.copy(
                 fontSize = 15.5.sp,
                 lineHeight = 18.5.sp,
@@ -819,6 +824,10 @@ private fun DayCell(
     onClick: () -> Unit,
 ) {
     val localDate = remember(date) { LocalDate.parse(date) }
+    val locale = LocalConfiguration.current.locales[0]
+    val weekdayFormatter = remember(locale) {
+        DateTimeFormatter.ofPattern("EEE", locale)
+    }
     // tvOS CalendarDayButton is 84x96 pt with 18/26 pt type and an 8 pt
     // event dot. Type is floored at 14/16sp for 10-ft legibility, and the
     // cell grows past half scale (52x60) to hold it — audit 2026-07-20.
@@ -861,7 +870,7 @@ private fun DayCell(
             verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
         ) {
             Text(
-                text = localDate.format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault())),
+                text = localDate.format(weekdayFormatter),
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontSize = 14.sp,
                     lineHeight = 18.sp,
@@ -901,10 +910,13 @@ private fun DayCell(
 }
 
 /** "June 2026" — anchored on the Thursday so a cross-month week shows the dominant month. */
-private fun monthYearLabel(weekDates: List<String>): String {
+private fun monthYearLabel(
+    weekDates: List<String>,
+    formatter: DateTimeFormatter,
+): String {
     if (weekDates.isEmpty()) return ""
     val anchor = LocalDate.parse(weekDates.getOrElse(3) { weekDates.first() })
-    return anchor.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()))
+    return anchor.format(formatter)
 }
 
 internal fun shouldReturnCalendarFocusToControls(
@@ -1292,11 +1304,15 @@ private fun DayShelf(
 @Composable
 private fun DayHeader(date: String, isToday: Boolean, muted: Boolean) {
     val localDate = remember(date) { LocalDate.parse(date) }
+    val locale = LocalConfiguration.current.locales[0]
+    val fullDateFormatter = remember(locale) {
+        DateTimeFormatter.ofPattern("EEEE, MMMM d", locale)
+    }
     Text(
         text = if (isToday) {
             "Today"
         } else {
-            localDate.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault()))
+            localDate.format(fullDateFormatter)
         },
         style = MaterialTheme.typography.headlineSmall,
         fontWeight = FontWeight.Bold,
