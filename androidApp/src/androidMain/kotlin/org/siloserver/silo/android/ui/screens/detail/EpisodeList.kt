@@ -8,7 +8,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -77,7 +76,7 @@ fun EpisodeList(
     tapToFocusEpisode: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+    Box(modifier = modifier.fillMaxWidth()) {
         val cardWidth = 240.dp
         val listState = rememberLazyListState()
         val flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
@@ -358,7 +357,7 @@ internal fun EpisodeListSkeleton(
     showsEpisodeDetails: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+    Box(modifier = modifier.fillMaxWidth()) {
         val cardWidth = 240.dp
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
