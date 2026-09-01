@@ -30,11 +30,14 @@
 #     target device ships it, and our emulator images are x86_64. The
 #     upstream build_ffmpeg.sh builds all four in one pass; we patch out
 #     the x86 block before running to save ~3 min + ~2 MB of repo bloat.
+#   * The final JNI shared libraries are linked with 16 KB max/common page
+#     sizes. NDK r27 and lower do not enable this automatically, so omitting
+#     the flags makes the extension unloadable on 16 KB-page devices.
 #
 # Required env:
-#   ANDROID_NDK_HOME — path to NDK r26d (26.3.11579264). Older NDKs don't
-#                      produce 16 KB-page-aligned .so files required for
-#                      Android 15+ devices; newer NDKs are untested.
+#   ANDROID_NDK_HOME — path to the reproducibly pinned NDK r26d
+#                      (26.3.11579264). The script adds the linker flags
+#                      required for 16 KB-page-aligned .so files.
 #   JAVA_HOME        — JDK 21
 #
 # Optional env:
@@ -276,6 +279,32 @@ script_path.write_text(new_text)
 print(f"  Pinned NDK {ndk_version} and injected abiFilters into {script_path}")
 PY
 fi
+
+# NDK r27 and lower do not produce 16 KB-aligned shared libraries by
+# default. Patch the final JNI link (not the intermediate static archives)
+# with Android's documented compatibility flags. The CI artifact job
+# independently reads every packaged ELF program header and rejects an
+# alignment below 0x4000.
+CMAKE_FILE="$FFMPEG_MODULE_PATH/jni/CMakeLists.txt"
+python3 - "$CMAKE_FILE" <<'PY'
+import pathlib, sys
+
+cmake_path = pathlib.Path(sys.argv[1])
+text = cmake_path.read_text()
+if "-Wl,-z,max-page-size=16384" not in text:
+    text += """
+
+# Silo: Android 15+ 16 KB-page compatibility for NDK r27 and lower.
+target_link_options(
+        ffmpegJNI
+        PRIVATE "-Wl,-z,max-page-size=16384"
+        PRIVATE "-Wl,-z,common-page-size=16384")
+"""
+    cmake_path.write_text(text)
+    print(f"  Added 16 KB ELF alignment flags to {cmake_path}")
+else:
+    print(f"  16 KB ELF alignment flags already present in {cmake_path}")
+PY
 
 # ---------------------------------------------------------------------------
 # Cross-compile FFmpeg per ABI (upstream script loops internally)
