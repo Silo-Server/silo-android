@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.components
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,7 +56,7 @@ fun MainAppTopBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .topBarGlass(hazeState),
+            .background(Color(0xFF1C1C1E)),
     ) {
         Box(
             modifier = Modifier
@@ -84,6 +85,7 @@ fun MainAppTopBar(
                 onSwitchProfileClick = onSwitchProfileClick,
                 onSwitchServerClick = onSwitchServerClick,
                 onSignOutClick = onSignOutClick,
+                opaque = true,
             )
         }
 

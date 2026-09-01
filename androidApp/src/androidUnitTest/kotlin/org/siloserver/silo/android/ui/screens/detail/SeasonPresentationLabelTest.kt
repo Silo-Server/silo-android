@@ -30,6 +30,18 @@ class SeasonPresentationLabelTest {
             "Specials",
             seriesSeasonSectionLabel(Season(contentId = "specials", seasonNumber = 0)),
         )
+        assertEquals(
+            "Specials Episodes",
+            seriesSeasonSectionTitle(Season(contentId = "specials", seasonNumber = 0)),
+        )
+    }
+
+    @Test
+    fun regularSeasonUsesIosCombinedEpisodeHeading() {
+        assertEquals(
+            "Season 1 Episodes",
+            seriesSeasonSectionTitle(Season(contentId = "season-1", seasonNumber = 1)),
+        )
     }
 
     @Test

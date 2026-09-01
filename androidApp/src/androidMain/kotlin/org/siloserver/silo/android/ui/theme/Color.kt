@@ -18,6 +18,23 @@ val SiloOutline = Color.White.copy(alpha = 0.12f)
 val SiloDivider = Color.White.copy(alpha = 0.12f)
 val SiloOverlay = Color.Black.copy(alpha = 0.60f)
 
+// Restrained Android substitute for iOS Liquid Glass. These shared washes keep
+// every migrated circle/capsule in one light material family without a live
+// blur. They remain inexpensive on
+// Android (no live backdrop blur), while allowing the title-derived surface
+// underneath to tint them instead of reading as flat white plastic.
+val SiloOpaqueControl = Color.White.copy(alpha = 0.58f)
+val SiloOpaqueControlSelected = Color.White.copy(alpha = 0.70f)
+val SiloOpaqueControlSelectionOverlay = Color.White.copy(alpha = 0.18f)
+// PR #212 PhoneLabeledAction values. These read as the same adaptive material
+// family as the Home tab bar over a dark detail surface without becoming the
+// pale, nearly solid circles shown in the Android comparison screenshot.
+val SiloDetailActionControl = Color.White.copy(alpha = 0.10f)
+val SiloDetailActionControlActive = Color.White.copy(alpha = 0.30f)
+val SiloOnOpaqueControl = Color(0xFF17171A)
+val SiloOnOpaqueControlMuted = Color(0xFF4F4F55)
+val SiloOpaqueControlBorder = Color.White.copy(alpha = 0.46f)
+
 // --- Grouped-surface palette (Silo web client parity) ---
 //
 // The OLED values above are the app's chrome: pure black grounds with

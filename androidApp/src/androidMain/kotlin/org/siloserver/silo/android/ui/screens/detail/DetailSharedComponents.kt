@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -32,8 +33,6 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -54,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -64,9 +64,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
+import org.siloserver.silo.android.ui.theme.SiloOnOpaqueControl
+import org.siloserver.silo.android.ui.theme.SiloDetailActionControl
+import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
+import org.siloserver.silo.android.ui.theme.SiloOpaqueControl
+import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
-import org.siloserver.silo.android.ui.navigation.heroTarget
 import org.siloserver.silo.android.ui.theme.PillShape
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.ItemDetail
@@ -82,17 +86,19 @@ internal val DetailTertiaryText = SiloOnSurface.copy(alpha = 0.55f)
 internal val SafePadding = 16.dp
 internal val SmallPadding = 8.dp
 internal val LargePadding = 24.dp
+private const val DetailArtworkCrossfadeMs = 120
 
 // ── Dynamic palette ───────────────────────────────────────────
 
-fun detailScreenBackgroundBrush(dominantColor: Color): Brush =
-    Brush.verticalGradient(
-        0.00f to dominantColor.copy(alpha = 0.10f),
-        0.22f to Color.Transparent,
-        1.00f to Color.Transparent,
+fun detailScreenBackgroundBrush(dominantColor: Color): Brush {
+    val surface = lerp(Color.Black, dominantColor, 0.42f)
+    return Brush.verticalGradient(
+        0.00f to surface,
+        1.00f to surface,
     )
+}
 
-private val ExpandedDetailBreakpoint = 600.dp
+internal val ExpandedDetailBreakpoint = 600.dp
 
 data class DetailPortraitArtwork(
     val url: String?,
@@ -120,13 +126,24 @@ fun AdaptiveDetailHero(
     modifier: Modifier = Modifier,
     dominantColor: Color = SiloBackground,
     directorText: String? = null,
+    isCreditLoading: Boolean = false,
+    reserveCreditSpace: Boolean = false,
+    overviewText: String? = detail.overview,
+    reserveOverviewSpace: Boolean = false,
     translation: (@Composable () -> Unit)? = null,
+    belowOverview: (@Composable () -> Unit)? = null,
+    /** Expanded-window replacement for [belowOverview]. Compact phones always
+     *  keep [belowOverview], so tablet/fold sections can be reordered safely. */
+    expandedBelowOverview: (@Composable () -> Unit)? = belowOverview,
     actions: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         if (maxWidth >= ExpandedDetailBreakpoint) {
             val horizontalPadding = if (maxWidth >= 840.dp) 48.dp else 32.dp
-            val posterWidth = (maxWidth * 0.25f).coerceIn(164.dp, 224.dp)
+            // The expanded header keeps Play + the bottom action row inside
+            // the portrait's vertical boundary. A 200pt minimum gives that
+            // control stack the same breathing room as the tablet reference.
+            val posterWidth = (maxWidth * 0.25f).coerceIn(200.dp, 224.dp)
             ExpandedDetailHero(
                 detail = detail,
                 portraitArtwork = portraitArtwork,
@@ -135,8 +152,14 @@ fun AdaptiveDetailHero(
                 factsLine = factsLine,
                 horizontalPadding = horizontalPadding,
                 posterWidth = posterWidth,
+                dominantColor = dominantColor,
                 directorText = directorText,
+                isCreditLoading = isCreditLoading,
+                reserveCreditSpace = reserveCreditSpace,
+                overviewText = overviewText,
+                reserveOverviewSpace = reserveOverviewSpace,
                 translation = translation,
+                belowOverview = expandedBelowOverview,
                 actions = actions,
             )
         } else {
@@ -147,7 +170,12 @@ fun AdaptiveDetailHero(
                 factsLine = factsLine,
                 dominantColor = dominantColor,
                 directorText = directorText,
+                isCreditLoading = isCreditLoading,
+                reserveCreditSpace = reserveCreditSpace,
+                overviewText = overviewText,
+                reserveOverviewSpace = reserveOverviewSpace,
                 translation = translation,
+                belowOverview = belowOverview,
                 actions = actions,
             )
         }
@@ -156,8 +184,8 @@ fun AdaptiveDetailHero(
 
 /**
  * Expanded-window detail hero inspired by the reference foldable layout:
- * a full-bleed backdrop carries the page while the poster and editorial
- * metadata form a readable two-column foreground.
+ * artwork ends at the shared poster/action baseline, then fades into the
+ * opaque title-derived page surface used by the centered editorial column.
  */
 @Composable
 private fun ExpandedDetailHero(
@@ -168,113 +196,160 @@ private fun ExpandedDetailHero(
     factsLine: List<String>,
     horizontalPadding: Dp,
     posterWidth: Dp,
+    dominantColor: Color,
     directorText: String?,
+    isCreditLoading: Boolean,
+    reserveCreditSpace: Boolean,
+    overviewText: String?,
+    reserveOverviewSpace: Boolean,
     translation: (@Composable () -> Unit)?,
+    belowOverview: (@Composable () -> Unit)?,
     actions: @Composable () -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxWidth()) {
-        ThumbhashImage(
-            url = detail.backdropUrl,
-            thumbhash = detail.backdropThumbhash,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.matchParentSize(),
-        )
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(
-                    Brush.horizontalGradient(
-                        0.00f to Color.Black.copy(alpha = 0.88f),
-                        0.48f to Color.Black.copy(alpha = 0.58f),
-                        1.00f to Color.Black.copy(alpha = 0.32f),
-                    ),
-                ),
-        )
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        0.00f to Color.Black.copy(alpha = 0.08f),
-                        0.68f to Color.Black.copy(alpha = 0.18f),
-                        1.00f to SiloBackground,
-                    ),
-                ),
-        )
+    val hasPortrait = portraitArtwork.reserveSpace || !portraitArtwork.url.isNullOrBlank()
+    val posterHeight = posterWidth * 1.5f
+    val pageSurface = lerp(Color.Black, dominantColor, 0.42f)
 
-        Row(
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(pageSurface),
+    ) {
+        // This cinematic box is measured by the row. Its last opaque gradient
+        // stop therefore lands exactly at the bottom of the poster/buttons.
+        Box(modifier = Modifier.fillMaxWidth()) {
+            ThumbhashImage(
+                url = detail.backdropUrl,
+                thumbhash = detail.backdropThumbhash,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                crossfadeMillis = DetailArtworkCrossfadeMs,
+                modifier = Modifier.matchParentSize(),
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.horizontalGradient(
+                            0.00f to Color.Black.copy(alpha = 0.88f),
+                            0.48f to Color.Black.copy(alpha = 0.58f),
+                            1.00f to Color.Black.copy(alpha = 0.32f),
+                        ),
+                    ),
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0.00f to Color.Black.copy(alpha = 0.08f),
+                            0.56f to Color.Black.copy(alpha = 0.18f),
+                            0.82f to pageSurface.copy(alpha = 0.62f),
+                            1.00f to pageSurface,
+                        ),
+                    ),
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = horizontalPadding)
+                    .padding(top = 88.dp),
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                if (hasPortrait) {
+                    Box(
+                        modifier = Modifier
+                            .width(posterWidth)
+                            .aspectRatio(2f / 3f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White.copy(alpha = 0.06f))
+                            .border(
+                                width = 1.dp,
+                                color = Color.White.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(12.dp),
+                            ),
+                    ) {
+                        if (!portraitArtwork.url.isNullOrBlank()) {
+                            ThumbhashImage(
+                                url = portraitArtwork.url,
+                                thumbhash = portraitArtwork.thumbhash,
+                                contentDescription = detail.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(if (hasPortrait) Modifier.height(posterHeight) else Modifier),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        if (!eyebrow.isNullOrBlank()) {
+                            EyebrowChip(text = eyebrow)
+                        }
+                        ExpandedHeroTitle(detail = detail)
+                        val metadataTokens = (factsLine + sourceTokens).distinct()
+                        if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
+                            SourceRow(
+                                tokens = metadataTokens,
+                                ratingChip = detail.contentRating,
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            )
+                        }
+                    }
+                    if (hasPortrait) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    } else {
+                        Spacer(modifier = Modifier.height(20.dp))
+                    }
+                    // Expanded/tablet only: Play and its bottom action row end
+                    // no lower than the portrait. The compact phone branch is
+                    // intentionally unchanged.
+                    actions()
+                }
+            }
+        }
+
+        // Overview, fixed Starring and selectors are entirely off the artwork,
+        // centered on the exact opaque surface used by the fade's final stop.
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = horizontalPadding)
-                .padding(top = 88.dp, bottom = 40.dp),
-            horizontalArrangement = Arrangement.spacedBy(28.dp),
-            verticalAlignment = Alignment.Top,
+                .padding(top = 24.dp, bottom = 40.dp),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            if (portraitArtwork.reserveSpace || !portraitArtwork.url.isNullOrBlank()) {
-                Box(
-                    modifier = Modifier
-                        .width(posterWidth)
-                        .aspectRatio(2f / 3f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(alpha = 0.06f))
-                        .border(
-                            width = 1.dp,
-                            color = Color.White.copy(alpha = 0.16f),
-                            shape = RoundedCornerShape(12.dp),
-                        )
-                        .heroTarget(),
-                ) {
-                    if (!portraitArtwork.url.isNullOrBlank()) {
-                        ThumbhashImage(
-                            url = portraitArtwork.url,
-                            thumbhash = portraitArtwork.thumbhash,
-                            contentDescription = detail.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                }
-            }
-
             Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.Start,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .widthIn(max = 920.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                if (!eyebrow.isNullOrBlank()) {
-                    EyebrowChip(text = eyebrow)
-                }
-                ExpandedHeroTitle(detail = detail)
-                if (sourceTokens.isNotEmpty() || detail.contentRating != null) {
-                    SourceRow(
-                        tokens = sourceTokens,
-                        ratingChip = detail.contentRating,
-                        horizontalAlignment = Alignment.Start,
+                if (reserveOverviewSpace || !overviewText.isNullOrBlank()) {
+                    OverviewBlock(
+                        text = overviewText.orEmpty(),
+                        reserveCollapsedSpace = reserveOverviewSpace,
                     )
                 }
-                if (factsLine.isNotEmpty()) {
-                    FactsRow(
-                        tokens = factsLine,
-                        horizontalAlignment = Alignment.Start,
-                    )
-                }
-                actions()
-                detail.overview?.takeIf { it.isNotBlank() }?.let { overview ->
-                    OverviewBlock(text = overview)
-                }
+                DetailCreditBlock(
+                    text = directorText,
+                    isLoading = isCreditLoading,
+                    reserveSpace = reserveCreditSpace,
+                    expanded = true,
+                )
                 translation?.invoke()
-                directorText?.takeIf { it.isNotBlank() }?.let { line ->
-                    Text(
-                        text = line,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.White.copy(alpha = 0.62f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                belowOverview?.invoke()
             }
         }
     }
@@ -286,15 +361,21 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
     val seriesTitle = detail.seriesTitle?.takeIf { it.isNotBlank() }
     if (isEpisode && seriesTitle != null) {
         val (episodePrimary, episodeSubtitle) = splitHeroTitle(detail.title)
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             Text(
                 text = seriesTitle,
                 fontSize = 34.sp,
                 lineHeight = 39.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = DetailPrimaryText,
+                textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
             )
             Text(
                 text = episodePrimary,
@@ -302,8 +383,10 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
                 lineHeight = 27.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = DetailPrimaryText.copy(alpha = 0.9f),
+                textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
             )
             if (episodeSubtitle != null) {
                 Text(
@@ -313,8 +396,10 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = 1.0.sp,
                     color = DetailPrimaryText.copy(alpha = 0.76f),
+                    textAlign = TextAlign.Center,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
@@ -337,15 +422,21 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
     }
 
     val (primary, subtitle) = splitHeroTitle(detail.title)
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
         Text(
             text = primary,
             fontSize = 36.sp,
             lineHeight = 41.sp,
             fontWeight = FontWeight.ExtraBold,
             color = DetailPrimaryText,
+            textAlign = TextAlign.Center,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
         )
         if (subtitle != null) {
             Text(
@@ -355,8 +446,10 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = 1.2.sp,
                 color = DetailPrimaryText.copy(alpha = 0.8f),
+                textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
@@ -380,59 +473,149 @@ fun DetailHero(
     modifier: Modifier = Modifier,
     dominantColor: Color = SiloBackground,
     directorText: String? = null,
+    isCreditLoading: Boolean = false,
+    reserveCreditSpace: Boolean = false,
+    overviewText: String? = detail.overview,
+    reserveOverviewSpace: Boolean = false,
     // Optional viewer-facing description-translation affordance, rendered
     // directly under the overview (Apple parity: DescriptionTranslationView).
     translation: (@Composable () -> Unit)? = null,
+    belowOverview: (@Composable () -> Unit)? = null,
     actions: @Composable () -> Unit,
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Backdrop(
-            backdropUrl = detail.backdropUrl,
-            backdropThumbhash = detail.backdropThumbhash,
-            contentDescription = detail.title,
-            contentId = detail.contentId,
-        )
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val artworkHeight = (maxWidth * 1.18f).coerceIn(430.dp, 540.dp)
+        val pageSurface = lerp(Color.Black, dominantColor, 0.42f)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(artworkHeight),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                ThumbhashImage(
+                    url = detail.backdropUrl ?: detail.posterUrl,
+                    thumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
+                    contentDescription = detail.title,
+                    contentScale = ContentScale.Crop,
+                    crossfadeMillis = DetailArtworkCrossfadeMs,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0.00f to Color.Black.copy(alpha = 0.34f),
+                                0.30f to Color.Transparent,
+                                0.72f to Color.Transparent,
+                                1.00f to pageSurface,
+                            ),
+                        ),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 28.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    HeroTitle(detail = detail)
+                }
+            }
 
-        Column(
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = SafePadding)
+                    .padding(top = 8.dp, bottom = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                val metadataTokens = (factsLine + sourceTokens).distinct()
+                if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
+                    SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
+                }
+                actions()
+                if (reserveOverviewSpace || !overviewText.isNullOrBlank()) {
+                    OverviewBlock(
+                        text = overviewText.orEmpty(),
+                        reserveCollapsedSpace = reserveOverviewSpace,
+                    )
+                }
+                DetailCreditBlock(
+                    text = directorText,
+                    isLoading = isCreditLoading,
+                    reserveSpace = reserveCreditSpace,
+                    expanded = false,
+                )
+                translation?.invoke()
+                belowOverview?.invoke()
+            }
+        }
+    }
+}
+
+/**
+ * Stable credit slot for series episode changes. The skeleton and loaded
+ * starring text share an identical footprint, so replacing one with the
+ * other cannot move the playback panel or episode rail.
+ */
+@Composable
+private fun DetailCreditBlock(
+    text: String?,
+    isLoading: Boolean,
+    reserveSpace: Boolean,
+    expanded: Boolean,
+) {
+    if (isLoading || reserveSpace) {
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = SafePadding)
-                .padding(top = 4.dp, bottom = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .height(38.dp),
+            contentAlignment = Alignment.TopStart,
         ) {
-            if (!eyebrow.isNullOrBlank()) {
-                EyebrowChip(text = eyebrow)
-            }
-            HeroTitle(detail = detail)
-            if (sourceTokens.isNotEmpty() || detail.contentRating != null) {
-                SourceRow(
-                    tokens = sourceTokens,
-                    ratingChip = detail.contentRating,
-                )
-            }
-            actions()
-            val overview = detail.overview
-            if (!overview.isNullOrBlank()) {
-                OverviewBlock(text = overview)
-            }
-            translation?.invoke()
-            directorText?.takeIf { it.isNotBlank() }?.let { line ->
+            if (isLoading) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.76f)
+                            .height(12.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.White.copy(alpha = 0.10f)),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.44f)
+                            .height(12.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.White.copy(alpha = 0.08f)),
+                    )
+                }
+            } else if (!text.isNullOrBlank()) {
                 Text(
-                    text = line,
-                    fontSize = 14.sp,
+                    text = text,
+                    fontSize = if (expanded) 14.sp else 13.sp,
+                    lineHeight = 18.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Color.White.copy(alpha = 0.62f),
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
+                    color = Color.White.copy(alpha = if (expanded) 0.62f else 0.58f),
+                    textAlign = TextAlign.Start,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            if (factsLine.isNotEmpty()) {
-                FactsRow(tokens = factsLine)
-            }
         }
+    } else if (!text.isNullOrBlank()) {
+        Text(
+            text = text,
+            fontSize = if (expanded) 14.sp else 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color.White.copy(alpha = if (expanded) 0.62f else 0.58f),
+            textAlign = TextAlign.Start,
+            maxLines = if (expanded) 1 else 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -452,17 +635,14 @@ private fun Backdrop(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(heroHeight)
-                // Hero morph target — pairs with the exact poster placement the
-                // user tapped (read from the hero hand-off) so the artwork bounds
-                // carry from that list card into this backdrop.
-                .heroTarget(),
+                .height(heroHeight),
         ) {
             ThumbhashImage(
                 url = backdropUrl,
                 thumbhash = backdropThumbhash,
                 contentDescription = contentDescription,
                 contentScale = ContentScale.Crop,
+                crossfadeMillis = DetailArtworkCrossfadeMs,
                 modifier = Modifier.fillMaxSize(),
             )
             // Soft single-direction fade — dissolves into the page
@@ -681,7 +861,10 @@ private fun ContentRatingChip(text: String) {
 }
 
 @Composable
-private fun OverviewBlock(text: String) {
+private fun OverviewBlock(
+    text: String,
+    reserveCollapsedSpace: Boolean = false,
+) {
     var expanded by remember(text) { mutableStateOf(false) }
     val canExpand = text.length > 140
 
@@ -698,6 +881,7 @@ private fun OverviewBlock(text: String) {
             lineHeight = 21.sp,
             fontWeight = FontWeight.Normal,
             color = DetailPrimaryText.copy(alpha = 0.78f),
+            minLines = if (reserveCollapsedSpace && !expanded) 3 else 1,
             maxLines = if (expanded) Int.MAX_VALUE else 3,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Start,
@@ -782,7 +966,7 @@ fun PrimaryPillButton(
 }
 
 /**
- * 44dp circle toggle used for favorite, watchlist, watched. Active
+ * 42dp circle toggle used for favorite, watchlist, watched. Active
  * state lifts the fill and stroke alpha — same energy as the iOS pill.
  */
 @Composable
@@ -793,26 +977,34 @@ fun CircleActionButton(
     contentDescription: String,
     onClick: () -> Unit,
     activeTint: Color = Color.White,
+    label: String,
+    modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = if (isActive) 0.18f else 0.10f))
-            .border(
-                width = 1.dp,
-                color = Color.White.copy(alpha = if (isActive) 0.55f else 0.25f),
-                shape = CircleShape,
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+    Column(
+        modifier = modifier.clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // iOS PhoneCircleActionButton: icon 16pt semibold.
-        Icon(
-            imageVector = if (isActive) activeIcon else icon,
-            contentDescription = contentDescription,
-            tint = if (isActive) activeTint else Color.White,
-            modifier = Modifier.size(16.dp),
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(if (isActive) SiloDetailActionControlActive else SiloDetailActionControl),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (isActive) activeIcon else icon,
+                contentDescription = contentDescription,
+                tint = if (isActive) activeTint else Color.White,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color.White.copy(alpha = if (isActive) 0.92f else 0.60f),
+            maxLines = 1,
         )
     }
 }
@@ -825,24 +1017,30 @@ fun CircleActionButton(
 fun CircleOverflowButton(
     contentDescription: String = "More options",
     menuContent: @Composable (dismiss: () -> Unit) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Box {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.10f))
-                .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
-                .clickable { expanded = true },
-            contentAlignment = Alignment.Center,
+    Box(modifier = modifier) {
+        Column(
+            modifier = Modifier.clickable { expanded = true },
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Icon(
-                imageVector = Icons.Filled.MoreHoriz,
-                contentDescription = contentDescription,
-                tint = Color.White,
-                modifier = Modifier.size(16.dp),
-            )
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(SiloDetailActionControl),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.MoreHoriz,
+                    contentDescription,
+                    tint = Color.White,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+            Text("More", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
         }
         DropdownMenu(
             expanded = expanded,
@@ -854,7 +1052,7 @@ fun CircleOverflowButton(
 }
 
 /**
- * Compact dark capsule sitting under the action row that surfaces the
+ * Compact opaque capsule sitting under the action row that surfaces the
  * currently selected video version and opens the picker on tap.
  */
 @Composable
@@ -866,8 +1064,8 @@ fun VersionPillButton(
 ) {
     Surface(
         shape = PillShape,
-        color = Color.White.copy(alpha = 0.10f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
+        color = SiloOpaqueControl,
+        border = androidx.compose.foundation.BorderStroke(1.dp, SiloOpaqueControlBorder),
         modifier = modifier
             .height(36.dp)
             .clickable(onClick = onClick),
@@ -882,27 +1080,27 @@ fun VersionPillButton(
             Icon(
                 imageVector = Icons.Filled.Layers,
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.78f),
+                tint = SiloOnOpaqueControl.copy(alpha = 0.78f),
                 modifier = Modifier.size(13.dp),
             )
             Text(
                 text = label,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
-                color = Color.White.copy(alpha = 0.7f),
+                color = SiloOnOpaqueControl.copy(alpha = 0.7f),
             )
             Text(
                 text = currentValue,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White,
+                color = SiloOnOpaqueControl,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Icon(
                 imageVector = Icons.Outlined.KeyboardArrowDown,
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.6f),
+                tint = SiloOnOpaqueControl.copy(alpha = 0.6f),
                 modifier = Modifier.size(10.dp),
             )
         }
@@ -927,8 +1125,6 @@ fun HeroActionStack(
     onToggleFavorite: () -> Unit,
     onToggleWatchlist: () -> Unit,
     onToggleWatched: () -> Unit,
-    userRating: Int? = null,
-    onRateClick: (() -> Unit)? = null,
     versionLabel: String? = null,
     onVersionClick: (() -> Unit)? = null,
     overflow: (@Composable (dismiss: () -> Unit) -> Unit)? = null,
@@ -951,8 +1147,9 @@ fun HeroActionStack(
             onClick = { if (onPlayFromBeginning != null) showResumeDialog = true else onPlay() },
         )
         Row(
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.Top,
         ) {
             CircleActionButton(
                 icon = Icons.Filled.FavoriteBorder,
@@ -960,6 +1157,8 @@ fun HeroActionStack(
                 isActive = isFavorite,
                 contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
                 onClick = onToggleFavorite,
+                label = "Favorite",
+                modifier = Modifier.weight(1f),
             )
             CircleActionButton(
                 icon = Icons.Filled.BookmarkBorder,
@@ -967,6 +1166,8 @@ fun HeroActionStack(
                 isActive = isInWatchlist,
                 contentDescription = if (isInWatchlist) "Remove from watchlist" else "Add to watchlist",
                 onClick = onToggleWatchlist,
+                label = "Watchlist",
+                modifier = Modifier.weight(1f),
             )
             CircleActionButton(
                 icon = Icons.Filled.CheckCircleOutline,
@@ -974,23 +1175,32 @@ fun HeroActionStack(
                 isActive = isWatched,
                 contentDescription = if (isWatched) "Mark as unwatched" else "Mark as watched",
                 onClick = onToggleWatched,
+                label = "Watched",
+                modifier = Modifier.weight(1f),
             )
-            if (onRateClick != null) {
-                CircleActionButton(
-                    icon = Icons.Filled.StarBorder,
-                    activeIcon = Icons.Filled.Star,
-                    isActive = userRating != null,
-                    contentDescription = userRating?.let { "Rated $it of 5" } ?: "Rate",
-                    onClick = onRateClick,
-                )
-            }
             if (downloadSlot != null) {
-                downloadSlot()
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    downloadSlot()
+                    Text("Download", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
+                }
             }
             if (overflow != null) {
-                CircleOverflowButton(menuContent = overflow)
+                CircleOverflowButton(
+                    menuContent = overflow,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(Color.White.copy(alpha = 0.08f)),
+        )
         if (versionLabel != null && onVersionClick != null) {
             VersionPillButton(
                 currentValue = versionLabel,
@@ -1089,7 +1299,10 @@ fun SeasonChips(
     onSeasonSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (seasons.size <= 1) return
+    // The series overview deliberately keeps its single selected chip. iOS
+    // renders "Season 1" even when there is no alternative season because it
+    // anchors the browser before the "Season 1 Episodes" heading.
+    if (seasons.isEmpty()) return
 
     val selectedSeasonIndex = seasons.indexOfFirst {
         it.seasonNumber == selectedSeasonNumber
@@ -1162,11 +1375,10 @@ fun SeasonChips(
 
 object HeroMetadata {
 
-    fun movieEyebrow(detail: ItemDetail): String? {
-        val rating = detail.ratingImdb?.let { "IMDb %.1f".format(it) }
-            ?: detail.ratingTmdb?.let { "TMDB %.1f".format(it) }
-        return rating
-    }
+    // iOS does not float a provider rating above movie artwork/title. Ratings
+    // that belong in the facts row remain there; the standalone TMDB/IMDb pill
+    // made the logo stack look vertically off-centre on tablets and folds.
+    fun movieEyebrow(@Suppress("UNUSED_PARAMETER") detail: ItemDetail): String? = null
 
     fun seriesEyebrow(detail: ItemDetail): String? = movieEyebrow(detail)
 
@@ -1180,30 +1392,26 @@ object HeroMetadata {
         }
     }
 
-    fun movieSourceTokens(detail: ItemDetail): List<String> = buildList {
-        if (detail.year > 0) add(detail.year.toString())
-        if (detail.runtime > 0) add(formatRuntime(detail.runtime))
-        detail.studios.firstOrNull()?.takeIf { it.isNotBlank() }?.let { add(it) }
-    }
+    fun movieSourceTokens(detail: ItemDetail): List<String> =
+        detail.genres.take(2).takeIf { it.isNotEmpty() }
+            ?.let { listOf(it.joinToString(", ")) }
+            .orEmpty()
 
-    fun seriesSourceTokens(detail: ItemDetail): List<String> = buildList {
-        if (detail.year > 0) add(detail.year.toString())
-        detail.seasonCount?.takeIf { it > 0 }?.let {
-            add("$it Season${if (it > 1) "s" else ""}")
-        }
-        detail.networks.firstOrNull()?.takeIf { it.isNotBlank() }?.let { add(it) }
-    }
+    fun seriesSourceTokens(detail: ItemDetail): List<String> =
+        detail.genres.take(2).takeIf { it.isNotEmpty() }
+            ?.let { listOf(it.joinToString(", ")) }
+            .orEmpty()
 
     fun movieFactsLine(detail: ItemDetail): List<String> = buildList {
-        if (detail.genres.isNotEmpty()) {
-            add(detail.genres.take(3).joinToString(" · "))
-        }
+        if (detail.year > 0) add(detail.year.toString())
+        if (detail.runtime > 0) add(formatRuntime(detail.runtime))
         detail.ratingImdb?.let { add("IMDb %.1f".format(it)) }
     }
 
     fun seriesFactsLine(detail: ItemDetail): List<String> = buildList {
-        if (detail.genres.isNotEmpty()) {
-            add(detail.genres.take(3).joinToString(" · "))
+        if (detail.year > 0) add(detail.year.toString())
+        detail.seasonCount?.takeIf { it > 0 }?.let {
+            add("$it Season${if (it > 1) "s" else ""}")
         }
         detail.ratingImdb?.let { add("IMDb %.1f".format(it)) }
     }

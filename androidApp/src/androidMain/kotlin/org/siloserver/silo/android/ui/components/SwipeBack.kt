@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +23,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import kotlinx.coroutines.launch
 
 private const val DismissFraction = 0.35f
@@ -29,6 +34,30 @@ private val FlingMinTravel = 24.dp
 private const val FlingVelocityPxPerSec = 1800f
 private const val MinScale = 0.96f
 private val CornerRadius = 24.dp
+
+class SwipeDownDismissState internal constructor() {
+    // Gesture callbacks update this synchronously on the UI thread. The old
+    // implementation launched one snap coroutine per pointer delta, which
+    // could queue updates and make the card trail the finger.
+    internal var offsetPx by mutableFloatStateOf(0f)
+    internal var dismissing by mutableStateOf(false)
+
+    /**
+     * Pop immediately so Navigation restores the real source page and moves
+     * the outgoing card itself. Keeping no separate local exit animation
+     * avoids leaving an invisible, touch-blocking destination after the card
+     * has visibly cleared the screen.
+     */
+    fun dismiss(onDismiss: () -> Unit) {
+        if (dismissing) return
+        dismissing = true
+        onDismiss()
+    }
+}
+
+@Composable
+fun rememberSwipeDownDismissState(): SwipeDownDismissState =
+    remember { SwipeDownDismissState() }
 
 /**
  * iOS-style interactive "swipe back": a rightward drag on the page moves it
@@ -103,5 +132,81 @@ fun Modifier.swipeBackToDismiss(
             transformOrigin = TransformOrigin(0f, 0.5f)
             clip = progress > 0f
             shape = RoundedCornerShape(cornerPx * (progress * 4f).coerceAtMost(1f))
+        }
+}
+
+/**
+ * Sheet-style downward dismissal that activates only from unconsumed downward
+ * scroll (normally when the detail list is already at its top). This preserves
+ * ordinary vertical scrolling in the page while matching the mobile detail
+ * card's pull-down-to-close interaction.
+ */
+@Composable
+fun Modifier.swipeDownToDismiss(
+    state: SwipeDownDismissState,
+    onDismiss: () -> Unit,
+    enabled: Boolean = true,
+): Modifier {
+    if (!enabled) return this
+    val density = LocalDensity.current
+    val thresholdPx = with(density) { 140.dp.toPx() }
+    val flingMinTravelPx = with(density) { 24.dp.toPx() }
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val connection = remember(state, thresholdPx, flingMinTravelPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): Offset {
+                if (state.dismissing || state.offsetPx <= 0f || available.y >= 0f) return Offset.Zero
+                val consumed = maxOf(available.y, -state.offsetPx)
+                state.offsetPx = (state.offsetPx + consumed).coerceAtLeast(0f)
+                return Offset(0f, consumed)
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+            ): Offset {
+                // Only a real finger pull on the detail page may arm its
+                // dismissal. Modal picker sheets also animate downward when an
+                // option is selected; accepting their side-effect scroll here
+                // popped the entire detail route as the selector closed.
+                if (source != androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput ||
+                    available.y <= 0f || state.dismissing
+                ) {
+                    return Offset.Zero
+                }
+                state.offsetPx = (state.offsetPx + available.y * 0.72f)
+                    .coerceAtMost(thresholdPx * 1.4f)
+                return Offset(0f, available.y)
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                val intentionalFlick = state.offsetPx >= flingMinTravelPx &&
+                    available.y > FlingVelocityPxPerSec
+                if (state.offsetPx >= thresholdPx || intentionalFlick) {
+                    state.dismiss(onDismiss = currentOnDismiss)
+                } else if (state.offsetPx > 0f) {
+                    Animatable(state.offsetPx).animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessLow,
+                        ),
+                    ) {
+                        state.offsetPx = value
+                    }
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+    return this
+        .nestedScroll(connection)
+        .graphicsLayer {
+            translationY = state.offsetPx
+            val progress = (state.offsetPx / thresholdPx).coerceIn(0f, 1f)
+            val scale = 1f - progress * 0.025f
+            scaleX = scale
+            scaleY = scale
         }
 }

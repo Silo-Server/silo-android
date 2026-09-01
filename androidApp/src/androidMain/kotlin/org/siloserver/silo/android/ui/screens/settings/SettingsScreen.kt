@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.downloads.DownloadsViewModel
+import org.siloserver.silo.android.ui.screens.home.HomeSectionsEditor
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.shouldShowDiagnosticsEntry
 import org.siloserver.silo.android.ui.theme.SettingsDimens
@@ -112,6 +113,7 @@ fun SettingsScreen(
     val downloadsState by downloadsViewModel.uiState.collectAsState()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
     var showRemoveAllDownloadsConfirm by remember { mutableStateOf(false) }
+    var showHomeSectionsEditor by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.loggedOut) {
         if (state.loggedOut) {
@@ -273,6 +275,16 @@ fun SettingsScreen(
             }
 
             item {
+                SettingsSection(title = "Interface") {
+                    SettingsNavigationRow(
+                        label = "Home Sections",
+                        description = "Choose which Home rows are visible and the order they appear in.",
+                        onClick = { showHomeSectionsEditor = true },
+                    )
+                }
+            }
+
+            item {
                 MediaCardsSettings(
                     state = state.cardPresentation,
                     onPresetSelected = viewModel::setCardPreset,
@@ -384,6 +396,10 @@ fun SettingsScreen(
             },
             onDismiss = { showRemoveAllDownloadsConfirm = false },
         )
+    }
+
+    if (showHomeSectionsEditor) {
+        HomeSectionsEditor(onDismiss = { showHomeSectionsEditor = false })
     }
 }
 

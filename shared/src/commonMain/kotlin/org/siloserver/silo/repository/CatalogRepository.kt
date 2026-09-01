@@ -18,13 +18,43 @@ import org.siloserver.silo.repository.port.CatalogCachePort
 import org.siloserver.silo.repository.port.CatalogCacheWriteLease
 import org.siloserver.silo.repository.port.NoOpCatalogCachePort
 import org.siloserver.silo.repository.port.canServeCache
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class CatalogRepository(
     private val catalogApi: CatalogApi,
     /** Offline read cache for a library's default first page (Track B). No-op by default. */
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
+    requestDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
+    /**
+     * Home may warm a detail immediately before its destination requests the
+     * same data. Process-owned, identity-keyed single-flight requests keep that
+     * navigation from duplicating calls, and keep useful work alive when Home
+     * leaves composition.
+     */
+    private val detailRequestScope = CoroutineScope(SupervisorJob() + requestDispatcher)
+    private val detailRequestMutex = Mutex()
+    private val itemDetailInFlight =
+        mutableMapOf<Pair<Long, String>, Deferred<ApiResult<ItemDetail>>>()
+    private val seasonsInFlight =
+        mutableMapOf<Pair<Long, String>, Deferred<ApiResult<SeasonsResponse>>>()
+    private data class EpisodesRequestKey(
+        val identityGeneration: Long,
+        val seriesId: String,
+        val seasonNumber: Int,
+    )
+    private val episodesInFlight =
+        mutableMapOf<EpisodesRequestKey, Deferred<ApiResult<EpisodesResponse>>>()
+
     /** Browse the catalog with optional filters, sorting, and pagination. */
     suspend fun browse(
         source: String? = null,
@@ -124,17 +154,24 @@ class CatalogRepository(
     /** Fetches full metadata for a single catalog item (offline: last cached detail). */
     suspend fun getItemDetail(contentId: String): ApiResult<ItemDetail> {
         val requestIdentityGeneration = identityTransitions.generation.value
-        val result = catalogApi.getItemDetail(contentId)
-        if (result is ApiResult.Success) {
-            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
-                catalogCache.cacheItemDetail(contentId, result.data, cacheWriteLease)
-            }
-            return result
+        val warmRequest = detailRequestMutex.withLock {
+            itemDetailInFlight[requestIdentityGeneration to contentId]
         }
-        if (result.canServeCache()) {
-            catalogCache.getCachedItemDetail(contentId)?.let { return ApiResult.Success(it) }
+        return warmRequest?.await() ?: fetchItemDetail(contentId, requestIdentityGeneration)
+    }
+
+    /**
+     * Starts a process-owned live detail warm-up. A destination calling
+     * [getItemDetail] while it is active joins this exact request.
+     */
+    suspend fun warmItemDetail(contentId: String): ApiResult<ItemDetail> {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        return coalescedDetailRequest(
+            requests = itemDetailInFlight,
+            key = requestIdentityGeneration to contentId,
+        ) {
+            fetchItemDetail(contentId, requestIdentityGeneration)
         }
-        return result
     }
 
     /** Returns the last cached item detail without touching the network. */
@@ -157,33 +194,69 @@ class CatalogRepository(
     /** Lists seasons for a series (offline: last cached seasons). */
     suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> {
         val requestIdentityGeneration = identityTransitions.generation.value
-        val result = catalogApi.getSeasons(seriesId)
-        if (result is ApiResult.Success) {
-            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
-                catalogCache.cacheSeasons(seriesId, result.data, cacheWriteLease)
-            }
-            return result
+        val warmRequest = detailRequestMutex.withLock {
+            seasonsInFlight[requestIdentityGeneration to seriesId]
         }
-        if (result.canServeCache()) {
-            catalogCache.getCachedSeasons(seriesId)?.let { return ApiResult.Success(it) }
+        return warmRequest?.await() ?: fetchSeasons(seriesId, requestIdentityGeneration)
+    }
+
+    /** Starts a process-owned live season-list warm-up for a pending detail route. */
+    suspend fun warmSeasons(seriesId: String): ApiResult<SeasonsResponse> {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        return coalescedDetailRequest(
+            requests = seasonsInFlight,
+            key = requestIdentityGeneration to seriesId,
+        ) {
+            fetchSeasons(seriesId, requestIdentityGeneration)
         }
-        return result
+    }
+
+    /** Returns the last cached season list without touching the network. */
+    suspend fun getCachedSeasons(seriesId: String): SeasonsResponse? =
+        catalogCache.getCachedSeasons(seriesId)
+
+    /** Cache-first season list for speculative detail navigation. */
+    suspend fun getSeasonsForPrefetch(seriesId: String): ApiResult<SeasonsResponse> {
+        catalogCache.getCachedSeasons(seriesId)?.let { return ApiResult.Success(it) }
+        return getSeasons(seriesId)
     }
 
     /** Lists episodes for a specific season of a series (offline: last cached episodes). */
     suspend fun getEpisodes(seriesId: String, seasonNumber: Int): ApiResult<EpisodesResponse> {
         val requestIdentityGeneration = identityTransitions.generation.value
-        val result = catalogApi.getEpisodes(seriesId, seasonNumber)
-        if (result is ApiResult.Success) {
-            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
-                catalogCache.cacheEpisodes(seriesId, seasonNumber, result.data, cacheWriteLease)
-            }
-            return result
+        val requestKey = EpisodesRequestKey(requestIdentityGeneration, seriesId, seasonNumber)
+        val warmRequest = detailRequestMutex.withLock { episodesInFlight[requestKey] }
+        return warmRequest?.await()
+            ?: fetchEpisodes(seriesId, seasonNumber, requestIdentityGeneration)
+    }
+
+    /** Starts a process-owned live episode-list warm-up for a pending detail route. */
+    suspend fun warmEpisodes(
+        seriesId: String,
+        seasonNumber: Int,
+    ): ApiResult<EpisodesResponse> {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        return coalescedDetailRequest(
+            requests = episodesInFlight,
+            key = EpisodesRequestKey(requestIdentityGeneration, seriesId, seasonNumber),
+        ) {
+            fetchEpisodes(seriesId, seasonNumber, requestIdentityGeneration)
         }
-        if (result.canServeCache()) {
-            catalogCache.getCachedEpisodes(seriesId, seasonNumber)?.let { return ApiResult.Success(it) }
+    }
+
+    /** Returns one cached season's episodes without touching the network. */
+    suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int): EpisodesResponse? =
+        catalogCache.getCachedEpisodes(seriesId, seasonNumber)
+
+    /** Cache-first episode list for speculative detail navigation. */
+    suspend fun getEpisodesForPrefetch(
+        seriesId: String,
+        seasonNumber: Int,
+    ): ApiResult<EpisodesResponse> {
+        catalogCache.getCachedEpisodes(seriesId, seasonNumber)?.let {
+            return ApiResult.Success(it)
         }
-        return result
+        return getEpisodes(seriesId, seasonNumber)
     }
 
     /** Lists all episodes directly attached to an item (e.g. a season content ID). */
@@ -222,6 +295,65 @@ class CatalogRepository(
             snapshotAt = snapshotAt,
         )
 
+    private suspend fun fetchItemDetail(
+        contentId: String,
+        requestIdentityGeneration: Long,
+    ): ApiResult<ItemDetail> {
+        val result = catalogApi.getItemDetail(contentId)
+        if (result is ApiResult.Success) {
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheItemDetail(contentId, result.data, cacheWriteLease)
+            }
+            return result
+        }
+        if (result.canServeCache()) {
+            catalogCache.getCachedItemDetail(contentId)?.let { return ApiResult.Success(it) }
+        }
+        return result
+    }
+
+    private suspend fun fetchSeasons(
+        seriesId: String,
+        requestIdentityGeneration: Long,
+    ): ApiResult<SeasonsResponse> {
+        val result = catalogApi.getSeasons(seriesId)
+        if (result is ApiResult.Success) {
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheSeasons(seriesId, result.data, cacheWriteLease)
+            }
+            return result
+        }
+        if (result.canServeCache()) {
+            catalogCache.getCachedSeasons(seriesId)?.let { return ApiResult.Success(it) }
+        }
+        return result
+    }
+
+    private suspend fun fetchEpisodes(
+        seriesId: String,
+        seasonNumber: Int,
+        requestIdentityGeneration: Long,
+    ): ApiResult<EpisodesResponse> {
+        val result = catalogApi.getEpisodes(seriesId, seasonNumber)
+        if (result is ApiResult.Success) {
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheEpisodes(
+                    seriesId,
+                    seasonNumber,
+                    result.data,
+                    cacheWriteLease,
+                )
+            }
+            return result
+        }
+        if (result.canServeCache()) {
+            catalogCache.getCachedEpisodes(seriesId, seasonNumber)?.let {
+                return ApiResult.Success(it)
+            }
+        }
+        return result
+    }
+
     private suspend fun writeIfIdentityUnchanged(
         requestGeneration: Long,
         write: suspend (CatalogCacheWriteLease) -> Unit,
@@ -229,5 +361,30 @@ class CatalogRepository(
         if (requestGeneration == identityTransitions.generation.value) {
             write(CatalogCacheWriteLease(requestGeneration))
         }
+    }
+
+    private suspend fun <K, T> coalescedDetailRequest(
+        requests: MutableMap<K, Deferred<T>>,
+        key: K,
+        request: suspend () -> T,
+    ): T {
+        val deferred = detailRequestMutex.withLock {
+            requests[key] ?: run {
+                lateinit var created: Deferred<T>
+                created = detailRequestScope.async(start = CoroutineStart.LAZY) {
+                    try {
+                        request()
+                    } finally {
+                        detailRequestMutex.withLock {
+                            if (requests[key] === created) requests.remove(key)
+                        }
+                    }
+                }
+                requests[key] = created
+                created.start()
+                created
+            }
+        }
+        return deferred.await()
     }
 }

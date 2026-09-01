@@ -62,6 +62,12 @@ fun heroSharedKeyPrefix(contentId: String): String = "hero-$contentId"
  */
 class HeroSourceHandoff {
     var pendingKey: String? by mutableStateOf(null)
+    var pendingBrowseContentIds: List<String>? by mutableStateOf(null)
+    var pendingBrowseOrigin: String? by mutableStateOf(null)
+    // Artwork already known by the tapped card. The detail loading state uses
+    // it immediately, starting the full backdrop request before metadata lands.
+    var pendingArtworkUrl: String? by mutableStateOf(null)
+    var pendingArtworkThumbhash: String? by mutableStateOf(null)
 }
 
 val LocalHeroSourceHandoff = compositionLocalOf<HeroSourceHandoff?> { null }

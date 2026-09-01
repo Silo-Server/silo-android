@@ -50,6 +50,7 @@ import org.siloserver.silo.android.ui.navigation.fallbackMobileTab
 import org.siloserver.silo.android.ui.navigation.scopedLocalDownloadBytes
 import org.siloserver.silo.android.ui.navigation.shouldShowDownloadsTab
 import org.siloserver.silo.android.ui.navigation.visibleMobileTabs
+import org.siloserver.silo.android.ui.navigation.continueWatchingDetailRoute
 import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
 import org.siloserver.silo.android.ui.screens.home.HomeScreen
 import org.siloserver.silo.android.cast.SiloCastController
@@ -60,6 +61,7 @@ import org.siloserver.silo.android.ui.screens.libraries.LibrariesSelectorSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesViewModel
 import org.siloserver.silo.android.ui.screens.recommendations.ForYouList
 import org.siloserver.silo.android.ui.screens.recommendations.RecommendationsScreen
+import org.siloserver.silo.viewmodel.RecommendationsViewModel
 import org.siloserver.silo.android.ui.screens.recommendations.headerTitle
 import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherMenuEntrySheet
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
@@ -131,9 +133,13 @@ fun MainScreen(
         null
     }
     var showLibrarySelector by rememberSaveable(currentTab) { mutableStateOf(false) }
-    // Bumped when the Home tab is re-tapped while already on Home; HomeScreen
-    // reacts by scrolling back to the top.
-    var homeScrollToTopTick by remember { mutableStateOf(0) }
+    var homeBottomNavMinimized by rememberSaveable { mutableStateOf(false) }
+
+    // Entering (or re-entering) any tab starts with the complete tab capsule.
+    // Home alone can minimize it after the user begins scrolling downward.
+    LaunchedEffect(currentTab) {
+        homeBottomNavMinimized = false
+    }
 
     // Downloads tab visibility: show whenever EITHER the server says there
     // are records OR we have bytes on disk. The on-disk check is what makes
@@ -312,6 +318,9 @@ fun MainScreen(
     // What For You is actually showing (the empty-feed fallback shows the
     // Watchlist without making it an explicit selection); drives the title.
     var forYouDisplayed by remember { mutableStateOf<ForYouList?>(null) }
+    // Instantiate with the shell, not when the lazy tab is first opened, so
+    // Discover and taste-profile requests run alongside profile/header setup.
+    val recommendationsViewModel = koinViewModel<RecommendationsViewModel>()
     Scaffold(
         bottomBar = {
             // The cast bar rests above the nav menu (iOS tabViewBottomAccessory
@@ -325,11 +334,13 @@ fun MainScreen(
                 )
                 SiloBottomNavBar(
                     currentTab = currentTab,
+                    minimizedToCurrentTab = currentTab == Tab.Home && homeBottomNavMinimized,
                     onTabSelected = { tab ->
                         if (tab == Tab.Home && currentTab == Tab.Home) {
-                            // Re-tapping Home while on Home scrolls it back to the
-                            // top (standard Android bottom-nav convention).
-                            homeScrollToTopTick += 1
+                            // The minimized Home control remains tappable. A
+                            // repeat tap expands the full capsule without
+                            // disturbing the user's feed position.
+                            homeBottomNavMinimized = false
                         } else {
                             navController.navigate(tab.route) {
                                 // Pop to the tab stack's live anchor, not a
@@ -344,7 +355,6 @@ fun MainScreen(
                         }
                     },
                     tabs = visibleTabs,
-                    hazeState = hazeState,
                 )
             }
         },
@@ -377,9 +387,14 @@ fun MainScreen(
                     Tab.Home -> {
                         val homeViewModel = koinViewModel<HomeViewModel>()
                         HomeScreen(
-                            scrollToTopTick = homeScrollToTopTick,
+                            onBottomNavMinimizedChange = { minimized ->
+                                homeBottomNavMinimized = minimized
+                            },
                             onItemClick = { contentId ->
                                 navController.navigate(Route.ItemDetail(contentId).route)
+                            },
+                            onContinueWatchingItemClick = { item ->
+                                navController.navigate(continueWatchingDetailRoute(item))
                             },
                             onPlayClick = { contentId, resumePositionSeconds ->
                                 playVideo(contentId, resumePositionSeconds = resumePositionSeconds)
@@ -438,6 +453,7 @@ fun MainScreen(
                             onSavedListSelectionChange = { forYouList = it },
                             onDisplayedListChange = { forYouDisplayed = it },
                             contentTopPadding = headerContentTop,
+                            viewModel = recommendationsViewModel,
                         )
                     }
                     Tab.Calendar -> {

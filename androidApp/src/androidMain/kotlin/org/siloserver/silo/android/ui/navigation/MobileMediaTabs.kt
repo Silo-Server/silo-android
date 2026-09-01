@@ -10,13 +10,16 @@ val Tab.isUtilityTab: Boolean
 // library content (video / audio / reading) is reached through the Libraries picker.
 fun visibleMobileTabs(
     @Suppress("UNUSED_PARAMETER") capabilities: MediaModeCapabilities,
-    showDownloads: Boolean,
+    @Suppress("UNUSED_PARAMETER") showDownloads: Boolean,
 ): List<Tab> = buildList {
     add(Tab.Home)
     add(Tab.Libraries)
     add(Tab.ForYou)
     add(Tab.Calendar)
-    if (showDownloads) add(Tab.Downloads)
+    // Keep Downloads present from the first authenticated frame. Capability
+    // and local-record hydration may finish later, but navigation must not
+    // shift underneath the user while that optional data arrives.
+    add(Tab.Downloads)
 }
 
 fun fallbackMobileTab(

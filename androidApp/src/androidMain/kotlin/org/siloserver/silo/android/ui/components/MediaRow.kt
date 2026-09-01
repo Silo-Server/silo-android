@@ -21,15 +21,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import kotlin.math.roundToInt
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
@@ -37,6 +43,8 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
+import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 enum class CardStyle { Poster, Backdrop }
 
@@ -71,7 +79,13 @@ fun MediaRow(
     icon: ImageVector? = null,
     modifier: Modifier = Modifier,
     cardActions: (SectionItem) -> MediaCardActions = { MediaCardActions() },
+    /** Publishes the card nearest the viewport centre after a row settles. */
+    onCenteredItemChanged: ((SectionItem?) -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    val heroHandoff = LocalHeroSourceHandoff.current
+    val browseContentIds = remember(items) { items.map { it.contentId } }
+    val browseOrigin = remember(title, browseContentIds) { "media-row-$title-${browseContentIds.hashCode()}" }
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
     }
@@ -193,6 +207,55 @@ fun MediaRow(
         // A row fling defers artwork presentation just like the parent feed's
         // vertical fling (the helper ORs in any deferral already in scope).
         val rowState = rememberLazyListState()
+        fun openDetail(item: SectionItem) {
+            // Keep one full-size backdrop request alive across the loading-
+            // skeleton -> detail-content composition swap. Without this, the
+            // skeleton's differently-sized request can be cancelled as soon as
+            // metadata arrives and the real hero then starts from zero again.
+            item.backdropUrl?.takeIf { it.isNotBlank() }?.let { backdropUrl ->
+                val metrics = context.resources.displayMetrics
+                val widthPx = metrics.widthPixels.coerceAtLeast(1)
+                val heightPx = minOf(
+                    metrics.heightPixels.coerceAtLeast(1),
+                    (widthPx * 1.18f).roundToInt().coerceAtLeast(1),
+                )
+                context.imageLoader.enqueue(
+                    ImageRequest.Builder(context)
+                        .data(backdropUrl)
+                        .size(widthPx, heightPx)
+                        .build(),
+                )
+            }
+            heroHandoff?.pendingBrowseContentIds = browseContentIds
+            heroHandoff?.pendingBrowseOrigin = browseOrigin
+            heroHandoff?.pendingArtworkUrl = item.backdropUrl ?: item.posterUrl
+            heroHandoff?.pendingArtworkThumbhash = item.backdropThumbhash ?: item.posterThumbhash
+            onItemClick(item.contentId)
+        }
+        val currentItems = rememberUpdatedState(rowItems)
+        val currentOnCenteredItemChanged = rememberUpdatedState(onCenteredItemChanged)
+        LaunchedEffect(rowState, onCenteredItemChanged) {
+            if (onCenteredItemChanged == null) return@LaunchedEffect
+            snapshotFlow {
+                if (rowState.isScrollInProgress) {
+                    null
+                } else {
+                    val info = rowState.layoutInfo
+                    val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2
+                    info.visibleItemsInfo.minByOrNull { visible ->
+                        kotlin.math.abs((visible.offset + visible.size / 2) - viewportCenter)
+                    }?.key as? String
+                }
+            }
+                .distinctUntilChanged()
+                .collect { contentId ->
+                    if (contentId != null) {
+                        currentOnCenteredItemChanged.value?.invoke(
+                            currentItems.value.firstOrNull { it.item.contentId == contentId }?.item,
+                        )
+                    }
+                }
+        }
         DeferImagePresentationWhileScrolling(rowState) {
         CompositionLocalProvider(LocalViewConfiguration provides rowViewConfiguration) {
         LazyRow(
@@ -218,8 +281,9 @@ fun MediaRow(
                             episodeNumber = item.episodeNumber,
                             progress = rowItem.progress,
                             remainingMinutes = rowItem.remainingMinutes,
-                            onClick = { onItemClick(item.contentId) },
+                            onClick = { openDetail(item) },
                             userState = item.userState,
+                            overlay = rowItem.overlay,
                             actions = cardActions(item),
                             overlayIcon = if (rowItem.isBook) Icons.AutoMirrored.Filled.MenuBook else Icons.Default.PlayArrow,
                             overlayContentDescription = if (rowItem.isBook) "Read" else "Play",
@@ -240,7 +304,7 @@ fun MediaRow(
                             type = item.type,
                             userState = item.userState,
                             progress = rowItem.progress,
-                            onClick = { onItemClick(item.contentId) },
+                            onClick = { openDetail(item) },
                             overlay = rowItem.overlay,
                             actions = cardActions(item),
                             modifier = Modifier.animateItem(),

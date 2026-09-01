@@ -4,25 +4,23 @@ import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.MediaModeCapabilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class MobileMediaTabsTest {
 
-    // Apple-aligned shell: Home · Libraries · For You · Calendar, independent of which
-    // media types the libraries contain. Library content (video / audio /
-    // reading) is reached through the Libraries picker. Downloads only appears
-    // when the user has downloads.
-    private val baseLabels = listOf("Home", "Libraries", "For You", "Calendar")
+    // Apple-aligned shell stays structurally fixed while capabilities and
+    // download records hydrate, so the selected pill never shifts underneath
+    // the user after the first authenticated frame.
+    private val baseLabels = listOf("Home", "Libraries", "For You", "Calendar", "Downloads")
 
     @Test
-    fun fixedTabsAppendDownloadsWhenPresent() {
+    fun fixedTabsIncludeDownloadsWhenPresent() {
         val tabs = visibleMobileTabs(
             capabilities = MediaModeCapabilities(listOf(MediaMode.Video)),
             showDownloads = true,
         )
 
-        assertEquals(baseLabels + "Downloads", tabs.map { it.label })
+        assertEquals(baseLabels, tabs.map { it.label })
     }
 
     @Test
@@ -45,14 +43,14 @@ class MobileMediaTabsTest {
     }
 
     @Test
-    fun downloadsStaysHiddenWhenNoDownloadsExist() {
+    fun downloadsKeepsItsStableSlotBeforeRecordsHydrate() {
         val tabs = visibleMobileTabs(
             capabilities = MediaModeCapabilities(listOf(MediaMode.Video, MediaMode.Audio)),
             showDownloads = false,
         )
 
         assertEquals(baseLabels, tabs.map { it.label })
-        assertFalse(Tab.Downloads in tabs)
+        assertTrue(Tab.Downloads in tabs)
     }
 
     @Test
