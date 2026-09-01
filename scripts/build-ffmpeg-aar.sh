@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# build-ffmpeg-aar.sh — Produce media3-decoder-ffmpeg-1.10.1.aar from source.
+# build-ffmpeg-aar.sh — Produce media3-decoder-ffmpeg-1.11.0.aar from source.
 #
-# Output: android-shared/libs/media3-decoder-ffmpeg-1.10.1.aar
+# Output: android-shared/libs/media3-decoder-ffmpeg-1.11.0.aar
 #
 # Why this script exists:
 #   Google never publishes the Media3 decoder_ffmpeg extension as a binary
@@ -13,8 +13,8 @@
 #   android-shared/libs/ and consumed as a local file dependency.
 #
 # Build design:
-#   * Pinned to Media3 tag `1.10.1` and FFmpeg tag `n6.0`. The
-#     libraries/decoder_ffmpeg/README.md in Media3 1.10.1 recommends
+#   * Pinned to Media3 tag `1.11.0` and FFmpeg tag `n6.0`. The
+#     libraries/decoder_ffmpeg/README.md in Media3 1.11.0 recommends
 #     FFmpeg 6.0 specifically — n7.x has ABI changes that break the JNI
 #     glue.
 #   * LGPL-only. No --enable-gpl. Every codec we want is in the LGPL
@@ -41,7 +41,7 @@
 #   WORKDIR          — scratch dir; defaults to a per-run mktemp dir.
 #                      Pass a persistent path to speed up re-runs (keeps
 #                      Media3 + FFmpeg clones warm).
-#   MEDIA3_TAG       — override the pinned `1.10.1`
+#   MEDIA3_TAG       — override the pinned `1.11.0`
 #   FFMPEG_TAG       — override the pinned `n6.0`
 #
 # Usage:
@@ -57,7 +57,7 @@ set -euo pipefail
 # Config
 # ---------------------------------------------------------------------------
 
-MEDIA3_TAG=${MEDIA3_TAG:-1.10.1}
+MEDIA3_TAG=${MEDIA3_TAG:-1.11.0}
 FFMPEG_TAG=${FFMPEG_TAG:-n6.0}
 ANDROID_API_LEVEL=21            # FFmpeg NDK floor; Silo's app minSdk is 24
 ENABLED_DECODERS=(ac3 eac3 mlp truehd dca)
@@ -159,7 +159,7 @@ fi
 # ---------------------------------------------------------------------------
 # Patch upstream build_ffmpeg.sh to skip excluded ABIs
 #
-# Upstream 1.10.1 hardcodes four per-ABI blocks (armeabi-v7a / arm64-v8a /
+# Upstream 1.11.0 hardcodes four per-ABI blocks (armeabi-v7a / arm64-v8a /
 # x86 / x86_64). It takes ENABLED_DECODERS as positional args, so the
 # decoder list is handled at invocation time — we only need to patch to
 # skip ABIs. Each block starts with `./configure \` and ends with
