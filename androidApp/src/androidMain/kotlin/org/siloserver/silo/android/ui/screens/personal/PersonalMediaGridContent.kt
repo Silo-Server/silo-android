@@ -77,10 +77,17 @@ import org.siloserver.silo.viewmodel.WatchlistViewModel
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 
-private enum class PersonalMediaType(val label: String) {
-    Movies("Movies"),
-    TvShows("TV Shows"),
+private enum class PersonalMediaType(
+    val label: String,
+    val emptyTitle: String,
+    val emptySubtitle: String,
+) {
+    Movies("Movies", "No movies", "There are no movies in this list."),
+    TvShows("TV Shows", "No TV shows", "There are no TV shows in this list."),
 }
+
+private const val PersonalMediaGridRowSize = 6
+private const val PersonalMediaGridPrefetchRows = 2
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -272,7 +279,7 @@ private fun PersonalMediaGridContent(
         derivedStateOf {
             val layoutInfo = gridState.layoutInfo
             val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisible >= layoutInfo.totalItemsCount - 8
+            lastVisible >= layoutInfo.totalItemsCount - PersonalMediaGridPrefetchRows
         }
     }
 
@@ -310,9 +317,18 @@ private fun PersonalMediaGridContent(
                 // A narrowed query with no hits is not an empty list — say so,
                 // and keep the header's controls reachable to widen it (TV parity).
                 val filtered = !state.query.isDefault
+                val selectedTypeEmpty = mediaType != null && state.items.isNotEmpty()
                 EmptyStateView(
-                    title = if (filtered) "No matches" else emptyTitle,
-                    subtitle = if (filtered) "No titles match the current filters." else emptySubtitle,
+                    title = when {
+                        filtered -> "No matches"
+                        selectedTypeEmpty -> mediaType?.emptyTitle ?: emptyTitle
+                        else -> emptyTitle
+                    },
+                    subtitle = when {
+                        filtered -> "No titles match the current filters."
+                        selectedTypeEmpty -> mediaType?.emptySubtitle ?: emptySubtitle
+                        else -> emptySubtitle
+                    },
                     icon = emptyIcon,
                     modifier = Modifier.weight(1f),
                 )
@@ -342,7 +358,7 @@ private fun PersonalMediaGridContent(
                             header(state)
                         }
                     }
-                    visibleItems.chunked(6).forEachIndexed { rowIndex, rowItems ->
+                    visibleItems.chunked(PersonalMediaGridRowSize).forEachIndexed { rowIndex, rowItems ->
                         item(key = "media-row-$rowIndex") {
                             LazyRow(
                                 horizontalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridHorizontalSpacing),

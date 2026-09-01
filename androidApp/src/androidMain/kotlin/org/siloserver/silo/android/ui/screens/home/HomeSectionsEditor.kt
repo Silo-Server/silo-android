@@ -82,7 +82,7 @@ fun HomeSectionsEditor(onDismiss: () -> Unit) {
     }
     val rows = remember { mutableStateListOf<ResolvedSection>() }
     var draggingId by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(arranged) {
+    LaunchedEffect(arranged, draggingId) {
         if (draggingId == null) {
             rows.clear()
             rows.addAll(arranged)

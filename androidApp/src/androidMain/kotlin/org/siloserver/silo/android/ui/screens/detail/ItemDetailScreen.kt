@@ -614,7 +614,11 @@ fun ItemDetailScreen(
                                     state.hasExplicitSubtitleSelection
                             }
                         val selectedEpisodeResume = selectedEpisode?.let(::playbackResumePosition)
-                        val activeSeriesResume = selectedEpisodeResume ?: seriesResume
+                        val activeSeriesResume = if (selectedEpisode != null) {
+                            selectedEpisodeResume
+                        } else {
+                            seriesResume
+                        }
                         SeriesDetailContent(
                             translation = translationSlot,
                             detail = detail,

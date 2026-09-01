@@ -291,9 +291,14 @@ fun MovieDetailContent(
                             onSeasonSelected = onSeasonSelected,
                         )
                     }
+                    val selectedSeason = seasons.firstOrNull {
+                        it.seasonNumber == selectedSeasonNumber
+                    }
                     SectionHeader(
-                        title = if (selectedSeasonNumber == 0) {
-                            "This Season Episodes"
+                        title = selectedSeason?.let(::seriesSeasonSectionTitle) ?: if (
+                            selectedSeasonNumber == 0
+                        ) {
+                            "Specials Episodes"
                         } else {
                             "Season $selectedSeasonNumber Episodes"
                         },

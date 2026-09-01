@@ -1213,7 +1213,13 @@ class ItemDetailViewModel(
                     userData = (episodeDetail.userData ?: LeafItemUserData()).copy(played = played),
                 )
             }
+            val ownDetail = state.detail?.let { itemDetail ->
+                if (itemDetail.contentId != episodeContentId) itemDetail else itemDetail.copy(
+                    userData = (itemDetail.userData ?: LeafItemUserData()).copy(played = played),
+                )
+            }
             state.copy(
+                detail = ownDetail,
                 episodes = state.episodes.map { it.updated() },
                 episodesBySeason = state.episodesBySeason.mapValues { (_, episodes) ->
                     episodes.map { it.updated() }

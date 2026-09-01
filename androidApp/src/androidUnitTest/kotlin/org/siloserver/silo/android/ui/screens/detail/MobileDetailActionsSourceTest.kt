@@ -186,6 +186,13 @@ class MobileDetailActionsSourceTest {
         assertTrue(itemDetail.contains("onEpisodeDetailClick = { viewModel.selectSeriesEpisode(it) }"))
         assertTrue(seriesDetail.contains("selectedEpisode?.let { \"Play \${episodeNumberText(it)}\" }"))
         assertTrue(seriesDetail.contains("loadedSelectedEpisodeDetail.versions.getOrNull(selectedVersionIndex)"))
+        assertTrue(seriesDetail.contains("loadedSelectedEpisodeDetail?.let { episodeDetail ->"))
+    }
+
+    @Test
+    fun selectedEpisodeResumeNeverFallsBackToAnotherEpisode() {
+        assertTrue(itemDetail.contains("val activeSeriesResume = if (selectedEpisode != null)"))
+        assertFalse(itemDetail.contains("val activeSeriesResume = selectedEpisodeResume ?: seriesResume"))
     }
 
     @Test
@@ -209,6 +216,21 @@ class MobileDetailActionsSourceTest {
             true,
             viewModel.uiState.value.episodesBySeason.getValue(1).single().userData?.played,
         )
+    }
+
+    @Test
+    fun episodePageHeroRepaintsAfterLongPressWatchedChange() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf({ ApiResult.Success(Unit) }),
+        )
+        val viewModel = itemDetailViewModel(repository)
+        viewModel.seedEpisodeDetail()
+
+        viewModel.setEpisodeWatched("season-1-episode-1", true)
+        advanceUntilIdle()
+
+        assertEquals(true, viewModel.uiState.value.detail?.userData?.played)
+        assertEquals(true, viewModel.uiState.value.episodes.single().userData?.played)
     }
 
     @Test
@@ -523,6 +545,31 @@ class MobileDetailActionsSourceTest {
                 title = "Movie",
                 userData = LeafItemUserData(played = played),
             ),
+        )
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun ItemDetailViewModel.seedEpisodeDetail() {
+        val field = ItemDetailViewModel::class.java.getDeclaredField("_uiState")
+        field.isAccessible = true
+        val flow = field.get(this) as MutableStateFlow<ItemDetailUiState>
+        val episode = EpisodeListItem(
+            contentId = "season-1-episode-1",
+            seasonNumber = 1,
+            episodeNumber = 1,
+            userData = LeafItemUserData(played = false),
+        )
+        flow.value = ItemDetailUiState(
+            isLoading = false,
+            detail = ItemDetail(
+                contentId = episode.contentId,
+                type = "episode",
+                title = "Episode",
+                userData = LeafItemUserData(played = false),
+            ),
+            selectedSeasonNumber = 1,
+            episodes = listOf(episode),
+            episodesBySeason = mapOf(1 to listOf(episode)),
         )
     }
 

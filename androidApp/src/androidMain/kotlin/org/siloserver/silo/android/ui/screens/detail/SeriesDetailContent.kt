@@ -354,7 +354,7 @@ fun SeriesDetailContent(
     }
     }
 
-    selectedEpisodeDetail?.let { episodeDetail ->
+    loadedSelectedEpisodeDetail?.let { episodeDetail ->
         val version = episodeDetail.versions.getOrNull(selectedVersionIndex)
         if (showVersionPicker) {
             VersionPickerSheet(
