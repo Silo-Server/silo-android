@@ -278,7 +278,7 @@ class DiagnosticsInstrumentationTest {
         assertTrue(lines[1].contains("unique_item_rows"), lines[1])
         assertTrue(lines[2].contains("thermal_elevated"), lines[2])
         assertTrue(lines[2].contains("heap_128_255_pss_256_511"), lines[2])
-        assertFalse(lines[2].contains("173"), lines[2])
-        assertFalse(lines[2].contains("419"), lines[2])
+        assertFalse(lines[2].contains("\"java_heap_mb\""), lines[2])
+        assertFalse(lines[2].contains("\"process_pss_mb\""), lines[2])
     }
 }
