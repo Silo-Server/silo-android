@@ -9,15 +9,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,8 +34,14 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -112,7 +121,7 @@ fun TvSeasonPicker(
     ) {
         items(
             seasons,
-            key = { it.seasonNumber },
+            key = { "season-${it.seasonNumber}-${it.contentId}" },
             contentType = { "season-chip" },
         ) { season ->
             TvSeasonChip(
@@ -127,6 +136,196 @@ fun TvSeasonPicker(
             )
         }
     }
+}
+
+/**
+ * Combined Series mode row from the approved tvOS page: Show first, followed
+ * by every season. These are true capsules with a fixed footprint and no focus
+ * scale, so lateral movement never shifts its neighbours.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+fun TvSeriesModePicker(
+    seasons: List<Season>,
+    isShowingSeriesOverview: Boolean,
+    selectedSeason: Int?,
+    onShowSelected: () -> Unit,
+    onSeasonSelected: (Season) -> Unit,
+    modifier: Modifier = Modifier,
+    horizontalContentPadding: Dp = 0.dp,
+    onDirectionUp: (() -> Boolean)? = null,
+) {
+    val listState = rememberLazyListState()
+    val selectedFocusRequester = remember { FocusRequester() }
+    val selectedIndex = remember(isShowingSeriesOverview, selectedSeason, seasons) {
+        if (isShowingSeriesOverview) {
+            0
+        } else {
+            seasons.indexOfFirst { it.seasonNumber == selectedSeason }
+                .takeIf { it >= 0 }
+                ?.plus(1)
+                ?: 0
+        }
+    }
+
+    LaunchedEffect(selectedIndex, seasons.size) {
+        listState.scrollToItem(selectedIndex)
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == selectedIndex }
+            ?: return@LaunchedEffect
+        val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+        val itemCenter = item.offset + item.size / 2f
+        listState.animateScrollBy(itemCenter - viewportCenter)
+    }
+
+    LazyRow(
+        modifier = modifier
+            .focusProperties { enter = { selectedFocusRequester } }
+            .then(
+                if (onDirectionUp != null) {
+                    Modifier.onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                            onDirectionUp()
+                        } else {
+                            false
+                        }
+                    }
+                } else {
+                    Modifier
+                },
+            )
+            .focusGroup(),
+        state = listState,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        contentPadding = PaddingValues(horizontal = horizontalContentPadding, vertical = 2.dp),
+    ) {
+        item(key = "series-show-overview", contentType = "series-mode") {
+            TvSeriesModeTab(
+                title = "Show",
+                isSelected = isShowingSeriesOverview,
+                onActivated = onShowSelected,
+                modifier = if (isShowingSeriesOverview) {
+                    Modifier.focusRequester(selectedFocusRequester)
+                } else {
+                    Modifier
+                },
+            )
+        }
+        items(
+            seasons,
+            key = { "series-season-${it.seasonNumber}-${it.contentId}" },
+            contentType = { "series-mode" },
+        ) { season ->
+            val selected = !isShowingSeriesOverview && season.seasonNumber == selectedSeason
+            TvSeriesModeTab(
+                title = tvSeasonPickerLabel(season),
+                isSelected = selected,
+                onActivated = { onSeasonSelected(season) },
+                modifier = if (selected) {
+                    Modifier.focusRequester(selectedFocusRequester)
+                } else {
+                    Modifier
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TvSeriesModeTab(
+    title: String,
+    isSelected: Boolean,
+    onActivated: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val fill by animateColorAsState(
+        targetValue = when {
+            isFocused -> Color.White
+            isSelected -> Color.White.copy(alpha = 0.20f)
+            else -> Color.White.copy(alpha = 0.05f)
+        },
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f),
+        label = "seriesModeFill",
+    )
+    val labelColor by animateColorAsState(
+        targetValue = if (isFocused) Color.Black else Color.White,
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f),
+        label = "seriesModeLabel",
+    )
+    val borderWidth = when {
+        isFocused -> 0.75.dp
+        isSelected -> 1.dp
+        else -> 0.75.dp
+    }
+    val borderColor = if (isFocused) {
+        Color.Black.copy(alpha = 0.12f)
+    } else {
+        Color.White.copy(alpha = if (isSelected) 0.70f else 0.30f)
+    }
+
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                val pressScale = if (isPressed) 0.98f else 1f
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .shadow(
+                elevation = if (isFocused) 6.dp else 0.dp,
+                shape = CircleShape,
+                clip = false,
+                ambientColor = Color.White.copy(alpha = if (isFocused) 0.08f else 0f),
+                spotColor = Color.White.copy(alpha = if (isFocused) 0.08f else 0f),
+            )
+            .height(26.dp)
+            // Same outward white focus outline as Play and the selector
+            // controls, without changing this row's stable measurements.
+            .seriesModeFocusRing(visible = isFocused)
+            .background(fill, CircleShape)
+            .border(borderWidth, borderColor, CircleShape)
+            // tvOS treats Show and each season as focus-driven modes: moving
+            // laterally updates the page immediately, without an extra Select.
+            // The ViewModel ignores the already-selected season and generation-
+            // guards quick successive loads while the existing selectedIndex
+            // effect keeps the newly focused tab centered.
+            .onFocusChanged { focusState ->
+                if (focusState.isFocused && !isSelected) onActivated()
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onActivated,
+            )
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontSize = 14.sp,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+            ),
+            color = labelColor,
+            maxLines = 1,
+        )
+    }
+}
+
+private fun Modifier.seriesModeFocusRing(visible: Boolean): Modifier = drawWithContent {
+    drawContent()
+    if (!visible) return@drawWithContent
+    val inset = 1.5.dp.toPx()
+    val stroke = 1.25.dp.toPx()
+    drawRoundRect(
+        color = Color.White.copy(alpha = 0.98f),
+        topLeft = Offset(-inset, -inset),
+        size = Size(size.width + inset * 2f, size.height + inset * 2f),
+        cornerRadius = CornerRadius((size.height + inset * 2f) / 2f),
+        style = Stroke(width = stroke),
+    )
 }
 
 /**

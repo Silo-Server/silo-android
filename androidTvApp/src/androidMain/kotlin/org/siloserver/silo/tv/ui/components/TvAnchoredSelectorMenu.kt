@@ -1,6 +1,10 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -12,6 +16,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -20,6 +25,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -55,6 +61,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -93,6 +100,13 @@ data class TvSelectorOption(
     val onSelect: () -> Unit,
     val enabled: Boolean = true,
 )
+
+/** Trigger chrome used by the selector without changing its anchored menu. */
+internal enum class TvSelectorTriggerStyle {
+    SquaredPill,
+    ConnectedSegment,
+    CircularAction,
+}
 
 internal fun selectorExpansionAfterInteractivityChange(
     expanded: Boolean,
@@ -173,7 +187,7 @@ internal fun initialSelectorMenuIndex(options: List<TvSelectorOption>): Int {
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun TvAnchoredSelectorMenu(
+internal fun TvAnchoredSelectorMenu(
     icon: ImageVector,
     label: String,
     value: String,
@@ -181,6 +195,13 @@ fun TvAnchoredSelectorMenu(
     modifier: Modifier = Modifier,
     triggerFocusRequester: FocusRequester? = null,
     interactive: Boolean = true,
+    triggerStyle: TvSelectorTriggerStyle = TvSelectorTriggerStyle.SquaredPill,
+    compactValue: String = value,
+    groupExpanded: Boolean = false,
+    /** Fixed selector bands make the connected trigger occupy its equal share. */
+    connectedFillWidth: Boolean = false,
+    /** Compact fixed bands keep their value stable instead of growing on focus. */
+    connectedExpandValue: Boolean = true,
 ) {
     var expansionRequested by remember { mutableStateOf(false) }
     // Derived, not deferred: a LaunchedEffect would leave the dropdown drawn
@@ -201,71 +222,83 @@ fun TvAnchoredSelectorMenu(
     // popup at the trigger's layout position (the menu inherits the anchor's
     // top-start), so it opens at/under the pill rather than as a centered modal.
     Box(modifier = modifier) {
-        SquaredPillSurface(
-            kind = PillKind.Secondary,
-            onClick = { if (interactive) expansionRequested = true },
-            modifier = Modifier,
-            focusRequester = triggerFr,
-            // Deliberately NOT `enabled = interactive`. A single-choice pill is
-            // not a disabled control — it is Apple's `TVSelectorValue`, a value
-            // display that stays focusable and simply does nothing on Select.
-            // `SquaredPillSurface` routes `enabled` into `Modifier.clickable`,
-            // and a disabled clickable is also unfocusable, so handing it
-            // `interactive` would drop the pill out of D-pad traversal. Most
-            // titles have one version and one audio track, so that would strand
-            // the row: three pills drawn, none reachable, and Down from the
-            // action row skipping the whole cluster. The chevron below is
-            // hidden instead, which is what tells the viewer it will not open.
-            // Secondary .compact pill body padding, tvOS 40×22pt → 20×11dp,
-            // +2/+1 per design review.
-            contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
-        ) { fg ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = fg,
-                    modifier = Modifier.size(13.dp),
-                )
-                Spacer(Modifier.width(7.dp))
-                // tvOS `TVSelectorButton`: label 18pt bold tracking 1.0 @0.6,
-                // value 22pt semibold — floored at 14sp for 10-ft legibility
-                // (audit 2026-07-20).
-                Text(
-                    text = label.uppercase(),
-                    style = MaterialTheme.typography.labelLarge.copy(
-                        fontSize = 14.sp,
-                        lineHeight = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp,
-                    ),
-                    color = fg.copy(alpha = 0.75f),
-                    maxLines = 1,
-                )
-                Spacer(Modifier.width(7.dp))
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = 14.sp,
-                        lineHeight = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    ),
-                    color = fg,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (interactive) {
-                    Spacer(Modifier.width(7.dp))
+        when (triggerStyle) {
+            TvSelectorTriggerStyle.CircularAction -> TvSquareToggleButton(
+                icon = icon,
+                iconActive = icon,
+                isActive = false,
+                contentDescription = buildString {
+                    append(label)
+                    value.takeIf { it.isNotBlank() }?.let { append(", ").append(it) }
+                },
+                onClick = { if (interactive) expansionRequested = true },
+                focusRequester = triggerFr,
+            )
+            TvSelectorTriggerStyle.ConnectedSegment -> ConnectedSelectorTrigger(
+                icon = icon,
+                label = label,
+                value = value,
+                compactValue = compactValue,
+                expanded = groupExpanded || expanded,
+                interactive = interactive,
+                focusRequester = triggerFr,
+                fillWidth = connectedFillWidth,
+                expandValue = connectedExpandValue,
+                onClick = { if (interactive) expansionRequested = true },
+            )
+            TvSelectorTriggerStyle.SquaredPill -> SquaredPillSurface(
+                kind = PillKind.Secondary,
+                onClick = { if (interactive) expansionRequested = true },
+                modifier = Modifier,
+                focusRequester = triggerFr,
+                // Deliberately NOT `enabled = interactive`. A single-choice
+                // value remains focusable and simply does nothing on Select.
+                contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
+            ) { fg ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Icon(
-                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        imageVector = icon,
                         contentDescription = null,
-                        tint = fg.copy(alpha = 0.6f),
-                        modifier = Modifier.size(9.5.dp),
+                        tint = fg,
+                        modifier = Modifier.size(13.dp),
                     )
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        text = label.uppercase(),
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = 14.sp,
+                            lineHeight = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp,
+                        ),
+                        color = fg.copy(alpha = 0.75f),
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        text = value,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 14.sp,
+                            lineHeight = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = fg,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (interactive) {
+                        Spacer(Modifier.width(7.dp))
+                        Icon(
+                            imageVector = Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = fg.copy(alpha = 0.6f),
+                            modifier = Modifier.size(9.5.dp),
+                        )
+                    }
                 }
             }
         }
@@ -401,6 +434,86 @@ fun TvAnchoredSelectorMenu(
                 }
                 CascadePanelFooter(caption = "Press selects · Back closes")
             }
+        }
+    }
+}
+
+/** One focusable segment inside the approved connected selector capsule. */
+@Composable
+private fun ConnectedSelectorTrigger(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    compactValue: String,
+    expanded: Boolean,
+    interactive: Boolean,
+    focusRequester: FocusRequester,
+    fillWidth: Boolean,
+    expandValue: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val focused by interactionSource.collectIsFocusedAsState()
+    val foreground by animateColorAsState(
+        targetValue = if (focused) Color.Black else Color.White,
+        animationSpec = tween(120),
+        label = "selectorSegmentForeground",
+    )
+    val fill by animateColorAsState(
+        targetValue = if (focused) Color.White else Color.Transparent,
+        animationSpec = tween(120),
+        label = "selectorSegmentFill",
+    )
+    val showsFullValue = expandValue && (expanded || focused)
+
+    Row(
+        modifier = (if (fillWidth) {
+            Modifier.fillMaxWidth()
+        } else {
+            Modifier.animateContentSize(animationSpec = tween(durationMillis = 280))
+        })
+            .height(23.dp)
+            .clip(CircleShape)
+            .background(fill)
+            .border(
+                width = if (focused) 1.25.dp else 0.dp,
+                color = if (focused) Color.White.copy(alpha = 0.95f) else Color.Transparent,
+                shape = CircleShape,
+            )
+            .focusRequester(focusRequester)
+            .semantics { contentDescription = "$label, $value" }
+            // Keep single-choice values focusable, matching tvOS
+            // TVSelectorValue; interactivity only controls menu expansion.
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = foreground,
+            modifier = Modifier.size(15.dp),
+        )
+        Text(
+            text = if (showsFullValue) value else compactValue,
+            color = foreground,
+            fontWeight = FontWeight.Medium,
+            fontSize = 14.sp,
+            lineHeight = 17.sp,
+            maxLines = 1,
+        )
+        if (interactive && showsFullValue) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                tint = foreground.copy(alpha = 0.78f),
+                modifier = Modifier.size(8.dp),
+            )
         }
     }
 }

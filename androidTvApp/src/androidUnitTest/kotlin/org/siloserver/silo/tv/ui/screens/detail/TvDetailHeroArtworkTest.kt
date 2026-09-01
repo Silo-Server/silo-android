@@ -1,9 +1,12 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import androidx.compose.ui.graphics.Color
+import java.io.File
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class TvDetailHeroArtworkTest {
@@ -65,5 +68,40 @@ class TvDetailHeroArtworkTest {
 
         assertNull(artwork.url)
         assertNull(artwork.thumbhash)
+    }
+
+    @Test
+    fun detailPageTintIsOpaqueAndCompositedOverBlack() {
+        val surface = tvDetailPageSurfaceColor(Color(red = 1f, green = 0.5f, blue = 0f))
+
+        assertEquals(0.42f, surface.red, absoluteTolerance = ColorChannelTolerance)
+        assertEquals(0.21f, surface.green, absoluteTolerance = ColorChannelTolerance)
+        assertEquals(0f, surface.blue, absoluteTolerance = ColorChannelTolerance)
+        assertEquals(1f, surface.alpha, absoluteTolerance = ColorChannelTolerance)
+    }
+
+    @Test
+    fun detailPageUsesApprovedDefaultTintBeforeArtworkSamplingCompletes() {
+        val surface = tvDetailPageSurfaceColor(null)
+
+        assertEquals(0.0168f, surface.red, absoluteTolerance = ColorChannelTolerance)
+        assertEquals(0.0504f, surface.green, absoluteTolerance = ColorChannelTolerance)
+        assertEquals(0.0588f, surface.blue, absoluteTolerance = ColorChannelTolerance)
+        assertEquals(1f, surface.alpha, absoluteTolerance = ColorChannelTolerance)
+    }
+
+    @Test
+    fun seriesArtworkDoesNotExposeATintedStripAboveTheImage() {
+        val source = File(
+            "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/detail/TvDetailHero.kt",
+        ).readText()
+
+        assertFalse(source.contains("SERIES_ARTWORK_TOP_OFFSET"))
+        assertFalse(source.contains(".offset(y = if (compactSeries)"))
+    }
+
+    private companion object {
+        // Compose packs sRGB Color channels to 8-bit precision.
+        const val ColorChannelTolerance = 1f / 255f
     }
 }

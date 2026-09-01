@@ -222,6 +222,20 @@ class CatalogRepositoryDetailCacheTest {
     }
 
     @Test
+    fun continueWatchingSeasonPrefetchUsesCachedNavigationWithoutNetwork() = runTest {
+        val cache = FakeCache(
+            seasonsPreset = SeasonsResponse(seasons = emptyList()),
+            episodesPreset = EpisodesResponse(episodes = emptyList()),
+        )
+        val repository = repoThatFailsOnNetwork(cache)
+
+        assertTrue(repository.getSeasonsForPrefetch("series-1") is ApiResult.Success)
+        assertTrue(repository.getEpisodesForPrefetch("series-1", 3) is ApiResult.Success)
+        assertEquals(cache.seasonsPreset, repository.getCachedSeasons("series-1"))
+        assertEquals(cache.episodesPreset, repository.getCachedEpisodes("series-1", 3))
+    }
+
+    @Test
     fun detailResponseStartedBeforeProfileSwitchIsNotCachedForNewProfile() = runTest {
         val requestEntered = CompletableDeferred<Unit>()
         val releaseResponse = CompletableDeferred<Unit>()

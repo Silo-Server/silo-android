@@ -3,7 +3,6 @@ package org.siloserver.silo.tv.ui.shell
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
@@ -47,7 +46,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,7 +58,6 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
@@ -118,6 +115,36 @@ object TvTopMenuLayout {
 }
 
 /**
+ * One shared, soft shadow behind the floating top navigation.
+ *
+ * Root artwork used to paint its own black top scrim while the shell painted a
+ * second background-coloured gradient. Home therefore had a much heavier band
+ * than flat pages, and the two different colours could expose a visible seam.
+ * Keeping this layer beside the bar gives every route exactly one shadow and
+ * lets it disappear with the bar on full-screen surfaces such as Settings.
+ */
+@Composable
+internal fun TvTopMenuDropShadow(
+    visibility: Float,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(TvTopMenuLayout.contentTopInset)
+            .graphicsLayer { alpha = visibility.coerceIn(0f, 1f) }
+            .background(
+                Brush.verticalGradient(
+                    0.00f to Color.Black.copy(alpha = 0.58f),
+                    0.58f to Color.Black.copy(alpha = 0.42f),
+                    0.80f to Color.Black.copy(alpha = 0.14f),
+                    1.00f to Color.Transparent,
+                ),
+            ),
+    )
+}
+
+/**
  * Identifies which menu button currently holds focus. Library-type tabs share
  * the [Tab] case keyed by [TvLibraryTabType]; the remaining cases are the
  * fixed Home/Calendar tabs plus the Search icon and trailing profile avatar.
@@ -135,8 +162,7 @@ private sealed class TvTopMenuFocus {
  * The custom top menu bar — the Skyline grammar from tvOS `TVTopMenuBar.swift`.
  *
  * Layout (three zones):
- * - Leading: the Silo brand lockup (`R.drawable.silo_wordmark`, see
- *   [TvSiloWordmark]).
+ * - Leading: the tracked SILO wordmark used by tvOS (see [TvSiloWordmark]).
  * - Center: Search icon · `Home` · one inverted-capsule tab per visible
  *   library-type · `Calendar`, derived from [destinations] (the shell's
  *   `visibleRoots`), with an invisible search-size twin trailing the tabs so
@@ -677,41 +703,19 @@ data class TvAccountState(
 )
 
 /**
- * The Silo brand lockup at the bar's leading edge (§5.1).
- *
- * This is the shipped trademark artwork, not type: silo-branding's
- * `silo-wordmark-white.svg` as its `derive.py` renders it for Android
- * (`R.drawable.silo_wordmark`, 764x400). Branding's own rules pick both the
- * variant and the treatment:
- * - *"Pick the variant that contrasts with its background: dark art on light,
- *   white on dark."* The menu bar is dark chrome, so the **white** lockup is the
- *   correct cut — and it is the only wordmark `derive.py` emits for Android.
- * - *"Don't recolour the mark, or add shadows, outlines or effects."* So, unlike
- *   the `Text` this replaced, no `SiloOnSurface` tint is applied. The lockup's
- *   type is already `#FFFFFF` and its three bars carry the signal palette; a
- *   `ColorFilter` would flatten them and breach the trademark guidance.
- * - *"Typeset 'Silo' in place of the supplied wordmark"* is on branding's
- *   **Don't** list — which is precisely what the old `Text("SILO")` did.
- *
- * The PNG is used rather than a hand-built `VectorDrawable` because `derive.py`
- * is branding's declared source of truth for downstream Android assets and emits
- * exactly this file at exactly this path; a transcribed vector would fork the
- * mark out of that pipeline and go stale the next time the artwork changes. It
- * costs nothing in sharpness: the source is 764px wide against a ~46dp render
- * (92px at the 320dpi TV reference, 184px even on a 4x surface).
- *
- * Height comes from [TvSkyline.wordmarkHeight]; the width follows the drawable's
- * intrinsic 764:400 ratio (~45.8.dp) with [ContentScale.Fit], so the artwork is
- * never stretched or cropped — also forbidden. Decorative: an `Image` adds no
- * focusable node, so the bar's D-pad order is unchanged.
+ * The approved Apple TV bar deliberately uses a heavy text mark rather than
+ * the multicolour image lockup: 26pt with 0.34-em tracking. Android's TV canvas
+ * is half scale, with a 14sp floor for ten-foot readability.
  */
 @Composable
 private fun TvSiloWordmark() {
-    Image(
-        painter = painterResource(id = R.drawable.silo_wordmark),
-        contentDescription = "Silo",
-        contentScale = ContentScale.Fit,
-        modifier = Modifier.height(TvSkyline.wordmarkHeight),
+    Text(
+        text = "SILO",
+        color = Color.White,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 4.42.sp,
+        maxLines = 1,
     )
 }
 
