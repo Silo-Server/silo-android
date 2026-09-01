@@ -33,7 +33,7 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 | **Apps** | Android phone · Android TV |
 | **Application ID** | `org.siloserver.silo` (shared by phone + TV — one Play listing) |
 | **Language / UI** | Kotlin 2.1.20 · Jetpack Compose (Material 3) · Compose for TV (`androidx.tv`) |
-| **Playback** | AndroidX **Media3 / ExoPlayer** 1.10.1 with a pinned FFmpeg audio fallback extension |
+| **Playback** | AndroidX **Media3 / ExoPlayer** 1.11.0 with a pinned FFmpeg audio fallback extension |
 | **Networking** | **Ktor** 3.1.2 client · kotlinx.serialization · WebSockets for realtime |
 | **DI** | **Koin** 4.1.0 |
 | **Persistence** | AndroidX DataStore · EncryptedSharedPreferences (tokens) · WorkManager (downloads) |

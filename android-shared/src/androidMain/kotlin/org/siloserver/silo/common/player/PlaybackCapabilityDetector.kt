@@ -133,11 +133,16 @@ class PlaybackCapabilityDetector(
             val routeCaps = audioCapabilityManager.capabilities.value
             val maxChannels = routeCaps.maxChannels
 
+            // Match the exact native probe used by FfmpegAudioRenderer rather
+            // than treating Java class presence as proof that this ABI and
+            // decoder are usable. A partial/native-load failure must replan,
+            // not loop through the same impossible DIRECT claim.
+            val ffmpegSupportsMime = FfmpegAudioSupport.supportsMimeType(mime)
             val rendererCanDecode = canDecodeAudio(
                 mime = mime,
                 channelCount = channels,
                 platformDecoders = detectPlatformSoftwareAudioCodecs().decoders,
-                ffmpegAvailable = FfmpegAudioSupport.isAvailable(),
+                ffmpegAvailable = ffmpegSupportsMime,
             )
             // A sink that carries the encoded stream bypasses the decoder
             // entirely, so its channel limit is irrelevant. AC-3/E-AC-3/JOC were
@@ -154,6 +159,7 @@ class PlaybackCapabilityDetector(
                 MimeTypes.AUDIO_TRUEHD -> listOf("truehd")
                 MimeTypes.AUDIO_DTS_HD -> listOf("dts_hd")
                 MimeTypes.AUDIO_DTS -> listOf("dts")
+                MimeTypes.AUDIO_DTS_EXPRESS -> listOf("dts")
                 MimeTypes.AUDIO_AC4 -> listOf("ac4")
                 MimeTypes.AUDIO_AC3 -> listOf("ac3")
                 MimeTypes.AUDIO_E_AC3 -> listOf("eac3")
@@ -174,7 +180,7 @@ class PlaybackCapabilityDetector(
                 mime = mime,
                 channelCount = 0,
                 platformDecoders = detectPlatformSoftwareAudioCodecs().decoders,
-            ) || (FfmpegAudioSupport.isAvailable() && mime in FfmpegAudioSupport.mimeTypes)
+            ) || ffmpegSupportsMime
 
             if (!codecKnownAtAll && !sinkCanPassthrough) {
                 return Playability.UnsupportedAudioCodec(mime)
@@ -196,12 +202,13 @@ class PlaybackCapabilityDetector(
     }
 
     /**
-     * @param ffmpegAvailable overridable for tests; production callers omit
-     * this to let [FfmpegAudioSupport.isAvailable] probe the real classpath.
-     * On phones, FFmpeg codecs are appended to
-     * [ClientCodecCapabilities.codecsAudio]. TV planning advertises platform
-     * decoders plus the active sink's separate passthrough capabilities so
-     * extension-only PCM fallback cannot preempt synchronized audio adaptation.
+     * @param ffmpegAvailable master gate for tests and diagnostics; a true
+     * value still requires [FfmpegAudioSupport] to load the native library and
+     * verify each decoder for the current ABI. Both phone and TV advertise the
+     * per-decoder subset
+     * verified by [FfmpegAudioSupport.supportedCodecShortCodes]. Encoded HDMI
+     * passthrough remains a separate claim and the platform renderer still
+     * wins when it can preserve that path.
      */
     fun detect(
         ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
@@ -227,10 +234,14 @@ class PlaybackCapabilityDetector(
         }
 
         val platformAudio = detectPlatformSoftwareAudioCodecs()
+        val ffmpegAudio = if (ffmpegAvailable) {
+            FfmpegAudioSupport.supportedCodecShortCodes()
+        } else {
+            emptyList()
+        }
         val softwareAudio = advertisedAudioDecodeCodecs(
             platformCodecs = platformAudio.codecs,
-            ffmpegAvailable = ffmpegAvailable,
-            isTv = TvModeDetector.isTv(context),
+            ffmpegCodecs = ffmpegAudio,
         )
         val passthrough = audioRoute.capabilities
         val hasAnyHdr = intersectedHdr.hdr10 ||
@@ -578,25 +589,19 @@ internal class PlaybackPlanningSnapshotRegistry(
  * Audio decoders safe to advertise to the server's route planner.
  *
  * Media3's FFmpeg [androidx.media3.exoplayer.audio.DecoderAudioRenderer] emits
- * PCM and does not report tunneling support. On TV, advertising extension-only
- * codecs such as TrueHD therefore makes the server send original audio into a
- * software-timed HDMI path even when it could copy the video and adapt only the
- * audio to a platform-synchronized format. Keep FFmpeg available as a runtime
- * fallback, but advertise only platform decoders on TV; encoded formats the
- * active sink can carry remain represented separately by `audioPassthrough`.
+ * PCM and does not report tunneling support. That is still valid local decode
+ * evidence on TV: Media3 declines tunneling for the FFmpeg renderer and keeps
+ * hardware video decoding, while a passthrough-capable platform renderer wins
+ * before FFmpeg. Excluding these codecs by form factor forced every TV-side
+ * DTS/DTS-HD/TrueHD MKV through server HLS despite the bundled decoder.
+ *
+ * [ffmpegCodecs] has already passed both JNI-load and decoder-presence probes;
+ * this helper only performs the stable, order-preserving merge.
  */
 internal fun advertisedAudioDecodeCodecs(
     platformCodecs: List<String>,
-    ffmpegAvailable: Boolean,
-    isTv: Boolean,
-): List<String> {
-    val ffmpegCodecs = if (ffmpegAvailable && !isTv) {
-        FfmpegAudioSupport.codecShortCodes
-    } else {
-        emptyList()
-    }
-    return (platformCodecs + ffmpegCodecs).distinct()
-}
+    ffmpegCodecs: List<String>,
+): List<String> = (platformCodecs + ffmpegCodecs).distinct()
 
 /**
  * Client-side Dolby Vision transformations safe to expose to the v3 planner.
@@ -774,21 +779,17 @@ internal fun canDecodeAudio(
  * channels" — those are different answers for the viewer and different
  * fallbacks for the server.
  *
- * Media3 soft-matches E-AC3 JOC onto a plain E-AC3 decoder
- * (`MediaCodecUtil.getAlternativeCodecMimeType`), so a JOC track is accepted by
- * an E-AC3 decoder here too; refusing it would reject content Media3 plays.
+ * Keep E-AC3 JOC separate from plain E-AC3. Media3 1.11 removed its Pixel
+ * fallback from JOC to the standard E-AC3 decoder because those decoders do
+ * not reliably accept JOC streams. A device may still expose a real JOC
+ * decoder, and the bundled FFmpeg renderer is evaluated separately.
  */
 internal fun platformCanDecodeAudio(
     mime: String,
     channelCount: Int,
     platformDecoders: List<PlatformAudioDecodeCapability>,
 ): Boolean {
-    val acceptable = buildSet {
-        add(mime.lowercase())
-        if (mime.equals(MimeTypes.AUDIO_E_AC3_JOC, ignoreCase = true)) {
-            add(MimeTypes.AUDIO_E_AC3.lowercase())
-        }
-    }
+    val acceptable = setOf(mime.lowercase())
     return platformDecoders.any { decoder ->
         decoder.mimeType.lowercase() in acceptable &&
             when {
@@ -809,6 +810,12 @@ internal fun platformAudioCodecName(mimeType: String): String? = when {
     mimeType.equals(MimeTypes.AUDIO_AC3, ignoreCase = true) -> "ac3"
     mimeType.equals(MimeTypes.AUDIO_E_AC3, ignoreCase = true) -> "eac3"
     mimeType.equals(MimeTypes.AUDIO_E_AC3_JOC, ignoreCase = true) -> "eac3_joc"
+    mimeType.equals(MimeTypes.AUDIO_TRUEHD, ignoreCase = true) -> "truehd"
+    mimeType.equals(MimeTypes.AUDIO_DTS, ignoreCase = true) -> "dts"
+    mimeType.equals(MimeTypes.AUDIO_DTS_EXPRESS, ignoreCase = true) -> "dts"
+    mimeType.equals(MimeTypes.AUDIO_DTS_HD, ignoreCase = true) -> "dts_hd"
+    mimeType.equals(MimeTypes.AUDIO_AC4, ignoreCase = true) -> "ac4"
+    mimeType.equals(MimeTypes.AUDIO_ALAC, ignoreCase = true) -> "alac"
     mimeType.equals(MimeTypes.AUDIO_FLAC, ignoreCase = true) -> "flac"
     mimeType.equals(MimeTypes.AUDIO_OPUS, ignoreCase = true) -> "opus"
     mimeType.equals(MimeTypes.AUDIO_VORBIS, ignoreCase = true) -> "vorbis"

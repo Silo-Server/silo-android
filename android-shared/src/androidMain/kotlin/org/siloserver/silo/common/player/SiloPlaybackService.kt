@@ -163,10 +163,17 @@ class SiloPlaybackService : MediaSessionService() {
         // the logcat to show the player's FFmpeg-audio mode alongside the
         // analytics listener's `onAudioDecoderInitialized` callback, which
         // reports the specific decoder the renderer selected.
+        val ffmpegAvailable = FfmpegAudioSupport.isAvailable()
+        val ffmpegCodecs = if (ffmpegAvailable) {
+            FfmpegAudioSupport.supportedCodecShortCodes().joinToString(",")
+        } else {
+            "none"
+        }
         android.util.Log.i(
             TAG,
-            "FFmpeg audio preferred = ${BuildConfig.FFMPEG_AUDIO_ENABLED}, " +
-                "extension on classpath = ${FfmpegAudioSupport.isAvailable()}",
+            "FFmpeg audio enabled = ${BuildConfig.FFMPEG_AUDIO_ENABLED}, " +
+                "native extension available = $ffmpegAvailable, " +
+                "verified codecs = $ffmpegCodecs",
         )
 
         val bitmapLoader = SiloMediaSessionBitmapLoader(this)

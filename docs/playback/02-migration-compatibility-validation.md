@@ -146,7 +146,7 @@ Specific correctness work includes:
   Profile 7 checks the required DV and HEVC decoder combination;
 - remove unconditional Profile 8 direct play and use server-supplied variant and
   base-layer compatibility metadata;
-- build the private FFmpeg decoder extension from the same Media3 1.10.1 tag as
+- build the private FFmpeg decoder extension from the same Media3 1.11.0 tag as
   the app runtime and retain its pinned NDK/FFmpeg inputs;
 - test AVI as Media3 extractor-supported rather than classifying it as MPV-only;
 - test embedded and sidecar PGS/VobSub/DVB separately instead of treating every

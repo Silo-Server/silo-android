@@ -48,11 +48,14 @@ class TrackSelectionPresetsFfmpegTest {
         val mimes = TrackSelectionPresets.buildTvAudioMimePreferences(
             caps = stereoOnlySink,
             ffmpegAvailable = true,
+            ffmpegMimeTypes = FfmpegAudioSupport.mimeTypes,
         )
         // Every FFmpeg-decodable MIME is reachable and must appear in the list.
         assertContains(mimes, MimeTypes.AUDIO_TRUEHD)
         assertContains(mimes, MimeTypes.AUDIO_DTS_HD)
         assertContains(mimes, MimeTypes.AUDIO_DTS)
+        assertContains(mimes, MimeTypes.AUDIO_DTS_EXPRESS)
+        assertContains(mimes, MimeTypes.AUDIO_ALAC)
         assertContains(mimes, MimeTypes.AUDIO_E_AC3_JOC)
         assertContains(mimes, MimeTypes.AUDIO_E_AC3)
         assertContains(mimes, MimeTypes.AUDIO_AC3)
@@ -85,6 +88,20 @@ class TrackSelectionPresetsFfmpegTest {
     }
 
     @Test
+    fun `DTS passthrough makes both core and Express MIME variants reachable`() {
+        val mimes = TrackSelectionPresets.buildTvAudioMimePreferences(
+            caps = AudioPassthroughCapabilities(
+                passthroughCodecs = listOf("dts"),
+                maxChannels = 6,
+            ),
+            ffmpegAvailable = false,
+        )
+
+        assertContains(mimes, MimeTypes.AUDIO_DTS)
+        assertContains(mimes, MimeTypes.AUDIO_DTS_EXPRESS)
+    }
+
+    @Test
     fun `TV desired order — E-AC-3 JOC beats TrueHD beats AC-3 beats AAC`() {
         val mimes = TrackSelectionPresets.buildTvAudioMimePreferences(
             caps = atmosAvrSink,
@@ -109,10 +126,13 @@ class TrackSelectionPresetsFfmpegTest {
             caps = stereoOnlySink,
             spatializerOn = false,
             ffmpegAvailable = true,
+            ffmpegMimeTypes = FfmpegAudioSupport.mimeTypes,
         )
         assertContains(mimes, MimeTypes.AUDIO_E_AC3)
         assertContains(mimes, MimeTypes.AUDIO_TRUEHD)
         assertContains(mimes, MimeTypes.AUDIO_DTS_HD)
+        assertContains(mimes, MimeTypes.AUDIO_DTS_EXPRESS)
+        assertContains(mimes, MimeTypes.AUDIO_ALAC)
         assertContains(mimes, MimeTypes.AUDIO_AAC)
         // Without spatializer, JOC should not be prioritized ahead of E-AC-3.
         val jocIdx = mimes.indexOf(MimeTypes.AUDIO_E_AC3_JOC)
@@ -138,6 +158,7 @@ class TrackSelectionPresetsFfmpegTest {
             caps = stereoOnlySink,
             spatializerOn = true,
             ffmpegAvailable = true,
+            ffmpegMimeTypes = FfmpegAudioSupport.mimeTypes,
         )
         // Spatializer elevates JOC to the top; AC-4 would follow if reachable,
         // but it's not in FFmpeg's set or passthrough, so it drops out.
@@ -166,6 +187,7 @@ class TrackSelectionPresetsFfmpegTest {
             caps = eac3PassthroughSink,
             spatializerOn = true,
             ffmpegAvailable = true,
+            ffmpegMimeTypes = FfmpegAudioSupport.mimeTypes,
         )
         assertEquals(mimes.size, mimes.toSet().size, "MIME list must be duplicate-free")
     }
