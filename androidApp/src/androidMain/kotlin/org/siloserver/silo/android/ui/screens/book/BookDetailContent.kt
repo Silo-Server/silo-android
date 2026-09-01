@@ -271,6 +271,7 @@ fun BookDetailContent(
                         contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
                         onClick = onFavoriteClick,
                         activeTint = Color(0xFFEF5350),
+                        label = "Favorite",
                     )
                     CircleActionButton(
                         icon = Icons.Filled.BookmarkBorder,
@@ -278,6 +279,7 @@ fun BookDetailContent(
                         isActive = isInWatchlist,
                         contentDescription = if (isInWatchlist) "Remove from watchlist" else "Add to watchlist",
                         onClick = onWatchlistClick,
+                        label = "Watchlist",
                     )
                 }
                 downloadProgress?.let { progress ->

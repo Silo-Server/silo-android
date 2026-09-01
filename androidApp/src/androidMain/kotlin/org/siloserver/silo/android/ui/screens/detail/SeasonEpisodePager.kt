@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.animation.core.animateDpAsState
@@ -47,21 +46,29 @@ internal fun SeasonEpisodePager(
     episodesBySeason: Map<Int, List<EpisodeListItem>>,
     isLoadingEpisodes: Boolean,
     onSeasonSelected: (Int) -> Unit,
-    onEpisodePlayClick: (String, Double?) -> Unit,
+    onEpisodePlayClick: ((String, Double?) -> Unit)?,
     onEpisodeDetailClick: (String) -> Unit,
-    onEpisodeDownloadClick: ((EpisodeListItem) -> Unit)?,
-    episodeDownloadState: (EpisodeListItem) -> DetailDownloadState,
+    onEpisodeWatchedChange: ((String, Boolean) -> Unit)? = null,
     highlightContentId: String? = null,
+    showsSeasonSelector: Boolean = true,
+    selectsCenteredEpisode: Boolean = false,
+    allowsSeasonPaging: Boolean = true,
+    /** Tablet/fold rail cards show title, date/runtime, and overview. */
+    showsEpisodeDetails: Boolean = false,
+    /** Tablet/fold rail selection follows taps rather than centre position. */
+    tapToFocusEpisode: Boolean = false,
 ) {
-    if (seasons.size <= 1) {
+    if (seasons.size <= 1 || !allowsSeasonPaging) {
         SeasonEpisodePage(
             episodes = episodes,
             isLoading = isLoadingEpisodes,
             onEpisodePlayClick = onEpisodePlayClick,
             onEpisodeDetailClick = onEpisodeDetailClick,
-            onEpisodeDownloadClick = onEpisodeDownloadClick,
-            episodeDownloadState = episodeDownloadState,
+            onEpisodeWatchedChange = onEpisodeWatchedChange,
             highlightContentId = highlightContentId,
+            selectsCenteredEpisode = selectsCenteredEpisode,
+            showsEpisodeDetails = showsEpisodeDetails,
+            tapToFocusEpisode = tapToFocusEpisode,
         )
         return
     }
@@ -101,17 +108,19 @@ internal fun SeasonEpisodePager(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        SeasonChips(
-            seasons = seasons,
-            selectedSeasonNumber = selectedSeasonNumber,
-            onSeasonSelected = { seasonNumber ->
-                val page = seasons.indexOfFirst { it.seasonNumber == seasonNumber }
-                onSeasonSelected(seasonNumber)
-                if (page >= 0 && pagerState.targetPage != page) {
-                    scope.launch { pagerState.animateScrollToPage(page) }
-                }
-            },
-        )
+        if (showsSeasonSelector) {
+            SeasonChips(
+                seasons = seasons,
+                selectedSeasonNumber = selectedSeasonNumber,
+                onSeasonSelected = { seasonNumber ->
+                    val page = seasons.indexOfFirst { it.seasonNumber == seasonNumber }
+                    onSeasonSelected(seasonNumber)
+                    if (page >= 0 && pagerState.targetPage != page) {
+                        scope.launch { pagerState.animateScrollToPage(page) }
+                    }
+                },
+            )
+        }
 
         // A pager with an unconstrained height sizes itself to the TALLEST page
         // it has composed — with the neighbours kept alive, a long season next
@@ -155,9 +164,11 @@ internal fun SeasonEpisodePager(
                         (season.seasonNumber != selectedSeasonNumber || isLoadingEpisodes),
                     onEpisodePlayClick = onEpisodePlayClick,
                     onEpisodeDetailClick = onEpisodeDetailClick,
-                    onEpisodeDownloadClick = onEpisodeDownloadClick,
-                    episodeDownloadState = episodeDownloadState,
+                    onEpisodeWatchedChange = onEpisodeWatchedChange,
                     highlightContentId = highlightContentId,
+                    selectsCenteredEpisode = selectsCenteredEpisode,
+                    showsEpisodeDetails = showsEpisodeDetails,
+                    tapToFocusEpisode = tapToFocusEpisode,
                     modifier = Modifier
                         .onSizeChanged { pageHeightsPx[page] = it.height }
                         .graphicsLayer {
@@ -175,23 +186,21 @@ internal fun SeasonEpisodePager(
 private fun SeasonEpisodePage(
     episodes: List<EpisodeListItem>,
     isLoading: Boolean,
-    onEpisodePlayClick: (String, Double?) -> Unit,
+    onEpisodePlayClick: ((String, Double?) -> Unit)?,
     onEpisodeDetailClick: (String) -> Unit,
-    onEpisodeDownloadClick: ((EpisodeListItem) -> Unit)?,
-    episodeDownloadState: (EpisodeListItem) -> DetailDownloadState,
+    onEpisodeWatchedChange: ((String, Boolean) -> Unit)?,
     highlightContentId: String?,
+    selectsCenteredEpisode: Boolean,
+    showsEpisodeDetails: Boolean,
+    tapToFocusEpisode: Boolean,
     modifier: Modifier = Modifier,
 ) {
     when {
         isLoading -> {
-            Box(
-                modifier = modifier
-                    .fillMaxWidth()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
+            EpisodeListSkeleton(
+                showsEpisodeDetails = showsEpisodeDetails,
+                modifier = modifier,
+            )
         }
         episodes.isEmpty() -> {
             Text(
@@ -206,9 +215,11 @@ private fun SeasonEpisodePage(
                 episodes = episodes,
                 onEpisodePlayClick = onEpisodePlayClick,
                 onEpisodeDetailClick = onEpisodeDetailClick,
-                onEpisodeDownloadClick = onEpisodeDownloadClick,
-                episodeDownloadState = episodeDownloadState,
+                onEpisodeWatchedChange = onEpisodeWatchedChange,
                 highlightContentId = highlightContentId,
+                selectsCenteredEpisode = selectsCenteredEpisode,
+                showsEpisodeDetails = showsEpisodeDetails,
+                tapToFocusEpisode = tapToFocusEpisode,
                 modifier = modifier,
             )
         }

@@ -4,6 +4,7 @@ import android.net.Uri
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
+import org.siloserver.silo.model.section.SectionItem
 
 /**
  * All navigation routes for the Silo app.
@@ -123,15 +124,19 @@ sealed class Route(val route: String) {
     data class ItemDetail(
         val contentId: String,
         val seasonNumber: Int? = null,
+        val episodeContentId: String? = null,
     ) : Route(
-        if (seasonNumber != null) {
-            "item/${contentId.routeEncode()}?seasonNumber=$seasonNumber"
-        } else {
-            "item/${contentId.routeEncode()}"
-        }
+        "item/${contentId.routeEncode()}" +
+            listOfNotNull(
+                seasonNumber?.let { "seasonNumber=$it" },
+                episodeContentId
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { "episodeContentId=${it.routeEncode()}" },
+            ).let { params -> if (params.isEmpty()) "" else "?" + params.joinToString("&") },
     ) {
         companion object {
-            const val ROUTE = "item/{contentId}?seasonNumber={seasonNumber}"
+            const val ROUTE =
+                "item/{contentId}?seasonNumber={seasonNumber}&episodeContentId={episodeContentId}"
         }
     }
 
@@ -263,6 +268,24 @@ sealed class Route(val route: String) {
         }
     }
 
+}
+
+/**
+ * Continue Watching episodes belong to the unified series detail surface.
+ * Preserve the episode as route state so opening (for example) S3E1 loads the
+ * parent series, selects Season 3, and focuses that exact episode in its rail.
+ */
+internal fun continueWatchingDetailRoute(item: SectionItem): String {
+    val seriesId = item.seriesId?.takeIf { it.isNotBlank() }
+    return if (item.type.equals("episode", ignoreCase = true) && seriesId != null) {
+        Route.ItemDetail(
+            contentId = seriesId,
+            seasonNumber = item.seasonNumber,
+            episodeContentId = item.contentId,
+        ).route
+    } else {
+        Route.ItemDetail(item.contentId).route
+    }
 }
 
 /**

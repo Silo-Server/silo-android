@@ -55,6 +55,10 @@ data class ItemDetailUiState(
     val seasons: List<Season> = emptyList(),
     val selectedSeasonNumber: Int = 1,
     val episodes: List<EpisodeListItem> = emptyList(),
+    /** Episode selected inside a series page. Its full detail powers the hero play target and selectors. */
+    val selectedEpisodeContentId: String? = null,
+    val selectedEpisodeDetail: ItemDetail? = null,
+    val isLoadingSelectedEpisodeDetail: Boolean = false,
     /** Parent-series portrait art used when an episode's own artwork is a wide still. */
     val episodeSeriesPosterUrl: String? = null,
     val episodeSeriesPosterThumbhash: String? = null,
@@ -136,10 +140,14 @@ class ItemDetailViewModel(
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val initialSeasonNumber: Int? =
         savedStateHandle.get<String>("seasonNumber")?.toIntOrNull()
+    private val initialEpisodeContentId: String? =
+        savedStateHandle.get<String>("episodeContentId")?.takeIf { it.isNotBlank() }
+    private var pendingInitialEpisodeContentId: String? = initialEpisodeContentId
 
     private val _uiState = MutableStateFlow(ItemDetailUiState())
     val uiState: StateFlow<ItemDetailUiState> = _uiState.asStateFlow()
     private var episodeLoadJob: Job? = null
+    private var selectedEpisodeLoadJob: Job? = null
     private var allEpisodeFileIdsJob: Job? = null
     private data class EpisodeRollupRequest(
         val seriesId: String,
@@ -166,6 +174,7 @@ class ItemDetailViewModel(
     val downloadCapability: StateFlow<DownloadCapability?> = downloadsRepository.capability
 
     private var watchedMutationGeneration = 0
+    private val episodeWatchedMutationGenerations = mutableMapOf<String, Int>()
 
     private val descriptionTranslation = DescriptionTranslationController(
         repository = metadataAiRepository,
@@ -343,9 +352,13 @@ class ItemDetailViewModel(
     fun loadDetail() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
+            // Start the live request immediately. The durable cache read can
+            // still paint an instant first frame, but it no longer delays the
+            // network request that supplies fresh movie/series metadata.
+            val liveDetail = async { catalogRepository.getItemDetail(contentId) }
             seedCachedDetail()
 
-            when (val result = catalogRepository.getItemDetail(contentId)) {
+            when (val result = liveDetail.await()) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
                     _uiState.update {
@@ -518,7 +531,15 @@ class ItemDetailViewModel(
 
     private fun loadSeasons(seriesId: String) {
         viewModelScope.launch {
-            when (val result = catalogRepository.getSeasons(seriesId)) {
+            // Continue Watching warms the parent series before navigation. Use
+            // that fresh cache immediately only for that targeted route; direct
+            // card opens retain their normal live season refresh.
+            val result = if (initialEpisodeContentId != null) {
+                catalogRepository.getSeasonsForPrefetch(seriesId)
+            } else {
+                catalogRepository.getSeasons(seriesId)
+            }
+            when (result) {
                 is ApiResult.Success -> {
                     val plan = result.data.seasons.initialSeasonDisplayPlan(initialSeasonNumber)
                     _uiState.update {
@@ -532,6 +553,7 @@ class ItemDetailViewModel(
                             seriesId = seriesId,
                             seasonNumber = seasonNumber,
                             seasonsForDownloadRollup = plan.seasons,
+                            preferPrefetched = initialEpisodeContentId != null,
                         )
                     } ?: run {
                         loadAllEpisodeFileIds(seriesId, plan.seasons)
@@ -683,6 +705,9 @@ class ItemDetailViewModel(
                 selectedSeasonNumber = seasonNumber,
                 episodes = cachedEpisodes.orEmpty(),
                 isLoadingEpisodes = cachedEpisodes == null,
+                selectedEpisodeContentId = null,
+                selectedEpisodeDetail = null,
+                isLoadingSelectedEpisodeDetail = false,
             )
         }
         val detail = _uiState.value.detail ?: return
@@ -690,11 +715,95 @@ class ItemDetailViewModel(
         loadEpisodes(seriesId, seasonNumber)
     }
 
+    /** Selects an episode in place instead of pushing a separate episode route. */
+    fun selectSeriesEpisode(contentId: String) {
+        if (_uiState.value.selectedEpisodeContentId == contentId &&
+            _uiState.value.selectedEpisodeDetail != null
+        ) return
+        selectedEpisodeLoadJob?.cancel()
+        _uiState.update {
+            it.copy(
+                selectedEpisodeContentId = contentId,
+                selectedEpisodeDetail = null,
+                isLoadingSelectedEpisodeDetail = true,
+                selectedVersionIndex = 0,
+                selectedAudioIndex = 0,
+                selectedSubtitleIndex = -1,
+                hasExplicitVersionSelection = false,
+                hasExplicitAudioSelection = false,
+                hasExplicitSubtitleSelection = false,
+            )
+        }
+        loadSelectedEpisodeDetail(contentId)
+    }
+
+    fun ensureSelectedEpisodeDetailLoaded() {
+        val state = _uiState.value
+        val contentId = state.selectedEpisodeContentId ?: return
+        if (state.selectedEpisodeDetail != null || state.isLoadingSelectedEpisodeDetail) return
+        _uiState.update { it.copy(isLoadingSelectedEpisodeDetail = true) }
+        loadSelectedEpisodeDetail(contentId)
+    }
+
+    private fun loadSelectedEpisodeDetail(contentId: String) {
+        selectedEpisodeLoadJob = viewModelScope.launch {
+            val result = if (contentId == initialEpisodeContentId) {
+                catalogRepository.getItemDetailForPrefetch(contentId)
+            } else {
+                catalogRepository.getItemDetail(contentId)
+            }
+            when (result) {
+                is ApiResult.Success -> _uiState.update { state ->
+                    if (state.selectedEpisodeContentId != contentId) state else state.copy(
+                        selectedEpisodeDetail = withLocalProgress(result.data),
+                        isLoadingSelectedEpisodeDetail = false,
+                    )
+                }
+                else -> _uiState.update { state ->
+                    if (state.selectedEpisodeContentId != contentId) state else state.copy(
+                        isLoadingSelectedEpisodeDetail = false,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun ensureSeriesEpisodeSelection(episodes: List<EpisodeListItem>) {
+        if (episodes.isEmpty()) return
+        val current = _uiState.value.selectedEpisodeContentId
+        if (episodes.any { it.contentId == current }) return
+        val routedEpisode = pendingInitialEpisodeContentId?.let { requestedContentId ->
+            episodes.firstOrNull { it.contentId == requestedContentId }
+        }
+        // The route's target applies only to its initial season load. If stale
+        // metadata names an episode outside that season, fall back normally
+        // instead of unexpectedly selecting it after a later manual chip tap.
+        pendingInitialEpisodeContentId = null
+        val preferred = routedEpisode ?: episodes.firstOrNull {
+            (it.userData?.positionSeconds ?: 0.0) > 0.0 && it.userData?.played != true
+        } ?: episodes.firstOrNull { it.userData?.played != true }
+            ?: episodes.first()
+        _uiState.update {
+            it.copy(
+                selectedEpisodeContentId = preferred.contentId,
+                selectedEpisodeDetail = null,
+                isLoadingSelectedEpisodeDetail = false,
+                selectedVersionIndex = 0,
+                selectedAudioIndex = 0,
+                selectedSubtitleIndex = -1,
+                hasExplicitVersionSelection = false,
+                hasExplicitAudioSelection = false,
+                hasExplicitSubtitleSelection = false,
+            )
+        }
+    }
+
     private fun loadEpisodes(
         seriesId: String,
         seasonNumber: Int,
         seasonsForDownloadRollup: List<Season>? = null,
         forceRefresh: Boolean = false,
+        preferPrefetched: Boolean = false,
     ) {
         episodeLoadJob?.cancel()
         val cachedEpisodes = _uiState.value.episodesBySeason[seasonNumber]
@@ -707,6 +816,7 @@ class ItemDetailViewModel(
                     isLoadingEpisodes = false,
                 )
             }
+            ensureSeriesEpisodeSelection(cachedEpisodes)
             seasonsForDownloadRollup?.let { seasons ->
                 loadAllEpisodeFileIds(
                     seriesId = seriesId,
@@ -728,7 +838,12 @@ class ItemDetailViewModel(
                     },
                 )
             }
-            when (val result = catalogRepository.getEpisodes(seriesId, seasonNumber)) {
+            val result = if (!forceRefresh && preferPrefetched) {
+                catalogRepository.getEpisodesForPrefetch(seriesId, seasonNumber)
+            } else {
+                catalogRepository.getEpisodes(seriesId, seasonNumber)
+            }
+            when (result) {
                 is ApiResult.Success -> {
                     val episodes = withLocalProgress(result.data.episodes)
                     loadedSeasonNumber = seasonNumber
@@ -740,6 +855,7 @@ class ItemDetailViewModel(
                             episodes = if (it.selectedSeasonNumber == seasonNumber) episodes else it.episodes,
                         )
                     }
+                    ensureSeriesEpisodeSelection(episodes)
                     seasonsForDownloadRollup?.let { seasons ->
                         loadAllEpisodeFileIds(
                             seriesId = seriesId,
@@ -1057,6 +1173,59 @@ class ItemDetailViewModel(
                 is ApiResult.Success -> { /* already updated */ }
                 else -> if (generation == watchedMutationGeneration) updatePlayedState(current)
             }
+        }
+    }
+
+    /** Marks one episode from the in-page rail without navigating away. */
+    fun setEpisodeWatched(episodeContentId: String, watched: Boolean) {
+        val state = _uiState.value
+        val previous = state.episodes.firstOrNull { it.contentId == episodeContentId }
+            ?.userData?.played
+            ?: state.episodesBySeason.values.asSequence()
+                .flatten()
+                .firstOrNull { it.contentId == episodeContentId }
+                ?.userData?.played
+            ?: false
+        if (previous == watched) return
+
+        val generation = (episodeWatchedMutationGenerations[episodeContentId] ?: 0) + 1
+        episodeWatchedMutationGenerations[episodeContentId] = generation
+        updateEpisodePlayedState(episodeContentId, watched)
+        viewModelScope.launch {
+            when (personalDataRepository.setWatched(episodeContentId, watched)) {
+                is ApiResult.Success -> Unit
+                else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
+                    updateEpisodePlayedState(episodeContentId, previous)
+                }
+            }
+        }
+    }
+
+    private fun updateEpisodePlayedState(episodeContentId: String, played: Boolean) {
+        fun EpisodeListItem.updated(): EpisodeListItem =
+            if (contentId != episodeContentId) this else copy(
+                userData = (userData ?: LeafItemUserData()).copy(played = played),
+            )
+
+        _uiState.update { state ->
+            val selectedDetail = state.selectedEpisodeDetail?.let { episodeDetail ->
+                if (episodeDetail.contentId != episodeContentId) episodeDetail else episodeDetail.copy(
+                    userData = (episodeDetail.userData ?: LeafItemUserData()).copy(played = played),
+                )
+            }
+            val ownDetail = state.detail?.let { itemDetail ->
+                if (itemDetail.contentId != episodeContentId) itemDetail else itemDetail.copy(
+                    userData = (itemDetail.userData ?: LeafItemUserData()).copy(played = played),
+                )
+            }
+            state.copy(
+                detail = ownDetail,
+                episodes = state.episodes.map { it.updated() },
+                episodesBySeason = state.episodesBySeason.mapValues { (_, episodes) ->
+                    episodes.map { it.updated() }
+                },
+                selectedEpisodeDetail = selectedDetail,
+            )
         }
     }
 

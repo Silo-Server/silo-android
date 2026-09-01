@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import org.siloserver.silo.android.ui.components.CardStyle
@@ -31,6 +33,7 @@ fun HomeSectionRow(
     onToggleFavorite: ((String, Boolean) -> Unit)? = null,
     onToggleWatchlist: ((String, Boolean) -> Unit)? = null,
     onDismissContinueWatching: ((SectionItem) -> Unit)? = null,
+    onCenteredContinueWatchingItemChanged: ((SectionItem?) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     if (section.items.isEmpty()) return
@@ -51,6 +54,7 @@ fun HomeSectionRow(
         onItemPlay = if (useBackdrop) onItemPlay else null,
         showProgress = showProgress,
         cardStyle = cardStyle,
+        icon = if (isContinueWatching) Icons.Filled.PlayCircle else null,
         modifier = modifier,
         cardActions = { item ->
             MediaCardActions(
@@ -62,5 +66,6 @@ fun HomeSectionRow(
                 } else null,
             )
         },
+        onCenteredItemChanged = if (isContinueWatching) onCenteredContinueWatchingItemChanged else null,
     )
 }

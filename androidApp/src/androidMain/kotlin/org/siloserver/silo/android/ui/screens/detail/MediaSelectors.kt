@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -22,8 +23,8 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -40,6 +41,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.DarkOutline
@@ -51,10 +53,9 @@ import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.player.DolbyVisionDetection
 
 /**
- * Full-width box row for one playback track group (Video / Audio /
- * Subtitles) — the phone counterpart of the TV detail's selector row.
- * Icon + group label on the left, the current value (ellipsized) and a
- * chevron on the right; tap opens the matching bottom-sheet picker.
+ * One iOS-style row inside [PlaybackSelectorCard]. Icon + group label lead,
+ * while the current value and disclosure chevron trail. Rows deliberately do
+ * not draw their own boxes; the three controls share one rounded container.
  *
  * [interactive] = false when the group holds a single real choice (one
  * version, one audio track, one subtitle track), mirroring Apple's
@@ -75,30 +76,30 @@ fun TrackSelectorRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(DarkSurfaceVariant.copy(alpha = 0.7f))
-            .border(1.dp, DarkOutline, RoundedCornerShape(8.dp))
             .then(if (interactive) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+            .height(44.dp)
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
-            tint = Color.White,
-        )
+        Box(modifier = Modifier.width(20.dp), contentAlignment = Alignment.CenterStart) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(13.dp),
+                tint = Color.White.copy(alpha = 0.55f),
+            )
+        }
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall,
+            fontSize = 14.sp,
             color = Color.White.copy(alpha = 0.72f),
             fontWeight = FontWeight.Medium,
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.labelMedium,
-            color = Color.White.copy(alpha = 0.9f),
+            fontSize = 14.sp,
+            color = Color.White,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             fontWeight = FontWeight.SemiBold,
@@ -107,13 +108,83 @@ fun TrackSelectorRow(
         )
         if (interactive) {
             Icon(
-                imageVector = Icons.Outlined.KeyboardArrowDown,
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = "Select",
-                modifier = Modifier.size(14.dp),
-                tint = Color.White.copy(alpha = 0.62f),
+                modifier = Modifier.size(11.dp),
+                tint = Color.White.copy(alpha = 0.35f),
             )
         }
     }
+}
+
+/**
+ * The common Version / Audio / Subtitles control: one 12dp rounded card with
+ * shared hairline dividers, matching `PhonePlaybackSelectorRow` on iOS.
+ */
+@Composable
+fun PlaybackSelectorCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(133.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .border(0.5.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(12.dp)),
+        content = content,
+    )
+}
+
+@Composable
+fun PlaybackSelectorDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 30.dp),
+        thickness = 0.5.dp,
+        color = Color.White.copy(alpha = 0.08f),
+    )
+}
+
+/**
+ * Loading state with the exact same three 44dp rows as [PlaybackSelectorCard].
+ * Keeping the complete card mounted while a newly centred episode hydrates
+ * prevents the season controls and episode rail from moving vertically.
+ */
+@Composable
+fun PlaybackSelectorSkeleton(modifier: Modifier = Modifier) {
+    val labelWidths = listOf(52.dp, 42.dp, 64.dp)
+    val valueWidths = listOf(128.dp, 154.dp, 48.dp)
+
+    PlaybackSelectorCard(modifier = modifier) {
+        repeat(3) { index ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SelectorSkeletonShape(width = 13.dp, height = 13.dp)
+                SelectorSkeletonShape(width = labelWidths[index], height = 12.dp)
+                Spacer(modifier = Modifier.weight(1f))
+                SelectorSkeletonShape(width = valueWidths[index], height = 12.dp)
+            }
+            if (index < 2) PlaybackSelectorDivider()
+        }
+    }
+}
+
+@Composable
+private fun SelectorSkeletonShape(width: Dp, height: Dp) {
+    Box(
+        modifier = Modifier
+            .width(width)
+            .height(height)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color.White.copy(alpha = 0.10f)),
+    )
 }
 
 // ── Bottom sheet pickers ──────────────────────────────────────

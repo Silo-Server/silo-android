@@ -1,17 +1,13 @@
 package org.siloserver.silo.android.ui.screens.detail
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
@@ -19,7 +15,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.ClosedCaption
@@ -28,7 +23,6 @@ import androidx.compose.material.icons.outlined.HighQuality
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -41,6 +35,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.theme.SiloBackground
+import org.siloserver.silo.android.ui.theme.SiloDetailActionControl
+import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
 import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.model.catalog.EpisodeListItem
@@ -77,9 +73,6 @@ fun MovieDetailContent(
     onFavoriteClick: () -> Unit,
     onWatchlistClick: () -> Unit,
     onToggleWatched: () -> Unit,
-    userRating: Int? = null,
-    onSetRating: (Int) -> Unit = {},
-    onClearRating: () -> Unit = {},
     onVersionSelected: (Int?) -> Unit,
     onAudioSelected: (Int?) -> Unit,
     onSubtitleSelected: (Int?) -> Unit,
@@ -95,10 +88,8 @@ fun MovieDetailContent(
     episodesBySeason: Map<Int, List<EpisodeListItem>> = emptyMap(),
     isLoadingEpisodes: Boolean = false,
     onSeasonSelected: (Int) -> Unit = {},
-    onEpisodePlayClick: (String, Double?) -> Unit = { _, _ -> },
     onEpisodeDetailClick: (String) -> Unit = {},
-    onEpisodeDownloadClick: ((EpisodeListItem) -> Unit)? = null,
-    episodeDownloadState: (EpisodeListItem) -> DetailDownloadState = { DetailDownloadState() },
+    onEpisodeWatchedChange: (String, Boolean) -> Unit = { _, _ -> },
     isDownloaded: Boolean = false,
     downloadProgress: Float? = null,
     playOnDeviceLabel: String = "Play on device",
@@ -112,9 +103,12 @@ fun MovieDetailContent(
     var showVersionPicker by remember { mutableStateOf(false) }
     var showAudioPicker by remember { mutableStateOf(false) }
     var showSubtitlePicker by remember { mutableStateOf(false) }
-    var showRatingSheet by remember { mutableStateOf(false) }
 
-    val dominantColor by rememberDominantColor(detail.backdropUrl, fallback = SiloBackground)
+    val dominantColor by rememberDominantColor(
+        imageUrl = detail.backdropUrl,
+        fallback = SiloBackground,
+        thumbhash = detail.backdropThumbhash,
+    )
 
     val selectedVersion = detail.versions.getOrNull(selectedVersionIndex)
     val audioTracks = selectedVersion?.audioTracks.orEmpty()
@@ -154,6 +148,45 @@ fun MovieDetailContent(
                 dominantColor = dominantColor,
                 directorText = movieDirectorCredit(detail),
                 translation = translation,
+                belowOverview = {
+                    // PR #212 places the grouped playback card after overview,
+                    // credits, and translation—not inside the action stack.
+                    if (hasTrackSelectors) {
+                        PlaybackSelectorCard {
+                            TrackSelectorRow(
+                                icon = Icons.Outlined.HighQuality,
+                                label = "Version",
+                                value = formatVersionValueLabel(selectedVersion, isAutoVersion),
+                                onClick = { showVersionPicker = true },
+                                interactive = detail.versions.size > 1,
+                            )
+                            if (audioTracks.isNotEmpty()) {
+                                PlaybackSelectorDivider()
+                                TrackSelectorRow(
+                                    icon = Icons.Outlined.AudioFile,
+                                    label = "Audio",
+                                    value = formatAudioValueLabel(
+                                        audioTracks,
+                                        selectedAudioIndex,
+                                        selectedVersion?.effectiveAudioTrackIndex,
+                                    ),
+                                    onClick = { showAudioPicker = true },
+                                    interactive = audioTracks.size > 1,
+                                )
+                            }
+                            if (subtitleTracks.isNotEmpty()) {
+                                PlaybackSelectorDivider()
+                                TrackSelectorRow(
+                                    icon = Icons.Outlined.ClosedCaption,
+                                    label = "Subtitles",
+                                    value = formatSubtitleValueLabel(subtitleTracks, selectedSubtitleIndex),
+                                    onClick = { showSubtitlePicker = true },
+                                    interactive = subtitleTracks.size > 1,
+                                )
+                            }
+                        }
+                    }
+                },
             ) {
                 HeroActionStack(
                     primaryLabel = computePlayLabel(detail),
@@ -166,8 +199,6 @@ fun MovieDetailContent(
                     onToggleFavorite = onFavoriteClick,
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleWatched,
-                    userRating = userRating,
-                    onRateClick = { showRatingSheet = true },
                     overflow = if (hasOverflow) {
                         { dismiss ->
                             if (onPlayOnDevice != null) {
@@ -240,65 +271,6 @@ fun MovieDetailContent(
                         null
                     },
                 )
-                // Downloaded confirmation under the action row — the circle
-                // button's filled state alone is easy to miss (QA 2026-07-08);
-                // iOS pairs its green check with an accessible "Downloaded".
-                if (isDownloaded) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.DownloadDone,
-                            contentDescription = null,
-                            tint = Color(0xFF30D158),
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Text(
-                            text = "Downloaded",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color.White.copy(alpha = 0.85f),
-                        )
-                    }
-                }
-                // Box-style track group list (Video / Audio / Subtitles) —
-                // TV & Apple parity; Auto rows preview the resolved track.
-                if (hasTrackSelectors) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        TrackSelectorRow(
-                            icon = Icons.Outlined.HighQuality,
-                            label = "Video",
-                            value = formatVersionValueLabel(selectedVersion, isAutoVersion),
-                            onClick = { showVersionPicker = true },
-                            // Apple's shouldEnable*Selector: a picker is offered
-                            // only when there is more than one real choice. The
-                            // sheets' Auto/Off rows are pseudo-entries and do
-                            // not count toward it.
-                            interactive = detail.versions.size > 1,
-                        )
-                        if (audioTracks.isNotEmpty()) {
-                            TrackSelectorRow(
-                                icon = Icons.Outlined.AudioFile,
-                                label = "Audio",
-                                value = formatAudioValueLabel(audioTracks, selectedAudioIndex, selectedVersion?.effectiveAudioTrackIndex),
-                                onClick = { showAudioPicker = true },
-                                interactive = audioTracks.size > 1,
-                            )
-                        }
-                        if (subtitleTracks.isNotEmpty()) {
-                            TrackSelectorRow(
-                                icon = Icons.Outlined.ClosedCaption,
-                                label = "Subtitles",
-                                value = formatSubtitleValueLabel(subtitleTracks, selectedSubtitleIndex),
-                                onClick = { showSubtitlePicker = true },
-                                interactive = subtitleTracks.size > 1,
-                            )
-                        }
-                    }
-                }
             }
         }
 
@@ -312,9 +284,24 @@ fun MovieDetailContent(
         if (detail.type == "episode" && (seasons.isNotEmpty() || episodes.isNotEmpty() || isLoadingEpisodes)) {
             item(contentType = "detail-episodes") {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    if (seasons.isNotEmpty()) {
+                        SeasonChips(
+                            seasons = seasons,
+                            selectedSeasonNumber = selectedSeasonNumber,
+                            onSeasonSelected = onSeasonSelected,
+                        )
+                    }
+                    val selectedSeason = seasons.firstOrNull {
+                        it.seasonNumber == selectedSeasonNumber
+                    }
                     SectionHeader(
-                        label = if (selectedSeasonNumber == 0) "Specials" else "Season $selectedSeasonNumber",
-                        title = "Episodes",
+                        title = selectedSeason?.let(::seriesSeasonSectionTitle) ?: if (
+                            selectedSeasonNumber == 0
+                        ) {
+                            "Specials Episodes"
+                        } else {
+                            "Season $selectedSeasonNumber Episodes"
+                        },
                     )
                     SeasonEpisodePager(
                         seasons = seasons,
@@ -323,11 +310,12 @@ fun MovieDetailContent(
                         episodesBySeason = episodesBySeason,
                         isLoadingEpisodes = isLoadingEpisodes,
                         onSeasonSelected = onSeasonSelected,
-                        onEpisodePlayClick = onEpisodePlayClick,
+                        onEpisodePlayClick = null,
                         onEpisodeDetailClick = onEpisodeDetailClick,
-                        onEpisodeDownloadClick = onEpisodeDownloadClick,
-                        episodeDownloadState = episodeDownloadState,
+                        onEpisodeWatchedChange = onEpisodeWatchedChange,
                         highlightContentId = detail.contentId,
+                        showsSeasonSelector = false,
+                        allowsSeasonPaging = false,
                     )
                 }
             }
@@ -404,24 +392,10 @@ fun MovieDetailContent(
         )
     }
 
-    if (showRatingSheet) {
-        RatingSheet(
-            currentRating = userRating,
-            onSetRating = { stars ->
-                onSetRating(stars)
-                showRatingSheet = false
-            },
-            onClearRating = {
-                onClearRating()
-                showRatingSheet = false
-            },
-            onDismiss = { showRatingSheet = false },
-        )
-    }
 }
 
 /**
- * 44dp circle download button styled to sit alongside [CircleActionButton]
+ * 42dp circle download button styled to sit alongside [CircleActionButton]
  * (favorite / watchlist / watched) in [HeroActionStack]. Three visual states:
  *
  *   - Not downloaded:  white download icon over a ghost circle (matches the
@@ -442,17 +416,11 @@ internal fun DownloadCircleButton(
     val isInFlight = progress != null && !isDownloaded
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(42.dp)
             .clip(CircleShape)
             .background(
-                if (isDownloaded) Color.White
-                else Color.White.copy(alpha = 0.10f)
-            )
-            .border(
-                width = 1.dp,
-                color = if (isDownloaded) Color.White
-                else Color.White.copy(alpha = 0.25f),
-                shape = CircleShape,
+                if (isDownloaded) SiloDetailActionControlActive
+                else SiloDetailActionControl
             )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -469,7 +437,7 @@ internal fun DownloadCircleButton(
         Icon(
             imageVector = if (isDownloaded) Icons.Filled.Check else Icons.Filled.Download,
             contentDescription = if (isDownloaded) "Downloaded" else "Download",
-            tint = if (isDownloaded) Color.Black else Color.White,
+            tint = Color.White,
             modifier = Modifier.size(if (isDownloaded) 22.dp else 18.dp),
         )
     }

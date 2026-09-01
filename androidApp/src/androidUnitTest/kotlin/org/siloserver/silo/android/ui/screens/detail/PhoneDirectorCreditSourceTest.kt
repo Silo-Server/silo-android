@@ -19,10 +19,11 @@ class PhoneDirectorCreditSourceTest {
     }
 
     @Test
-    fun phoneCreditStaysBetweenTranslationAndFacts() {
-        val translation = hero.indexOf("translation?.invoke()")
-        val director = hero.indexOf("directorText?.takeIf")
-        val facts = hero.indexOf("if (factsLine.isNotEmpty())", startIndex = director)
-        assertTrue(translation >= 0 && translation < director && director < facts)
+    fun phoneCreditStaysBelowFactsAndAboveTranslationAndSelectors() {
+        val facts = hero.indexOf("val metadataTokens = (factsLine + sourceTokens).distinct()")
+        val director = hero.indexOf("DetailCreditBlock(", startIndex = facts)
+        val translation = hero.indexOf("translation?.invoke()", startIndex = director)
+        val selectors = hero.indexOf("belowOverview?.invoke()", startIndex = translation)
+        assertTrue(facts >= 0 && facts < director && director < translation && translation < selectors)
     }
 }

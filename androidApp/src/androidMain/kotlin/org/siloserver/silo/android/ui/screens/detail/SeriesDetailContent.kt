@@ -2,33 +2,30 @@ package org.siloserver.silo.android.ui.screens.detail
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.outlined.Cast
-import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Groups
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.outlined.AudioFile
+import androidx.compose.material.icons.outlined.ClosedCaption
+import androidx.compose.material.icons.outlined.HighQuality
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.model.catalog.EpisodeListItem
@@ -53,24 +50,29 @@ fun SeriesDetailContent(
     isFavorite: Boolean,
     isInWatchlist: Boolean,
     nextEpisodeLabel: String?,
+    selectedEpisodeContentId: String?,
+    selectedEpisodeDetail: ItemDetail?,
+    isLoadingSelectedEpisodeDetail: Boolean,
+    selectedVersionIndex: Int,
+    isAutoVersion: Boolean,
+    selectedAudioIndex: Int?,
+    selectedSubtitleIndex: Int?,
+    onVersionSelected: (Int?) -> Unit,
+    onAudioSelected: (Int?) -> Unit,
+    onSubtitleSelected: (Int?) -> Unit,
     onPlayClick: () -> Unit,
     onPlayFromBeginning: (() -> Unit)? = null,
     resumeStoppedAtLabel: String? = null,
     onEpisodePlayClick: (String, Double?) -> Unit,
     onEpisodeDetailClick: (String) -> Unit,
+    onEpisodeWatchedChange: (String, Boolean) -> Unit,
     onSeasonSelected: (Int) -> Unit,
     onFavoriteClick: () -> Unit,
     onWatchlistClick: () -> Unit,
     onToggleWatched: () -> Unit,
-    userRating: Int? = null,
-    onSetRating: (Int) -> Unit = {},
-    onClearRating: () -> Unit = {},
     onPersonClick: (String) -> Unit,
     onItemDetailClick: (String) -> Unit,
     onSeriesDownloadClick: (() -> Unit)? = null,
-    onSeasonDownloadClick: ((Int) -> Unit)? = null,
-    onEpisodeDownloadClick: ((EpisodeListItem) -> Unit)? = null,
-    episodeDownloadState: (EpisodeListItem) -> DetailDownloadState = { DetailDownloadState() },
     /** Series-level roll-up across ALL seasons: isDownloaded when every episode
      *  is downloaded, progress = downloaded/total fraction while partial. */
     seriesDownloadState: DetailDownloadState = DetailDownloadState(),
@@ -81,25 +83,139 @@ fun SeriesDetailContent(
     translation: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    val dominantColor by rememberDominantColor(detail.backdropUrl, fallback = SiloBackground)
-    var showRatingSheet by remember { mutableStateOf(false) }
+    val dominantColor by rememberDominantColor(
+        imageUrl = detail.backdropUrl,
+        fallback = SiloBackground,
+        thumbhash = detail.backdropThumbhash,
+    )
+    var showVersionPicker by remember { mutableStateOf(false) }
+    var showAudioPicker by remember { mutableStateOf(false) }
+    var showSubtitlePicker by remember { mutableStateOf(false) }
 
     val eyebrow = HeroMetadata.seriesEyebrow(detail)
     val sourceTokens = HeroMetadata.seriesSourceTokens(detail)
     val factsLine = HeroMetadata.seriesFactsLine(detail)
 
     val selectedSeason = seasons.firstOrNull { it.seasonNumber == selectedSeasonNumber }
+    val selectedEpisode = episodes.firstOrNull { it.contentId == selectedEpisodeContentId }
+    val loadedSelectedEpisodeDetail = selectedEpisodeDetail
+        ?.takeIf { it.contentId == selectedEpisodeContentId }
+    val usesEpisodeEditorial = selectedEpisode != null || selectedEpisodeContentId != null
+    val selectedEpisodeOverview = loadedSelectedEpisodeDetail?.overview
+        ?.takeIf { it.isNotBlank() }
+        ?: selectedEpisode?.overview?.takeIf { it.isNotBlank() }
+    // iOS keeps the series cast credit stable while the selected episode's
+    // overview and playback options change. Reusing the series credit avoids
+    // replacing it with a skeleton (and repainting different names) on every
+    // horizontal episode selection.
+    val fixedSeriesCredit = remember(detail.contentId, detail.cast) { seriesStarringCredit(detail) }
     val episodeCountSubtitle = selectedSeason?.episodeCount?.takeIf { it > 0 }?.let { count ->
         "$count episode${if (count == 1) "" else "s"}"
+    }
+
+    val playbackSelector: @Composable () -> Unit = {
+        if (selectedEpisodeContentId != null) {
+            when {
+                isLoadingSelectedEpisodeDetail || loadedSelectedEpisodeDetail == null ->
+                    PlaybackSelectorSkeleton()
+                else -> {
+                    val selectedVersion = loadedSelectedEpisodeDetail.versions.getOrNull(selectedVersionIndex)
+                    val audioTracks = selectedVersion?.audioTracks.orEmpty()
+                    val subtitleTracks = selectedVersion?.subtitleTracks.orEmpty()
+                    PlaybackSelectorCard {
+                        TrackSelectorRow(
+                            icon = Icons.Outlined.HighQuality,
+                            label = "Version",
+                            value = formatVersionValueLabel(selectedVersion, isAutoVersion),
+                            onClick = { showVersionPicker = true },
+                            interactive = loadedSelectedEpisodeDetail.versions.size > 1,
+                        )
+                        PlaybackSelectorDivider()
+                        TrackSelectorRow(
+                            icon = Icons.Outlined.AudioFile,
+                            label = "Audio",
+                            value = if (audioTracks.isEmpty()) "Unavailable" else formatAudioValueLabel(
+                                audioTracks,
+                                selectedAudioIndex,
+                                selectedVersion?.effectiveAudioTrackIndex,
+                            ),
+                            onClick = { showAudioPicker = true },
+                            interactive = audioTracks.size > 1,
+                        )
+                        PlaybackSelectorDivider()
+                        TrackSelectorRow(
+                            icon = Icons.Outlined.ClosedCaption,
+                            label = "Subtitles",
+                            value = if (subtitleTracks.isEmpty()) "Unavailable" else formatSubtitleValueLabel(
+                                subtitleTracks,
+                                selectedSubtitleIndex,
+                            ),
+                            onClick = { showSubtitlePicker = true },
+                            interactive = subtitleTracks.size > 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    val episodeSection: @Composable (Boolean) -> Unit = { showsEpisodeDetails ->
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (seasons.isNotEmpty()) {
+                SeasonChips(
+                    seasons = seasons,
+                    selectedSeasonNumber = selectedSeasonNumber,
+                    onSeasonSelected = onSeasonSelected,
+                )
+            }
+            if (showsEpisodeDetails) {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    SectionHeader(
+                        title = seriesSeasonSectionTitle(selectedSeason),
+                        trailingText = episodeCountSubtitle,
+                    )
+                    Text(
+                        text = "Tap to focus",
+                        fontSize = 11.sp,
+                        color = DetailTertiaryText,
+                        modifier = Modifier.padding(horizontal = SafePadding),
+                    )
+                }
+            } else {
+                SectionHeader(
+                    title = seriesSeasonSectionTitle(selectedSeason),
+                    trailingText = episodeCountSubtitle,
+                )
+            }
+            SeasonEpisodePager(
+                seasons = seasons,
+                selectedSeasonNumber = selectedSeasonNumber,
+                episodes = episodes,
+                episodesBySeason = episodesBySeason,
+                isLoadingEpisodes = isLoadingEpisodes,
+                onSeasonSelected = onSeasonSelected,
+                onEpisodePlayClick = onEpisodePlayClick,
+                onEpisodeDetailClick = onEpisodeDetailClick,
+                onEpisodeWatchedChange = onEpisodeWatchedChange,
+                highlightContentId = selectedEpisodeContentId,
+                showsSeasonSelector = false,
+                selectsCenteredEpisode = !showsEpisodeDetails,
+                allowsSeasonPaging = false,
+                showsEpisodeDetails = showsEpisodeDetails,
+                tapToFocusEpisode = showsEpisodeDetails,
+            )
+        }
     }
 
     // iOS below-fold section spacing is 36 (hero→first section 32). Use 36
     // uniformly — the closest single-value match to the iOS column rhythm.
     val feedState = rememberLazyListState()
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    val isExpandedDetailLayout = maxWidth >= ExpandedDetailBreakpoint
     DeferImagePresentationWhileScrolling(feedState) {
     LazyColumn(
         state = feedState,
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(SiloBackground)
             .background(detailScreenBackgroundBrush(dominantColor)),
@@ -108,14 +224,31 @@ fun SeriesDetailContent(
         item(contentType = "detail-hero") {
             AdaptiveDetailHero(
                 detail = detail,
-                eyebrow = eyebrow,
+                eyebrow = if (isExpandedDetailLayout) null else eyebrow,
                 sourceTokens = sourceTokens,
                 factsLine = factsLine,
                 dominantColor = dominantColor,
-                translation = translation,
+                overviewText = if (isExpandedDetailLayout) {
+                    detail.overview
+                } else if (usesEpisodeEditorial) {
+                    selectedEpisodeOverview
+                } else {
+                    detail.overview
+                },
+                reserveOverviewSpace = !isExpandedDetailLayout && usesEpisodeEditorial,
+                directorText = fixedSeriesCredit,
+                isCreditLoading = false,
+                reserveCreditSpace = !isExpandedDetailLayout && usesEpisodeEditorial,
+                translation = if (isExpandedDetailLayout || !usesEpisodeEditorial) translation else null,
+                belowOverview = if (isExpandedDetailLayout) null else playbackSelector,
+                expandedBelowOverview = {
+                    episodeSection(true)
+                    playbackSelector()
+                },
             ) {
                 HeroActionStack(
-                    primaryLabel = computePlayLabel(detail, nextEpisodeLabel),
+                    primaryLabel = selectedEpisode?.let { "Play ${episodeNumberText(it)}" }
+                        ?: computePlayLabel(detail, nextEpisodeLabel),
                     onPlay = onPlayClick,
                     onPlayFromBeginning = onPlayFromBeginning,
                     resumeStoppedAtLabel = resumeStoppedAtLabel,
@@ -125,8 +258,6 @@ fun SeriesDetailContent(
                     onToggleFavorite = onFavoriteClick,
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleWatched,
-                    userRating = userRating,
-                    onRateClick = { showRatingSheet = true },
                     overflow = if (
                         onWatchTogether != null || onPlayOnDevice != null ||
                         onSuggestToRoom != null
@@ -185,75 +316,9 @@ fun SeriesDetailContent(
             }
         }
 
-        item(contentType = "detail-episodes") {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    SectionHeader(
-                        label = seriesSeasonSectionLabel(selectedSeason),
-                        title = "Episodes",
-                        trailingText = episodeCountSubtitle,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // "Download season N" — only when a season is selected
-                    // AND the parent screen wired the callback.
-                    val seasonNumberForDownload = selectedSeason?.seasonNumber
-                    if (seasonNumberForDownload != null && onSeasonDownloadClick != null && episodes.isNotEmpty()) {
-                        // Roll up ONLY the episodes of the selected season (the
-                        // loaded `episodes` can briefly be the previous season's
-                        // during a season switch — don't claim ✓ off stale data).
-                        val seasonEpisodes = episodes.filter { it.seasonNumber == seasonNumberForDownload }
-                        val states = seasonEpisodes.map { episodeDownloadState(it) }
-                        val allDownloaded = seasonEpisodes.isNotEmpty() && states.all { it.isDownloaded }
-                        val anyInFlight = states.any { it.progress != null }
-                        IconButton(
-                            onClick = { onSeasonDownloadClick(seasonNumberForDownload) },
-                            modifier = Modifier
-                                .padding(end = SafePadding)
-                                .size(40.dp),
-                        ) {
-                            when {
-                                allDownloaded -> Icon(
-                                    imageVector = Icons.Filled.DownloadDone,
-                                    contentDescription = seasonDownloadContentDescription(
-                                        selectedSeason,
-                                        isDownloaded = true,
-                                    ),
-                                    tint = DetailPrimaryText,
-                                    modifier = Modifier.size(24.dp),
-                                )
-                                anyInFlight -> CircularProgressIndicator(
-                                    modifier = Modifier.size(22.dp),
-                                    strokeWidth = 2.dp,
-                                    color = DetailPrimaryText,
-                                )
-                                else -> Icon(
-                                    imageVector = Icons.Outlined.FileDownload,
-                                    contentDescription = seasonDownloadContentDescription(
-                                        selectedSeason,
-                                        isDownloaded = false,
-                                    ),
-                                    tint = DetailPrimaryText,
-                                    modifier = Modifier.size(24.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-                SeasonEpisodePager(
-                    seasons = seasons,
-                    selectedSeasonNumber = selectedSeasonNumber,
-                    episodes = episodes,
-                    episodesBySeason = episodesBySeason,
-                    isLoadingEpisodes = isLoadingEpisodes,
-                    onSeasonSelected = onSeasonSelected,
-                    onEpisodePlayClick = onEpisodePlayClick,
-                    onEpisodeDetailClick = onEpisodeDetailClick,
-                    onEpisodeDownloadClick = onEpisodeDownloadClick,
-                    episodeDownloadState = episodeDownloadState,
-                )
+        if (!isExpandedDetailLayout) {
+            item(contentType = "detail-episodes") {
+                episodeSection(false)
             }
         }
 
@@ -287,23 +352,42 @@ fun SeriesDetailContent(
         }
     }
     }
+    }
 
-    if (showRatingSheet) {
-        RatingSheet(
-            currentRating = userRating,
-            onSetRating = { stars ->
-                onSetRating(stars)
-                showRatingSheet = false
-            },
-            onClearRating = {
-                onClearRating()
-                showRatingSheet = false
-            },
-            onDismiss = { showRatingSheet = false },
-        )
+    loadedSelectedEpisodeDetail?.let { episodeDetail ->
+        val version = episodeDetail.versions.getOrNull(selectedVersionIndex)
+        if (showVersionPicker) {
+            VersionPickerSheet(
+                versions = episodeDetail.versions,
+                selectedIndex = selectedVersionIndex.takeUnless { isAutoVersion },
+                onSelect = { onVersionSelected(it); showVersionPicker = false },
+                onDismiss = { showVersionPicker = false },
+            )
+        }
+        if (showAudioPicker) {
+            AudioPickerSheet(
+                tracks = version?.audioTracks.orEmpty(),
+                selectedIndex = selectedAudioIndex,
+                onSelect = { onAudioSelected(it); showAudioPicker = false },
+                onDismiss = { showAudioPicker = false },
+            )
+        }
+        if (showSubtitlePicker) {
+            SubtitlePickerSheet(
+                tracks = version?.subtitleTracks.orEmpty(),
+                selectedIndex = selectedSubtitleIndex,
+                onSelect = { onSubtitleSelected(it); showSubtitlePicker = false },
+                onDismiss = { showSubtitlePicker = false },
+            )
+        }
     }
 }
 
+internal fun seriesSeasonSectionTitle(season: Season?): String =
+    season?.let { "${phoneSeasonLabel(it)} Episodes" } ?: "Episodes"
+
+// Retained for formatter tests and non-visual accessibility copy even though
+// the iOS-aligned Episodes header no longer renders a season download button.
 internal fun seriesSeasonSectionLabel(season: Season?): String =
     season?.let(::phoneSeasonLabel) ?: "Episodes"
 
@@ -318,3 +402,9 @@ internal fun seasonDownloadContentDescription(
         "Download ${label.replaceFirstChar(Char::lowercase)}"
     }
 }
+
+private fun seriesStarringCredit(detail: ItemDetail): String? =
+    detail.cast.take(3)
+        .map { it.name }
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(prefix = "Starring ", separator = ", ")

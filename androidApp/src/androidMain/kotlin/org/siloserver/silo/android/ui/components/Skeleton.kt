@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -26,10 +27,12 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.ThumbhashImage
 
 private val ShimmerHighlight = Color.White.copy(alpha = 0.06f)
 
@@ -165,15 +168,37 @@ private val GridSkeletonInset = 16.dp
  * first frame instead of a spinner over black that snaps into the full screen.
  */
 @Composable
-fun DetailLoadingSkeleton(modifier: Modifier = Modifier) {
+fun DetailLoadingSkeleton(
+    modifier: Modifier = Modifier,
+    artworkUrl: String? = null,
+    artworkThumbhash: String? = null,
+) {
     val shimmer = rememberShimmerProgress()
     Column(modifier = modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 10f)
-                .skeleton(shimmer, RoundedCornerShape(0.dp)),
-        )
+        val heroModifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 10f)
+        if (!artworkUrl.isNullOrBlank() || !artworkThumbhash.isNullOrBlank()) {
+            Box(modifier = heroModifier) {
+                ThumbhashImage(
+                    url = artworkUrl,
+                    thumbhash = artworkThumbhash,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    crossfadeMillis = 120,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .drawBehind { drawRect(Color.Black.copy(alpha = 0.20f)) },
+                )
+            }
+        } else {
+            Box(
+                modifier = heroModifier.skeleton(shimmer, RoundedCornerShape(0.dp)),
+            )
+        }
         Spacer(modifier = Modifier.height(20.dp))
         Box(
             modifier = Modifier

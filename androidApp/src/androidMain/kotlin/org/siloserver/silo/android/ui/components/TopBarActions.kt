@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +29,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
+import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.profile.Profile
 
@@ -48,16 +50,23 @@ fun TopBarIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     isActive: Boolean = false,
+    opaque: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Surface(
         onClick = onClick,
         modifier = modifier,
-        color = if (isActive) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-        contentColor = if (isActive) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurface,
+        color = when {
+            isActive && opaque -> Color.White.copy(alpha = 0.38f)
+            isActive -> Color.White.copy(alpha = 0.18f)
+            opaque -> SiloDetailActionControlActive
+            else -> Color.Transparent
+        },
+        contentColor = if (opaque) Color.White else MaterialTheme.colorScheme.onSurface,
         shape = CircleShape,
         tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
+        shadowElevation = if (opaque) 5.dp else 0.dp,
+        border = if (opaque) BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)) else null,
     ) {
         Box(
             modifier = Modifier.size(40.dp),
@@ -77,15 +86,16 @@ fun TopBarProfileMenu(
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
     onSignOutClick: () -> Unit,
+    opaque: Boolean = false,
 ) {
     var menuExpanded by rememberSaveable { mutableStateOf(false) }
     Box {
-        TopBarIconButton(onClick = { menuExpanded = true }) {
+        TopBarIconButton(onClick = { menuExpanded = true }, opaque = opaque) {
             if (activeProfile != null) {
                 ProfileAvatar(
                     avatar = activeProfile.avatarRef(),
                     name = activeProfile.name,
-                    size = 36.dp,
+                    size = if (opaque) 30.dp else 36.dp,
                 )
             } else {
                 Box(
@@ -131,6 +141,7 @@ fun TabTopBarActions(
     onSwitchServerClick: () -> Unit,
     onSignOutClick: () -> Unit,
     modifier: Modifier = Modifier,
+    opaque: Boolean = false,
     leadingActions: @Composable () -> Unit = {},
 ) {
     Row(
@@ -139,7 +150,7 @@ fun TabTopBarActions(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leadingActions()
-        TopBarIconButton(onClick = onSearchClick) {
+        TopBarIconButton(onClick = onSearchClick, opaque = opaque) {
             Icon(
                 imageVector = Icons.Outlined.Search,
                 contentDescription = "Search",
@@ -153,6 +164,7 @@ fun TabTopBarActions(
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,
             onSignOutClick = onSignOutClick,
+            opaque = opaque,
         )
     }
 }

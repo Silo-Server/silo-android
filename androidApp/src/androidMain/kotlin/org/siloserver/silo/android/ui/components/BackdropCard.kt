@@ -42,7 +42,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.common.overlays.CardOverlayVariant
+import org.siloserver.silo.common.overlays.CardOverlays
+import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
 import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.overlays.OverlayData
 
 /**
  * Reserved height for the text block under a backdrop card: title (bodySmall)
@@ -81,6 +85,7 @@ fun BackdropCard(
     modifier: Modifier = Modifier,
     width: Dp = 280.dp * LocalCardPresentation.current.posterSize.posterScale,
     userState: MediaItemUserState? = null,
+    overlay: OverlayData? = null,
     actions: MediaCardActions = MediaCardActions(),
     // Center overlay glyph — play for watch/listen, a book for reading.
     overlayIcon: ImageVector = Icons.Default.PlayArrow,
@@ -89,6 +94,7 @@ fun BackdropCard(
      *  null keeps it decorative and the whole card opens the item page. */
     onOverlayClick: (() -> Unit)? = null,
 ) {
+    val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
     Column(
         modifier = modifier
@@ -129,6 +135,18 @@ fun BackdropCard(
                         ),
                     ),
             )
+
+            // Continue Watching / Next Up use the same server-configured
+            // badges as Apple, tvOS, and Android TV. The wide preset leaves
+            // the lower corners clear of the resume progress treatment.
+            if (overlayState.enabled && overlay != null) {
+                CardOverlays(
+                    data = overlay,
+                    prefs = overlayState.prefs,
+                    variant = CardOverlayVariant.Wide,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
 
             // Play button circle
             Box(

@@ -1,17 +1,26 @@
 package org.siloserver.silo.android.ui.screens.detail
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -35,7 +45,10 @@ import org.siloserver.silo.android.downloads.LEGACY_PUBLIC_DOWNLOAD_PERMISSION
 import org.siloserver.silo.android.downloads.hasLegacyPublicDownloadPermission
 import org.siloserver.silo.android.ui.components.DetailLoadingSkeleton
 import org.siloserver.silo.android.ui.components.ErrorView
+import org.siloserver.silo.android.ui.components.rememberSwipeDownDismissState
 import org.siloserver.silo.android.ui.components.swipeBackToDismiss
+import org.siloserver.silo.android.ui.components.swipeDownToDismiss
+import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.downloads.openDownloadTargetInExternalApp
 import org.siloserver.silo.android.ui.screens.watchtogether.SuggestToRoomViewModel
@@ -76,6 +89,8 @@ private const val PLAY_ON_DEVICE_LABEL = "Play on device"
  */
 @Composable
 fun ItemDetailScreen(
+    openingArtworkUrl: String? = null,
+    openingArtworkThumbhash: String? = null,
     onBackClick: () -> Unit,
     onPlayClick: (String, Int?, Int?, Int?, Double?) -> Unit,
     onItemDetailClick: (String) -> Unit,
@@ -92,6 +107,15 @@ fun ItemDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val swipeDownDismissState = rememberSwipeDownDismissState()
+    val requestDismiss: () -> Unit = {
+        swipeDownDismissState.dismiss(onBackClick)
+    }
+    BackHandler { requestDismiss() }
+
+    LaunchedEffect(state.selectedEpisodeContentId) {
+        if (state.selectedEpisodeContentId != null) viewModel.ensureSelectedEpisodeDetailLoaded()
+    }
     val suggestViewModel: SuggestToRoomViewModel = koinViewModel()
     val suggestRoom by suggestViewModel.room.collectAsState()
     val suggestState by suggestViewModel.uiState.collectAsState()
@@ -293,15 +317,32 @@ fun ItemDetailScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
+            // Match iOS's large detail sheet: the rounded card begins below
+            // the status/camera safe area instead of painting behind it.
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+            .padding(top = 4.dp)
+            .shadow(
+                elevation = 20.dp,
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                clip = false,
+            )
+            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
             // Swipe right on the page to go back (iOS interactive pop) — a
             // lighter alternative to reaching for the back arrow on a tall
             // detail page.
             .swipeBackToDismiss(onDismiss = onBackClick)
+            .swipeDownToDismiss(
+                state = swipeDownDismissState,
+                onDismiss = onBackClick,
+            )
             .background(MaterialTheme.colorScheme.background),
     ) {
         when {
             state.isLoading && state.detail == null -> {
-                DetailLoadingSkeleton()
+                DetailLoadingSkeleton(
+                    artworkUrl = openingArtworkUrl,
+                    artworkThumbhash = openingArtworkThumbhash,
+                )
             }
 
             state.error != null && state.detail == null -> {
@@ -558,6 +599,26 @@ fun ItemDetailScreen(
                         } else {
                             playbackResumePosition(detail.userData)
                         }
+                        val selectedEpisode = state.episodes.firstOrNull {
+                            it.contentId == state.selectedEpisodeContentId
+                        }
+                        val selectedEpisodeDetail = state.selectedEpisodeDetail
+                        val selectedEpisodeVersionIndex = state.selectedVersionIndex
+                            .coerceIn(0, (selectedEpisodeDetail?.versions?.lastIndex ?: 0).coerceAtLeast(0))
+                        val selectedEpisodeFileId = selectedEpisodeDetail?.versions
+                            ?.getOrNull(selectedEpisodeVersionIndex)
+                            ?.fileId
+                            ?.takeIf {
+                                state.hasExplicitVersionSelection ||
+                                    state.hasExplicitAudioSelection ||
+                                    state.hasExplicitSubtitleSelection
+                            }
+                        val selectedEpisodeResume = selectedEpisode?.let(::playbackResumePosition)
+                        val activeSeriesResume = if (selectedEpisode != null) {
+                            selectedEpisodeResume
+                        } else {
+                            seriesResume
+                        }
                         SeriesDetailContent(
                             translation = translationSlot,
                             detail = detail,
@@ -570,8 +631,32 @@ fun ItemDetailScreen(
                             isFavorite = state.isFavorite,
                             isInWatchlist = state.isInWatchlist,
                             nextEpisodeLabel = nextEpisodeLabel,
+                            selectedEpisodeContentId = state.selectedEpisodeContentId,
+                            selectedEpisodeDetail = selectedEpisodeDetail,
+                            isLoadingSelectedEpisodeDetail = state.isLoadingSelectedEpisodeDetail,
+                            selectedVersionIndex = selectedEpisodeVersionIndex,
+                            isAutoVersion = !state.hasExplicitVersionSelection,
+                            selectedAudioIndex = state.selectedAudioIndex.takeIf { state.hasExplicitAudioSelection },
+                            selectedSubtitleIndex = state.selectedSubtitleIndex.takeIf { state.hasExplicitSubtitleSelection },
+                            onVersionSelected = { index ->
+                                if (index == null) viewModel.selectAutoVersion() else viewModel.selectVersion(index)
+                            },
+                            onAudioSelected = { index ->
+                                if (index == null) viewModel.selectAutoAudioTrack() else viewModel.selectAudioTrack(index)
+                            },
+                            onSubtitleSelected = { index ->
+                                if (index == null) viewModel.selectAutoSubtitle() else viewModel.selectSubtitle(index)
+                            },
                             onPlayClick = {
-                                nextEpisode?.let {
+                                selectedEpisode?.let {
+                                    onPlayClick(
+                                        it.contentId,
+                                        selectedEpisodeFileId,
+                                        state.selectedAudioIndex.takeIf { state.hasExplicitAudioSelection },
+                                        state.selectedSubtitleIndex.takeIf { state.hasExplicitSubtitleSelection },
+                                        selectedEpisodeResume,
+                                    )
+                                } ?: nextEpisode?.let {
                                     onPlayClick(it.contentId, null, null, null, playbackResumePosition(it))
                                 } ?: onPlayClick(
                                     detail.contentId,
@@ -581,25 +666,27 @@ fun ItemDetailScreen(
                                     playbackResumePosition(detail.userData),
                                 )
                             },
-                            onPlayFromBeginning = seriesResume?.let {
+                            onPlayFromBeginning = activeSeriesResume?.let {
                                 {
-                                    nextEpisode?.let { ep ->
+                                    selectedEpisode?.let { ep ->
+                                        onPlayClick(ep.contentId, selectedEpisodeFileId, null, null, 0.0)
+                                    } ?: nextEpisode?.let { ep ->
                                         onPlayClick(ep.contentId, null, null, null, 0.0)
                                     } ?: onPlayClick(detail.contentId, null, null, null, 0.0)
                                 }
                             },
-                            resumeStoppedAtLabel = seriesResume?.let { formatResumeStoppedAt(it) },
+                            resumeStoppedAtLabel = activeSeriesResume?.let { formatResumeStoppedAt(it) },
                             onEpisodePlayClick = { contentId, resumePositionSeconds ->
                                 onPlayClick(contentId, null, null, null, resumePositionSeconds)
                             },
-                            onEpisodeDetailClick = onItemDetailClick,
+                            onEpisodeDetailClick = { viewModel.selectSeriesEpisode(it) },
+                            onEpisodeWatchedChange = { episodeContentId, watched ->
+                                viewModel.setEpisodeWatched(episodeContentId, watched)
+                            },
                             onSeasonSelected = { viewModel.selectSeason(it) },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
                             onToggleWatched = { viewModel.toggleWatched() },
-                            userRating = state.userRating,
-                            onSetRating = { viewModel.setRating(it) },
-                            onClearRating = { viewModel.clearRating() },
                             onPersonClick = onPersonClick,
                             onItemDetailClick = onItemDetailClick,
                             onSeriesDownloadClick = {
@@ -615,32 +702,6 @@ fun ItemDetailScreen(
                                         viewModel.onSeriesDownloadTapped()
                                     }
                                 }
-                            },
-                            onSeasonDownloadClick = { season ->
-                                runDownloadAction {
-                                    viewModel.onSeasonDownloadTapped(season)
-                                }
-                            },
-                            onEpisodeDownloadClick = { ep ->
-                                val episodeState = detailDownloadStateForFile(
-                                    fileId = ep.files.firstOrNull()?.fileId,
-                                    records = episodeDownloadRecords,
-                                )
-                                runDownloadTap(
-                                    downloadState = episodeState,
-                                    directAction = { viewModel.onEpisodeDownloadTapped(ep) },
-                                    qualityAction = { quality ->
-                                        viewModel.onEpisodeDownloadTapped(ep, downloadQuality = quality)
-                                    },
-                                    estimate = org.siloserver.silo.model.download.DownloadSizeEstimate
-                                        .estimate(fileSizes = ep.files.map { it.fileSize }),
-                                )
-                            },
-                            episodeDownloadState = { ep ->
-                                detailDownloadStateForFile(
-                                    fileId = ep.files.firstOrNull()?.fileId,
-                                    records = episodeDownloadRecords,
-                                )
                             },
                             seriesDownloadState = seriesDownloadState,
                             playOnDeviceLabel = PLAY_ON_DEVICE_LABEL,
@@ -792,9 +853,6 @@ fun ItemDetailScreen(
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
                             onToggleWatched = { viewModel.toggleWatched() },
-                            userRating = state.userRating,
-                            onSetRating = { viewModel.setRating(it) },
-                            onClearRating = { viewModel.clearRating() },
                             onVersionSelected = { index ->
                                 if (index != null) viewModel.selectVersion(index) else viewModel.selectAutoVersion()
                             },
@@ -820,30 +878,9 @@ fun ItemDetailScreen(
                             episodesBySeason = state.episodesBySeason,
                             isLoadingEpisodes = state.isLoadingEpisodes,
                             onSeasonSelected = { viewModel.selectSeason(it) },
-                            onEpisodePlayClick = { contentId, resumePositionSeconds ->
-                                onPlayClick(contentId, null, null, null, resumePositionSeconds)
-                            },
                             onEpisodeDetailClick = onItemDetailClick,
-                            onEpisodeDownloadClick = { ep ->
-                                val episodeState = detailDownloadStateForFile(
-                                    fileId = ep.files.firstOrNull()?.fileId,
-                                    records = downloadRecords,
-                                )
-                                runDownloadTap(
-                                    downloadState = episodeState,
-                                    directAction = { viewModel.onEpisodeDownloadTapped(ep) },
-                                    qualityAction = { quality ->
-                                        viewModel.onEpisodeDownloadTapped(ep, downloadQuality = quality)
-                                    },
-                                    estimate = org.siloserver.silo.model.download.DownloadSizeEstimate
-                                        .estimate(fileSizes = ep.files.map { it.fileSize }),
-                                )
-                            },
-                            episodeDownloadState = { ep ->
-                                detailDownloadStateForFile(
-                                    fileId = ep.files.firstOrNull()?.fileId,
-                                    records = downloadRecords,
-                                )
+                            onEpisodeWatchedChange = { episodeContentId, watched ->
+                                viewModel.setEpisodeWatched(episodeContentId, watched)
                             },
                             isDownloaded = downloadState.isDownloaded,
                             downloadProgress = downloadState.progress,
@@ -963,21 +1000,39 @@ fun ItemDetailScreen(
             )
         }
 
-        // Floating back button — sits on the hero artwork without
-        // pushing content down, mirroring iOS's transparent nav bar.
+        // Android's non-glass counterpart to iOS's detail controls: the same
+        // faint artwork-tinted wash and white glyphs, without live blur.
         IconButton(
-            onClick = onBackClick,
+            onClick = requestDismiss,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding()
-                .padding(8.dp)
-                .size(40.dp)
+                .padding(horizontal = 28.dp, vertical = 18.dp)
+                .size(42.dp)
                 .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.45f)),
+                .background(SiloDetailActionControlActive.copy(alpha = 0.38f))
+                .border(1.dp, Color.White.copy(alpha = 0.36f), CircleShape),
         ) {
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Close",
+                tint = Color.White,
+            )
+        }
+        IconButton(
+            onClick = onOpenCastRemote,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(horizontal = 28.dp, vertical = 18.dp)
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(SiloDetailActionControlActive.copy(alpha = 0.38f))
+                .border(1.dp, Color.White.copy(alpha = 0.36f), CircleShape),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.SettingsRemote,
+                contentDescription = "Remote Control",
                 tint = Color.White,
             )
         }

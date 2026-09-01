@@ -110,6 +110,11 @@ fun MediaCard(
                     // Record which exact placement was tapped so the detail hero
                     // pairs with this card, not a duplicate elsewhere on screen.
                     if (heroKey != null) heroHandoff?.pendingKey = heroKey
+                    // Generic fallback for cards whose caller only knows the
+                    // poster. Rows/grids with a backdrop overwrite this before
+                    // navigating so detail can warm the wide art.
+                    heroHandoff?.pendingArtworkUrl = posterUrl
+                    heroHandoff?.pendingArtworkThumbhash = posterThumbhash
                     onClick()
                 },
                 onLongClick = if (actions.isEmpty) null else { { menuExpanded = true } },

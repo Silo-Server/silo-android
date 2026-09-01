@@ -51,7 +51,6 @@ import org.siloserver.silo.android.ui.screens.personal.rememberPersonalListContr
 import org.siloserver.silo.viewmodel.PersonalListUiState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -64,6 +63,10 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
+import org.siloserver.silo.android.ui.theme.SiloOnOpaqueControl
+import org.siloserver.silo.android.ui.theme.SiloOpaqueControl
+import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
+import org.siloserver.silo.android.ui.theme.SiloOpaqueControlSelected
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -393,9 +396,10 @@ private fun SavedShortcutPill(
         onClick = onClick,
         shape = CircleShape,
         contentPadding = PaddingValues(horizontal = 15.dp),
-        border = BorderStroke(1.5.dp, Color.White.copy(alpha = if (selected) 0.9f else 0.3f)),
+        border = BorderStroke(1.dp, SiloOpaqueControlBorder),
         colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = MaterialTheme.colorScheme.onSurface,
+            contentColor = SiloOnOpaqueControl,
+            containerColor = if (selected) SiloOpaqueControlSelected else SiloOpaqueControl,
         ),
         modifier = Modifier.height(40.dp),
     ) {

@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.navigation
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import org.siloserver.silo.model.section.SectionItem
 
 /**
  * `URI.path` is already percent-decoded. The parser used to take that decoded
@@ -35,6 +36,34 @@ class ContentDeepLinkEncodingTest {
             Route.ItemDetail("tt0111161").route,
             contentDeepLinkRouteOrNull("silo://item/tt0111161"),
         )
+    }
+
+    @Test
+    fun `a continue watching episode opens its series and preserves its exact selection`() {
+        val item = SectionItem(
+            contentId = "episode/3-1",
+            type = "episode",
+            title = "Episode 1",
+            seriesId = "series 42",
+            seasonNumber = 3,
+            episodeNumber = 1,
+        )
+
+        assertEquals(
+            "item/series%2042?seasonNumber=3&episodeContentId=episode%2F3-1",
+            continueWatchingDetailRoute(item),
+        )
+    }
+
+    @Test
+    fun `a continue watching movie still opens its own detail`() {
+        val item = SectionItem(
+            contentId = "movie-1",
+            type = "movie",
+            title = "Movie",
+        )
+
+        assertEquals(Route.ItemDetail("movie-1").route, continueWatchingDetailRoute(item))
     }
 
     @Test
