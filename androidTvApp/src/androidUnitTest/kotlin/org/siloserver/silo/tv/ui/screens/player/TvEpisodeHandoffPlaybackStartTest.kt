@@ -11,6 +11,7 @@ import org.siloserver.silo.common.player.video.EpisodeSubtitleMode
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.playback.audioTrackFingerprint
 
 class TvEpisodeHandoffPlaybackStartTest {
@@ -189,12 +190,34 @@ class TvEpisodeHandoffPlaybackStartTest {
             AudioTrack(codec = "eac3", language = "fra", title = "French"),
         )
         val durable = audioTrackFingerprint(tracks[1])
+        val capabilities = ClientCodecCapabilities(codecsAudio = listOf("aac", "truehd", "eac3"))
 
-        assertEquals(0, resolveTvInitialAudioTrackIndex(0, 2, false, tracks, durable, "fr"))
-        assertEquals(2, resolveTvInitialAudioTrackIndex(null, 2, false, tracks, durable, "fr"))
-        assertEquals(1, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr"))
-        assertEquals(2, resolveTvInitialAudioTrackIndex(null, null, false, tracks, null, "fr"))
-        assertNull(resolveTvInitialAudioTrackIndex(null, null, true, tracks, durable, "fr"))
+        assertEquals(0, resolveTvInitialAudioTrackIndex(0, 2, false, tracks, durable, "fr", capabilities))
+        assertEquals(2, resolveTvInitialAudioTrackIndex(null, 2, false, tracks, durable, "fr", capabilities))
+        assertEquals(1, resolveTvInitialAudioTrackIndex(null, null, false, tracks, durable, "fr", capabilities))
+        assertEquals(2, resolveTvInitialAudioTrackIndex(null, null, false, tracks, null, "fr", capabilities))
+        assertNull(resolveTvInitialAudioTrackIndex(null, null, true, tracks, durable, "fr", capabilities))
+    }
+
+    @Test
+    fun tvAutomaticAudioFallsBackFromUnsupportedDefaultToSupportedTrack() {
+        val tracks = listOf(
+            AudioTrack(codec = "truehd", language = "eng", isDefault = true),
+            AudioTrack(codec = "aac", language = "eng"),
+        )
+
+        assertEquals(
+            1,
+            resolveTvInitialAudioTrackIndex(
+                requestedAudioIndex = null,
+                carriedAudioIndex = null,
+                unresolvedCarriedChoice = false,
+                tracks = tracks,
+                durableAudioFingerprint = null,
+                preferredAudioLanguage = "eng",
+                capabilities = ClientCodecCapabilities(codecsAudio = listOf("aac")),
+            ),
+        )
     }
 
     private fun handoff(

@@ -616,6 +616,24 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
     }
 
     @Test
+    fun automaticAudioFallsBackFromUnsupportedDefaultToSupportedTrack() {
+        val selection = resolveMobileInitialTrackSelection(
+            explicitAudioTrackIndex = null,
+            explicitSubtitleTrackIndex = null,
+            audioTracks = listOf(
+                AudioTrack(codec = "truehd", language = "eng", isDefault = true),
+                AudioTrack(codec = "aac", language = "eng"),
+            ),
+            subtitleTracks = emptyList(),
+            persisted = null,
+            preferredAudioLanguage = "eng",
+            capabilities = ClientCodecCapabilities(codecsAudio = listOf("aac")),
+        )
+
+        assertEquals(1, selection.audioTrackIndex)
+    }
+
+    @Test
     fun explicitAudioSelectionWinsOverTheLanguageSetting() = runTest(dispatcher) {
         var allocation: MobileVideoSessionAllocation? = null
 

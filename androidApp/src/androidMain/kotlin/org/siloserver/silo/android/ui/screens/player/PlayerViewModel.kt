@@ -3202,6 +3202,7 @@ class PlayerViewModel(
     private fun setDesiredAudio(catalogOrdinal: Int, explicit: Boolean) {
         audioSelectionWatchdog.reset()
         desiredAudioGeneration += 1
+        localAudioAttemptCount = 0
         val state = _uiState.value
         desiredAudio = DesiredAudio(
             generation = desiredAudioGeneration,
@@ -3260,13 +3261,28 @@ class PlayerViewModel(
             }
 
             is AudioReconcileAction.Apply -> {
-                armOriginalAudioSelectionVerification(
+                val verificationArmed = armOriginalAudioSelectionVerification(
                     desired = desired,
                     state = state,
                     mounted = mounted,
                     action = action,
                 )
+                // The original-file watchdog covers a plan that promised this
+                // exact source row. Other deliveries, and a newly requested row
+                // that differs from the current plan, still need the bounded
+                // fallback: AudioTrackManager can silently ignore an override
+                // after its group disappears.
+                if (
+                    !verificationArmed &&
+                    localAudioAttemptsFor(desired.generation) >= MAX_LOCAL_AUDIO_ATTEMPTS
+                ) {
+                    _pendingLocalAudioSelection.value = null
+                    replanForDesiredAudio(desired)
+                    return
+                }
                 localAudioAttempt += 1
+                localAudioAttemptGeneration = desired.generation
+                localAudioAttemptCount += 1
                 if (desired.confirmed) desiredAudio = desired.copy(confirmed = false)
                 _pendingLocalAudioSelection.value = LocalAudioSelection(
                     generation = desired.generation,
@@ -3283,20 +3299,20 @@ class PlayerViewModel(
         state: PlayerUiState,
         mounted: List<MountedAudioTrack>,
         action: AudioReconcileAction,
-    ) {
-        if (
-            shouldVerifyOriginalAudioSelection(
-                desired = desired,
-                delivery = state.playbackPlan?.delivery,
-                planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
-                mounted = mounted,
-                action = action,
-            )
-        ) {
+    ): Boolean {
+        val shouldVerify = shouldVerifyOriginalAudioSelection(
+            desired = desired,
+            delivery = state.playbackPlan?.delivery,
+            planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
+            mounted = mounted,
+            action = action,
+        )
+        if (shouldVerify) {
             audioSelectionWatchdog.arm(desired.generation)
         } else {
             audioSelectionWatchdog.resolve(desired.generation)
         }
+        return shouldVerify
     }
 
     private fun onAudioSelectionVerificationExpired(generation: Long) {
@@ -3360,6 +3376,19 @@ class PlayerViewModel(
         // the context alone left it stale and the choice got undone.
         mobileSubtitleTransactions.commitLocallyAppliedAudio(desired.catalogOrdinal)
         if (desired.explicit) persistDesiredAudio(desired.catalogOrdinal)
+    }
+
+    private var localAudioAttemptGeneration = 0L
+    private var localAudioAttemptCount = 0
+
+    private fun localAudioAttemptsFor(generation: Long): Int =
+        if (localAudioAttemptGeneration == generation) localAudioAttemptCount else 0
+
+    /** The local switch is not taking; let the server materialize the track. */
+    private fun replanForDesiredAudio(desired: DesiredAudio) {
+        val state = _uiState.value
+        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
+        mobileSubtitleTransactions.selectAudio(desired.catalogOrdinal)
     }
 
     private fun persistDesiredAudio(catalogOrdinal: Int) {
@@ -4451,7 +4480,6 @@ class PlayerViewModel(
     }
 }
 
-/** Snapshots to let a local audio switch take before asking the server. */
 /**
  * How long `isPlaying == false` must hold before it counts as a pause rather
  * than a rebuffer, for the intro prompt's timer. The spec's
@@ -4459,6 +4487,8 @@ class PlayerViewModel(
  */
 private const val PLAYBACK_PAUSE_GRACE_MS = 1_500L
 
+/** Snapshots to let a local audio switch take before asking the server. */
+private const val MAX_LOCAL_AUDIO_ATTEMPTS = 3
 
 internal fun authoritativePlaybackSubtitleOrdinal(
     serverIndex: Int?,

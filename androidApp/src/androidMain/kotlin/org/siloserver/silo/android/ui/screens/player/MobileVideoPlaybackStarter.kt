@@ -6,6 +6,7 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.StartParams
+import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
@@ -30,7 +31,6 @@ import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
-import org.siloserver.silo.playback.resolvePreferredAudioTrackOrdinal
 import org.siloserver.silo.playback.resolveCatalogSubtitlePreferenceOrdinal
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.repository.CatalogRepository
@@ -86,10 +86,17 @@ internal fun resolveMobileInitialTrackSelection(
     subtitleTracks: List<SubtitleTrack>,
     persisted: LocalTrackSelection?,
     preferredAudioLanguage: String? = null,
+    capabilities: ClientCodecCapabilities,
 ): MobileInitialTrackSelection {
     val audioTrackIndex = explicitAudioTrackIndex
         ?: resolveAudioTrackOrdinal(audioTracks, persisted?.audioFingerprint)
-        ?: resolvePreferredAudioTrackOrdinal(audioTracks, preferredAudioLanguage)
+        ?: preferredAudioLanguage?.let { language ->
+            TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+                tracks = audioTracks,
+                preferredAudioLanguage = language,
+                capabilities = capabilities,
+            )
+        }
     val persistedSubtitleOrdinal = if (explicitSubtitleTrackIndex == null) {
         resolveCatalogSubtitlePreferenceOrdinal(
             subtitleTracks,
@@ -207,14 +214,6 @@ internal class MobileVideoPlaybackStarter(
                 )
             val preferredAudioLanguage = configuredAudioLanguage
                 ?: activeProfile?.language.orNullIfBlank()
-            val initialTracks = resolveMobileInitialTrackSelection(
-                explicitAudioTrackIndex = request.audioTrackIndex,
-                explicitSubtitleTrackIndex = request.subtitleTrackIndex,
-                audioTracks = version.audioTracks.orEmpty(),
-                subtitleTracks = version.subtitleTracks.orEmpty(),
-                persisted = persistedTrackSelection,
-                preferredAudioLanguage = preferredAudioLanguage,
-            )
             val accessToken = playbackSessionManager.getAccessToken()
                 ?: return failure(
                     request.contentId,
@@ -231,6 +230,15 @@ internal class MobileVideoPlaybackStarter(
                     dolbyVision = dolbyVision,
                     capabilities = capabilities,
                 )
+            val initialTracks = resolveMobileInitialTrackSelection(
+                explicitAudioTrackIndex = request.audioTrackIndex,
+                explicitSubtitleTrackIndex = request.subtitleTrackIndex,
+                audioTracks = version.audioTracks.orEmpty(),
+                subtitleTracks = version.subtitleTracks.orEmpty(),
+                persisted = persistedTrackSelection,
+                preferredAudioLanguage = preferredAudioLanguage,
+                capabilities = capabilities,
+            )
             // Skip-back-on-resume: nudge a genuine resume back a few seconds.
             // Suppressed for Start Over / retry (request flag) and Watch Together
             // (roomId — all participants must land on the synced anchor). The same

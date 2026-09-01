@@ -27,6 +27,7 @@ import org.siloserver.silo.common.player.video.shouldReachServerForPlayback
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.applyResumeRewind
 import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
@@ -36,7 +37,6 @@ import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
-import org.siloserver.silo.playback.resolvePreferredAudioTrackOrdinal
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ProfileRepository
@@ -132,14 +132,6 @@ class TvVideoPlaybackStarter(
             } else {
                 null
             }
-            val selectedAudioIndex = resolveTvInitialAudioTrackIndex(
-                requestedAudioIndex = request.audioTrackIndex,
-                carriedAudioIndex = carriedAudioIndex,
-                unresolvedCarriedChoice = unresolvedCarriedChoice,
-                tracks = version.audioTracks.orEmpty(),
-                durableAudioFingerprint = durableAudioFingerprint,
-                preferredAudioLanguage = preferredAudioLanguage,
-            )
             val accessToken = playbackSessionManager.getAccessToken()
                 ?: return failure(
                     request.contentId,
@@ -161,19 +153,18 @@ class TvVideoPlaybackStarter(
                 settingsLanguage = preferredAudioLanguage,
                 profileLanguage = activeProfile?.language,
             )
-            // A detail/HUD choice or episode handoff is explicit and always
-            // wins. Otherwise resolve the automatic language + quality policy
-            // before asking the server for a plan, so an HLS/transcode route
-            // receives the same best-compatible source track that Media3 would
-            // choose for a direct-play container.
-            val automaticAudioTrackIndex =
-                TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
-                    tracks = version.audioTracks.orEmpty(),
-                    preferredAudioLanguage = effectivePreferredAudioLanguage,
-                    capabilities = capabilities,
-                )
-            val startAudioTrackIndex = selectedAudioIndex
-                ?: automaticAudioTrackIndex.takeUnless { unresolvedCarriedChoice }
+            // Explicit, carried, and durable choices win. Otherwise resolve the
+            // automatic language + quality policy against the detected device
+            // capabilities before asking the server for a plan.
+            val startAudioTrackIndex = resolveTvInitialAudioTrackIndex(
+                requestedAudioIndex = request.audioTrackIndex,
+                carriedAudioIndex = carriedAudioIndex,
+                unresolvedCarriedChoice = unresolvedCarriedChoice,
+                tracks = version.audioTracks.orEmpty(),
+                durableAudioFingerprint = durableAudioFingerprint,
+                preferredAudioLanguage = effectivePreferredAudioLanguage,
+                capabilities = capabilities,
+            )
             // Skip-back-on-resume — see MobileVideoPlaybackStarter for the rationale.
             // Suppressed for Start Over / retry (request flag) and Watch Together
             // (roomId); the one rewound value drives both the server seek and the
@@ -395,12 +386,17 @@ internal fun resolveTvInitialAudioTrackIndex(
     tracks: List<org.siloserver.silo.model.catalog.AudioTrack>,
     durableAudioFingerprint: String?,
     preferredAudioLanguage: String?,
+    capabilities: ClientCodecCapabilities,
 ): Int? {
     requestedAudioIndex?.let { return it }
     carriedAudioIndex?.let { return it }
     if (unresolvedCarriedChoice) return null
     return resolveAudioTrackOrdinal(tracks, durableAudioFingerprint)
-        ?: resolvePreferredAudioTrackOrdinal(tracks, preferredAudioLanguage)
+        ?: TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+            tracks = tracks,
+            preferredAudioLanguage = preferredAudioLanguage,
+            capabilities = capabilities,
+        )
 }
 
 internal fun resolveTvSourceStartPosition(
