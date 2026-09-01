@@ -220,11 +220,6 @@ fun TvCascadeSelector(
         valuesById = libraryRequesters,
         create = ::FocusRequester,
     )
-    val visiblePillRequesters = stableIdentityValues(
-        ids = pills,
-        valuesById = pillRequesters,
-        create = ::FocusRequester,
-    )
 
     // Each library row's top edge in the level-1 column's coordinate space; the
     // flyout offsets down to the anchored row's value to align tops (§5.3).
@@ -246,6 +241,11 @@ fun TvCascadeSelector(
             pill != TvLibraryPill.Collections || anchorHasCollections
         }
     }
+    val visiblePillRequesters = stableIdentityValues(
+        ids = pills,
+        valuesById = pillRequesters,
+        create = ::FocusRequester,
+    )
 
     // Scroll state for the lazy (libraries.size > 6) level-1 list, so focus
     // entry can scroll the current-scope row into composition before focusing.
