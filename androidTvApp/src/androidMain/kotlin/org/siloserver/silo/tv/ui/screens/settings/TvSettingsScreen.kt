@@ -114,6 +114,7 @@ import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.delay
 
 /**
@@ -136,6 +137,7 @@ fun TvSettingsScreen(
     onManageServersReturnFocusConsumed: () -> Unit = {},
     viewModel: TvSettingsViewModel = koinViewModel(),
     diagnosticsViewModel: TvDiagnosticsViewModel = koinViewModel(),
+    homeSectionsViewModel: HomeViewModel = koinViewModel(key = "settings-home-sections"),
 ) {
     val state by viewModel.uiState.collectAsState()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
@@ -242,6 +244,7 @@ fun TvSettingsScreen(
         state = state,
         diagnosticsState = diagnosticsState,
         diagnosticsViewModel = diagnosticsViewModel,
+        homeSectionsViewModel = homeSectionsViewModel,
         selectedCategory = selectedCategory,
         categoryFocusRequesters = categoryFocusRequesters,
         detailFocusRequester = detailFocusRequester,
@@ -382,6 +385,7 @@ private fun SettingsSplitLayout(
     state: TvSettingsViewModel.UiState,
     diagnosticsState: org.siloserver.silo.common.diagnostics.DiagnosticsUiState,
     diagnosticsViewModel: TvDiagnosticsViewModel,
+    homeSectionsViewModel: HomeViewModel,
     selectedCategory: TvSettingsCategory,
     categoryFocusRequesters: Map<TvSettingsCategory, FocusRequester>,
     detailFocusRequester: FocusRequester,
@@ -466,6 +470,7 @@ private fun SettingsSplitLayout(
             state = state,
             diagnosticsState = diagnosticsState,
             diagnosticsViewModel = diagnosticsViewModel,
+            homeSectionsViewModel = homeSectionsViewModel,
             selectedCategory = selectedCategory,
             detailFocusRequester = detailFocusRequester,
             onDetailFocusChanged = onDetailFocusChanged,
@@ -730,6 +735,7 @@ private fun SettingsDetailPane(
     state: TvSettingsViewModel.UiState,
     diagnosticsState: org.siloserver.silo.common.diagnostics.DiagnosticsUiState,
     diagnosticsViewModel: TvDiagnosticsViewModel,
+    homeSectionsViewModel: HomeViewModel,
     selectedCategory: TvSettingsCategory,
     detailFocusRequester: FocusRequester,
     onDetailFocusChanged: (Boolean) -> Unit,
@@ -795,6 +801,7 @@ private fun SettingsDetailPane(
         when (selectedCategory) {
             TvSettingsCategory.General -> TvGeneralSettingsPane(
                 state = state,
+                homeSectionsViewModel = homeSectionsViewModel,
                 firstFocusRequester = detailFocusRequester,
                 onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
                 onCardPresentationChanged = onCardPresentationChanged,
@@ -866,6 +873,7 @@ private fun SettingsDetailPane(
 @Composable
 private fun TvGeneralSettingsPane(
     state: TvSettingsViewModel.UiState,
+    homeSectionsViewModel: HomeViewModel,
     firstFocusRequester: FocusRequester,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
     onCardPresentationChanged: (CardPresentation) -> Unit,
@@ -873,6 +881,7 @@ private fun TvGeneralSettingsPane(
     onUseProfileCardDefault: () -> Unit,
 ) {
     var activeCardPicker by remember { mutableStateOf<CardPresentationPicker?>(null) }
+    var showHomeSectionsEditor by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -880,18 +889,17 @@ private fun TvGeneralSettingsPane(
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
-            // tvOS TVGeneralSettingsPane TOP MENU parity: the Audiobooks tab
-            // is opt-in (hidden by default) even when the server has an
-            // audiobook library.
-            SettingsGroup(title = "Top Menu") {
-                SettingsToggleRow(
-                    label = "Show Audiobooks",
-                    checked = state.showAudiobooksTab,
-                    onCheckedChange = onShowAudiobooksTabChanged,
+            // Device-local, server/profile-specific visibility and order for
+            // the populated rows returned by Home, matching tvOS General.
+            SettingsGroup(title = "Home Sections") {
+                SettingsValueRow(
+                    label = "Home Sections",
+                    value = "",
+                    onClick = { showHomeSectionsEditor = true },
                     focusRequester = firstFocusRequester,
                 )
                 SettingsFooterText(
-                    text = "Adds an Audiobooks tab to the top menu when your server has an audiobook library. Hidden by default.",
+                    text = "Choose which Home rows are visible and edit the order in which they appear on this Android TV.",
                 )
             }
         }
@@ -938,6 +946,21 @@ private fun TvGeneralSettingsPane(
                             "unless \"Only This Device\" is on.",
                     )
                 }
+            }
+        }
+        item {
+            // tvOS TVGeneralSettingsPane TOP MENU parity: the Audiobooks tab
+            // is opt-in (hidden by default) even when the server has an
+            // audiobook library.
+            SettingsGroup(title = "Top Menu") {
+                SettingsToggleRow(
+                    label = "Show Audiobooks",
+                    checked = state.showAudiobooksTab,
+                    onCheckedChange = onShowAudiobooksTabChanged,
+                )
+                SettingsFooterText(
+                    text = "Adds an Audiobooks tab to the top menu when your server has an audiobook library. Hidden by default.",
+                )
             }
         }
         // No Library group — tvOS parity: Apple's TVSettingsView has no such
@@ -994,6 +1017,13 @@ private fun TvGeneralSettingsPane(
         )
         null -> Unit
     }
+
+    if (showHomeSectionsEditor) {
+        TvHomeSectionsEditor(
+            onDismiss = { showHomeSectionsEditor = false },
+            viewModel = homeSectionsViewModel,
+        )
+    }
 }
 
 private enum class CardPresentationPicker {
@@ -1045,14 +1075,6 @@ private fun TvPlaybackSettingsPane(
                     onClick = { activePicker = PlaybackPicker.Quality },
                     focusRequester = firstFocusRequester,
                 )
-                SettingsValueRow(
-                    label = "Audio Language",
-                    value = LanguageOptions.label(
-                        state.audioLanguage,
-                        SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
-                    ),
-                    onClick = { activePicker = PlaybackPicker.AudioLanguage },
-                )
                 // tvOS TVPlaybackSettingsPane STREAMING parity: Dolby Vision
                 // (default on; off plays the HDR10 base layer) with the
                 // narrower Profile 7 fallback nested under it — the P7 row
@@ -1073,6 +1095,27 @@ private fun TvPlaybackSettingsPane(
                     label = "Match Content Frame Rate",
                     checked = state.matchContentFrameRate,
                     onCheckedChange = onMatchContentFrameRateChanged,
+                )
+            }
+        }
+        item {
+            SettingsGroup(title = "Audio") {
+                SettingsValueRow(
+                    label = "Preferred Audio Language",
+                    value = LanguageOptions.label(
+                        state.audioLanguage,
+                        SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
+                    ),
+                    onClick = { activePicker = PlaybackPicker.AudioLanguage },
+                )
+                SettingsInfoRow(
+                    label = "Audio Quality",
+                    value = "Best Compatible",
+                )
+                SettingsFooterText(
+                    text = "Uses the preferred language when available, then English. " +
+                        "Within that language, Silo chooses the highest-quality track " +
+                        "supported by this TV and its current audio output.",
                 )
             }
         }
@@ -1143,7 +1186,7 @@ private fun TvPlaybackSettingsPane(
             onDismiss = { activePicker = null },
         )
         PlaybackPicker.AudioLanguage -> TvSettingsPickerSheet(
-            title = "Audio Language",
+            title = "Preferred Audio Language",
             options = audioLanguages.map { PickerOption(it.first, it.second) },
             selectedId = state.audioLanguage,
             onSelect = { onAudioLanguageChanged(it); activePicker = null },

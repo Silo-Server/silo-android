@@ -1,11 +1,13 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import android.util.Log
+import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.StartParams
+import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.common.player.VideoSessionStartV3
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
@@ -39,6 +41,7 @@ import org.siloserver.silo.tv.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 
+@UnstableApi
 class TvVideoPlaybackStarter(
     private val catalogRepository: CatalogRepository,
     private val playbackSessionManager: PlaybackSessionManager,
@@ -125,6 +128,26 @@ class TvVideoPlaybackStarter(
                     dolbyVision = dolbyVision,
                     capabilities = capabilities,
                 )
+            val effectivePreferredAudioLanguage = TrackSelectionPresets.effectivePreferredAudioLanguage(
+                settingsLanguage = preferredAudioLanguage,
+                profileLanguage = activeProfile?.language,
+            )
+            // A detail/HUD choice or episode handoff is explicit and always
+            // wins. Otherwise resolve the automatic language + quality policy
+            // before asking the server for a plan, so an HLS/transcode route
+            // receives the same best-compatible source track that Media3 would
+            // choose for a direct-play container.
+            val automaticAudioTrackIndex =
+                TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+                    tracks = version.audioTracks.orEmpty(),
+                    preferredAudioLanguage = effectivePreferredAudioLanguage,
+                    capabilities = capabilities,
+                )
+            val startAudioTrackIndex = resolveTvStartAudioTrackIndex(
+                requestedTitleTrackIndex = request.audioTrackIndex,
+                episodeHandoffTrackIndex = resolvedEpisodeSelection.audioTrackIndex,
+                automaticPreferenceTrackIndex = automaticAudioTrackIndex,
+            )
             // Skip-back-on-resume — see MobileVideoPlaybackStarter for the rationale.
             // Suppressed for Start Over / retry (request flag) and Watch Together
             // (roomId); the one rewound value drives both the server seek and the
@@ -158,8 +181,7 @@ class TvVideoPlaybackStarter(
                     // the carry-over resolved a track and then threw it away,
                     // and a dubbed household was returned to the server default
                     // at every automatic transition.
-                    audioTrackIndex = request.audioTrackIndex
-                        ?: resolvedEpisodeSelection.audioTrackIndex,
+                    audioTrackIndex = startAudioTrackIndex,
                     subtitleTrackIndex = serverSubtitleTrackIndex,
                     qualityPreference = playbackQualityIntent,
                     startPosition = startRequestPosition,
@@ -288,7 +310,7 @@ class TvVideoPlaybackStarter(
                     catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
                 ),
-                preferredAudioLanguage = preferredAudioLanguage ?: activeProfile?.language,
+                preferredAudioLanguage = effectivePreferredAudioLanguage ?: "en",
                 // Blank normalizes to null on every rung: a canonical row
                 // holding JSON null ("no preference") arrives here as a
                 // present-but-empty string, and TV auto-selection reads a
@@ -406,6 +428,20 @@ fun resolveTvPlaybackStartSelection(
         audioTrackIndex = resolvedAudioIndex,
     )
 }
+
+/**
+ * Playback authority for audio at launch. A track chosen on the movie/show
+ * detail is title-level intent and therefore outranks both a carried episode
+ * choice and the global language/quality preference. The preference is only
+ * the fallback when neither manual source supplied a track.
+ */
+internal fun resolveTvStartAudioTrackIndex(
+    requestedTitleTrackIndex: Int?,
+    episodeHandoffTrackIndex: Int?,
+    automaticPreferenceTrackIndex: Int?,
+): Int? = requestedTitleTrackIndex
+    ?: episodeHandoffTrackIndex
+    ?: automaticPreferenceTrackIndex
 
 /** Converts the client-side selection to the server's non-negative index contract. */
 fun resolveTvServerSubtitleTrackIndex(

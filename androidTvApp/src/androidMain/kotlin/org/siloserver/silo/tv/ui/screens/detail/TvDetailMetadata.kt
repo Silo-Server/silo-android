@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.model.catalog.FileVersion
+import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import java.time.Instant
@@ -48,10 +49,29 @@ internal object TvDetailMetadata {
     fun ratingChip(detail: ItemDetail): String? =
         detail.contentRating?.trim()?.takeIf { it.isNotEmpty() }
 
+    fun seriesEpisodeSourceTokens(episode: EpisodeListItem): List<String> = listOfNotNull(
+        if (episode.seasonNumber == 0) "Specials" else "Season ${episode.seasonNumber}",
+        "Episode ${episode.episodeNumber}".takeIf { episode.episodeNumber > 0 },
+    )
+
+    /** Episode editorial facts used by the combined Series page. These mirror
+     * tvOS: the episode's air date and runtime replace the Show facts, while
+     * version choices remain directly beneath the episode carousel. */
+    fun seriesEpisodeFactsLine(
+        episode: EpisodeListItem,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): List<TvHeroFactToken> = buildList {
+        abbreviatedDate(episode.airDate, zone)?.let {
+            add(TvHeroFactToken.TextToken(it))
+        }
+        runtimeLabel(episode.runtime)?.let { add(TvHeroFactToken.TextToken(it)) }
+    }
+
     fun factsLine(
         detail: ItemDetail,
         preferredQuality: String? = null,
         selectedFileId: Int? = null,
+        includePlaybackFormats: Boolean = true,
         zone: ZoneId = ZoneId.systemDefault(),
     ): List<TvHeroFactToken> {
         val tokens = mutableListOf<TvHeroFactToken>()
@@ -73,7 +93,9 @@ internal object TvDetailMetadata {
         detail.ratingImdb?.let {
             tokens += TvHeroFactToken.TextToken("★ ${formatOneDecimal(it)}")
         }
-        tokens += qualityTokens(detail, preferredQuality, selectedFileId)
+        if (includePlaybackFormats) {
+            tokens += qualityTokens(detail, preferredQuality, selectedFileId)
+        }
         return tokens
     }
 

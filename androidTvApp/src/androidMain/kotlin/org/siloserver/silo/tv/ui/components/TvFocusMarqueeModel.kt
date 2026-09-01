@@ -28,7 +28,7 @@ data class TvMarqueeContent(
     val id: String,
     val title: String,
     val logoUrl: String?,
-    /** Optional uppercase content-classification chip. */
+    /** Optional uppercase content-classification badge before the editorial metadata. */
     val badges: List<String>,
     /** Dot-joined editorial metadata after the badge. */
     val metaParts: List<String>,
@@ -37,9 +37,8 @@ data class TvMarqueeContent(
     val detailLine: String?,
     /**
      * Playback format, `4K · Dolby Vision · EAC3 5.1`, from the section
-     * payload's overlay summary. Rendered as a muted spec line under the
-     * detail line rather than as chips, so the content rating stays the only
-     * badge on the hero and the format is there when the viewer looks for it.
+     * payload's overlay summary. The view splits this stable representation
+     * into the three tvOS-style badges beneath the detail line.
      */
     val specLine: String?,
     val backdropUrl: String?,
@@ -93,15 +92,11 @@ data class TvMarqueeContent(
             if (isEpisode) {
                 episodeToken(item.seasonNumber, item.episodeNumber)?.let(meta::add)
                 if (item.title.isNotBlank()) meta.add(item.title)
-                lengthText(item.runtime, item.durationSeconds)?.let(meta::add)
-                timeLeftText(item.positionSeconds, item.durationSeconds)?.let(meta::add)
-                ratingToken(item.ratingImdb)?.let(meta::add)
             } else {
                 if (item.year > 0) meta.add(item.year.toString())
                 lengthText(item.runtime, item.durationSeconds)?.let(meta::add)
                 ratingToken(item.ratingImdb)?.let(meta::add)
                 item.genres.firstOrNull { it.isNotBlank() }?.let(meta::add)
-                timeLeftText(item.positionSeconds, item.durationSeconds)?.let(meta::add)
             }
 
             val badges = item.contentRating
@@ -144,18 +139,10 @@ data class TvMarqueeContent(
             else -> null
         }
 
-        private fun timeLeftText(position: Double?, duration: Double?): String? {
-            if (position == null || duration == null || duration <= 0) return null
-            if (position <= 60 || position / duration >= 0.95) return null
-            val remaining = (((duration - position) / 60.0)).let { kotlin.math.ceil(it).toInt() }.coerceAtLeast(1)
-            return "$remaining min left"
-        }
-
         /**
          * `4K · Dolby Vision · EAC3 5.1` from the payload's overlay summary —
-         * the same resolution / dynamic-range / audio trio the tvOS marquee
-         * shows, spelled out rather than uppercased since it is a text line
-         * here, not a chip row.
+         * a stable delimiter representation that the view turns into separate,
+         * uppercased tvOS-style badges.
          */
         internal fun specLine(summary: OverlaySummary?): String? {
             if (summary == null) return null

@@ -373,6 +373,7 @@ class DiagnosticsCoordinatorTest {
         fixture.reports.saveHostedEnvelope(report.id, bundle)
 
         assertTrue(fixture.coordinator.delete(report.id))
+        runCurrent()
 
         assertEquals(null, fixture.reports.load(report.id))
         assertEquals(listOf(report.id), fixture.reports.hostedDeletionIntents())
@@ -382,6 +383,7 @@ class DiagnosticsCoordinatorTest {
 
         deleter.result = true
         fixture.coordinator.refresh()
+        runCurrent()
 
         assertTrue(fixture.reports.hostedDeletionIntents().isEmpty())
         assertEquals(listOf(report.id, report.id), deleter.reportIds)
@@ -434,6 +436,7 @@ class DiagnosticsCoordinatorTest {
         fixture.reports.saveHostedEnvelope(report.id, bundle)
 
         fixture.coordinator.setConsent(DiagnosticsConsentMode.NEVER)
+        runCurrent()
 
         assertEquals(null, fixture.reports.load(report.id))
         assertEquals(listOf(report.id), fixture.reports.hostedDeletionIntents())
@@ -680,6 +683,7 @@ class DiagnosticsCoordinatorTest {
 
         assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123"), upload.await())
         assertTrue(deletion.await())
+        runCurrent()
         assertNull(fixture.reports.load(report.id))
         assertEquals(hosted.binding, fixture.reports.hostedReadyBinding(report.id))
         assertEquals(listOf(report.id), fixture.reports.hostedDeletionIntents())
@@ -687,6 +691,7 @@ class DiagnosticsCoordinatorTest {
 
         deleter.result = true
         fixture.coordinator.refresh()
+        runCurrent()
 
         assertTrue(fixture.reports.hostedDeletionIntents().isEmpty())
         assertNull(fixture.reports.hostedReadyBinding(report.id))
@@ -729,6 +734,7 @@ class DiagnosticsCoordinatorTest {
 
         assertEquals(DiagnosticsUploadDecision.Uploaded("ABC123"), upload.await())
         turnOff.await()
+        runCurrent()
         assertEquals(DiagnosticsConsentMode.NEVER, fixture.coordinator.state.value.consent)
         assertNull(fixture.reports.load(report.id))
         assertEquals(hosted.binding, fixture.reports.hostedReadyBinding(report.id))
@@ -738,6 +744,7 @@ class DiagnosticsCoordinatorTest {
 
         deleter.result = true
         fixture.coordinator.refresh()
+        runCurrent()
 
         assertTrue(fixture.reports.hostedDeletionIntents().isEmpty())
         assertNull(fixture.reports.hostedReadyBinding(report.id))

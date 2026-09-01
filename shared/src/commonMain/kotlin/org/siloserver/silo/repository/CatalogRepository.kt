@@ -170,6 +170,16 @@ class CatalogRepository(
         return result
     }
 
+    /** Returns the last cached season list without touching the network. */
+    suspend fun getCachedSeasons(seriesId: String): SeasonsResponse? =
+        catalogCache.getCachedSeasons(seriesId)
+
+    /** Cache-first season list for a focused card that may open imminently. */
+    suspend fun getSeasonsForPrefetch(seriesId: String): ApiResult<SeasonsResponse> {
+        catalogCache.getCachedSeasons(seriesId)?.let { return ApiResult.Success(it) }
+        return getSeasons(seriesId)
+    }
+
     /** Lists episodes for a specific season of a series (offline: last cached episodes). */
     suspend fun getEpisodes(seriesId: String, seasonNumber: Int): ApiResult<EpisodesResponse> {
         val requestIdentityGeneration = identityTransitions.generation.value
@@ -184,6 +194,19 @@ class CatalogRepository(
             catalogCache.getCachedEpisodes(seriesId, seasonNumber)?.let { return ApiResult.Success(it) }
         }
         return result
+    }
+
+    /** Returns cached episodes without touching the network. */
+    suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int): EpisodesResponse? =
+        catalogCache.getCachedEpisodes(seriesId, seasonNumber)
+
+    /** Cache-first episode list for a focused Continue Watching season. */
+    suspend fun getEpisodesForPrefetch(
+        seriesId: String,
+        seasonNumber: Int,
+    ): ApiResult<EpisodesResponse> {
+        catalogCache.getCachedEpisodes(seriesId, seasonNumber)?.let { return ApiResult.Success(it) }
+        return getEpisodes(seriesId, seasonNumber)
     }
 
     /** Lists all episodes directly attached to an item (e.g. a season content ID). */

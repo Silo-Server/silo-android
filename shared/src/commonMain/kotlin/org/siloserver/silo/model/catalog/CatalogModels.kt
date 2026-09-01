@@ -213,6 +213,29 @@ data class ItemDetail(
     val book: org.siloserver.silo.model.book.BookMetadata? = null,
     /** Populated only when [type] is "ebook" on current servers. */
     val ebook: org.siloserver.silo.model.ebook.EbookMetadata? = null,
+    /** Remote provider trailers/teasers, pre-ordered by the server. */
+    val videos: List<ItemVideo>? = null,
+    /** Scanner-discovered local trailers and featurettes. */
+    val extras: List<ItemExtra>? = null,
+)
+
+@Serializable
+data class ItemVideo(
+    val kind: String,
+    val site: String,
+    @SerialName("site_key") val siteKey: String,
+    val name: String? = null,
+    val language: String? = null,
+    @SerialName("is_official") val isOfficial: Boolean = false,
+)
+
+@Serializable
+data class ItemExtra(
+    @SerialName("content_id") val contentId: String,
+    val kind: String,
+    val title: String? = null,
+    @SerialName("duration_seconds") val durationSeconds: Int? = null,
+    @SerialName("file_id") val fileId: Int? = null,
 )
 
 @Serializable
@@ -392,7 +415,8 @@ fun Season.isSpecialsForDisplay(): Boolean =
 
 fun List<Season>.sortedForDisplay(): List<Season> =
     sortedWith(
-        compareByDescending<Season> { it.isSpecialsForDisplay() }
+        // Match tvOS: numbered seasons first, Specials last.
+        compareBy<Season> { it.isSpecialsForDisplay() }
             .thenBy { it.seasonNumber }
             .thenBy { it.title.orEmpty() }
             .thenBy { it.contentId },
@@ -401,7 +425,16 @@ fun List<Season>.sortedForDisplay(): List<Season> =
 private fun List<Season>.selectedSeasonForDisplay(preferredSeasonNumber: Int?): Season? {
     return preferredSeasonNumber
         ?.let { preferred -> firstOrNull { it.seasonNumber == preferred } }
-        ?: firstOrNull { !it.isSpecialsForDisplay() }
+        // Open the Show overview while preloading the viewer's actual browse
+        // target: Continue Watching first, then a partially watched season,
+        // then the first not-yet-complete season. This lets the first Down land
+        // on e.g. Season 3 Episode 1 exactly as tvOS does.
+        ?: firstOrNull { (it.userData?.inProgressCount ?: 0) > 0 }
+        ?: firstOrNull { season ->
+            val watched = season.userData?.watchedCount ?: 0
+            watched > 0 && watched < season.episodeCount
+        }
+        ?: firstOrNull { it.userData?.played != true }
         ?: firstOrNull()
 }
 

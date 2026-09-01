@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -171,6 +172,7 @@ private fun SquaredPill(
         onClick = onClick,
         modifier = modifier,
         focusRequester = focusRequester,
+        capsule = true,
         contentPadding = PaddingValues(
             horizontal = if (primary) 27.dp else 20.dp,
             vertical = if (primary) 13.dp else 11.dp,
@@ -226,6 +228,8 @@ internal fun SquaredPillSurface(
     modifier: Modifier,
     focusRequester: FocusRequester?,
     enabled: Boolean = true,
+    /** Hero Play/Start Over use tvOS Capsule; selector triggers keep their approved squared shape. */
+    capsule: Boolean = false,
     contentPadding: PaddingValues,
     content: @Composable (foreground: Color) -> Unit,
 ) {
@@ -233,12 +237,16 @@ internal fun SquaredPillSurface(
     val isPressed by interactionSource.collectIsPressedAsState()
     var isFocused by remember { mutableStateOf(false) }
 
-    val shape = RoundedCornerShape(TvControlCorner)
+    val shape = if (capsule) RoundedCornerShape(percent = 50) else RoundedCornerShape(TvControlCorner)
     val primary = kind == PillKind.Primary
 
     // --- Body visuals (per kind) ---
     val foreground by animateColorAsState(
         targetValue = when (kind) {
+            // The Play pill remains the bright primary action at rest. Making
+            // it use the same translucent treatment as the circular utility
+            // buttons erased the hierarchy and made the whole action cluster
+            // look malformed whenever focus moved down to the selector.
             PillKind.Primary -> Color.Black
             PillKind.Secondary -> if (isFocused) Color.Black else Color.White
         },
@@ -276,7 +284,7 @@ internal fun SquaredPillSurface(
 
     // --- Compact focus treatment (shared by both pills) ---
     val focusOutlineColor = if (primary) Color.White.copy(alpha = 0.94f) else Color.White.copy(alpha = 0.98f)
-    val focusOutlineShape = RoundedCornerShape(TvControlCorner + 2.dp)
+    val focusOutlineShape = if (capsule) RoundedCornerShape(percent = 50) else RoundedCornerShape(TvControlCorner + 2.dp)
     val shadowOpacity by animateFloatAsState(
         targetValue = if (isFocused) 0.24f else 0.14f,
         animationSpec = focusSpring(),
@@ -333,7 +341,7 @@ internal fun SquaredPillSurface(
                 color = focusOutlineColor,
                 width = 1.25.dp,
                 inset = 1.5.dp,
-                corner = TvControlCorner + 2.dp,
+                corner = if (capsule) 50.dp else TvControlCorner + 2.dp,
             )
             .background(fill, shape)
             .border(innerBorderWidth, innerBorderColor, shape)
@@ -353,7 +361,7 @@ internal fun SquaredPillSurface(
 }
 
 /**
- * 72×72 squared icon toggle (Favorite / Watchlist / Watched). Mirrors
+ * 72×72 circular icon toggle (Favorite / Watchlist / Watched). Mirrors
  * `TVCircleActionButton` + `TVCircleButtonStyle`.
  *
  * Fill white@0.10 → focus white; icon white → focus black; swaps [icon] /
@@ -375,7 +383,7 @@ fun TvSquareToggleButton(
     val isPressed by interactionSource.collectIsPressedAsState()
     var isFocused by remember { mutableStateOf(false) }
 
-    val shape = RoundedCornerShape(TvControlCorner)
+    val shape = CircleShape
 
     val fill by animateColorAsState(
         targetValue = if (isFocused) Color.White else Color.White.copy(alpha = 0.10f),
@@ -410,7 +418,7 @@ fun TvSquareToggleButton(
     )
     val scale = focusScale * pressScale
 
-    val focusOutlineShape = RoundedCornerShape(TvControlCorner + 2.dp)
+    val focusOutlineShape = CircleShape
 
     Box(
         modifier = modifier
@@ -442,7 +450,7 @@ fun TvSquareToggleButton(
                 color = Color.White.copy(alpha = 0.96f),
                 width = 1.5.dp,
                 inset = 2.5.dp,
-                corner = TvControlCorner + 2.dp,
+                corner = 22.dp,
             )
             .background(fill, shape)
             .border(innerBorderWidth, innerBorderColor, shape)

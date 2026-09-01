@@ -1,9 +1,13 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.AutoSubtitleContext
+import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.catalogAutoSubtitleCandidates
 import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
 import org.siloserver.silo.model.playback.resolveAutoSubtitle
@@ -15,6 +19,20 @@ import java.util.Locale
 
 internal fun automaticTrackLabel(resolvedLabel: String?): String =
     "Auto - ${resolvedLabel ?: "None"}"
+
+internal fun resolveTvAutomaticAudioTrackOrdinal(
+    version: FileVersion?,
+    preferredAudioLanguage: String?,
+    capabilities: ClientCodecCapabilities?,
+): Int? = if (version == null || capabilities == null) {
+    null
+} else {
+    TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+        tracks = version.audioTracks.orEmpty(),
+        preferredAudioLanguage = preferredAudioLanguage,
+        capabilities = capabilities,
+    )
+}
 
 /**
  * Pure formatting helpers for the TV detail playback selector row (Version /
@@ -106,6 +124,19 @@ object TvPlaybackFormatting {
                 isHdr(version) -> add("HDR")
             }
             resolvedAudioCodec(version)?.let { add(it) }
+        }
+        return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
+    }
+
+    /** Resting connected-segment value: resolution plus HDR family. */
+    fun versionCompactLabel(version: FileVersion?): String {
+        if (version == null) return "Auto"
+        val tokens = buildList {
+            resolvedResolution(version)?.let(::displayResolution)?.let { add(it) }
+            when {
+                isDolbyVision(version) -> add("DV")
+                isHdr(version) -> add("HDR")
+            }
         }
         return if (tokens.isEmpty()) "Auto" else tokens.joinToString(" · ")
     }
@@ -231,16 +262,22 @@ object TvPlaybackFormatting {
         }
     }
 
-    fun audioValueLabel(version: FileVersion?, selectedAudioTrackIndex: Int?): String {
+    fun audioValueLabel(
+        version: FileVersion?,
+        selectedAudioTrackIndex: Int?,
+        automaticAudioTrackOrdinal: Int? = null,
+    ): String {
         val tracks = version?.audioTracks ?: return "Unknown"
-        val ordinal = resolvedAudioOrdinal(version, selectedAudioTrackIndex) ?: return "Unknown"
+        val ordinal = resolvedAudioOrdinal(
+            version,
+            selectedAudioTrackIndex,
+            automaticAudioTrackOrdinal,
+        ) ?: return "Unknown"
         val track = tracks.getOrNull(ordinal) ?: return "Unknown"
         val summary = audioSummary(track, ordinal)
         // Auto shows what it resolved to ("Auto: English · EAC3 · 5.1"); a
         // manual pick shows just the track (tvOS `annotateAuto`). Audio auto
-        // is the file's default/first track — the same signal the player uses
-        // (there is no client-side language audio resolver; the server drives
-        // audio selection), so unlike subtitles this preview needs no prefs.
+        // follows the same language/capability resolution used by playback.
         return if (selectedAudioTrackIndex == null) "Auto: $summary" else summary
     }
 
@@ -250,17 +287,32 @@ object TvPlaybackFormatting {
      * is already in the preferred subtitle language. Mirrors silo-apple's
      * `DetailPlaybackFormatting.resolvedAudioLanguage`.
      */
-    fun resolvedAudioLanguage(version: FileVersion?, selectedAudioTrackIndex: Int?): String? {
+    fun resolvedAudioLanguage(
+        version: FileVersion?,
+        selectedAudioTrackIndex: Int?,
+        automaticAudioTrackOrdinal: Int? = null,
+    ): String? {
         val tracks = version?.audioTracks ?: return null
-        val ordinal = resolvedAudioOrdinal(version, selectedAudioTrackIndex) ?: return null
+        val ordinal = resolvedAudioOrdinal(
+            version,
+            selectedAudioTrackIndex,
+            automaticAudioTrackOrdinal,
+        ) ?: return null
         return tracks.getOrNull(ordinal)?.language
     }
 
-    private fun resolvedAudioOrdinal(version: FileVersion?, selectedAudioTrackIndex: Int?): Int? {
+    private fun resolvedAudioOrdinal(
+        version: FileVersion?,
+        selectedAudioTrackIndex: Int?,
+        automaticAudioTrackOrdinal: Int? = null,
+    ): Int? {
         val tracks = version?.audioTracks ?: return null
         if (tracks.isEmpty()) return null
         if (selectedAudioTrackIndex != null && selectedAudioTrackIndex in tracks.indices) {
             return selectedAudioTrackIndex
+        }
+        if (automaticAudioTrackOrdinal != null && automaticAudioTrackOrdinal in tracks.indices) {
+            return automaticAudioTrackOrdinal
         }
         // Server-resolved effective track beats the isDefault flag (Apple
         // parity: selected → effective → default → first).

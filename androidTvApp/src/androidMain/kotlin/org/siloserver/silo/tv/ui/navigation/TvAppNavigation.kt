@@ -114,10 +114,13 @@ internal fun tvIsAlreadyShowingItemDetail(
     currentSeasonNumber: Int?,
     contentId: String,
     seasonNumber: Int?,
+    currentEpisodeContentId: String? = null,
+    episodeContentId: String? = null,
 ): Boolean =
     currentRoute == TvRoute.ItemDetail.ROUTE &&
         currentContentId == contentId &&
-        currentSeasonNumber == seasonNumber
+        currentSeasonNumber == seasonNumber &&
+        currentEpisodeContentId == episodeContentId
 
 /** Destinations that own an active playback session. */
 private val tvPlayerRoutes = setOf(TvRoute.Player.ROUTE, TvRoute.AudiobookPlayer.ROUTE)
@@ -273,6 +276,7 @@ private fun NavHostController.navigateToTvWatchTogether(
 private fun NavHostController.navigateToTvItemDetail(
     contentId: String,
     seasonNumber: Int? = null,
+    episodeContentId: String? = null,
 ) {
     val top = currentBackStackEntry
     if (
@@ -282,13 +286,16 @@ private fun NavHostController.navigateToTvItemDetail(
             currentSeasonNumber = top?.arguments
                 ?.getString(TvRoute.ItemDetail.ARG_SEASON_NUMBER)
                 ?.toIntOrNull(),
+            currentEpisodeContentId = top?.arguments
+                ?.getString(TvRoute.ItemDetail.ARG_EPISODE_CONTENT_ID),
             contentId = contentId,
             seasonNumber = seasonNumber,
+            episodeContentId = episodeContentId,
         )
     ) {
         return
     }
-    navigate(TvRoute.ItemDetail(contentId, seasonNumber).route)
+    navigate(TvRoute.ItemDetail(contentId, seasonNumber, episodeContentId).route)
 }
 
 /**
@@ -765,6 +772,13 @@ fun TvAppNavigation(
                 onOpenItemDetail = { contentId ->
                     navController.navigateToTvItemDetail(contentId)
                 },
+                onOpenItemDetailSelection = { contentId, seasonNumber, episodeContentId ->
+                    navController.navigateToTvItemDetail(
+                        contentId = contentId,
+                        seasonNumber = seasonNumber,
+                        episodeContentId = episodeContentId,
+                    )
+                },
                 onOpenWatchTogether = { room ->
                     navController.navigateToTvWatchTogether(room, lastPlaybackNavigation)
                 },
@@ -903,6 +917,11 @@ fun TvAppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument(TvRoute.ItemDetail.ARG_EPISODE_CONTENT_ID) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { backStack ->
             val contentId = backStack.arguments
@@ -911,9 +930,12 @@ fun TvAppNavigation(
             val seasonNumber = backStack.arguments
                 ?.getString(TvRoute.ItemDetail.ARG_SEASON_NUMBER)
                 ?.toIntOrNull()
+            val episodeContentId = backStack.arguments
+                ?.getString(TvRoute.ItemDetail.ARG_EPISODE_CONTENT_ID)
             TvItemDetailScreen(
                 contentId = contentId,
                 seasonNumber = seasonNumber,
+                initialEpisodeContentId = episodeContentId,
                 // The detail screen's playback selector row writes the chosen
                 // version's fileId into [TvItemDetailViewModel.selectedFileId];
                 // we forward it through the route so the player session

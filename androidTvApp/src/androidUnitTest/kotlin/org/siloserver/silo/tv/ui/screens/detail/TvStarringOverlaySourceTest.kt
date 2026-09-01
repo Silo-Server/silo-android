@@ -2,7 +2,6 @@ package org.siloserver.silo.tv.ui.screens.detail
 
 import java.io.File
 import kotlin.test.Test
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TvStarringOverlaySourceTest {
@@ -15,15 +14,24 @@ class TvStarringOverlaySourceTest {
     private val metadata = File(
         "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/detail/TvDetailMetadata.kt",
     ).readText()
-    private val presentationSources = listOf(hero, screen, metadata)
-
     @Test
-    fun tvDetailDoesNotDeriveOrRenderDuplicatedStarringOverlay() {
-        assertFalse(
-            presentationSources.any { source ->
-                source.contains("starring", ignoreCase = true)
-            },
+    fun tvDetailRendersOneStableSeriesStarringCreditAbovePlaybackSummary() {
+        val lockedSeriesFooter = hero
+            .substringAfter("translation?.invoke()")
+            .substringBefore("@Composable\nprivate fun HeroCreditLine")
+
+        assertTrue(screen.contains("internal fun seriesStarringCredit(detail: ItemDetail)"))
+        assertTrue(screen.contains("prefix = \"Starring \""))
+        assertTrue(screen.contains("val heroCreditText = if (isSeriesDetail)"))
+        assertTrue(hero.contains("SERIES_CREDIT_SLOT_HEIGHT"))
+        assertTrue(lockedSeriesFooter.indexOf("SERIES_CREDIT_SLOT_HEIGHT") >= 0)
+        assertTrue(
+            lockedSeriesFooter.indexOf("SERIES_CREDIT_SLOT_HEIGHT") <
+                lockedSeriesFooter.indexOf("playbackSummary?.invoke()"),
         )
+        // The general metadata helper must not independently derive a second
+        // Starring overlay.
+        assertTrue(!metadata.contains("starring", ignoreCase = true))
     }
 
     @Test

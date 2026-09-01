@@ -141,14 +141,15 @@ class TvControlWiringCallSiteTest {
     fun singleChoiceSelectorPillStaysFocusableAndNoOps() {
         val selector = source("ui/components/TvAnchoredSelectorMenu.kt")
             .declarationBody("TvAnchoredSelectorMenu")
+        val pillArguments = selector.argumentsOf("SquaredPillSurface(")
 
         assertFalse(
-            selector.argumentsOf("SquaredPillSurface(").containsLoosely("enabled ="),
+            pillArguments.containsLoosely("enabled ="),
             "the selector pill must stay focusable, so it must not hand its trigger an enabled flag",
         )
         assertEquals(
             1,
-            selector.countLoosely("onClick = { if (interactive) expansionRequested = true }"),
+            pillArguments.countLoosely("onClick = { if (interactive) expansionRequested = true }"),
             "a non-interactive selector pill must swallow Select rather than leave the focus graph",
         )
         assertEquals(
