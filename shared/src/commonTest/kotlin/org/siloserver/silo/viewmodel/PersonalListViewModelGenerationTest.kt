@@ -49,6 +49,17 @@ class PersonalListViewModelGenerationTest {
         CatalogResponse(items = ids.map(::item), hasMore = hasMore, total = ids.size),
     )
 
+    @Test
+    fun mediaTypeParticipatesInPersonalListQueryIdentity() {
+        val movies = PersonalListQuery(mediaType = "movie")
+        val series = PersonalListQuery(mediaType = "series")
+
+        assertFalse(movies.isDefault)
+        assertFalse(series.isDefault)
+        assertTrue(PersonalListQuery().isDefault)
+        assertTrue(movies != series)
+    }
+
     private class TestList : PersonalListViewModel(pageSize = 2) {
         val pending = ArrayDeque<CompletableDeferred<ApiResult<CatalogResponse>>>()
         val offsets = mutableListOf<Int>()

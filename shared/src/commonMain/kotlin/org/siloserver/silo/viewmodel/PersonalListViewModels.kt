@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
  * `/catalog?source=…`, the only route that accepts sort and facets.
  */
 data class PersonalListQuery(
+    /** Optional top-level catalog type (for example `movie` or `series`). */
+    val mediaType: String? = null,
     /** null = send no sort, i.e. keep the server's stored list order. */
     val sort: String? = null,
     val order: String? = null,
@@ -30,7 +32,7 @@ data class PersonalListQuery(
     /** "all" | "any"; only meaningful when [queryGroups] is non-empty. */
     val match: String? = null,
 ) {
-    val isDefault: Boolean get() = sort == null && queryGroups.isEmpty()
+    val isDefault: Boolean get() = mediaType == null && sort == null && queryGroups.isEmpty()
 }
 
 /**
@@ -285,6 +287,7 @@ class FavoritesViewModel(
     override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
         catalogRepository.browse(
             source = "favorites",
+            mediaType = query.mediaType,
             sort = query.sort,
             order = query.order,
             offset = offset,
@@ -322,6 +325,7 @@ class WatchlistViewModel(
     override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
         catalogRepository.browse(
             source = "watchlist",
+            mediaType = query.mediaType,
             sort = query.sort,
             order = query.order,
             offset = offset,

@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.model.audiobook.AudiobookMetadata
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.SubtitleTrack
@@ -12,6 +13,44 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class TvDetailMetadataTest {
+    @Test
+    fun seriesEpisodeEditorialMatchesTvOsHierarchy() {
+        val episode = EpisodeListItem(
+            contentId = "e1",
+            seasonNumber = 3,
+            episodeNumber = 1,
+            title = "Smells Like Mean Spirit",
+            airDate = "2026-03-30T00:00:00Z",
+            runtime = 52,
+        )
+
+        assertEquals(
+            listOf("Season 3", "Episode 1"),
+            TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+        )
+        assertEquals(
+            listOf(
+                TvHeroFactToken.TextToken("Mar 30, 2026"),
+                TvHeroFactToken.TextToken("52 min"),
+            ),
+            TvDetailMetadata.seriesEpisodeFactsLine(episode, zone = ZoneId.of("UTC")),
+        )
+    }
+
+    @Test
+    fun seriesSpecialEditorialUsesSpecialsLabel() {
+        val episode = EpisodeListItem(
+            contentId = "special-1",
+            seasonNumber = 0,
+            episodeNumber = 1,
+        )
+
+        assertEquals(
+            listOf("Specials", "Episode 1"),
+            TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+        )
+    }
+
     @Test
     fun episodeFactsPutAirDateBeforeRuntime() {
         val detail = ItemDetail(

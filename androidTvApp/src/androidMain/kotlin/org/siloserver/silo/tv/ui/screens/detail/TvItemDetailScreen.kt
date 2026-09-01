@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.AnimationSpec
@@ -24,27 +26,22 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BookmarkAdded
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Tv
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -68,7 +65,6 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -86,7 +82,6 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Glow
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
@@ -108,6 +103,7 @@ import org.siloserver.silo.model.audiobook.AudiobookNarration
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.ItemVideo
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
@@ -128,8 +124,8 @@ import org.siloserver.silo.tv.ui.components.TvOptionDialog
 import org.siloserver.silo.tv.ui.components.TvPillVariant
 import org.siloserver.silo.tv.ui.components.TvPrimaryPillButton
 import org.siloserver.silo.tv.ui.components.TvRowStyle
-import org.siloserver.silo.tv.ui.components.TvSecondaryPillButton
 import org.siloserver.silo.tv.ui.components.TvSquareToggleButton
+import org.siloserver.silo.tv.ui.components.rememberAmbientBackdropTintState
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
@@ -139,13 +135,13 @@ import org.siloserver.silo.tv.ui.screens.watchtogether.TvSuggestToRoomViewModel
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherEntryDialog
 import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherViewModel
 import org.siloserver.silo.tv.ui.theme.Spacing
-import org.siloserver.silo.tv.ui.theme.TvControlCorner
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 
 @Composable
 fun TvItemDetailScreen(
     contentId: String,
     seasonNumber: Int? = null,
+    initialEpisodeContentId: String? = null,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
     onItemDetailReplace: (contentId: String) -> Unit = onItemDetail,
@@ -155,7 +151,7 @@ fun TvItemDetailScreen(
     onOpenPerson: (personId: Long) -> Unit,
     onBack: () -> Unit,
     viewModel: TvItemDetailViewModel = koinViewModel(
-        key = "item-detail-$contentId-${seasonNumber ?: "default"}",
+        key = "item-detail-$contentId-${seasonNumber ?: "default"}-${initialEpisodeContentId ?: "default"}",
         parameters = { parametersOf(contentId) },
     ),
 ) {
@@ -190,6 +186,23 @@ fun TvItemDetailScreen(
         }
     }
 
+    LaunchedEffect(
+        state.detail?.contentId,
+        seasonNumber,
+        initialEpisodeContentId,
+        state.selectedSeason,
+        state.episodes,
+        state.episodesLoading,
+        state.entryEpisodeSelectionApplied,
+    ) {
+        val detail = state.detail ?: return@LaunchedEffect
+        val episodeContentId = initialEpisodeContentId ?: return@LaunchedEffect
+        if (detail.type != "series" || state.entryEpisodeSelectionApplied) return@LaunchedEffect
+        if (seasonNumber != null && state.selectedSeason != seasonNumber) return@LaunchedEffect
+        if (state.episodesLoading || state.episodes.isEmpty()) return@LaunchedEffect
+        viewModel.onEntrySeriesEpisodeRequested(episodeContentId)
+    }
+
     when {
         state.isLoading && state.detail == null -> TvLoadingScreen(
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
@@ -202,6 +215,7 @@ fun TvItemDetailScreen(
         state.detail != null -> TvDetailContent(
             detail = state.detail!!,
             state = state,
+            initialEpisodeContentId = initialEpisodeContentId,
             viewModel = viewModel,
             onPlay = onPlay,
             onItemDetail = onItemDetail,
@@ -219,6 +233,7 @@ fun TvItemDetailScreen(
 private fun TvDetailContent(
     detail: ItemDetail,
     state: TvItemDetailUiState,
+    initialEpisodeContentId: String?,
     viewModel: TvItemDetailViewModel,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
@@ -229,10 +244,9 @@ private fun TvDetailContent(
     onOpenPerson: (personId: Long) -> Unit,
 ) {
     val playFocus = remember { FocusRequester() }
-    // The playback selector row inside the hero action cluster. Hoisted here so
-    // an Up press from the body (episodes/season chips) can land on the
-    // selectors — the hero's bottom-most focus stop — instead of skipping
-    // straight to Play.
+    // The circular Version control in the hero action cluster. Hoisted here so
+    // an Up press from the body can return to the bottom-most playback control
+    // without skipping straight to Play.
     val selectorFocus = remember { FocusRequester() }
     val firstCastFocus = remember { FocusRequester() }
     // Focus restore for the cast rail: remembers which cast card pushed the
@@ -277,6 +291,31 @@ private fun TvDetailContent(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val isAudiobook = isAudiobookItemType(detail.type)
+    val isSeriesDetail = detail.type == "series"
+    var isShowingSeriesOverview by rememberSaveable(detail.contentId) { mutableStateOf(true) }
+    LaunchedEffect(
+        initialEpisodeContentId,
+        state.entryEpisodeSelectionApplied,
+        state.nextUpEpisode?.contentId,
+    ) {
+        if (
+            initialEpisodeContentId != null &&
+            state.entryEpisodeSelectionApplied &&
+            state.nextUpEpisode?.contentId == initialEpisodeContentId
+        ) {
+            isShowingSeriesOverview = false
+        }
+    }
+    // tvOS treats Show / Season tabs, Episodes and the playback selector as a
+    // single fixed first viewport. Supporting rails only begin vertical page
+    // movement after focus leaves that complete primary region.
+    val seriesPrimaryViewportActive = remember(detail.contentId) { mutableStateOf(false) }
+    var seriesPrimaryFocusGeneration by remember(detail.contentId) { mutableStateOf(0) }
+    var seriesHeroHeightPx by remember(detail.contentId) { mutableStateOf(0) }
+    val trailerEntries = remember(detail.videos, detail.extras) {
+        tvDetailTrailerEntries(detail)
+    }
+    val detailContext = LocalContext.current
 
     // Default focus → Play (user-initiated), mirroring Apple's
     // `defaultFocus($playFocused, true, priority: .userInitiated)`. This
@@ -329,6 +368,12 @@ private fun TvDetailContent(
         if (pendingSimilarContentId != null) return@LaunchedEffect
         listState.scrollToItem(0)
         playFocus.claimFocusOrReport(target = "detail_play", action = "entry_fallback")
+        // Play's initial focus claim can enqueue its own bring-into-view before
+        // heroHasFocus observes the node. Let that request settle, then restore
+        // the approved top framing (most visible on the compact Series hero).
+        withFrameNanos { }
+        withFrameNanos { }
+        listState.scrollToItem(0)
     }
 
     // Returning from a related item: land back on the card that opened it
@@ -399,7 +444,11 @@ private fun TvDetailContent(
 
     val isEpisodicType = detail.type in setOf("series", "season", "episode")
     val showsEpisodeRail = isEpisodicType && state.episodes.isNotEmpty()
-    val showsSeasonChips = isEpisodicType && state.seasons.size > 1
+    val showsSeasonChips = isEpisodicType && if (isSeriesDetail) {
+        state.seasons.isNotEmpty()
+    } else {
+        state.seasons.size > 1
+    }
     // Keep the whole Episodes section — and, crucially, the season chips —
     // mounted whenever the series has seasons, so selecting an empty or failed
     // season can't unmount the chips and strand the user (T15). The rail itself
@@ -411,6 +460,7 @@ private fun TvDetailContent(
     // Up-return-to-hero fallback.
     val hasEpisodeNavAbove = showsEpisodeRail || showsSeasonChips
     val showsCastSection = !isAudiobook && detail.cast.isNotEmpty()
+    val showsTrailersSection = !isAudiobook && trailerEntries.isNotEmpty()
     val showsSimilarRail = !isAudiobook && detail.type != "episode" && state.moreLikeThis.isNotEmpty()
     val showsDetailsSection = !isAudiobook && remember(detail) { detail.hasTvDetailFacts() }
     // Whole-book timeline stitched from the item's audiobook-part files — the
@@ -443,7 +493,36 @@ private fun TvDetailContent(
     } else {
         state.selectedFileId
     }
+    val activeSeriesEpisode = state.nextUpEpisode.takeIf {
+        isSeriesDetail && !isShowingSeriesOverview
+    }
+    val activeSeriesPlaybackDetail = state.nextUpPlaybackDetail.takeIf { playbackDetail ->
+        activeSeriesEpisode?.contentId == playbackDetail?.contentId
+    }
+    val heroTitle = activeSeriesEpisode?.let { episode ->
+        activeSeriesPlaybackDetail?.title
+            ?: episode.title
+            ?: "Episode ${episode.episodeNumber}"
+    } ?: detail.title
+    val heroOverview = activeSeriesEpisode?.let { episode ->
+        activeSeriesPlaybackDetail?.overview ?: episode.overview
+    } ?: detail.overview
+    val heroSourceTokens = activeSeriesEpisode?.let(TvDetailMetadata::seriesEpisodeSourceTokens)
+        ?: TvDetailMetadata.sourceTokens(detail)
+    val heroFactsLine = activeSeriesEpisode?.let { episode ->
+        TvDetailMetadata.seriesEpisodeFactsLine(episode)
+    } ?: TvDetailMetadata.factsLine(
+        detail = detail,
+        preferredQuality = state.preferredQuality,
+        selectedFileId = heroSelectedFileId,
+        includePlaybackFormats = false,
+    )
     val heroArtwork = resolveTvDetailHeroArtwork(detail, state.nextUpEpisode)
+    val detailPageTint = rememberAmbientBackdropTintState()
+    LaunchedEffect(heroArtwork.url) {
+        detailPageTint.set(item = null, url = heroArtwork.url)
+    }
+    val pageSurfaceColor = tvDetailPageSurfaceColor(detailPageTint.accent)
     var chaptersDialogOpen by remember(detail.contentId) { mutableStateOf(false) }
 
     // The first focusable body rail (episode rail, else cast). An Up press from
@@ -452,8 +531,8 @@ private fun TvDetailContent(
     // actions section.
     val returnToHero: () -> Boolean = {
         coroutineScope.launch {
-            // Land on the selector row (the hero element directly above the
-            // body) when it is composed; otherwise fall back to Play
+            // Land on the selector row (the bottom-most primary control) when
+            // it is composed; otherwise fall back to Play
             // (audiobooks, or the next-up placeholder pill). Focus moves
             // BEFORE the scroll so the highlight travels with the window
             // instead of appearing only after it settles; when the hero has
@@ -528,7 +607,7 @@ private fun TvDetailContent(
     // hopping Play ↔ selector row. Suppress it for hero-origin requests and
     // keep the smooth spec for body rails.
     val heroHasFocus = remember { mutableStateOf(false) }
-    val detailBringIntoViewSpec = remember(heroHasFocus) {
+    val detailBringIntoViewSpec = remember(heroHasFocus, seriesPrimaryViewportActive, isSeriesDetail) {
         object : BringIntoViewSpec {
             override val scrollAnimationSpec: AnimationSpec<Float> = DetailAnchorScrollSpec
 
@@ -536,7 +615,10 @@ private fun TvDetailContent(
                 offset: Float,
                 size: Float,
                 containerSize: Float,
-            ): Float = if (heroHasFocus.value) {
+            ): Float = if (
+                heroHasFocus.value ||
+                (isSeriesDetail && seriesPrimaryViewportActive.value)
+            ) {
                 0f
             } else {
                 TvSmoothBringIntoViewSpec.calculateScrollDistance(offset, size, containerSize)
@@ -562,19 +644,21 @@ private fun TvDetailContent(
                 }
                 false
             }
-            .background(MaterialTheme.colorScheme.background),
+            .background(pageSurfaceColor),
     ) {
         CompositionLocalProvider(LocalBringIntoViewSpec provides detailBringIntoViewSpec) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
-                contentPadding = PaddingValues(bottom = 160.dp),
+                contentPadding = PaddingValues(bottom = if (isAudiobook) 160.dp else TvDetailPageBottomPadding),
             ) {
                 item(key = "hero", contentType = "detail-hero") {
                     Box(
-                        modifier = Modifier.onFocusChanged { focusState ->
-                            heroHasFocus.value = focusState.hasFocus
-                        },
+                        modifier = Modifier
+                            .onSizeChanged { seriesHeroHeightPx = it.height }
+                            .onFocusChanged { focusState ->
+                                heroHasFocus.value = focusState.hasFocus
+                            },
                     ) {
                     if (isAudiobook) {
                         TvAudiobookDetailHero(
@@ -586,30 +670,35 @@ private fun TvDetailContent(
                         )
                     } else {
                         TvDetailHero(
-                            scrollOffsetPx = {
-                                if (listState.firstVisibleItemIndex == 0) {
-                                    listState.firstVisibleItemScrollOffset.toFloat()
-                                } else {
-                                    Float.MAX_VALUE
-                                }
+                            title = heroTitle,
+                            seriesTitle = when {
+                                activeSeriesEpisode != null -> detail.title
+                                detail.type == "episode" -> detail.seriesTitle
+                                else -> null
                             },
-                            title = detail.title,
-                            seriesTitle = if (detail.type == "episode") detail.seriesTitle else null,
                             logoUrl = detail.logoUrl,
                             backdropUrl = heroArtwork.url,
                             backdropThumbhash = heroArtwork.thumbhash,
-                            sourceTokens = TvDetailMetadata.sourceTokens(detail),
+                            sourceTokens = heroSourceTokens,
                             ratingChip = TvDetailMetadata.ratingChip(detail),
-                            overview = detail.overview,
-                            tagline = detail.tagline,
-                            factsLine = TvDetailMetadata.factsLine(
-                                detail = detail,
-                                preferredQuality = state.preferredQuality,
-                                selectedFileId = heroSelectedFileId,
-                            ),
-                            directorText = movieDirectorCredit(detail),
-                            translation = translationSlot,
+                            overview = heroOverview,
+                            tagline = detail.tagline.takeIf { activeSeriesEpisode == null },
+                            factsLine = heroFactsLine,
+                            directorText = movieDirectorCredit(detail).takeIf { activeSeriesEpisode == null },
+                            translation = translationSlot.takeIf { activeSeriesEpisode == null },
+                            compactSeries = isSeriesDetail,
+                            playbackSummary = {
+                                TvDetailPlaybackSelectionSummary(
+                                    detail = detail,
+                                    state = state,
+                                )
+                            },
                             actions = {
+                                // Series keeps the full action row in both Show
+                                // and Season browsing modes. Because episode
+                                // focus updates state.nextUpEpisode, Play/Resume
+                                // always follows the focused episode while the
+                                // other Show-level actions stay available.
                                 HeroActionRow(
                                     detail = detail,
                                     state = state,
@@ -627,14 +716,13 @@ private fun TvDetailContent(
                     }
                 }
 
-                // Keep a short hero→body handoff so the next section header
-                // peeks below the selectors and signals that more is available.
-                // Every gap derives from TvDetailSectionGap (the hero handoff
-                // adds only the remainder above its internal bottom inset), so
-                // the whole page's vertical rhythm changes with one value.
+                // Approved hero→body rhythm: the artwork ends with the hero;
+                // the first section begins one standard body gap below it.
                 item(key = "body", contentType = "detail-body") {
                     Column(
-                        modifier = Modifier.padding(top = TvDetailSectionGap - TvDetailHeroBottomInset),
+                        // tvOS starts the first body section immediately after
+                        // the hero; the 64pt token is only BETWEEN sections.
+                        modifier = Modifier,
                         verticalArrangement = Arrangement.spacedBy(TvDetailSectionGap),
                     ) {
                         if (isAudiobook && audiobookParts.size > 1) {
@@ -715,24 +803,72 @@ private fun TvDetailContent(
                         }
 
                         if (showsEpisodesSection) {
-                            // Anchor the window when focus ENTERS the episodes
-                            // section (chips or cards): both center the section
-                            // in the viewport (tvOS scrolls the episode section
-                            // with `anchor: .center`), so focusing "Season N"
-                            // sits where an episode focus sits, and coming back
-                            // up from Cast & Crew restores the same position.
+                            // Series owns a fixed first viewport through the
+                            // selector. Entering it from Cast (or another
+                            // supporting rail) restores the hero top with one
+                            // smooth curve; internal mode/episode/selector
+                            // moves then suppress native reveal entirely.
                             Box(
-                                modifier = Modifier.detailSectionAnchor(listState, coroutineScope) { height, viewport ->
-                                    (viewport - height) / 2f
+                                modifier = if (isSeriesDetail) {
+                                    Modifier.onFocusChanged { focusState ->
+                                        seriesPrimaryFocusGeneration += 1
+                                        val generation = seriesPrimaryFocusGeneration
+                                        if (focusState.hasFocus) {
+                                            val needsRestore = !seriesPrimaryViewportActive.value
+                                            seriesPrimaryViewportActive.value = true
+                                            if (needsRestore) {
+                                                coroutineScope.launch {
+                                                    withFrameNanos { }
+                                                    if (
+                                                        seriesPrimaryViewportActive.value &&
+                                                        seriesPrimaryFocusGeneration == generation
+                                                    ) {
+                                                        listState.animateSeriesPrimaryViewport(seriesHeroHeightPx)
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            // Preserve the lock across the tiny
+                                            // hand-off gap between descendants.
+                                            coroutineScope.launch {
+                                                delay(180)
+                                                if (seriesPrimaryFocusGeneration == generation) {
+                                                    seriesPrimaryViewportActive.value = false
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Modifier.detailSectionAnchor(listState, coroutineScope) { height, viewport ->
+                                        (viewport - height) / 2f
+                                    }
                                 },
                             ) {
                             EpisodesSection(
                                 detail = detail,
                                 state = state,
+                                entryEpisodeContentId = initialEpisodeContentId
+                                    ?.takeUnless { state.entryEpisodeSelectionApplied },
                                 showsSeasonChips = showsSeasonChips,
+                                isShowingSeriesOverview = isShowingSeriesOverview,
+                                onShowSelected = {
+                                    isShowingSeriesOverview = true
+                                    viewModel.onSeriesEpisodeActivated(null)
+                                },
                                 onReturnToHero = returnToHero,
+                                onReturnToSeriesSelector = if (isSeriesDetail) {
+                                    {
+                                        selectorFocus.claimFocusOrReport(
+                                            target = "detail_series_selector",
+                                            action = "season_up",
+                                        ) || returnToHero()
+                                    }
+                                } else {
+                                    null
+                                },
                                 onSeasonSelected = { season ->
                                     if (detail.type == "series") {
+                                        isShowingSeriesOverview = false
                                         viewModel.onSeasonSelected(season.seasonNumber)
                                     } else if (season.contentId != detail.contentId) {
                                         // Season/episode pages own their hero and
@@ -743,12 +879,48 @@ private fun TvDetailContent(
                                         onItemDetailReplace(season.contentId)
                                     }
                                 },
-                                // Match tvOS browse semantics: OK opens the
-                                // episode detail. Playback remains an explicit
-                                // Play/Resume action so its version and track
-                                // selectors are honored.
                                 onEpisodeSelected = { episode ->
-                                    onItemDetail(episode.contentId)
+                                    if (isSeriesDetail) {
+                                        // The combined tvOS Series page never
+                                        // pushes an episode-detail route. OK on
+                                        // the focused card quick-plays it.
+                                        isShowingSeriesOverview = false
+                                        viewModel.onSeriesEpisodeActivated(episode.contentId)
+                                        val launch = seriesEpisodePlaybackLaunch(state, episode)
+                                        onPlay(
+                                            episode.contentId,
+                                            launch.fileId,
+                                            launch.audioTrackIndex,
+                                            launch.audioPickedThisSession,
+                                            launch.subtitleSelection,
+                                            "episode",
+                                            launch.resumePositionSeconds,
+                                        )
+                                    } else {
+                                        // Season/episode routes use the same
+                                        // direct-play contract: no legacy
+                                        // episode-detail page is pushed.
+                                        val launch = seriesEpisodePlaybackLaunch(state, episode)
+                                        onPlay(
+                                            episode.contentId,
+                                            launch.fileId,
+                                            launch.audioTrackIndex,
+                                            launch.audioPickedThisSession,
+                                            launch.subtitleSelection,
+                                            "episode",
+                                            launch.resumePositionSeconds,
+                                        )
+                                    }
+                                },
+                                onEpisodeFocused = { episode ->
+                                    if (isSeriesDetail) {
+                                        // Entering the rail swaps the hero's
+                                        // editorial and Play target to the
+                                        // focused episode without hiding the
+                                        // action row.
+                                        isShowingSeriesOverview = false
+                                        viewModel.onSeriesEpisodeActivated(episode.contentId)
+                                    }
                                 },
                                 onSetEpisodeWatched = viewModel::onSetEpisodeWatched,
                                 onSetEpisodeFavorite = viewModel::onSetEpisodeFavorite,
@@ -757,10 +929,19 @@ private fun TvDetailContent(
                         }
 
                         if (showsCastSection) {
-                            Box(modifier = Modifier.detailBodySectionAnchor(listState, coroutineScope)) {
+                            Box(
+                                modifier = Modifier
+                                    .onFocusChanged { focusState ->
+                                        if (focusState.hasFocus && isSeriesDetail) {
+                                            seriesPrimaryFocusGeneration += 1
+                                            seriesPrimaryViewportActive.value = false
+                                        }
+                                    }
+                                    .detailBodySectionAnchor(listState, coroutineScope),
+                            ) {
                             TvCastCrewSection(
                                 cast = detail.cast,
-                                horizontalContentPadding = Spacing.safeArea,
+                                horizontalContentPadding = TvDetailHorizontalInset,
                                 firstItemFocusRequester = firstCastFocus,
                                 // Cast is the first body rail only when there is no
                                 // episode rail or season chips above it; Up then
@@ -788,15 +969,36 @@ private fun TvDetailContent(
                             }
                         }
 
-                        if (showsDetailsSection) {
-                            DetailsSection(
-                                detail = detail,
+                        if (showsTrailersSection) {
+                            TvDetailTrailersSection(
+                                entries = trailerEntries,
+                                onSelectRemote = { video ->
+                                    openTvYoutubeTrailer(detailContext, video)
+                                },
+                                onSelectLocal = { extra ->
+                                    onPlay(
+                                        extra.contentId,
+                                        extra.fileId,
+                                        null,
+                                        false,
+                                        null,
+                                        "extra",
+                                        0.0,
+                                    )
+                                },
+                                onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection) {
+                                    returnToHero
+                                } else {
+                                    null
+                                },
                                 modifier = Modifier
-                                    .detailBodySectionAnchor(listState, coroutineScope)
-                                    // The section pads its own inner inset so the
-                                    // focus highlight box extends past the text
-                                    // instead of starting flush at its left edge.
-                                    .padding(horizontal = Spacing.safeArea - TvDetailsFocusInset),
+                                    .onFocusChanged { focusState ->
+                                        if (focusState.hasFocus && isSeriesDetail) {
+                                            seriesPrimaryFocusGeneration += 1
+                                            seriesPrimaryViewportActive.value = false
+                                        }
+                                    }
+                                    .detailBodySectionAnchor(listState, coroutineScope),
                             )
                         }
 
@@ -805,15 +1007,23 @@ private fun TvDetailContent(
                             // header (Recommended / More Like This) over a bare
                             // poster rail — no See-all on the detail page.
                             Column(
-                                modifier = Modifier.detailBodySectionAnchor(listState, coroutineScope),
+                                modifier = Modifier
+                                    .onFocusChanged { focusState ->
+                                        if (focusState.hasFocus && isSeriesDetail) {
+                                            seriesPrimaryFocusGeneration += 1
+                                            seriesPrimaryViewportActive.value = false
+                                        }
+                                    }
+                                    .detailBodySectionAnchor(listState, coroutineScope),
                                 verticalArrangement = Arrangement.spacedBy(20.dp),
                             ) {
+                                val similarTitle = if (isSeriesDetail) "Recommended Series" else "Related Movies"
                                 TvDetailSectionHeader(
-                                    title = "More Like This",
-                                    modifier = Modifier.padding(horizontal = Spacing.safeArea),
+                                    title = similarTitle,
+                                    modifier = Modifier.padding(horizontal = TvDetailHorizontalInset),
                                 )
                                 TvMediaRow(
-                                    title = "More Like This",
+                                    title = similarTitle,
                                     showHeader = false,
                                     items = state.moreLikeThis,
                                     onItemClick = { clickedContentId ->
@@ -855,10 +1065,10 @@ private fun TvDetailContent(
                                         null
                                     },
                                     style = TvRowStyle.Poster,
-                                    horizontalPadding = Spacing.safeArea,
+                                    horizontalPadding = TvDetailHorizontalInset,
                                     rowTopPadding = 0.dp,
                                     firstItemFocusRequester = firstSimilarFocus,
-                                    onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection) {
+                                    onDirectionUp = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection) {
                                         returnToHero
                                     } else {
                                         null
@@ -866,13 +1076,31 @@ private fun TvDetailContent(
                                     // When Similar is the first body rail (movie with no
                                     // episode rail and no cast), Up returns to the hero
                                     // Play button instead of relying on geometry.
-                                    upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection) {
+                                    upFocusRequester = if (!hasEpisodeNavAbove && !showsCastSection && !showsTrailersSection) {
                                         playFocus
                                     } else {
                                         null
                                     },
                                 )
                             }
+                        }
+
+                        if (showsDetailsSection) {
+                            DetailsSection(
+                                detail = detail,
+                                modifier = Modifier
+                                    .onFocusChanged { focusState ->
+                                        if (focusState.hasFocus && isSeriesDetail) {
+                                            seriesPrimaryFocusGeneration += 1
+                                            seriesPrimaryViewportActive.value = false
+                                        }
+                                    }
+                                    .detailBodySectionAnchor(listState, coroutineScope)
+                                    // The section pads its own inner inset so the
+                                    // focus highlight box extends past the text
+                                    // instead of starting flush at its left edge.
+                                    .padding(horizontal = TvDetailHorizontalInset - TvDetailsFocusInset),
+                            )
                         }
                     }
                 }
@@ -913,6 +1141,158 @@ private fun TvDetailContent(
         }
     }
 }
+
+/**
+ * Quiet, non-pill playback readout directly under the date/runtime facts.
+ * It follows the same selected file and next-up episode state as Play, so a
+ * Series episode focus change updates this line and the circular menus together.
+ */
+@Composable
+private fun TvDetailPlaybackSelectionSummary(
+    detail: ItemDetail,
+    state: TvItemDetailUiState,
+) {
+    val usesNextUp = detail.type == "series" || detail.type == "season"
+    val playbackDetail = if (usesNextUp) state.nextUpPlaybackDetail else detail
+    val versions = playbackDetail?.versions.orEmpty()
+    val selectedFileId = (if (usesNextUp) state.selectedNextUpFileId else state.selectedFileId)
+        ?.takeIf { fileId -> versions.any { it.fileId == fileId } }
+    val selectedAudioIndex = if (usesNextUp) state.selectedNextUpAudioIndex else state.selectedAudioIndex
+    val selectedSubtitleIndex =
+        if (usesNextUp) state.selectedNextUpSubtitleIndex else state.selectedSubtitleIndex
+    val selectedVersion = remember(
+        versions,
+        selectedFileId,
+        playbackDetail?.userData?.lastFileId,
+        state.preferredQuality,
+    ) {
+        selectTvDetailDisplayVersion(
+            versions = versions,
+            selectedFileId = selectedFileId,
+            lastFileId = playbackDetail?.userData?.lastFileId,
+            preferredQuality = state.preferredQuality,
+        )
+    }
+    val compactVersion = selectedVersion?.let(TvPlaybackFormatting::versionCompactLabel)
+    val versionValue = if (selectedVersion == null) {
+        null
+    } else if (selectedFileId == null && compactVersion != "Auto") {
+        "Auto · $compactVersion"
+    } else {
+        compactVersion
+    }
+    val automaticAudioTrackOrdinal = resolveTvAutomaticAudioTrackOrdinal(
+        version = selectedVersion,
+        preferredAudioLanguage = state.preferredAudioLanguage,
+        capabilities = state.audioSelectionCapabilities,
+    )
+    val automaticAudioResolutionKnown = state.audioSelectionCapabilities != null
+    val audioValue = selectedVersion?.let { version ->
+        if (selectedAudioIndex == null && !automaticAudioResolutionKnown) {
+            "Auto"
+        } else {
+            TvPlaybackFormatting.audioValueLabel(
+                version = version,
+                selectedAudioTrackIndex = selectedAudioIndex,
+                automaticAudioTrackOrdinal = automaticAudioTrackOrdinal,
+            ).replace("Auto: ", "Auto · ")
+        }
+    }
+    val subtitleValue = selectedVersion?.let { version ->
+        TvPlaybackFormatting.subtitleValueLabel(
+            version = version,
+            selectedSubtitleTrackIndex = selectedSubtitleIndex,
+            autoContext = if (selectedAudioIndex != null || automaticAudioResolutionKnown) {
+                TvPlaybackFormatting.SubtitleAutoContext(
+                    preferredLanguage = state.preferredSubtitleLanguage,
+                    mode = state.subtitleMode,
+                    showForced = state.showForcedSubtitles,
+                    audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
+                        version,
+                        selectedAudioIndex,
+                        automaticAudioTrackOrdinal,
+                    ),
+                )
+            } else {
+                null
+            },
+        ).replace("Auto - ", "Auto · ")
+    }
+
+    Row(
+        modifier = Modifier.height(TV_PLAYBACK_SUMMARY_HEIGHT),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        TvPlaybackSummaryItem(
+            label = "VERSION",
+            value = versionValue,
+            valueWidth = TV_PLAYBACK_VERSION_VALUE_WIDTH,
+        )
+        TvPlaybackSummaryItem(
+            label = "AUDIO",
+            value = audioValue,
+            valueWidth = TV_PLAYBACK_AUDIO_VALUE_WIDTH,
+        )
+        TvPlaybackSummaryItem(
+            label = "SUBTITLES",
+            value = subtitleValue,
+            valueWidth = TV_PLAYBACK_SUBTITLE_VALUE_WIDTH,
+        )
+    }
+}
+
+@Composable
+private fun TvPlaybackSummaryItem(
+    label: String,
+    value: String?,
+    valueWidth: androidx.compose.ui.unit.Dp,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = label,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            letterSpacing = 0.65.sp,
+            color = Color.White.copy(alpha = 0.48f),
+            maxLines = 1,
+        )
+        if (value == null) {
+            TvPlaybackSummarySkeleton(valueWidth)
+        } else {
+            Text(
+                text = value,
+                modifier = Modifier.width(valueWidth),
+                fontWeight = FontWeight.Medium,
+                fontSize = 14.sp,
+                color = Color.White.copy(alpha = 0.82f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TvPlaybackSummarySkeleton(width: androidx.compose.ui.unit.Dp) {
+    Box(
+        modifier = Modifier
+            .width(width)
+            .height(7.dp)
+            .background(
+                color = Color.White.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(2.dp),
+            ),
+    )
+}
+
+private val TV_PLAYBACK_SUMMARY_HEIGHT = 18.dp
+private val TV_PLAYBACK_VERSION_VALUE_WIDTH = 72.dp
+private val TV_PLAYBACK_AUDIO_VALUE_WIDTH = 104.dp
+private val TV_PLAYBACK_SUBTITLE_VALUE_WIDTH = 116.dp
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -955,11 +1335,11 @@ private fun HeroActionRow(
     // Series / season detail target the *next-up episode* rather than the
     // container itself (mirrors silo-apple's TVSeriesDetailView /
     // TVSeasonDetailView). For those types the hero Play button, the resume
-    // position, and the inline selector row all bind to the next-up episode's
+    // position, and the circular selectors all bind to the next-up episode's
     // own playback detail; movie / episode detail keep the container behavior.
     val isSeriesOrSeason = detail.type == "series" || detail.type == "season"
     val nextUp = state.nextUpEpisode.takeIf { isSeriesOrSeason }
-    val nextUpDetail = state.nextUpPlaybackDetail
+    val nextUpDetail = state.nextUpPlaybackDetail.takeIf { state.nextUpTargetReady }
 
     // The contentId / type / versions / resume the Play action actually uses.
     val playContentId = nextUp?.contentId ?: detail.contentId
@@ -967,15 +1347,14 @@ private fun HeroActionRow(
     // For series/season we must NOT fall back to playing the container — Play is
     // a no-op until the next-up episode resolves (episodes still loading, or an
     // empty/error season). Movie/episode are always ready.
-    val playReady = !isSeriesOrSeason || nextUp != null
+    val playReady = !isSeriesOrSeason || (nextUp != null && state.nextUpTargetReady)
     val containerResume = remember(detail.userData) { detail.resumePositionSeconds() }
     val nextUpResume = remember(nextUp?.userData) { nextUp?.userData?.resumePositionSeconds() }
     val resumePosition = if (isSeriesOrSeason) nextUpResume else containerResume
     val hasResume = resumePosition != null
 
-    // tvOS overflow: episode Go-to-Series / Go-to-Season navigation and season
-    // Go-to-Series (mirrors `TVMovieDetailView.moreMenu` /
-    // `TVSeasonDetailView.moreMenu`). Movies do not show an overflow button.
+    // Every video detail owns a More menu. Favorite now lives there while the
+    // higher-frequency Watchlist toggle is visible in the stable action row.
     val hasSeriesNavigation = detail.type in setOf("episode", "season") && detail.seriesId != null
     val hasOverflowNavigation = hasSeriesNavigation
     val hasWatchTogether =
@@ -983,7 +1362,6 @@ private fun HeroActionRow(
     val hasSuggestionTarget = detail.type in setOf("movie", "episode") || nextUp != null
     val canSuggestToRoom =
         CLIENT_WATCH_TOGETHER_SURFACE_ENABLED && activeRoom != null && hasSuggestionTarget
-    val hasOverflowMenu = hasOverflowNavigation || hasWatchTogether || canSuggestToRoom
 
     // Version set + selection state driving the selector row / Play file id.
     // Series/season use the next-up episode's versions + the next-up selection;
@@ -1023,6 +1401,12 @@ private fun HeroActionRow(
         )
     }
     val selectedFileId = selectedVersion?.fileId
+    val automaticAudioTrackOrdinal = resolveTvAutomaticAudioTrackOrdinal(
+        version = selectedVersion,
+        preferredAudioLanguage = state.preferredAudioLanguage,
+        capabilities = state.audioSelectionCapabilities,
+    )
+    val automaticAudioResolutionKnown = state.audioSelectionCapabilities != null
     val hasTrackOverride = selectorAudioIndex != null || selectorSubtitleIndex != null
     // Exactly what the Subtitles pill is displaying — including the Auto
     // preview — so playback starts on that track instead of re-deciding from
@@ -1033,7 +1417,9 @@ private fun HeroActionRow(
         selectedSubtitleTrackIndex = selectorSubtitleIndex,
         // No displayed version means no displayed pill: stay silent and let the
         // player resolve, rather than asserting an "Auto - None" nobody saw.
-        autoContext = selectedVersion?.let { version ->
+        autoContext = selectedVersion?.takeIf {
+            selectorAudioIndex != null || automaticAudioResolutionKnown
+        }?.let { version ->
             TvPlaybackFormatting.SubtitleAutoContext(
                 preferredLanguage = state.preferredSubtitleLanguage,
                 mode = state.subtitleMode,
@@ -1041,115 +1427,127 @@ private fun HeroActionRow(
                 audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
                     version,
                     selectorAudioIndex,
+                    automaticAudioTrackOrdinal,
                 ),
             )
         },
     )
     val playFileId = selectorSelectedFileId ?: selectedFileId.takeIf { hasTrackOverride }
-    // The effective playable version drives the inline playback selector row.
-    val isAudiobook = isAudiobookItemType(detail.type)
-    // Down from the action cluster lands on the selector row (when shown) rather
-    // than skipping into the body — mirrors Apple's full-width `.focusSection()`.
-    // The selectorFocus requester itself is hoisted to the screen so body Up
-    // traversal can target the row too.
-    // While the next-up playback detail is still loading we hold a placeholder in
-    // the selector slot (Apple's `TVVersionPillPlaceholder`); once resolved the
-    // real selector binds to the next-up versions/tracks.
-    val showsNextUpPlaceholder = isSeriesOrSeason && nextUp != null &&
-        (state.isLoadingNextUpPlaybackDetail ||
-            (!state.didLoadNextUpPlaybackDetail && nextUpDetail == null))
-    val showsSelectorRow = !isAudiobook && !showsNextUpPlaceholder && selectedVersion != null
-
     // No separate next-up autofocus: the Play button is always rendered and
     // focusable, and the screen already focuses it on detail load, so re-focusing
     // when next-up resolves would only risk yanking focus back if the viewer had
     // already moved into the seasons/episodes rails.
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // Action row — tvOS `HStack(spacing: 36)` mapped through the same
-        // half-scale dp port as the button internals. One
-        // focusGroup; Down from the far-right toggle is redirected onto the
-        // selector row via focusProperties.
-        Row(
+        // Action row — approved tvOS `HStack(spacing: 18)` mapped through the
+        // half-scale dp port as the button internals. Version and Subtitles use
+        // the same circular chrome as the utility actions, so this cluster never
+        // changes shape while focus moves across it.
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusProperties {
                     // Entering the cluster from outside (Down from the
-                    // synopsis/facts, Up from the selectors or body) always
+                    // synopsis/facts, Up from the body) always
                     // lands on Play — geometric nearest-child search would
                     // otherwise pick whichever toggle sits closest.
                     enter = { playFocus }
                 }
                 .focusGroup(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            TvPrimaryPillButton(
-                icon = Icons.Filled.PlayArrow,
-                title = playButtonLabel(
-                    isSeriesOrSeason = isSeriesOrSeason,
-                    seriesContainer = detail.type == "series",
-                    nextUp = nextUp,
-                    hasResume = hasResume,
-                    resumePosition = resumePosition,
-                ),
-                onClick = {
-                    if (playReady && !playLaunchPending) {
-                        playLaunchPending = true
-                        onPlay(
-                            playContentId, playFileId,
-                            selectorAudioIndex, selectorAudioPicked, subtitleLaunchSelection,
-                            playType, resumePosition,
-                        )
-                    }
-                },
-                focusRequester = playFocus,
-            )
-
-            if (hasResume) {
-                // tvOS Start Over uses `backward.end.fill` (skip-to-start),
-                // not a circular replay arrow.
-                TvSecondaryPillButton(
-                    icon = Icons.Filled.SkipPrevious,
-                    title = "Start Over",
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                TvPrimaryPillButton(
+                    icon = Icons.Filled.PlayArrow,
+                    title = playButtonLabel(
+                        isSeriesOrSeason = isSeriesOrSeason,
+                        seriesContainer = detail.type == "series",
+                        nextUp = nextUp,
+                        hasResume = hasResume,
+                        resumePosition = resumePosition,
+                    ),
                     onClick = {
                         if (playReady && !playLaunchPending) {
                             playLaunchPending = true
                             onPlay(
                                 playContentId, playFileId,
-                                selectorAudioIndex, selectorAudioPicked, subtitleLaunchSelection,
-                                playType, 0.0,
+                                selectorAudioIndex ?: automaticAudioTrackOrdinal,
+                                selectorAudioPicked,
+                                subtitleLaunchSelection,
+                                playType, resumePosition,
                             )
                         }
                     },
+                    focusRequester = playFocus,
                 )
-            }
 
-            TvSquareToggleButton(
-                icon = Icons.Outlined.FavoriteBorder,
-                iconActive = Icons.Filled.Favorite,
-                isActive = state.isFavorite,
-                contentDescription = if (state.isFavorite) "Remove from favorites" else "Add to favorites",
-                onClick = viewModel::onToggleFavorite,
-            )
+                TvPlaybackActionSelectors(
+                    versions = selectorVersions,
+                    currentVersion = selectedVersion,
+                    selectedVersionFileId = selectorSelectedFileId,
+                    selectedAudioTrackIndex = selectorAudioIndex,
+                    selectedSubtitleTrackIndex = selectorSubtitleIndex,
+                    automaticAudioTrackOrdinal = automaticAudioTrackOrdinal,
+                    automaticAudioResolutionKnown = automaticAudioResolutionKnown,
+                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
+                    subtitleMode = state.subtitleMode,
+                    showForcedSubtitles = state.showForcedSubtitles,
+                    onSelectVersion = if (isSeriesOrSeason) {
+                        viewModel::onNextUpVersionSelected
+                    } else {
+                        viewModel::onVersionSelected
+                    },
+                    onSelectAudioTrack = if (isSeriesOrSeason) {
+                        viewModel::onNextUpAudioTrackSelected
+                    } else {
+                        viewModel::onAudioTrackSelected
+                    },
+                    onSelectSubtitleTrack = if (isSeriesOrSeason) {
+                        viewModel::onNextUpSubtitleTrackSelected
+                    } else {
+                        viewModel::onSubtitleTrackSelected
+                    },
+                    versionFocusRequester = selectorFocus,
+                )
 
-            TvSquareToggleButton(
-                icon = Icons.Outlined.BookmarkBorder,
-                iconActive = Icons.Filled.BookmarkAdded,
-                isActive = state.inWatchlist,
-                contentDescription = if (state.inWatchlist) "Remove from watchlist" else "Add to watchlist",
-                onClick = viewModel::onToggleWatchlist,
-            )
+                if (hasResume) {
+                    // tvOS Start Over uses `backward.end.fill` (skip-to-start),
+                    // not a replay arrow. It is an icon-only circular companion
+                    // to the primary Play/Resume pill.
+                    TvSquareToggleButton(
+                        icon = Icons.Filled.SkipPrevious,
+                        iconActive = Icons.Filled.SkipPrevious,
+                        contentDescription = "Start Over",
+                        isActive = false,
+                        onClick = {
+                            if (playReady && !playLaunchPending) {
+                                playLaunchPending = true
+                                onPlay(
+                                    playContentId, playFileId,
+                                    selectorAudioIndex ?: automaticAudioTrackOrdinal,
+                                    selectorAudioPicked,
+                                    subtitleLaunchSelection,
+                                    playType, 0.0,
+                                )
+                            }
+                        },
+                    )
+                }
 
-            TvSquareToggleButton(
-                icon = Icons.Outlined.CheckCircle,
-                iconActive = Icons.Filled.CheckCircle,
-                isActive = state.isWatched,
-                contentDescription = if (state.isWatched) watchedUnmarkLabel(detail) else watchedMarkLabel(detail),
-                onClick = viewModel::onToggleWatched,
-            )
+                TvSquareToggleButton(
+                    icon = Icons.Filled.BookmarkBorder,
+                    iconActive = Icons.Filled.Bookmark,
+                    isActive = state.inWatchlist,
+                    contentDescription = if (state.inWatchlist) {
+                        "Remove from watchlist"
+                    } else {
+                        "Add to watchlist"
+                    },
+                    onClick = viewModel::onToggleWatchlist,
+                )
 
-            if (hasOverflowMenu) {
                 TvSquareToggleButton(
                     icon = Icons.Filled.MoreHoriz,
                     iconActive = Icons.Filled.MoreHoriz,
@@ -1159,47 +1557,32 @@ private fun HeroActionRow(
                 )
             }
         }
-
-        // Audiobooks have no meaningful video "version"/quality (the "720p" was
-        // the cover-art mjpeg stream); hide the selector row for them. For
-        // series/season detail the row binds to the *next-up* episode's
-        // versions/tracks; while that detail loads we hold a placeholder pill
-        // (Apple's `TVVersionPillPlaceholder`). Movie / episode detail bind to
-        // the container's own versions.
-        if (showsNextUpPlaceholder) {
-            TvVersionPillPlaceholder()
-        } else if (showsSelectorRow) {
-            TvPlaybackSelectorRow(
-                modifier = Modifier.focusRequester(selectorFocus),
-                versions = selectorVersions,
-                currentVersion = selectedVersion,
-                selectedVersionFileId = selectorSelectedFileId,
-                selectedAudioTrackIndex = selectorAudioIndex,
-                selectedSubtitleTrackIndex = selectorSubtitleIndex,
-                preferredSubtitleLanguage = state.preferredSubtitleLanguage,
-                subtitleMode = state.subtitleMode,
-                showForcedSubtitles = state.showForcedSubtitles,
-                onSelectVersion = if (isSeriesOrSeason) {
-                    viewModel::onNextUpVersionSelected
-                } else {
-                    viewModel::onVersionSelected
-                },
-                onSelectAudioTrack = if (isSeriesOrSeason) {
-                    viewModel::onNextUpAudioTrackSelected
-                } else {
-                    viewModel::onAudioTrackSelected
-                },
-                onSelectSubtitleTrack = if (isSeriesOrSeason) {
-                    viewModel::onNextUpSubtitleTrackSelected
-                } else {
-                    viewModel::onSubtitleTrackSelected
-                },
-            )
-        }
     }
 
-    if (moreOpen && hasOverflowMenu) {
+    if (moreOpen) {
         val options = buildList {
+            add(
+                TvDialogOption(
+                    key = "favorite",
+                    title = if (state.isFavorite) "Remove from Favorites" else "Add to Favorites",
+                    selected = state.isFavorite,
+                    onClick = {
+                        moreOpen = false
+                        viewModel.onToggleFavorite()
+                    },
+                ),
+            )
+            add(
+                TvDialogOption(
+                    key = "watched",
+                    title = if (state.isWatched) watchedUnmarkLabel(detail) else watchedMarkLabel(detail),
+                    selected = state.isWatched,
+                    onClick = {
+                        moreOpen = false
+                        viewModel.onToggleWatched()
+                    },
+                ),
+            )
             if (canSuggestToRoom) {
                 add(
                     TvDialogOption(
@@ -1313,125 +1696,178 @@ private fun HeroActionRow(
     }
 }
 
-private fun watchedMarkLabel(detail: ItemDetail): String =
-    if (detail.type == "episode") "Mark Episode Watched" else "Mark as Watched"
+internal data class SeriesEpisodePlaybackLaunch(
+    val fileId: Int?,
+    val audioTrackIndex: Int?,
+    val audioPickedThisSession: Boolean,
+    val subtitleSelection: TvSubtitleLaunchSelection?,
+    val resumePositionSeconds: Double?,
+)
 
-private fun watchedUnmarkLabel(detail: ItemDetail): String =
-    if (detail.type == "episode") "Mark Episode Unwatched" else "Mark as Unwatched"
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun CircleAction(
-    icon: ImageVector,
-    onClick: () -> Unit,
-    contentDescription: String,
-    isActive: Boolean,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-    val shape = CircleShape
-
-    Surface(
-        onClick = onClick,
-        interactionSource = interactionSource,
-        shape = ClickableSurfaceDefaults.shape(shape = shape),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isActive) Color.White.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.34f),
-            contentColor = Color.White,
-            focusedContainerColor = Color.White,
-            focusedContentColor = Color.Black,
-            pressedContainerColor = Color.White,
-            pressedContentColor = Color.Black,
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-        border = ClickableSurfaceDefaults.border(
-            border = Border(
-                border = BorderStroke(1.2.dp, Color.White.copy(alpha = 0.32f)),
-                shape = shape,
-            ),
-            focusedBorder = Border(
-                border = BorderStroke(2.0.dp, Color.Black.copy(alpha = 0.82f)),
-                shape = shape,
-            ),
-        ),
-        glow = ClickableSurfaceDefaults.glow(
-            focusedGlow = Glow(
-                elevationColor = Color.White.copy(alpha = 0.16f),
-                elevation = 14.dp,
-            ),
-        ),
-        modifier = Modifier
-            .then(
-                if (isFocused) {
-                    Modifier.border(
-                        width = 2.dp,
-                        color = Color.White.copy(alpha = 0.98f),
-                        shape = shape,
-                    )
-                } else {
-                    Modifier
-                },
+/**
+ * Builds the quick-play intent for one Series episode. Selection state is used
+ * only when it belongs to this exact episode; a fast OK during an episode
+ * focus hand-off must never carry the previous episode's file or track IDs.
+ */
+internal fun seriesEpisodePlaybackLaunch(
+    state: TvItemDetailUiState,
+    episode: EpisodeListItem,
+): SeriesEpisodePlaybackLaunch {
+    val selectionMatchesEpisode =
+        state.nextUpEpisode?.contentId == episode.contentId &&
+            state.nextUpPlaybackDetail?.contentId == episode.contentId
+    val playbackDetail = state.nextUpPlaybackDetail.takeIf { selectionMatchesEpisode }
+    val versions = playbackDetail?.versions.orEmpty()
+    val explicitFileId = state.selectedNextUpFileId
+        ?.takeIf { selectionMatchesEpisode }
+        ?.takeIf { selected -> versions.any { it.fileId == selected } }
+    val audioTrackIndex = state.selectedNextUpAudioIndex.takeIf { selectionMatchesEpisode }
+    val subtitleTrackIndex = state.selectedNextUpSubtitleIndex.takeIf { selectionMatchesEpisode }
+    val selectedVersion = selectTvDetailDisplayVersion(
+        versions = versions,
+        selectedFileId = explicitFileId,
+        lastFileId = playbackDetail?.userData?.lastFileId,
+        preferredQuality = state.preferredQuality,
+    )
+    val automaticAudioTrackOrdinal = resolveTvAutomaticAudioTrackOrdinal(
+        version = selectedVersion,
+        preferredAudioLanguage = state.preferredAudioLanguage,
+        capabilities = state.audioSelectionCapabilities,
+    )
+    val automaticAudioResolutionKnown = state.audioSelectionCapabilities != null
+    val hasTrackOverride = audioTrackIndex != null || subtitleTrackIndex != null
+    val subtitleSelection = TvPlaybackFormatting.subtitleLaunchSelection(
+        version = selectedVersion,
+        selectedSubtitleTrackIndex = subtitleTrackIndex,
+        autoContext = selectedVersion?.takeIf {
+            audioTrackIndex != null || automaticAudioResolutionKnown
+        }?.let { version ->
+            TvPlaybackFormatting.SubtitleAutoContext(
+                preferredLanguage = state.preferredSubtitleLanguage,
+                mode = state.subtitleMode,
+                showForced = state.showForcedSubtitles,
+                audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
+                    version,
+                    audioTrackIndex,
+                    automaticAudioTrackOrdinal,
+                ),
             )
-            .size(38.dp),
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                tint = if (isFocused) Color.Black else Color.White,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-    }
+        },
+    )
+    return SeriesEpisodePlaybackLaunch(
+        fileId = explicitFileId ?: selectedVersion?.fileId?.takeIf { hasTrackOverride },
+        audioTrackIndex = audioTrackIndex ?: automaticAudioTrackOrdinal,
+        audioPickedThisSession = selectionMatchesEpisode && state.nextUpAudioPickedThisSession,
+        subtitleSelection = subtitleSelection,
+        resumePositionSeconds = episode.userData?.resumePositionSeconds(),
+    )
 }
+
+private fun openTvYoutubeTrailer(context: android.content.Context, video: ItemVideo) {
+    val appIntent = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:${video.siteKey}"))
+    val webIntent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("https://www.youtube.com/watch?v=${video.siteKey}"),
+    )
+    val intent = if (appIntent.resolveActivity(context.packageManager) != null) {
+        appIntent
+    } else {
+        webIntent
+    }
+    runCatching { context.startActivity(intent) }
+        .onFailure {
+            Toast.makeText(context, "No app is available to open this trailer", Toast.LENGTH_SHORT).show()
+        }
+}
+
+private fun watchedMarkLabel(detail: ItemDetail): String = when (detail.type) {
+    "series" -> "Mark Series Watched"
+    "season" -> "Mark Season Watched"
+    "episode" -> "Mark Episode Watched"
+    "movie" -> "Mark Movie Watched"
+    else -> "Mark as Watched"
+}
+
+private fun watchedUnmarkLabel(detail: ItemDetail): String = when (detail.type) {
+    "series" -> "Mark Series Unwatched"
+    "season" -> "Mark Season Unwatched"
+    "episode" -> "Mark Episode Unwatched"
+    "movie" -> "Mark Movie Unwatched"
+    else -> "Mark as Unwatched"
+}
+
+/** Tiny breathing room between the fixed hero controls and the series modes. */
+private val SeriesSeasonPickerTopPadding = 3.dp
 
 @Composable
 private fun EpisodesSection(
     detail: ItemDetail,
     state: TvItemDetailUiState,
+    entryEpisodeContentId: String?,
     showsSeasonChips: Boolean,
+    isShowingSeriesOverview: Boolean,
+    onShowSelected: () -> Unit,
     onReturnToHero: () -> Boolean,
+    onReturnToSeriesSelector: (() -> Boolean)? = null,
     onSeasonSelected: (org.siloserver.silo.model.catalog.Season) -> Unit,
     onEpisodeSelected: (EpisodeListItem) -> Unit,
+    onEpisodeFocused: (EpisodeListItem) -> Unit = {},
     onSetEpisodeWatched: (contentId: String, watched: Boolean) -> Unit,
     onSetEpisodeFavorite: (contentId: String, favorite: Boolean) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Spacing.safeArea),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            TvDetailSectionHeader(
-                eyebrow = episodeEyebrowLabel(detail, state),
-                title = "Episodes",
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            val count = state.episodes.size
-            if (count > 0) {
-                Text(
-                    text = "$count episode${if (count == 1) "" else "s"}",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 16.sp,
-                    ),
-                    color = Color.White.copy(alpha = 0.55f),
+    val isSeries = detail.type == "series"
+    Column(verticalArrangement = Arrangement.spacedBy(if (isSeries) 7.dp else 20.dp)) {
+        if (!isSeries) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = TvDetailHorizontalInset),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                TvDetailSectionHeader(
+                    eyebrow = episodeEyebrowLabel(detail, state),
+                    title = "Episodes",
                 )
+                Spacer(modifier = Modifier.weight(1f))
+                val count = state.episodes.size
+                if (count > 0) {
+                    Text(
+                        text = "$count episode${if (count == 1) "" else "s"}",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 16.sp,
+                        ),
+                        color = Color.White.copy(alpha = 0.55f),
+                    )
+                }
             }
         }
 
         if (showsSeasonChips) {
-            TvSeasonPicker(
-                seasons = state.seasons,
-                selectedSeason = state.selectedSeason,
-                onSeasonSelected = onSeasonSelected,
-                onDirectionUp = onReturnToHero,
-                horizontalContentPadding = Spacing.safeArea,
-            )
+            if (isSeries) {
+                TvSeriesModePicker(
+                    seasons = state.seasons,
+                    isShowingSeriesOverview = isShowingSeriesOverview,
+                    selectedSeason = state.selectedSeason,
+                    onShowSelected = onShowSelected,
+                    onSeasonSelected = onSeasonSelected,
+                    // Keep the approved row geometry, adding only the small
+                    // requested breathing room below the compact hero.
+                    modifier = Modifier.padding(top = SeriesSeasonPickerTopPadding),
+                    // Return to the circular Version control in the hero; if
+                    // it is not attached yet, fall back to Play.
+                    onDirectionUp = onReturnToSeriesSelector ?: onReturnToHero,
+                    horizontalContentPadding = TvDetailHorizontalInset,
+                )
+            } else {
+                TvSeasonPicker(
+                    seasons = state.seasons,
+                    selectedSeason = state.selectedSeason,
+                    onSeasonSelected = onSeasonSelected,
+                    onDirectionUp = onReturnToHero,
+                    horizontalContentPadding = TvDetailHorizontalInset,
+                )
+            }
         }
 
         // Reserve the rail's measured height while a newly-selected season
@@ -1439,7 +1875,13 @@ private fun EpisodesSection(
         // collapse the section and flash Cast & Crew up into the viewport.
         var railHeightPx by remember { mutableStateOf(0) }
         val railMinHeight = with(LocalDensity.current) { railHeightPx.toDp() }
-        Box(modifier = Modifier.heightIn(min = railMinHeight)) {
+        Box(
+            modifier = Modifier
+                .heightIn(min = railMinHeight)
+                // Keep a small separation from Seasons while reclaiming the
+                // space previously occupied by the selector band.
+                .padding(top = if (isSeries && showsSeasonChips) 10.dp else 0.dp),
+        ) {
             when {
                 // Spinner while a newly-selected season loads, instead of leaving the
                 // previous season's episodes under the new season header (T15b). The
@@ -1449,7 +1891,7 @@ private fun EpisodesSection(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = Spacing.safeArea, vertical = 24.dp),
+                            .padding(horizontal = TvDetailHorizontalInset, vertical = 24.dp),
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         CircularProgressIndicator()
@@ -1464,36 +1906,46 @@ private fun EpisodesSection(
                         text = "No episodes available",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
                         color = Color.White.copy(alpha = 0.55f),
-                        modifier = Modifier.padding(horizontal = Spacing.safeArea, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = TvDetailHorizontalInset, vertical = 8.dp),
                     )
                 }
                 else -> {
                     TvDetailEpisodeRail(
                         episodes = state.episodes,
-                        currentContentId = currentEpisodeRailContentId(detail, state),
+                        currentContentId = currentEpisodeRailContentId(
+                            detail = detail,
+                            state = state,
+                            entryEpisodeContentId = entryEpisodeContentId,
+                        ),
                         favoriteStates = state.episodeFavoriteStates,
                         onEpisodeSelected = onEpisodeSelected,
+                        onEpisodeFocused = onEpisodeFocused.takeIf { isSeries },
                         onSetWatched = onSetEpisodeWatched,
                         onSetFavorite = onSetEpisodeFavorite,
                         // Up returns to the hero only when the season chips aren't above
                         // the rail (the chips own the Up traversal when present).
                         onDirectionUp = if (showsSeasonChips) null else onReturnToHero,
+                        hidesEpisodeTitle = isSeries,
+                        usesSeriesGeometry = isSeries,
                         modifier = Modifier.onSizeChanged { railHeightPx = it.height },
                     )
                 }
             }
         }
+
     }
 }
 
-private fun currentEpisodeRailContentId(detail: ItemDetail, state: TvItemDetailUiState): String? =
+internal fun currentEpisodeRailContentId(
+    detail: ItemDetail,
+    state: TvItemDetailUiState,
+    entryEpisodeContentId: String? = null,
+): String? =
     when (detail.type) {
         "episode" -> detail.contentId
         "series",
         "season",
-        -> state.nextUpEpisode
-            ?.takeIf { it.userData?.isInProgress == true }
-            ?.contentId
+        -> entryEpisodeContentId ?: state.nextUpEpisode?.contentId
         else -> null
     }
 
@@ -1508,48 +1960,6 @@ internal fun episodeEyebrowLabel(detail: ItemDetail, state: TvItemDetailUiState)
         detail.seasonNumber?.let { return if (it == 0) "Specials" else "Season $it" }
     }
     return "This Season"
-}
-
-/**
- * Static, non-focusable placeholder shown in the selector slot while the
- * next-up episode's playback detail loads. Compose-for-TV analogue of
- * silo-apple's `TVVersionPillPlaceholder` — a dimmed "Version" pill.
- */
-@Composable
-private fun TvVersionPillPlaceholder(modifier: Modifier = Modifier) {
-    // Matches the live selector pill geometry (TvAnchoredSelectorMenu trigger):
-    // squared TvControlCorner shape, 22×12 padding, 13dp glyph, 12sp value.
-    val shape = RoundedCornerShape(TvControlCorner)
-    Row(
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.42f), shape)
-            .border(0.6.dp, Color.White.copy(alpha = 0.16f), shape)
-            .padding(horizontal = 22.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Icons.Filled.Tv,
-            contentDescription = null,
-            tint = Color.White.copy(alpha = 0.75f),
-            modifier = Modifier.size(15.dp),
-        )
-        Text(
-            text = "Version",
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontSize = 14.sp,
-                lineHeight = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-            ),
-            color = Color.White.copy(alpha = 0.75f),
-        )
-        Icon(
-            imageVector = Icons.Filled.KeyboardArrowDown,
-            contentDescription = null,
-            tint = Color.White.copy(alpha = 0.35f),
-            modifier = Modifier.size(9.5.dp),
-        )
-    }
 }
 
 @Composable
@@ -1898,7 +2308,7 @@ private fun org.siloserver.silo.model.catalog.LeafItemUserData.resumePositionSec
 /**
  * Hero Play button label. Movie / episode detail keep the plain Play /
  * Resume<hms> form; series / season detail target the next-up episode and read
- * "Play S2 · E3" / "Resume S2 · E3" (series) or "Play E4" / "Resume E4"
+ * "Play S2:E3" / "Resume S2:E3" (series) or "Play E4" / "Resume E4"
  * (season), mirroring silo-apple's `playButtonLabel(for:)`.
  */
 private fun playButtonLabel(
@@ -1911,7 +2321,7 @@ private fun playButtonLabel(
     if (isSeriesOrSeason && nextUp != null) {
         val verb = if (hasResume) "Resume" else "Play"
         return if (seriesContainer) {
-            "$verb S${nextUp.seasonNumber} · E${nextUp.episodeNumber}"
+            "$verb S${nextUp.seasonNumber}:E${nextUp.episodeNumber}"
         } else {
             "$verb E${nextUp.episodeNumber}"
         }
@@ -1931,21 +2341,27 @@ private fun Double.formatHms(): String {
     }
 }
 
-/**
- * One knob for the detail page's vertical rhythm: every body section gap AND
- * the hero → first-section handoff derive from this, so the selector row →
- * Episodes gap matches Episodes → Cast & Crew, Cast & Crew → Details, etc.
- * The hero already ends with [TvDetailHeroBottomInset] of internal padding
- * below the selector row, so the body's top padding is the remainder.
- */
-internal val TvDetailSectionGap = 28.dp
+/** Approved tvOS 64pt body rhythm and 140pt page tail at Android's 0.5 scale. */
+internal val TvDetailSectionGap = 32.dp
+internal val TvDetailPageBottomPadding = 70.dp
+internal val TvDetailHorizontalInset = 50.dp
+
+private val TvDetailDefaultTint = Color(red = 0.04f, green = 0.12f, blue = 0.14f)
+private const val TvDetailTintOpacity = 0.42f
 
 /**
- * Bottom inset inside the hero, below the action/selector cluster. Trimmed
- * 28 → 16dp per design review so the stack sits lower in the hero. Part of
- * the [TvDetailSectionGap] handoff math — keep them in sync.
+ * The sampled tint is composited over black into a fully opaque color. Keeping
+ * this pure makes it explicit that detail never uses a live blur/material.
  */
-internal val TvDetailHeroBottomInset = 16.dp
+internal fun tvDetailPageSurfaceColor(sampledTint: Color?): Color {
+    val tint = sampledTint ?: TvDetailDefaultTint
+    return Color(
+        red = tint.red * TvDetailTintOpacity,
+        green = tint.green * TvDetailTintOpacity,
+        blue = tint.blue * TvDetailTintOpacity,
+        alpha = 1f,
+    )
+}
 
 internal data class TvDetailHeroArtwork(
     val url: String?,
@@ -1984,6 +2400,10 @@ internal fun resolveTvDetailHeroArtwork(
  * 260ms anchor with a 620ms rail reveal.
  */
 private val DetailAnchorScrollSpec = tween<Float>(durationMillis = 400, easing = FastOutSlowInEasing)
+
+/** tvOS Series uses a slower, single smooth curve when supporting content
+ * hands focus back to the fixed Show/Season/Episodes/Version viewport. */
+private val SeriesPrimaryScrollSpec = tween<Float>(durationMillis = 800, easing = FastOutSlowInEasing)
 
 /**
  * Where a body section's top edge lands when focus enters it, as a fraction
@@ -2053,6 +2473,33 @@ private suspend fun LazyListState.animateScrollToItemPaced(index: Int) {
         )
     } else {
         animateScrollToItem(index)
+    }
+}
+
+/**
+ * Restores the complete Series primary viewport without the stock LazyList
+ * snap that otherwise appears when the hero item has already been disposed.
+ * This page has two vertical list items (hero + body), so the measured hero
+ * height plus the body's current offset gives the exact distance back to zero.
+ */
+private suspend fun LazyListState.animateSeriesPrimaryViewport(heroHeightPx: Int) {
+    if (heroHeightPx <= 0) {
+        animateScrollToItemPaced(0)
+        return
+    }
+    val distance = when (firstVisibleItemIndex) {
+        0 -> -firstVisibleItemScrollOffset.toFloat()
+        1 -> -(heroHeightPx + firstVisibleItemScrollOffset).toFloat()
+        else -> {
+            animateScrollToItem(0)
+            return
+        }
+    }
+    if (distance != 0f) {
+        animateScrollBy(
+            value = distance,
+            animationSpec = SeriesPrimaryScrollSpec,
+        )
     }
 }
 

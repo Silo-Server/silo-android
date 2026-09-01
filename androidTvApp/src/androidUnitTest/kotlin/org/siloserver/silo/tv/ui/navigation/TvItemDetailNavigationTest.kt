@@ -73,6 +73,48 @@ class TvItemDetailNavigationTest {
     }
 
     @Test
+    fun `the same continue watching episode is the current page`() {
+        assertTrue(
+            tvIsAlreadyShowingItemDetail(
+                currentRoute = TvRoute.ItemDetail.ROUTE,
+                currentContentId = "series-a",
+                currentSeasonNumber = 3,
+                currentEpisodeContentId = "episode-1",
+                contentId = "series-a",
+                seasonNumber = 3,
+                episodeContentId = "episode-1",
+            ),
+        )
+    }
+
+    @Test
+    fun `another episode in the same season is a different detail request`() {
+        assertFalse(
+            tvIsAlreadyShowingItemDetail(
+                currentRoute = TvRoute.ItemDetail.ROUTE,
+                currentContentId = "series-a",
+                currentSeasonNumber = 3,
+                currentEpisodeContentId = "episode-1",
+                contentId = "series-a",
+                seasonNumber = 3,
+                episodeContentId = "episode-2",
+            ),
+        )
+    }
+
+    @Test
+    fun `continue watching route carries encoded series season and episode`() {
+        assertEquals(
+            "item/series%2Fa?seasonNumber=3&episodeContentId=episode%2F1",
+            TvRoute.ItemDetail(
+                contentId = "series/a",
+                seasonNumber = 3,
+                episodeContentId = "episode/1",
+            ).route,
+        )
+    }
+
+    @Test
     fun `the identical request on the same entry is suppressed`() {
         val destination = TvRoute.Player(contentId = "movie-a").route
         assertEquals(

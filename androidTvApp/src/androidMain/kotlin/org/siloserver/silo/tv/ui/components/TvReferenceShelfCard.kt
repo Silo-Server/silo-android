@@ -53,6 +53,7 @@ fun TvReferenceShelfCard(
     cardModifier: Modifier = Modifier,
     userState: org.siloserver.silo.model.catalog.MediaItemUserState? = null,
     actions: TvMediaCardActions = TvMediaCardActions(),
+    onLongClick: (() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(12.dp)
     val focus = siloCardDefaults(shape = shape, focusedScale = 1f)
@@ -66,7 +67,7 @@ fun TvReferenceShelfCard(
     ) {
         Card(
             onClick = onClick,
-            onLongClick = if (actions.isEmpty) null else { { menuExpanded = true } },
+            onLongClick = onLongClick ?: if (actions.isEmpty) null else { { menuExpanded = true } },
             shape = CardDefaults.shape(shape = shape),
             scale = focus.scale,
             border = focus.border,

@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -69,7 +70,6 @@ import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.ProgressFill
-import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.capsuleCaps
 import org.siloserver.silo.tv.ui.theme.cardScaled
 
@@ -77,8 +77,9 @@ import org.siloserver.silo.tv.ui.theme.cardScaled
  * Horizontal rail of episode cards for the series/season/episode detail
  * screens — a direct port of tvOS `TVEpisodeRail`. Pressing OK on a card
  * navigates to that episode's own detail page (where the user picks a
- * version, marks watched and starts playback); the rail is a browsing
- * surface, NOT a direct play launcher.
+ * version, marks watched and starts playback). Container detail pages may use
+ * the rail as a browser; the combined Series page uses OK as direct playback,
+ * matching tvOS without pushing a second episode-detail page.
  *
  * When `currentContentId` is non-null the matching card is highlighted
  * (white 2dp ring + full-color title), scrolled to the horizontal center
@@ -95,7 +96,10 @@ internal fun TvDetailEpisodeRail(
     onSetFavorite: (contentId: String, favorite: Boolean) -> Unit,
     modifier: Modifier = Modifier,
     currentContentId: String? = null,
+    onEpisodeFocused: ((EpisodeListItem) -> Unit)? = null,
     onDirectionUp: (() -> Boolean)? = null,
+    hidesEpisodeTitle: Boolean = false,
+    usesSeriesGeometry: Boolean = false,
 ) {
     if (episodes.isEmpty()) return
 
@@ -103,16 +107,29 @@ internal fun TvDetailEpisodeRail(
     val currentIndex = remember(currentContentId, episodes) {
         episodes.indexOfFirst { it.contentId == currentContentId }.takeIf { it >= 0 }
     }
-    // Default focus target: the current episode if present. Mirrors tvOS
-    // `defaultFocus(..., priority: .userInitiated)` so d-pad entry into the
-    // rail lands on the current episode rather than the first card.
+    // The first entry uses next-up/current. Once the viewer browses sideways,
+    // retain that exact episode for every Up/Down round-trip through the
+    // selector and supporting rails. Keying by the first episode resets this
+    // memory when a different season's rail replaces the current one.
+    val episodeSetKey = episodes.first().contentId
+    var rememberedFocusedContentId by remember(episodeSetKey) { mutableStateOf<String?>(null) }
+    val entryIndex = remember(rememberedFocusedContentId, currentContentId, episodes) {
+        val targetId = rememberedFocusedContentId
+            ?.takeIf { remembered -> episodes.any { it.contentId == remembered } }
+            ?: currentContentId
+        episodes.indexOfFirst { it.contentId == targetId }.takeIf { it >= 0 }
+    }
+    // Default focus target: the remembered episode, falling back to current.
+    // Mirrors tvOS's focusedEpisodeContentId plus its suggestedEpisode entry.
     val defaultFocusRequester = remember { FocusRequester() }
 
-    // Auto-center the current episode on first appearance (parity with the
-    // tvOS `proxy.scrollTo(id, anchor: .center)` on appear). Same true-center
-    // approach as TvSeasonPicker: bring the item into view, then nudge by the
-    // delta between the item center and the viewport center.
-    LaunchedEffect(currentContentId, episodes.size) {
+    // Auto-center the suggested episode ONCE when this season's rail appears
+    // (parity with tvOS `scrollTo(..., anchor: .center)`). Do not key this on
+    // currentContentId: Series focus intentionally updates that id for every
+    // Left/Right step. Re-running this centering animation would race the
+    // one-shot tvRailPinOnFocus glide and make Right visually travel backward
+    // even though focus reached the correct episode.
+    LaunchedEffect(episodeSetKey) {
         val target = currentIndex ?: return@LaunchedEffect
         listState.scrollToItem(target)
         val info = listState.layoutInfo
@@ -142,7 +159,7 @@ internal fun TvDetailEpisodeRail(
             )
             .focusGroup()
             .then(
-                if (currentIndex != null) {
+                if (entryIndex != null) {
                     Modifier.focusProperties { enter = { defaultFocusRequester } }
                 } else {
                     Modifier
@@ -150,10 +167,12 @@ internal fun TvDetailEpisodeRail(
             ),
         state = listState,
         contentPadding = PaddingValues(
-            horizontal = Spacing.safeArea,
-            vertical = 16.dp,
+            horizontal = TvDetailHorizontalInset,
+            // Compact Series padding keeps the lowered episode band within the
+            // fixed primary viewport beneath the selector and season controls.
+            vertical = if (usesSeriesGeometry) 6.dp else 16.dp,
         ),
-        horizontalArrangement = Arrangement.spacedBy(18.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (usesSeriesGeometry) 16.dp else 18.dp),
     ) {
         itemsIndexed(
             episodes,
@@ -161,6 +180,7 @@ internal fun TvDetailEpisodeRail(
             contentType = { _, _ -> "episode-card" },
         ) { index, episode ->
             val isCurrent = episode.contentId == currentContentId
+            val isEntryTarget = index == entryIndex
             TvDetailEpisodeCard(
                 episode = episode,
                 isCurrent = isCurrent,
@@ -168,10 +188,18 @@ internal fun TvDetailEpisodeRail(
                 onClick = { onEpisodeSelected(episode) },
                 onSetWatched = { watched -> onSetWatched(episode.contentId, watched) },
                 onSetFavorite = { favorite -> onSetFavorite(episode.contentId, favorite) },
+                hidesEpisodeTitle = hidesEpisodeTitle,
+                usesSeriesGeometry = usesSeriesGeometry,
                 modifier = Modifier
-                    .tvRailPinOnFocus(listState, index, Spacing.safeArea)
+                    .tvRailPinOnFocus(listState, index, TvDetailHorizontalInset)
+                    .onFocusChanged { focusState ->
+                        if (focusState.isFocused) {
+                            rememberedFocusedContentId = episode.contentId
+                            onEpisodeFocused?.invoke(episode)
+                        }
+                    }
                     .then(
-                        if (isCurrent) {
+                        if (isEntryTarget) {
                             Modifier.focusRequester(defaultFocusRequester)
                         } else {
                             Modifier
@@ -192,10 +220,12 @@ private fun TvDetailEpisodeCard(
     onClick: () -> Unit,
     onSetWatched: (Boolean) -> Unit,
     onSetFavorite: (Boolean) -> Unit,
+    hidesEpisodeTitle: Boolean,
+    usesSeriesGeometry: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val cardWidth = 230.dp.cardScaled()
-    val stillHeight = 130.dp.cardScaled()
+    val cardWidth = (if (usesSeriesGeometry) 240.dp else 230.dp).cardScaled()
+    val stillHeight = (if (usesSeriesGeometry) 135.dp else 130.dp).cardScaled()
     val caption = LocalCardPresentation.current.caption
     val cornerRadius = 5.dp
     val shape = RoundedCornerShape(cornerRadius)
@@ -336,8 +366,9 @@ private fun TvDetailEpisodeCard(
                     Text(
                         text = "EPISODE ${episode.episodeNumber}",
                         fontSize = 14.sp,
+                        lineHeight = 17.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.0.sp,
+                        letterSpacing = 0.75.sp,
                         color = SiloOnSurface.copy(alpha = 0.7f),
                         maxLines = 1,
                     )
@@ -346,20 +377,22 @@ private fun TvDetailEpisodeCard(
                     }
                 }
 
-                Text(
-                    text = episode.title ?: "Episode ${episode.episodeNumber}",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = when {
-                        isCurrent -> SiloOnSurface
-                        isFocused -> SiloOnSurface
-                        else -> SiloOnSurface.copy(alpha = 0.92f)
-                    },
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                if (!hidesEpisodeTitle) {
+                    Text(
+                        text = episode.title ?: "Episode ${episode.episodeNumber}",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = when {
+                            isCurrent -> SiloOnSurface
+                            isFocused -> SiloOnSurface
+                            else -> SiloOnSurface.copy(alpha = 0.92f)
+                        },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
 
-                if (caption.showsMetadata) {
+                if (!hidesEpisodeTitle && caption.showsMetadata) {
                     episodeMetadataLine(episode)?.let { metadata ->
                         Text(
                             text = metadata,
@@ -399,14 +432,14 @@ private fun NowViewingTag() {
         modifier = Modifier
             .clip(RoundedCornerShape(50.dp))
             .background(Color.White)
-            .padding(horizontal = 9.dp, vertical = 3.dp),
+            .padding(horizontal = 7.dp, vertical = 2.dp),
     ) {
         Text(
             text = "NOW VIEWING",
             style = capsuleCaps.copy(
                 fontSize = 14.sp,
-                lineHeight = 18.sp,
-                letterSpacing = 0.7.sp,
+                lineHeight = 17.sp,
+                letterSpacing = 0.55.sp,
             ),
             color = Color.Black,
         )

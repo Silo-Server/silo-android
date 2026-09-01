@@ -233,8 +233,28 @@ class MainTvActivity : ComponentActivity() {
 
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (TvPlayerRemoteKeyBridge.dispatch(event)) return true
-        return super.dispatchKeyEvent(event)
+        // Desktop TV emulators deliver the host keyboard's Escape key as
+        // KEYCODE_ESCAPE, not always as Android's KEYCODE_BACK. Translate it
+        // before normal window dispatch so a focused popup/menu gets first
+        // refusal, exactly as it does for a physical remote's Back button.
+        val translatedEvent = if (event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
+            KeyEvent(
+                event.downTime,
+                event.eventTime,
+                event.action,
+                KeyEvent.KEYCODE_BACK,
+                event.repeatCount,
+                event.metaState,
+                event.deviceId,
+                event.scanCode,
+                event.flags,
+                event.source,
+            )
+        } else {
+            event
+        }
+        if (TvPlayerRemoteKeyBridge.dispatch(translatedEvent)) return true
+        return super.dispatchKeyEvent(translatedEvent)
     }
 
     /**

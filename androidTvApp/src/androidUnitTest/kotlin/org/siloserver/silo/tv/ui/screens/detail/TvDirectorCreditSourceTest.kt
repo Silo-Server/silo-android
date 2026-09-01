@@ -18,10 +18,13 @@ class TvDirectorCreditSourceTest {
     }
 
     @Test
-    fun tvCreditStaysBetweenTranslationAndFacts() {
+    fun approvedMetadataPrecedesSynopsisAndTvCreditFollowsTranslation() {
+        val metadata = hero.indexOf("MetadataRow(tokens = factsLine")
+        val synopsis = hero.indexOf("overview?.takeIf")
         val translation = hero.indexOf("translation?.invoke()")
         val director = hero.indexOf("directorText?.takeIf")
-        val facts = hero.indexOf("if (factsLine.isNotEmpty())", startIndex = director)
-        assertTrue(translation >= 0 && translation < director && director < facts)
+        assertTrue(
+            metadata >= 0 && metadata < synopsis && synopsis < translation && translation < director,
+        )
     }
 }

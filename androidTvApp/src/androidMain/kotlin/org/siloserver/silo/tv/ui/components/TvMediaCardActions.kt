@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -69,13 +70,16 @@ import org.siloserver.silo.tv.ui.theme.FocusedContent
  * app — kept separate to avoid pulling phone components into the TV module.
  */
 data class TvMediaCardActions(
+    val onPlay: (() -> Unit)? = null,
+    val playLabel: String = "Play",
     val onSetWatched: ((watched: Boolean) -> Unit)? = null,
     val onToggleFavorite: ((favorite: Boolean) -> Unit)? = null,
     val onToggleWatchlist: ((inWatchlist: Boolean) -> Unit)? = null,
     val onRemoveFromContinueWatching: (() -> Unit)? = null,
 ) {
     val isEmpty: Boolean
-        get() = onSetWatched == null &&
+        get() = onPlay == null &&
+            onSetWatched == null &&
             onToggleFavorite == null &&
             onToggleWatchlist == null &&
             onRemoveFromContinueWatching == null
@@ -110,6 +114,7 @@ fun TvMediaCardContextMenu(
         AboveAnchorPopupPositionProvider(popupMarginPx)
     }
     val firstAction = when {
+        actions.onPlay != null -> TvMenuAction.Play
         actions.onSetWatched != null -> TvMenuAction.Watched
         actions.onToggleFavorite != null -> TvMenuAction.Favorite
         actions.onToggleWatchlist != null -> TvMenuAction.Watchlist
@@ -174,6 +179,21 @@ private fun TvMediaCardMenuRows(
     firstRowFocus: FocusRequester,
     onDismiss: () -> Unit,
 ) {
+    actions.onPlay?.let { play ->
+        TvMenuRow(
+            text = actions.playLabel,
+            icon = Icons.Default.PlayArrow,
+            onClick = {
+                onDismiss()
+                play()
+            },
+            modifier = if (firstAction == TvMenuAction.Play) {
+                Modifier.focusRequester(firstRowFocus)
+            } else {
+                Modifier
+            },
+        )
+    }
     actions.onSetWatched?.let { setWatched ->
         TvMenuRow(
             text = if (isPlayed) "Mark as Unwatched" else "Mark as Watched",
@@ -261,6 +281,7 @@ private class AboveAnchorPopupPositionProvider(
 }
 
 private enum class TvMenuAction {
+    Play,
     Watched,
     Favorite,
     Watchlist,

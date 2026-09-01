@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -77,6 +78,24 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
 
 /**
+ * Data worth warming while a card is focused because Select opens a different
+ * detail identity than the card itself (Continue Watching episodes open their
+ * combined Series page). All fields are cache-only inputs; no navigation or
+ * presentation state is changed by this request.
+ */
+data class TvSkylineDetailPrefetchTarget(
+    val detailContentId: String,
+    val seriesId: String? = null,
+    val seasonNumber: Int? = null,
+    val episodeContentId: String? = null,
+)
+
+private data class TvSkylinePriorityPrefetchRequest(
+    val sourceContentId: String,
+    val target: TvSkylineDetailPrefetchTarget,
+)
+
+/**
  * Android TV port of tvOS `TVSkylineSectionFeed`: shared by Home and library
  * Recommended so their lower row band, focus marquee, and ambient backdrop
  * stay pixel-aligned.
@@ -101,6 +120,8 @@ fun TvSkylineSectionFeed(
      */
     surfaceKey: String,
     modifier: Modifier = Modifier,
+    /** Home-only foreground drop; backdrop and fixed top navigation do not move. */
+    contentVerticalOffset: Dp = 0.dp,
     /**
      * False while rows are still being hydrated.
      *
@@ -129,6 +150,20 @@ fun TvSkylineSectionFeed(
         if (it.isTvProgressRow()) TvRowStyle.Backdrop else TvRowStyle.Poster
     },
     cardActions: (ResolvedSection, SectionItem) -> TvMediaCardActions = { _, _ -> TvMediaCardActions() },
+    /** A non-null action replaces [onItemClick] while preserving detail-return tracking. */
+    clickActionForSection: (ResolvedSection, SectionItem) -> (() -> Unit)? = { _, _ -> null },
+    /**
+     * Optional high-priority cache warmer for cards whose Select target needs
+     * more than the card's own marquee detail. It starts on raw focus (and for
+     * the initial card) so an immediate Select does not wait for the marquee's
+     * focus-rest interval before useful work begins.
+     */
+    priorityDetailPrefetchTargetForSection: (
+        ResolvedSection,
+        SectionItem,
+    ) -> TvSkylineDetailPrefetchTarget? = { _, _ -> null },
+    /** A non-null action replaces the card context menu for that long press. */
+    longClickActionForSection: (ResolvedSection, SectionItem) -> (() -> Unit)? = { _, _ -> null },
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
 ) {
     val rows = remember(sections) { sections.filter { it.items.isNotEmpty() } }
@@ -192,6 +227,78 @@ fun TvSkylineSectionFeed(
     var focusedItemIndex by remember { mutableIntStateOf(-1) }
     var focusedContentId by remember { mutableStateOf<String?>(null) }
     var removalFocusRequest by remember { mutableIntStateOf(0) }
+
+    val priorityPrefetchRequest = remember(
+        rows,
+        focusedRowIndex,
+        focusedContentId,
+        initialMarqueeSeed,
+    ) {
+        val focused = rows.getOrNull(focusedRowIndex)?.let { section ->
+            section.items.firstOrNull { it.contentId == focusedContentId }?.let { item ->
+                priorityDetailPrefetchTargetForSection(section, item)?.let { target ->
+                    TvSkylinePriorityPrefetchRequest(item.contentId, target)
+                }
+            }
+        }
+        focused ?: rows.firstOrNull()?.let { section ->
+            section.items.firstOrNull()?.let { item ->
+                priorityDetailPrefetchTargetForSection(section, item)?.let { target ->
+                    TvSkylinePriorityPrefetchRequest(item.contentId, target)
+                }
+            }
+        }
+    }
+
+    // Continue Watching is a latency-sensitive handoff: a movie opens its own
+    // detail, while an episode opens Series + season + episode state. Warm the
+    // exact navigation target immediately, independently of the 150 ms marquee
+    // rest used to avoid noisy visual enrichment requests during fast D-pad
+    // travel. The cache-first repository calls make revisits local-only.
+    LaunchedEffect(priorityPrefetchRequest, fetchDetail) {
+        val request = priorityPrefetchRequest ?: return@LaunchedEffect
+        val target = request.target
+        if (target.detailContentId.isBlank()) return@LaunchedEffect
+
+        suspend fun warmDetail(contentId: String) {
+            if (contentId.isBlank() || !marquee.beginEnrichmentRequest(contentId)) return
+            try {
+                val detail = runCatching { fetchDetail(contentId) }.getOrNull() ?: return
+                // Only the card's own detail may enrich its hero. A Continue
+                // Watching episode also warms its Series target, but Series
+                // copy must never replace episode copy in the Home marquee.
+                if (contentId == request.sourceContentId) {
+                    marquee.applyEnrichment(contentId, TvMarqueeEnrichment.from(detail))
+                }
+            } finally {
+                marquee.finishEnrichmentRequest(contentId)
+            }
+        }
+
+        coroutineScope {
+            val jobs = linkedSetOf(target.detailContentId, target.episodeContentId)
+                .filterNotNull()
+                .map { contentId -> async { warmDetail(contentId) } }
+                .toMutableList()
+
+            val seriesId = target.seriesId?.takeIf { it.isNotBlank() }
+            if (seriesId != null) {
+                jobs += async {
+                    runCatching { catalogRepository.getSeasonsForPrefetch(seriesId) }
+                    Unit
+                }
+                target.seasonNumber?.let { seasonNumber ->
+                    jobs += async {
+                        runCatching {
+                            catalogRepository.getEpisodesForPrefetch(seriesId, seasonNumber)
+                        }
+                        Unit
+                    }
+                }
+            }
+            jobs.awaitAll()
+        }
+    }
     // Disposal drops the shell restorer's saved child NODE, so its default
     // enter can land on the wrong card; this target is what lets the recreation
     // ladder re-target the launch card exactly. Updated continuously from card
@@ -786,7 +893,9 @@ fun TvSkylineSectionFeed(
                 // floors made it tall enough to collide with the bar.
                 topPadding = TvSkyline.barTopInset + TvSkyline.barHeight,
                 bottomPadding = bandHeight + TvSkylineMarqueeBottomGap,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(y = contentVerticalOffset),
             )
 
             Box(
@@ -794,6 +903,7 @@ fun TvSkylineSectionFeed(
                     .fillMaxWidth()
                     .height(bandHeight)
                     .align(Alignment.BottomStart)
+                    .offset(y = contentVerticalOffset)
                     .clipToBounds(),
             ) {
                 LazyColumn(
@@ -817,6 +927,7 @@ fun TvSkylineSectionFeed(
                             title = section.title,
                             items = section.items,
                             onItemClick = { contentId ->
+                                val item = section.items.firstOrNull { it.contentId == contentId }
                                 returnTarget = TvReturnTarget(
                                     sectionId = section.id,
                                     itemId = contentId,
@@ -826,7 +937,8 @@ fun TvSkylineSectionFeed(
                                 )
                                 returnGeneration++
                                 detailReturnPending = true
-                                onItemClick(contentId)
+                                item?.let { clickActionForSection(section, it) }?.invoke()
+                                    ?: onItemClick(contentId)
                             },
                             icon = iconForSection(section),
                             onSeeAllClick = onSeeAllClickForSection(section),
@@ -877,6 +989,9 @@ fun TvSkylineSectionFeed(
                                 onItemFocused(item, section.title, section.id, rowIndex, itemIndex)
                             },
                             cardActions = { item -> cardActions(section, item) },
+                            longClickAction = { item ->
+                                longClickActionForSection(section, item)
+                            },
                         )
                     }
                 }
@@ -892,6 +1007,12 @@ fun ResolvedSection.isTvProgressRow(): Boolean {
         type.contains("in_progress") ||
         type.contains("next_up") ||
         type.contains("up_next")
+}
+
+/** Rows whose Select action resumes immediately instead of opening details. */
+fun ResolvedSection.isTvContinueWatchingRow(): Boolean {
+    val type = sectionType.lowercase()
+    return type.contains("continue") || type.contains("in_progress")
 }
 
 private data class TvSkylineMarqueeSeed(

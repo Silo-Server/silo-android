@@ -13,6 +13,30 @@ import org.siloserver.silo.model.catalog.SubtitleTrack
 
 class TvEpisodeHandoffPlaybackStartTest {
     @Test
+    fun manualTitleAudioChoiceWinsOverHandoffAndPlaybackSettings() {
+        assertEquals(
+            2,
+            resolveTvStartAudioTrackIndex(
+                requestedTitleTrackIndex = 2,
+                episodeHandoffTrackIndex = 1,
+                automaticPreferenceTrackIndex = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun playbackAudioSettingIsOnlyTheAutomaticFallback() {
+        assertEquals(
+            0,
+            resolveTvStartAudioTrackIndex(
+                requestedTitleTrackIndex = null,
+                episodeHandoffTrackIndex = null,
+                automaticPreferenceTrackIndex = 0,
+            ),
+        )
+    }
+
+    @Test
     fun explicitDetailFileIdWinsOverEpisodeHandoff() {
         val resolved = resolveTvPlaybackStartSelection(
             preferredFileId = 1080,
