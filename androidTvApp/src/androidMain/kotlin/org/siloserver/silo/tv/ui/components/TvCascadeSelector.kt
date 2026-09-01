@@ -220,6 +220,11 @@ fun TvCascadeSelector(
         valuesById = libraryRequesters,
         create = ::FocusRequester,
     )
+    val visiblePillRequesters = stableIdentityValues(
+        ids = pills,
+        valuesById = pillRequesters,
+        create = ::FocusRequester,
+    )
 
     // Each library row's top edge in the level-1 column's coordinate space; the
     // flyout offsets down to the anchored row's value to align tops (§5.3).
@@ -323,7 +328,7 @@ fun TvCascadeSelector(
             ) {
                 CascadePanelHeader(anchorLibrary.name.uppercase())
                 pills.forEach { pill ->
-                    val requester = pillRequesters.getOrPut(pill) { FocusRequester() }
+                    val requester = visiblePillRequesters.getValue(pill)
                     CascadeSectionRow(
                         pill = pill,
                         entersPanel = entersPanel,
@@ -461,7 +466,7 @@ fun TvCascadeSelector(
             ) {
                 CascadeFlyoutHeader(anchorLibrary.name)
                 pills.forEach { pill ->
-                    val requester = pillRequesters.getOrPut(pill) { FocusRequester() }
+                    val requester = visiblePillRequesters.getValue(pill)
                     CascadeSectionRow(
                         pill = pill,
                         entersPanel = entersPanel,
