@@ -1,8 +1,15 @@
 package org.siloserver.silo.common.player.video
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.playback.PlaybackDelivery
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * The decision half of desired-audio reconciliation.
@@ -42,6 +49,7 @@ class AudioReconcileTest {
         selectedOrdinal: Int? = 1,
         activeFileId: Int? = 1,
         planAudioOrdinal: Int? = null,
+        requiresMountedIdentity: Boolean = false,
     ) = reconcileDesiredAudioAction(
         desired = desired,
         activeFileId = activeFileId,
@@ -49,6 +57,7 @@ class AudioReconcileTest {
         mounted = mountedTracks,
         selectedOrdinal = selectedOrdinal,
         planAudioOrdinal = planAudioOrdinal,
+        requiresMountedIdentity = requiresMountedIdentity,
     )
 
     @Test
@@ -112,6 +121,89 @@ class AudioReconcileTest {
             AudioReconcileAction.None,
             reconcile(desire(0), mountedTracks = transcoded, selectedOrdinal = 0, planAudioOrdinal = null),
         )
+    }
+
+    @Test
+    fun originalFileRequiresMountedIdentityBeforeConfirmingThePlanSelection() {
+        val transcodedLookingSnapshot = listOf(
+            MountedAudioTrack(0, null, "audio/mp4a-latm", 2, null),
+        )
+        val desired = desire(0)
+        val action = reconcile(
+            desired = desired,
+            mountedTracks = transcodedLookingSnapshot,
+            selectedOrdinal = 0,
+            planAudioOrdinal = 0,
+            requiresMountedIdentity = true,
+        )
+
+        assertEquals(AudioReconcileAction.None, action)
+        assertTrue(
+            shouldVerifyOriginalAudioSelection(
+                desired = desired,
+                delivery = PlaybackDelivery.ORIGINAL_HTTP,
+                planAudioOrdinal = 0,
+                mounted = transcodedLookingSnapshot,
+                action = action,
+            ),
+        )
+        assertFalse(
+            shouldVerifyOriginalAudioSelection(
+                desired = desired,
+                delivery = PlaybackDelivery.SERVER_REMUX_HLS,
+                planAudioOrdinal = 0,
+                mounted = transcodedLookingSnapshot,
+                action = action,
+            ),
+        )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun verificationDeadlineDoesNotSlideOrRearmAfterExpiry() = runTest {
+        val expired = mutableListOf<Long>()
+        val watchdog = AudioSelectionWatchdog(
+            scope = this,
+            timeoutMs = 1_000,
+            onExpired = expired::add,
+        )
+
+        watchdog.arm(7)
+        advanceTimeBy(500)
+        watchdog.arm(7)
+        advanceTimeBy(499)
+        runCurrent()
+        assertEquals(emptyList(), expired)
+
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(listOf(7L), expired)
+
+        watchdog.arm(7)
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(listOf(7L), expired)
+        watchdog.reset()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun resolvedVerificationNeverExpires() = runTest {
+        val expired = mutableListOf<Long>()
+        val watchdog = AudioSelectionWatchdog(
+            scope = this,
+            timeoutMs = 1_000,
+            onExpired = expired::add,
+        )
+
+        watchdog.arm(9)
+        advanceTimeBy(500)
+        watchdog.resolve(9)
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(emptyList(), expired)
+        watchdog.reset()
     }
 
     /**

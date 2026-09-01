@@ -30,6 +30,7 @@ import org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
 import org.siloserver.silo.model.playback.CLIENT_DV_TRANSFORM_RECIPE_VERSION
 import org.siloserver.silo.model.playback.NATIVE_HLS_PLAYBACK_V1_FEATURE
+import org.siloserver.silo.model.playback.CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM
 import org.siloserver.silo.model.playback.PlaybackDeviceContext
 import org.siloserver.silo.model.playback.PlaybackTransformationExecutor
 import org.siloserver.silo.model.playback.PlaybackTransformationV3
@@ -376,7 +377,11 @@ class PlaybackCapabilityDetector(
                     },
                     transformations = clientVideoTransformations,
                     authHeaderRefresh = true,
-                    validatedClaims = emptyList(),
+                    // The player reconciles the server's catalog ordinal with
+                    // the mounted Media3 inventory and verifies the resulting
+                    // selection. A bounded typed failure-recovery replan is
+                    // emitted if the untouched file cannot honor the mapping.
+                    validatedClaims = listOf(CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM),
                 ),
                 DELIVERY_CLASS_PROGRESSIVE to DeliveryCapability(
                     enabled = false,

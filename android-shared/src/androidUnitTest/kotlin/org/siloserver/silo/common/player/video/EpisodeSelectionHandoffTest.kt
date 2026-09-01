@@ -5,11 +5,27 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.VideoTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 
 class EpisodeSelectionHandoffTest {
+    @Test
+    fun versionSwitchMapsManualAudioByIdentityInsteadOfOrdinal() {
+        val source = listOf(
+            AudioTrack(codec = "aac", channels = 2, language = "eng", title = "English"),
+            AudioTrack(codec = "truehd", channels = 8, language = "jpn", title = "Japanese Atmos"),
+        )
+        val target = listOf(
+            AudioTrack(codec = "truehd", channels = 8, language = "jpn", title = "Japanese Atmos"),
+            AudioTrack(codec = "aac", channels = 2, language = "eng", title = "English"),
+        )
+
+        assertEquals(0, resolveAudioSelectionAcrossVersions(source, 1, target))
+        assertNull(resolveAudioSelectionAcrossVersions(source, null, target))
+    }
+
     @Test
     fun sourceUsesResolutionBeforeCodecAndContainer() {
         val source = version(

@@ -23,6 +23,14 @@ const val DIRECT_STREAM_RESUME_V1_FEATURE = "direct_stream_resume_v1"
 const val NATIVE_HLS_PLAYBACK_V1_FEATURE = "native_hls_playback_v1"
 
 /**
+ * Delivery-scoped proof that the original-file player maps a server-selected
+ * source audio ordinal onto the mounted Media3 track inventory. A client that
+ * advertises this must report a typed playback failure when the mapping cannot
+ * be mounted or confirmed so the server can choose a packaged fallback.
+ */
+const val CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM = "client_selected_audio_track_v1"
+
+/**
  * How a capability list was obtained. The server validates strictly against
  * [CAPABILITY_EVIDENCE_EXACT] and only grants audio passthrough at that tier;
  * weaker tiers exist so a platform that cannot enumerate decoders does not have

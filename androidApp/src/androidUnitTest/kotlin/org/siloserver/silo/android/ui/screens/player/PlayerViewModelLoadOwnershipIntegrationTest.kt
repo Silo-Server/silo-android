@@ -587,11 +587,53 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 ]
             """.trimIndent(),
             userItemStatePort = localState,
+            audioLanguage = "eng",
             onAllocation = { allocation = it },
         )
 
         assertEquals(1, allocation?.audioTrackIndex)
         assertEquals(1, allocation?.subtitleTrackIndex)
+    }
+
+    @Test
+    fun audioLanguageSettingIsResolvedBeforeTheInitialV3Allocation() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            versionFields = """
+                "audio_tracks": [
+                  {"codec":"aac","language":"eng","title":"English"},
+                  {"codec":"truehd","language":"ja-JP","title":"Japanese","default":true}
+                ]
+            """.trimIndent(),
+            audioLanguage = "jpn",
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals(1, allocation?.audioTrackIndex)
+    }
+
+    @Test
+    fun explicitAudioSelectionWinsOverTheLanguageSetting() = runTest(dispatcher) {
+        var allocation: MobileVideoSessionAllocation? = null
+
+        start(
+            effective = "",
+            profile = Profile(id = PROFILE_ID, name = "Profile"),
+            versionFields = """
+                "audio_tracks": [
+                  {"codec":"aac","language":"eng","title":"English"},
+                  {"codec":"truehd","language":"jpn","title":"Japanese"}
+                ]
+            """.trimIndent(),
+            explicitAudioTrackIndex = 0,
+            audioLanguage = "jpn",
+            onAllocation = { allocation = it },
+        )
+
+        assertEquals(0, allocation?.audioTrackIndex)
     }
 
     @Test
@@ -642,7 +684,9 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         effective: String,
         profile: Profile,
         versionFields: String = "",
+        explicitAudioTrackIndex: Int? = null,
         explicitSubtitleTrackIndex: Int? = null,
+        audioLanguage: String = "",
         userItemStatePort: UserItemStatePort = NoOpUserItemStatePort,
         onAllocation: (MobileVideoSessionAllocation) -> Unit = {},
         readyStart: VideoSessionStartV3.Ready = allocatedReady("subtitle-session"),
@@ -663,7 +707,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 LibassBridge(false),
                 SiloClientBuildIdentity(buildNumber = "5", channel = "release"),
             ),
-            playerSettingsStore = FakePlayerSettingsStore(),
+            playerSettingsStore = FakePlayerSettingsStore(audioLanguage),
             sessionLifecycle = PlaybackSessionLifecycle(
                 manager,
                 HealthApi(client),
@@ -685,6 +729,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 preferredFileId = 41,
                 roomId = null,
                 resumePositionOverride = null,
+                audioTrackIndex = explicitAudioTrackIndex,
                 subtitleTrackIndex = explicitSubtitleTrackIndex,
             ),
         )
@@ -847,7 +892,9 @@ private class FakeServerRegistry : ServerRegistry {
     override suspend fun touchActive() = Unit
 }
 
-private class FakePlayerSettingsStore : PlayerSettingsStore {
+private class FakePlayerSettingsStore(
+    private val audioLanguage: String = "",
+) : PlayerSettingsStore {
     override val introSkipModeFlow: Flow<IntroSkipMode> = flowOf(IntroSkipMode.ASK)
     override val autoSkipCreditsFlow: Flow<Boolean> = flowOf(false)
     override val autoPlayNextFlow: Flow<Boolean> = flowOf(true)
@@ -868,7 +915,7 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     override val passOutThresholdFlow: Flow<Int> = flowOf(3)
     override val preferredQualityFlow: Flow<String> = flowOf("auto")
     override val maxBitrateKbpsFlow: Flow<Int?> = flowOf(null)
-    override val audioLanguageFlow: Flow<String> = flowOf("")
+    override val audioLanguageFlow: Flow<String> = flowOf(audioLanguage)
     override val videoGravityFlow: Flow<String> = flowOf("fit")
     override val orientationModeFlow: Flow<String> = flowOf("auto")
     override val subtitleAppearanceFlow: Flow<SubtitleAppearance> = flowOf(SubtitleAppearance.DEFAULT)

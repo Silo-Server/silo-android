@@ -30,6 +30,7 @@ import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.orNullIfBlank
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
+import org.siloserver.silo.playback.resolvePreferredAudioTrackOrdinal
 import org.siloserver.silo.playback.resolveCatalogSubtitlePreferenceOrdinal
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.siloserver.silo.repository.CatalogRepository
@@ -84,9 +85,11 @@ internal fun resolveMobileInitialTrackSelection(
     audioTracks: List<org.siloserver.silo.model.catalog.AudioTrack>,
     subtitleTracks: List<SubtitleTrack>,
     persisted: LocalTrackSelection?,
+    preferredAudioLanguage: String? = null,
 ): MobileInitialTrackSelection {
     val audioTrackIndex = explicitAudioTrackIndex
         ?: resolveAudioTrackOrdinal(audioTracks, persisted?.audioFingerprint)
+        ?: resolvePreferredAudioTrackOrdinal(audioTracks, preferredAudioLanguage)
     val persistedSubtitleOrdinal = if (explicitSubtitleTrackIndex == null) {
         resolveCatalogSubtitlePreferenceOrdinal(
             subtitleTracks,
@@ -178,7 +181,7 @@ internal class MobileVideoPlaybackStarter(
             // sending the resolution alone lets a capped preset ("1080p Low")
             // stream at the bandwidth the user explicitly declined.
             val maxBitrateKbps = playerSettingsStore.maxBitrateKbpsFlow.first()
-            val preferredAudioLanguage = playerSettingsStore.audioLanguageFlow
+            val configuredAudioLanguage = playerSettingsStore.audioLanguageFlow
                 .first().ifBlank { null }
             val version = request.preferredFileId
                 ?.let { id -> watchDetail.versions.firstOrNull { it.fileId == id } }
@@ -195,14 +198,6 @@ internal class MobileVideoPlaybackStarter(
             } else {
                 null
             }
-            val initialTracks = resolveMobileInitialTrackSelection(
-                explicitAudioTrackIndex = request.audioTrackIndex,
-                explicitSubtitleTrackIndex = request.subtitleTrackIndex,
-                audioTracks = version.audioTracks.orEmpty(),
-                subtitleTracks = version.subtitleTracks.orEmpty(),
-                persisted = persistedTrackSelection,
-            )
-
             val activeProfile = profileRepository.getActiveProfile()
             val profileId = activeProfile?.id ?: profileRepository.getActiveProfileId()
                 ?: return failure(
@@ -210,6 +205,16 @@ internal class MobileVideoPlaybackStarter(
                     "No active profile selected",
                     diagnosticsCode = PlaybackDiagnosticsCode.NO_ACTIVE_PROFILE,
                 )
+            val preferredAudioLanguage = configuredAudioLanguage
+                ?: activeProfile?.language.orNullIfBlank()
+            val initialTracks = resolveMobileInitialTrackSelection(
+                explicitAudioTrackIndex = request.audioTrackIndex,
+                explicitSubtitleTrackIndex = request.subtitleTrackIndex,
+                audioTracks = version.audioTracks.orEmpty(),
+                subtitleTracks = version.subtitleTracks.orEmpty(),
+                persisted = persistedTrackSelection,
+                preferredAudioLanguage = preferredAudioLanguage,
+            )
             val accessToken = playbackSessionManager.getAccessToken()
                 ?: return failure(
                     request.contentId,
@@ -394,7 +399,7 @@ internal class MobileVideoPlaybackStarter(
                     catalogTracks = effectiveVersion?.subtitleTracks.orEmpty(),
                     plannedTracks = resolved.subtitleUrls.orEmpty(),
                 ),
-                preferredAudioLanguage = preferredAudioLanguage ?: activeProfile?.language,
+                preferredAudioLanguage = preferredAudioLanguage,
                 // Server-resolved first, exactly as TvVideoPlaybackStarter does.
                 // The settings screens write these three canonically now
                 // (`PUT /settings/values/{key}?scope=profile`) and nothing
