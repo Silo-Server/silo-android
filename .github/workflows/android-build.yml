@@ -69,6 +69,21 @@ jobs:
           unzip -p "${aar}" classes.jar > /tmp/media3-ffmpeg-classes.jar
           unzip -l /tmp/media3-ffmpeg-classes.jar | \
             grep -F "androidx/media3/decoder/ffmpeg/FfmpegAudioRenderer.class"
+          readelf="${ANDROID_HOME}/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            so="/tmp/libffmpegJNI-${abi}.so"
+            unzip -p "${aar}" "jni/${abi}/libffmpegJNI.so" > "${so}"
+            "${readelf}" -lW "${so}" | python3 -c '
+          import sys
+          alignments = [
+              int(line.split()[-1], 16)
+              for line in sys.stdin
+              if line.lstrip().startswith("LOAD ")
+          ]
+          if not alignments or min(alignments) < 0x4000:
+              raise SystemExit(f"ELF LOAD alignment is below 16 KB: {alignments}")
+          '
+          done
           sha256sum "${aar}"
 
       - name: Upload FFmpeg AAR
