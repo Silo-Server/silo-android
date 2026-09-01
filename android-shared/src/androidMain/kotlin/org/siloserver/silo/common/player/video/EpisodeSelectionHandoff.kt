@@ -5,6 +5,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.common.player.normalizedSubtitleCodecFamily
+import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.player.DolbyVisionDetection
@@ -138,6 +139,37 @@ data class EpisodeAudioCandidate(
     /** Often the only thing separating a commentary track from the main mix. */
     val title: String? = null,
 )
+
+/**
+ * Carries a manual audio choice across a file-version replacement by semantic
+ * identity, never by list position. A null result deliberately hands control
+ * back to the target file's persisted/language/default selection chain.
+ */
+fun resolveAudioSelectionAcrossVersions(
+    sourceTracks: List<AudioTrack>,
+    selectedSourceOrdinal: Int?,
+    targetTracks: List<AudioTrack>,
+): Int? {
+    val source = selectedSourceOrdinal?.let(sourceTracks::getOrNull) ?: return null
+    return resolveEpisodeAudioIntent(
+        intent = EpisodeAudioIntent(
+            mode = EpisodeAudioMode.TRACK,
+            language = source.language,
+            codecFamily = source.codec,
+            channelCount = source.channels?.takeIf { it > 0 },
+            title = source.title,
+        ),
+        candidates = targetTracks.mapIndexed { ordinal, track ->
+            EpisodeAudioCandidate(
+                index = ordinal,
+                language = track.language,
+                codecFamily = track.codec,
+                channelCount = track.channels?.takeIf { it > 0 },
+                title = track.title,
+            )
+        },
+    )
+}
 
 @Serializable
 data class EpisodeSourceIntent(

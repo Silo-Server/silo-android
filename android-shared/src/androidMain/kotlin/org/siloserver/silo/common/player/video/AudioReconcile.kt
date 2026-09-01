@@ -1,6 +1,14 @@
 package org.siloserver.silo.common.player.video
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.playback.PlaybackDelivery
+
+const val AUDIO_TRACK_SELECTION_FAILED_CLASSIFICATION = "audio_track_selection_failed"
+const val AUDIO_SELECTION_CONFIRMATION_TIMEOUT_MS = 5_000L
 
 /**
  * What the viewer wants the audio to be, as a CATALOG ordinal into
@@ -67,6 +75,8 @@ sealed interface AudioReconcileAction {
  *
  * @param selectedOrdinal the Media3 ordinal currently selected, if any.
  * @param planAudioOrdinal the catalog ordinal the server says it delivered.
+ * @param requiresMountedIdentity whether a byte-for-byte original-file plan
+ * must prove the selected catalog row against Media3's mounted inventory.
  */
 fun reconcileDesiredAudioAction(
     desired: DesiredAudio?,
@@ -75,6 +85,7 @@ fun reconcileDesiredAudioAction(
     mounted: List<MountedAudioTrack>,
     selectedOrdinal: Int?,
     planAudioOrdinal: Int?,
+    requiresMountedIdentity: Boolean = false,
 ): AudioReconcileAction {
     if (desired == null) return AudioReconcileAction.None
     // An empty or partial snapshot is not evidence of anything. The intent must
@@ -96,7 +107,7 @@ fun reconcileDesiredAudioAction(
     // remains, so a main mix and its commentary — same language, same codec —
     // would confirm each other.
     val target = matchMountedAudioTrack(wanted, mounted)
-        ?: return if (planAudioOrdinal == desired.catalogOrdinal) {
+        ?: return if (!requiresMountedIdentity && planAudioOrdinal == desired.catalogOrdinal) {
             // Not in this stream, but the server says it delivered this row: a
             // transcode's recoded output cannot identity-match its own source,
             // so this is satisfied rather than retried forever.
@@ -111,6 +122,68 @@ fun reconcileDesiredAudioAction(
         AudioReconcileAction.Confirm
     } else {
         AudioReconcileAction.Apply(target.ordinal)
+    }
+}
+
+/**
+ * Whether an original-file plan has made a source-track selection promise that
+ * still needs runtime proof. Empty snapshots deliberately do not start the
+ * clock: Media3 publishes partial inventories while a source is preparing.
+ */
+fun shouldVerifyOriginalAudioSelection(
+    desired: DesiredAudio?,
+    delivery: PlaybackDelivery?,
+    planAudioOrdinal: Int?,
+    mounted: List<MountedAudioTrack>,
+    action: AudioReconcileAction,
+): Boolean = desired != null &&
+    delivery == PlaybackDelivery.ORIGINAL_HTTP &&
+    planAudioOrdinal == desired.catalogOrdinal &&
+    mounted.isNotEmpty() &&
+    action != AudioReconcileAction.Confirm &&
+    action != AudioReconcileAction.DropForeignFile
+
+/**
+ * One non-sliding deadline per desired-audio generation. Repeated Media3 track
+ * snapshots cannot postpone failure forever, and an expired generation cannot
+ * re-arm while its recovery replan is being installed.
+ */
+class AudioSelectionWatchdog(
+    private val scope: CoroutineScope,
+    private val timeoutMs: Long = AUDIO_SELECTION_CONFIRMATION_TIMEOUT_MS,
+    private val onExpired: (generation: Long) -> Unit,
+) {
+    private var activeGeneration: Long? = null
+    private var expiredGeneration: Long? = null
+    private var job: Job? = null
+
+    fun arm(generation: Long) {
+        if (expiredGeneration == generation) return
+        if (activeGeneration == generation && job?.isActive == true) return
+        job?.cancel()
+        activeGeneration = generation
+        job = scope.launch {
+            delay(timeoutMs)
+            activeGeneration = null
+            expiredGeneration = generation
+            onExpired(generation)
+        }
+    }
+
+    fun resolve(generation: Long) {
+        if (activeGeneration == generation) {
+            job?.cancel()
+            job = null
+            activeGeneration = null
+        }
+        if (expiredGeneration == generation) expiredGeneration = null
+    }
+
+    fun reset() {
+        job?.cancel()
+        job = null
+        activeGeneration = null
+        expiredGeneration = null
     }
 }
 
