@@ -27,7 +27,7 @@ File pointers are repository-relative.
 | Dolby Vision profiles 5 / 7 / 8 | 🟡 | 🟡 | Advertised only from codec + display probes; P7 additionally requires concurrent DV and HEVC decoder instances. 4K DV output still requires fixture validation on a DV display. |
 | Panel HDR probe (HDR10, HDR10+, HLG, DV) + per-profile HDR toggle | ✅ | ✅ | `DisplayHdrProbe` |
 | Audio passthrough (E-AC3 JOC/Atmos, TrueHD, DTS-HD) | ✅ | ✅ | TV prioritizes passthrough; `AudioCapabilityManager` |
-| FFmpeg audio extension (lossless fallback) | ✅ | ✅ | Media3 1.10.1-aligned, build-flag gated; `FfmpegAudioSupport` |
+| FFmpeg audio extension (lossless fallback) | ✅ | ✅ | Media3 1.11.0-aligned, build-flag gated; `FfmpegAudioSupport` |
 | Staged playback buffer | ✅ | ✅ | `PlaybackBufferPolicy` currently defaults to Smooth Playback |
 | Refresh-rate matching | ✅ | ➖ | Phone display mode; TV defers to HDMI sink |
 | HDMI EDID-driven display mode | ➖ | ✅ | `HdrDisplayController` |

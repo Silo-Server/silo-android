@@ -152,11 +152,50 @@ class PlaybackCapabilityDetectorAudioSupportTest {
         )
     }
 
+    /**
+     * Media3 1.11.0 still soft-matches JOC onto a plain E-AC3 decoder
+     * (`MediaCodecUtil.getAlternativeCodecMimeType`) everywhere except on
+     * Google-manufactured devices, so the preflight must agree with it.
+     */
     @Test
-    fun `JOC is not inferred from a plain E-AC3 decoder`() {
-        assertFalse(
-            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, sixChannelEac3),
+    fun `JOC is accepted by a plain E-AC3 decoder where Media3 soft-matches`() {
+        assertTrue(
+            platformCanDecodeAudio(
+                MimeTypes.AUDIO_E_AC3_JOC,
+                6,
+                sixChannelEac3,
+                jocFallsBackToEac3 = true,
+            ),
         )
+        assertFalse(
+            platformCanDecodeAudio(
+                MimeTypes.AUDIO_E_AC3_JOC,
+                6,
+                stereoOnlyEac3,
+                jocFallsBackToEac3 = true,
+            ),
+            "the borrowed decoder's channel limit still applies",
+        )
+    }
+
+    @Test
+    fun `JOC is not inferred from a plain E-AC3 decoder on Google devices`() {
+        assertFalse(
+            platformCanDecodeAudio(
+                MimeTypes.AUDIO_E_AC3_JOC,
+                6,
+                sixChannelEac3,
+                jocFallsBackToEac3 = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `JOC fallback mirrors Media3's manufacturer gate`() {
+        assertFalse(supportsEac3JocFallbackDecoding("Google"))
+        assertTrue(supportsEac3JocFallbackDecoding("NVIDIA"))
+        assertTrue(supportsEac3JocFallbackDecoding("onn"))
+        assertTrue(supportsEac3JocFallbackDecoding(null))
     }
 
     @Test
@@ -165,10 +204,10 @@ class PlaybackCapabilityDetectorAudioSupportTest {
         val stereoOnlyJoc = listOf(decoder(MimeTypes.AUDIO_E_AC3_JOC, "eac3_joc", 2))
 
         assertTrue(
-            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, sixChannelJoc),
+            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, sixChannelJoc, jocFallsBackToEac3 = false),
         )
         assertFalse(
-            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, stereoOnlyJoc),
+            platformCanDecodeAudio(MimeTypes.AUDIO_E_AC3_JOC, 6, stereoOnlyJoc, jocFallsBackToEac3 = false),
         )
     }
 

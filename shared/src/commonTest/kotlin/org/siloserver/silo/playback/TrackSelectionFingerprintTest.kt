@@ -65,6 +65,21 @@ class TrackSelectionFingerprintTest {
     }
 
     @Test
+    fun canonicalLanguageCoversTheWholeIso6392Table() {
+        assertEquals("it", canonicalSubtitleLanguage("ita"))
+        assertEquals("ko", canonicalSubtitleLanguage("kor"))
+        assertEquals("pt", canonicalSubtitleLanguage("por"))
+        assertEquals("ru", canonicalSubtitleLanguage("rus"))
+        assertEquals("pl", canonicalSubtitleLanguage("pol"))
+        assertEquals("zh", canonicalSubtitleLanguage("chi"))
+        assertEquals("zh", canonicalSubtitleLanguage("zho"))
+        assertEquals("zh", canonicalSubtitleLanguage("zh-Hans"))
+        assertEquals("en", canonicalSubtitleLanguage("en-US"))
+        assertNull(canonicalSubtitleLanguage("und"))
+        assertEquals("xyz", canonicalSubtitleLanguage("xyz"))
+    }
+
+    @Test
     fun preferredAudioLanguageUsesAliasesAndTheMatchingDefaultTrack() {
         val tracks = listOf(
             AudioTrack(index = 4, codec = "aac", language = "eng", title = "Commentary"),

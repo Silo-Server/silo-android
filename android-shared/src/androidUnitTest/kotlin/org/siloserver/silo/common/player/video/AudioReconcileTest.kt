@@ -158,6 +158,119 @@ class AudioReconcileTest {
         )
     }
 
+    /**
+     * Media3 normalizes every mounted language to ISO 639-1 while the catalog
+     * carries ffprobe's 639-2 code. A byte-identical original mount must not
+     * look like it is missing its own track just because the alias table did
+     * not know the language.
+     */
+    @Test
+    fun originalFileConfirmsAnIso6392CatalogRowAgainstMedia3sIso6391Mount() {
+        val catalog = listOf(
+            AudioTrack(codec = "aac", channels = 2, language = "eng", title = "English"),
+            AudioTrack(codec = "eac3", channels = 6, language = "ita", title = "Italiano"),
+        )
+        val mountedTracks = listOf(
+            MountedAudioTrack(0, "en", "audio/mp4a-latm", 2, "English"),
+            MountedAudioTrack(1, "it", "audio/eac3", 6, "Italiano"),
+        )
+        val action = reconcileDesiredAudioAction(
+            desired = desire(1),
+            activeFileId = 1,
+            catalog = catalog,
+            mounted = mountedTracks,
+            selectedOrdinal = 1,
+            planAudioOrdinal = 1,
+            requiresMountedIdentity = true,
+        )
+        assertEquals(AudioReconcileAction.Confirm, action)
+    }
+
+    /** Untitled main mix and commentary: identity ties, but an original mount is positional. */
+    @Test
+    fun originalFileFallsBackToPositionWhenIdentityTiesOnAFullInventory() {
+        val catalog = listOf(
+            AudioTrack(codec = "aac", channels = 2, language = "eng"),
+            AudioTrack(codec = "aac", channels = 2, language = "eng"),
+        )
+        val mountedTracks = listOf(
+            MountedAudioTrack(0, "en", "audio/mp4a-latm", 2, null),
+            MountedAudioTrack(1, "en", "audio/mp4a-latm", 2, null),
+        )
+        val confirmed = reconcileDesiredAudioAction(
+            desired = desire(1),
+            activeFileId = 1,
+            catalog = catalog,
+            mounted = mountedTracks,
+            selectedOrdinal = 1,
+            planAudioOrdinal = 1,
+            requiresMountedIdentity = true,
+        )
+        assertEquals(AudioReconcileAction.Confirm, confirmed)
+
+        val apply = reconcileDesiredAudioAction(
+            desired = desire(1),
+            activeFileId = 1,
+            catalog = catalog,
+            mounted = mountedTracks,
+            selectedOrdinal = 0,
+            planAudioOrdinal = 1,
+            requiresMountedIdentity = true,
+        )
+        assertEquals(AudioReconcileAction.Apply(1), apply)
+    }
+
+    /** A JOC mount belongs to the E-AC-3 family the catalog names. */
+    @Test
+    fun originalFileMatchesJocMountAgainstAnEac3CatalogRow() {
+        val catalog = listOf(
+            AudioTrack(codec = "aac", channels = 2, language = "eng", title = "Stereo"),
+            AudioTrack(codec = "eac3", channels = 8, language = "eng", title = "Atmos"),
+        )
+        val mountedTracks = listOf(
+            MountedAudioTrack(0, "en", "audio/mp4a-latm", 2, "Stereo"),
+            MountedAudioTrack(1, "en", "audio/eac3-joc", 8, "Atmos"),
+        )
+        val action = reconcileDesiredAudioAction(
+            desired = desire(1),
+            activeFileId = 1,
+            catalog = catalog,
+            mounted = mountedTracks,
+            selectedOrdinal = 1,
+            planAudioOrdinal = 1,
+            requiresMountedIdentity = true,
+        )
+        assertEquals(AudioReconcileAction.Confirm, action)
+    }
+
+    /** Position is not evidence when the inventories differ or a stated field disagrees. */
+    @Test
+    fun positionalFallbackRefusesPartialOrContradictoryMounts() {
+        val catalog = listOf(
+            AudioTrack(codec = "aac", channels = 2, language = "eng"),
+            AudioTrack(codec = "dts", channels = 6, language = "ita"),
+        )
+        val partial = listOf(MountedAudioTrack(0, "en", "audio/mp4a-latm", 2, null))
+        assertEquals(
+            AudioReconcileAction.None,
+            reconcileDesiredAudioAction(
+                desired = desire(1), activeFileId = 1, catalog = catalog, mounted = partial,
+                selectedOrdinal = 0, planAudioOrdinal = 1, requiresMountedIdentity = true,
+            ),
+        )
+        val contradictory = listOf(
+            MountedAudioTrack(0, "en", "audio/mp4a-latm", 2, null),
+            MountedAudioTrack(1, "en", "audio/mp4a-latm", 2, null),
+        )
+        assertEquals(
+            AudioReconcileAction.None,
+            reconcileDesiredAudioAction(
+                desired = desire(1), activeFileId = 1, catalog = catalog, mounted = contradictory,
+                selectedOrdinal = 1, planAudioOrdinal = 1, requiresMountedIdentity = true,
+            ),
+        )
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun verificationDeadlineDoesNotSlideOrRearmAfterExpiry() = runTest {

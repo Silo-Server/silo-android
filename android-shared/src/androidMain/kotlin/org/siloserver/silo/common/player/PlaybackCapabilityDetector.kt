@@ -754,8 +754,8 @@ internal data class PlatformAudioDecodeCapability(
  *
  * Any matching decoder is enough: several can expose the same MIME with
  * different limits, and the widest one is the one that would be used. A limit
- * is never borrowed from a different MIME, and JOC stays a separate claim from
- * plain E-AC3 unless the device actually advertises it.
+ * is never borrowed from a different MIME. JOC borrows the plain E-AC3 decoder
+ * only where Media3 itself would (see [platformCanDecodeAudio]).
  *
  * An unknown [channelCount] (non-positive) asks only whether the codec exists —
  * there is nothing to compare against, and refusing on that basis would reject
@@ -767,8 +767,9 @@ internal fun canDecodeAudio(
     channelCount: Int,
     platformDecoders: List<PlatformAudioDecodeCapability>,
     ffmpegAvailable: Boolean,
+    jocFallsBackToEac3: Boolean = supportsEac3JocFallbackDecoding(),
 ): Boolean {
-    if (platformCanDecodeAudio(mime, channelCount, platformDecoders)) return true
+    if (platformCanDecodeAudio(mime, channelCount, platformDecoders, jocFallsBackToEac3)) return true
     // FFmpeg genuinely rescues a format the platform decoder cannot take.
     // EXTENSION_RENDERER_MODE_ON puts the platform renderer FIRST, but order is
     // only the tie-break: MappingTrackSelector picks the renderer reporting the
@@ -787,17 +788,26 @@ internal fun canDecodeAudio(
  * channels" — those are different answers for the viewer and different
  * fallbacks for the server.
  *
- * Keep E-AC3 JOC separate from plain E-AC3. Media3 1.11 removed its Pixel
- * fallback from JOC to the standard E-AC3 decoder because those decoders do
- * not reliably accept JOC streams. A device may still expose a real JOC
- * decoder, and the bundled FFmpeg renderer is evaluated separately.
+ * E-AC3 JOC soft-matches onto a plain E-AC3 decoder exactly where Media3
+ * 1.11.0 does: `MediaCodecUtil.getAlternativeCodecMimeType` still returns
+ * E-AC3 for JOC, gated by `supportsEac3JocFallbackDecoding()`, which only
+ * excludes Google-manufactured devices (their E-AC3 decoders reject JOC).
+ * Refusing the fallback everywhere would reject content Media3 plays; granting
+ * it on a Pixel would repeat the failed-DIRECT loop this preflight exists for.
+ * [jocFallsBackToEac3] is overridable for tests.
  */
 internal fun platformCanDecodeAudio(
     mime: String,
     channelCount: Int,
     platformDecoders: List<PlatformAudioDecodeCapability>,
+    jocFallsBackToEac3: Boolean = supportsEac3JocFallbackDecoding(),
 ): Boolean {
-    val acceptable = setOf(mime.lowercase())
+    val acceptable = buildSet {
+        add(mime.lowercase())
+        if (jocFallsBackToEac3 && mime.equals(MimeTypes.AUDIO_E_AC3_JOC, ignoreCase = true)) {
+            add(MimeTypes.AUDIO_E_AC3.lowercase())
+        }
+    }
     return platformDecoders.any { decoder ->
         decoder.mimeType.lowercase() in acceptable &&
             when {
@@ -811,6 +821,14 @@ internal fun platformCanDecodeAudio(
             }
     }
 }
+
+/**
+ * Same rule as Media3 1.11.0 `MediaCodecUtil.supportsEac3JocFallbackDecoding`:
+ * every manufacturer except Google may decode JOC through the E-AC3 decoder.
+ */
+internal fun supportsEac3JocFallbackDecoding(
+    manufacturer: String? = Build.MANUFACTURER,
+): Boolean = !manufacturer.equals("Google", ignoreCase = false)
 
 /** The wire name this project uses for a platform audio MIME, if it tracks one. */
 internal fun platformAudioCodecName(mimeType: String): String? = when {

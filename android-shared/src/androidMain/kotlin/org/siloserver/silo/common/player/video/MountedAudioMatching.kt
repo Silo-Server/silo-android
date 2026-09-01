@@ -99,7 +99,9 @@ fun canonicalAudioCodecFamily(raw: String?): String? {
     return when {
         token.startsWith("mp4a") || token == "aac" || token == "aacl" -> "aac"
         token.startsWith("vnddts") || token.startsWith("dts") || token == "dca" -> "dts"
-        token.startsWith("ec3") || token == "eac3" || token == "ddp" -> "eac3"
+        // `audio/eac3-joc` is the same E-AC-3 family: the catalog spells the
+        // codec `eac3` and records Atmos in the layout, not the codec name.
+        token.startsWith("ec3") || token.startsWith("eac3") || token == "ddp" -> "eac3"
         token.startsWith("ac3") -> "ac3"
         token.contains("truehd") || token == "mlp" -> "truehd"
         token.startsWith("flac") -> "flac"
@@ -112,7 +114,7 @@ fun canonicalAudioCodecFamily(raw: String?): String? {
 }
 
 /** Shares subtitle's canonicaliser so "eng" and "en" are one answer. */
-private fun canonicalAudioLanguage(raw: String?): String? =
+internal fun canonicalAudioLanguage(raw: String?): String? =
     org.siloserver.silo.playback.canonicalSubtitleLanguage(raw)
 
 /** Lowercase, strip everything that is not a letter or digit. */

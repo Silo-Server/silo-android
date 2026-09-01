@@ -107,6 +107,14 @@ fun reconcileDesiredAudioAction(
     // remains, so a main mix and its commentary — same language, same codec —
     // would confirm each other.
     val target = matchMountedAudioTrack(wanted, mounted)
+        ?: positionalOriginalMount(
+            desired = desired,
+            wanted = wanted,
+            catalog = catalog,
+            mounted = mounted,
+            planAudioOrdinal = planAudioOrdinal,
+            requiresMountedIdentity = requiresMountedIdentity,
+        )
         ?: return if (!requiresMountedIdentity && planAudioOrdinal == desired.catalogOrdinal) {
             // Not in this stream, but the server says it delivered this row: a
             // transcode's recoded output cannot identity-match its own source,
@@ -123,6 +131,49 @@ fun reconcileDesiredAudioAction(
     } else {
         AudioReconcileAction.Apply(target.ordinal)
     }
+}
+
+/**
+ * Identity by position for a byte-for-byte original mount.
+ *
+ * [matchMountedAudioTrack] is deliberately conservative: it returns null for a
+ * main mix and an untitled commentary that agree on language, codec and
+ * layout, and for any field the two sides spell differently. On a transcode
+ * that null correctly means "not this stream". On an untouched original file
+ * Media3 mounts every source track in file order, which is exactly the order
+ * the catalog ordinal indexes, so when the inventories are the same size the
+ * server-planned row IS the mounted group at that position. Treating that as
+ * unproven armed a failure replan against playback that was already correct.
+ *
+ * Still refused when the positional candidate contradicts a stated field, so
+ * a mount that dropped or reordered tracks cannot be confirmed by accident.
+ */
+private fun positionalOriginalMount(
+    desired: DesiredAudio,
+    wanted: AudioTrack,
+    catalog: List<AudioTrack>,
+    mounted: List<MountedAudioTrack>,
+    planAudioOrdinal: Int?,
+    requiresMountedIdentity: Boolean,
+): MountedAudioTrack? {
+    if (!requiresMountedIdentity) return null
+    if (planAudioOrdinal != desired.catalogOrdinal) return null
+    if (mounted.size != catalog.size) return null
+    val candidate = mounted.getOrNull(desired.catalogOrdinal) ?: return null
+    val wantedLanguage = canonicalAudioLanguage(wanted.language)
+    val mountedLanguage = canonicalAudioLanguage(candidate.language)
+    if (wantedLanguage != null && mountedLanguage != null && wantedLanguage != mountedLanguage) {
+        return null
+    }
+    val wantedCodec = canonicalAudioCodecFamily(wanted.codec)
+    val mountedCodec = canonicalAudioCodecFamily(candidate.codecOrMime)
+    if (wantedCodec != null && mountedCodec != null && wantedCodec != mountedCodec) return null
+    val wantedChannels = wanted.channels?.takeIf { it > 0 }
+    val mountedChannels = candidate.channelCount?.takeIf { it > 0 }
+    if (wantedChannels != null && mountedChannels != null && wantedChannels != mountedChannels) {
+        return null
+    }
+    return candidate
 }
 
 /**
