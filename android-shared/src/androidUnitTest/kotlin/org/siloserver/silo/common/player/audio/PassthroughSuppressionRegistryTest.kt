@@ -15,6 +15,48 @@ class PassthroughSuppressionRegistryTest {
         .setChannelCount(8)
         .build()
 
+    /**
+     * Media3 1.11 turned both `configure` overloads into default interface
+     * methods that call each other. A wrapper that forwards only abstract
+     * members never reaches the delegate and overflows the stack on the first
+     * audio format change. The wrapper must hand every call to the real sink.
+     */
+    @Test
+    fun configureReachesTheDelegateInsteadOfRecursing() {
+        val configured = mutableListOf<Format>()
+        val delegate = Proxy.newProxyInstance(
+            AudioSink::class.java.classLoader,
+            arrayOf(AudioSink::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "configure" -> {
+                    val config = args?.firstOrNull()
+                    val format = when (config) {
+                        is Format -> config
+                        is AudioSink.AudioSinkConfig -> config.format
+                        else -> null
+                    }
+                    format?.let(configured::add)
+                    null
+                }
+                "getFormatSupport" -> AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY
+                "supportsFormat" -> true
+                else -> when (method.returnType) {
+                    java.lang.Boolean.TYPE -> false
+                    java.lang.Integer.TYPE -> 0
+                    java.lang.Long.TYPE -> 0L
+                    java.lang.Float.TYPE -> 0f
+                    else -> null
+                }
+            }
+        } as AudioSink
+        val sink = PassthroughSuppressingAudioSink(delegate)
+
+        sink.configure(trueHdEightChannel, 0, null)
+
+        assertEquals(listOf(trueHdEightChannel), configured)
+    }
+
     @Test
     fun suppressionIsBoundedToOneLayoutAndOneAttempt() {
         PassthroughSuppressionRegistry.beginAttempt("attempt-a")
