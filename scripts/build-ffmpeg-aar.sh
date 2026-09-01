@@ -21,10 +21,12 @@
 #     subset of FFmpeg.
 #   * Decoders restricted to the minimum set covering the codecs the
 #     client advertises via PlaybackCapabilityDetector:
-#       ac3 eac3 mlp truehd dca
+#       ac3 eac3 mlp truehd dca alac
 #     (eac3 decoder handles E-AC-3 JOC natively; dca decoder handles DTS
 #     core + HRA + MA; mlp + truehd together cover TrueHD. vorbis/opus/
-#     flac are already decoded by AOSP so we don't ship them. ac4 is
+#     flac are already decoded by AOSP so we don't ship them. ALAC is included
+#     because Media3 1.11 added Matroska ALAC extraction but Android does not
+#     guarantee a platform ALAC decoder. ac4 is
 #     skipped per the v1 plan — rare in our library, saves ~400 KB/ABI.)
 #   * ABIs: arm64-v8a, armeabi-v7a, x86_64. 32-bit x86 is skipped — no
 #     target device ships it, and our emulator images are x86_64. The
@@ -63,7 +65,7 @@ set -euo pipefail
 MEDIA3_TAG=${MEDIA3_TAG:-1.11.0}
 FFMPEG_TAG=${FFMPEG_TAG:-n6.0}
 ANDROID_API_LEVEL=21            # FFmpeg NDK floor; Silo's app minSdk is 24
-ENABLED_DECODERS=(ac3 eac3 mlp truehd dca)
+ENABLED_DECODERS=(ac3 eac3 mlp truehd dca alac)
 
 # If you change this list, also audit:
 #   * android-shared/.../PlaybackCapabilityDetector.kt codec list in Phase 3
