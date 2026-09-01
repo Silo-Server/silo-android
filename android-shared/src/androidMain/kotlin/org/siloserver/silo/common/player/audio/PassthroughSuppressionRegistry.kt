@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player.audio
 
 import androidx.media3.common.Format
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
 
@@ -81,6 +82,7 @@ object PassthroughSuppressionRegistry : PassthroughSuppressionScope {
  * delegating wrapper never reached the real sink and recursed until
  * StackOverflowError on the first audio format change.
  */
+@UnstableApi
 class PassthroughSuppressingAudioSink(
     private val delegate: AudioSink,
 ) : ForwardingAudioSink(delegate) {

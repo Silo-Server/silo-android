@@ -59,6 +59,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -69,6 +70,61 @@ import kotlin.test.assertTrue
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvNextUpSelectionHandoffTest {
+    @Test
+    fun delayedSeasonRefreshPreservesNewerSelectionAndInvalidatesOldPlayTarget() = runDetailTest {
+        val scenario = Scenario(suffix = "-season-refresh")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+
+        val seasonsBeforeRefresh = scenario.seasonsRequests.get()
+        scenario.seasonsGate = CompletableDeferred()
+        scenario.seasonTwoEpisodesGate = CompletableDeferred()
+        fixture.viewModel.loadAll()
+        awaitCondition { scenario.seasonsRequests.get() > seasonsBeforeRefresh }
+
+        fixture.viewModel.onSeasonSelected(2)
+        awaitCondition {
+            fixture.viewModel.uiState.value.let { it.selectedSeason == 2 && it.episodesLoading }
+        }
+        assertEquals(
+            scenario.episodeOneId,
+            fixture.viewModel.uiState.value.nextUpEpisode?.contentId,
+            "the previous target stays rendered so the action row keeps its geometry",
+        )
+        assertFalse(
+            fixture.viewModel.uiState.value.nextUpTargetReady,
+            "the placeholder must not remain playable while season 2 loads",
+        )
+
+        scenario.seasonsGate?.complete(Unit)
+        awaitCondition { !fixture.viewModel.uiState.value.seasonsLoading }
+        assertEquals(
+            2,
+            fixture.viewModel.uiState.value.selectedSeason,
+            "a late seasons refresh must not replay its older initial selection",
+        )
+
+        scenario.seasonTwoEpisodesGate?.complete(Unit)
+        awaitCondition {
+            fixture.viewModel.uiState.value.episodes.any { it.seasonNumber == 2 }
+        }
+        assertEquals(2, fixture.viewModel.uiState.value.selectedSeason)
+        assertTrue(fixture.viewModel.uiState.value.nextUpTargetReady)
+    }
+
+    @Test
+    fun focusedSeriesEpisodeBecomesHeroPlayAndSelectorTarget() = runDetailTest {
+        val scenario = Scenario(suffix = "-focus-target")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+
+        fixture.viewModel.onSeriesEpisodeActivated(scenario.episodeTwoId)
+        awaitEpisode(fixture.viewModel, scenario.episodeTwoId)
+
+        val state = fixture.viewModel.uiState.value
+        assertEquals(scenario.episodeTwoId, state.nextUpEpisode?.contentId)
+        assertEquals(scenario.episodeTwoId, state.nextUpPlaybackDetail?.contentId)
+    }
 
     @Test
     fun absentVersionCodecAndContainerDecodeAsNull() = runDetailTest {
@@ -596,10 +652,14 @@ class TvNextUpSelectionHandoffTest {
         val seriesId = "series$suffix"
         val episodeOneId = "episode-1$suffix"
         val episodeTwoId = "episode-2$suffix"
+        val seasonTwoEpisodeId = "season-2-episode-1$suffix"
         var episodeOneWatched = false
         var episodeTwoWatched = false
         var episodeTwoGate: CompletableDeferred<Unit>? = null
         var episodeOneWatchGate: CompletableDeferred<Unit>? = null
+        var seasonsGate: CompletableDeferred<Unit>? = null
+        var seasonTwoEpisodesGate: CompletableDeferred<Unit>? = null
+        val seasonsRequests = AtomicInteger()
         val episodeTwoRequests = AtomicInteger()
         val pendingEpisodeOneResponses = AtomicInteger()
         var episodeOneDefaultVersions = oldVersions
@@ -616,10 +676,25 @@ class TvNextUpSelectionHandoffTest {
                     "/api/v1/catalog/items/$seriesId" -> json(
                         """{"content_id":"$seriesId","type":"series","title":"Series"}""",
                     )
-                    "/api/v1/catalog/series/$seriesId/seasons" -> json(
-                        """{"seasons":[{"content_id":"season$suffix","season_number":1,"title":"Season 1"}]}""",
-                    )
+                    "/api/v1/catalog/series/$seriesId/seasons" -> {
+                        seasonsRequests.incrementAndGet()
+                        seasonsGate?.await()
+                        json(
+                            """{"seasons":[
+                                {"content_id":"season-1$suffix","season_number":1,"title":"Season 1"},
+                                {"content_id":"season-2$suffix","season_number":2,"title":"Season 2"}
+                            ]}""".trimIndent(),
+                        )
+                    }
                     "/api/v1/catalog/series/$seriesId/seasons/1/episodes" -> json(episodesJson())
+                    "/api/v1/catalog/series/$seriesId/seasons/2/episodes" -> {
+                        seasonTwoEpisodesGate?.await()
+                        json(
+                            """{"episodes":[
+                                {"content_id":"$seasonTwoEpisodeId","season_number":2,"episode_number":1,"title":"Season Two"}
+                            ]}""".trimIndent(),
+                        )
+                    }
                     "/api/v1/catalog/items/$episodeOneId" -> {
                         val queued = episodeOneResponses.pollFirst()
                         if (queued == null) {
@@ -635,6 +710,8 @@ class TvNextUpSelectionHandoffTest {
                         episodeTwoGate?.await()
                         json(itemDetailJson(episodeTwoId, newVersions, newLastFileId))
                     }
+                    "/api/v1/catalog/items/$seasonTwoEpisodeId" ->
+                        json(itemDetailJson(seasonTwoEpisodeId, newVersions, newLastFileId))
                     "/api/v1/watched/$episodeOneId" -> {
                         episodeOneWatchGate?.await()
                         episodeOneWatched = request.method.value != "DELETE"

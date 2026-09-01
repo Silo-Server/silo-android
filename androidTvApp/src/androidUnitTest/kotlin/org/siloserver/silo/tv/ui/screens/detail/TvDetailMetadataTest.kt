@@ -2,8 +2,10 @@ package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.model.audiobook.AudiobookMetadata
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.ItemVideo
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.VideoTrack
 import org.siloserver.silo.model.ebook.MediaPerson
@@ -12,6 +14,74 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class TvDetailMetadataTest {
+    @Test
+    fun seriesEpisodeEditorialMatchesTvOsHierarchy() {
+        val episode = EpisodeListItem(
+            contentId = "e1",
+            seasonNumber = 3,
+            episodeNumber = 1,
+            title = "Smells Like Mean Spirit",
+            airDate = "2026-03-30T00:00:00Z",
+            runtime = 52,
+        )
+
+        assertEquals(
+            listOf("Season 3", "Episode 1"),
+            TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+        )
+        assertEquals(
+            listOf(
+                TvHeroFactToken.TextToken("Mar 30, 2026"),
+                TvHeroFactToken.TextToken("52 min"),
+            ),
+            TvDetailMetadata.seriesEpisodeFactsLine(episode, zone = ZoneId.of("UTC")),
+        )
+    }
+
+    @Test
+    fun seriesSpecialEditorialUsesSpecialsLabel() {
+        val episode = EpisodeListItem(
+            contentId = "special-1",
+            seasonNumber = 0,
+            episodeNumber = 1,
+        )
+
+        assertEquals(
+            listOf("Specials", "Episode 1"),
+            TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+        )
+    }
+
+    @Test
+    fun seriesEditorialOmitsUnknownEpisodeNumber() {
+        val episode = EpisodeListItem(
+            contentId = "special",
+            seasonNumber = 0,
+            episodeNumber = 0,
+        )
+
+        assertEquals(
+            listOf("Specials"),
+            TvDetailMetadata.seriesEpisodeSourceTokens(episode),
+        )
+    }
+
+    @Test
+    fun trailerEntriesDeduplicateProviderKeysUsedByTheRail() {
+        val duplicate = ItemVideo(kind = "trailer", site = "youtube", siteKey = "abc")
+        val detail = ItemDetail(
+            contentId = "m1",
+            type = "movie",
+            title = "Movie",
+            videos = listOf(duplicate, duplicate.copy(name = "Duplicate")),
+        )
+
+        assertEquals(
+            listOf("remote:youtube:abc"),
+            tvDetailTrailerEntries(detail).map { it.key },
+        )
+    }
+
     @Test
     fun episodeFactsPutAirDateBeforeRuntime() {
         val detail = ItemDetail(

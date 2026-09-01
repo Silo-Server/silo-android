@@ -75,6 +75,7 @@ fun TvEpisodeCard(
     userState: org.siloserver.silo.model.catalog.MediaItemUserState? = null,
     overlay: OverlayData? = null,
     actions: TvMediaCardActions = TvMediaCardActions(),
+    onLongClick: (() -> Unit)? = null,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     val caption = LocalCardPresentation.current.caption
@@ -101,7 +102,7 @@ fun TvEpisodeCard(
 
         Card(
             onClick = onClick,
-            onLongClick = if (actions.isEmpty) null else { { menuExpanded = true } },
+            onLongClick = onLongClick ?: if (actions.isEmpty) null else { { menuExpanded = true } },
             interactionSource = interactionSource,
             shape = CardDefaults.shape(shape = cardShape),
             scale = cardFocus.scale,

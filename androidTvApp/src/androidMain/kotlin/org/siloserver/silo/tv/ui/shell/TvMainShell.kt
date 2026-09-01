@@ -56,7 +56,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
@@ -163,6 +162,7 @@ import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.viewmodel.HomeViewModel
 
 /**
  * Frames the shell will wait for content to actually take focus after it
@@ -191,6 +191,11 @@ fun TvMainShell(
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
     onOpenItemDetail: (contentId: String) -> Unit,
+    onOpenItemDetailSelection: (
+        contentId: String,
+        seasonNumber: Int?,
+        episodeContentId: String?,
+    ) -> Unit,
     onOpenLibraryCollectionDetail: (
         libraryId: Int,
         collectionId: String,
@@ -221,6 +226,10 @@ fun TvMainShell(
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val activeServerEntry by serverRegistry.activeEntry.collectAsState()
     val tvLibraryScopeStore: TvLibraryScopeStore = koinInject()
+    // One shell-scoped Home owner feeds both the Home screen and General's
+    // Home Sections editor. A Settings-scoped second instance could be empty
+    // while the already-visible Home instance held the populated rows.
+    val homeViewModel: HomeViewModel = koinViewModel(key = "tv-main-home")
     val serverUrl = rememberProfileServerUrl()
     val watchTogetherViewModel = koinViewModel<TvWatchTogetherViewModel>()
     val watchTogetherState by watchTogetherViewModel.uiState.collectAsState()
@@ -449,6 +458,12 @@ fun TvMainShell(
         detailReturnRoot = TvMainRoute.Home.route
         suppressHomeRefreshAfterDetail = true
         onOpenItemDetail(contentId)
+    }
+    val openHomeItemDetailSelection: (String, Int?, String?) -> Unit = { contentId, seasonNumber, episodeContentId ->
+        restoreContentAfterDetail = true
+        detailReturnRoot = TvMainRoute.Home.route
+        suppressHomeRefreshAfterDetail = true
+        onOpenItemDetailSelection(contentId, seasonNumber, episodeContentId)
     }
     val openForYouItemDetail: (String) -> Unit = { contentId ->
         restoreContentAfterDetail = true
@@ -1114,7 +1129,9 @@ fun TvMainShell(
             ) {
                 shellComposable(TvMainRoute.Video.route) {
                     TvHomeScreen(
+                        viewModel = homeViewModel,
                         onItemClick = openHomeItemDetail,
+                        onItemDetailSelection = openHomeItemDetailSelection,
                         onPlayItem = onPlayItem,
                         onSeeAll = {
                             navigateToSecondary(TvMainRoute.Browse.route)
@@ -1122,6 +1139,10 @@ fun TvMainShell(
                         },
                         onOpenForYou = {
                             openForYou(null)
+                        },
+                        onOpenSettings = {
+                            navigateToRoute(TvMainRoute.Settings.route)
+                            moveFocusToContent(TvMainRoute.Settings.route)
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
@@ -1135,7 +1156,9 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Home.route) {
                     TvHomeScreen(
+                        viewModel = homeViewModel,
                         onItemClick = openHomeItemDetail,
+                        onItemDetailSelection = openHomeItemDetailSelection,
                         onPlayItem = onPlayItem,
                         onSeeAll = {
                             navigateToSecondary(TvMainRoute.Browse.route)
@@ -1143,6 +1166,10 @@ fun TvMainShell(
                         },
                         onOpenForYou = {
                             openForYou(null)
+                        },
+                        onOpenSettings = {
+                            navigateToRoute(TvMainRoute.Settings.route)
+                            moveFocusToContent(TvMainRoute.Settings.route)
                         },
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         focusRequest = contentFocusRequest,
@@ -1325,6 +1352,7 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Settings.route) {
                     TvSettingsScreen(
+                        homeSectionsViewModel = homeViewModel,
                         onManageServers = onManageServers,
                         onOpenDiagnosticsReport = onOpenDiagnosticsReport,
                         initialManageServersFocus = returnToManageServers,
@@ -1391,28 +1419,12 @@ fun TvMainShell(
             }
         }
 
-        // The scrim TvTopMenuBar documents but the shell had stopped drawing.
-        // The bar deliberately has no background band of its own ("the SHELL
-        // draws a fixed top scrim behind the bar", QA 2026-07-08); without it
-        // the labels sit directly on whatever scrolled underneath. The gradient
-        // keeps the hero visible behind the bar on every route.
-        if (currentRoute != TvMainRoute.Settings.route) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(TvTopMenuLayout.contentTopInset)
-                    .align(Alignment.TopCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
-                                MaterialTheme.colorScheme.background.copy(alpha = 0.72f),
-                                MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                            ),
-                        ),
-                    ),
-            )
-        }
+        // Shared one-layer nav shadow. Root artwork no longer draws a second
+        // scrim, so Home and flat shell pages have identical chrome.
+        TvTopMenuDropShadow(
+            visibility = if (currentRoute == TvMainRoute.Settings.route) 0f else menuVisibility.value,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
 
         // Menu overlay — content remains visible behind the transparent bar,
         // matching tvOS without a heavy top-edge shadow.

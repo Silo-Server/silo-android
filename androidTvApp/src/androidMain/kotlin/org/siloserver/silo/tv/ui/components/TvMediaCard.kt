@@ -84,6 +84,7 @@ fun TvMediaCard(
     cardModifier: Modifier = Modifier,
     overlay: OverlayData? = null,
     actions: TvMediaCardActions = TvMediaCardActions(),
+    onLongClick: (() -> Unit)? = null,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     val caption = LocalCardPresentation.current.caption
@@ -122,7 +123,7 @@ fun TvMediaCard(
 
         Card(
             onClick = onClick,
-            onLongClick = if (actions.isEmpty) null else { { menuExpanded = true } },
+            onLongClick = onLongClick ?: if (actions.isEmpty) null else { { menuExpanded = true } },
             interactionSource = interactionSource,
             shape = CardDefaults.shape(shape = cardShape),
             scale = cardFocus.scale,

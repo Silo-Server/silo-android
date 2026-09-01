@@ -121,6 +121,8 @@ fun TvMediaRow(
     /** Reports whether this row or any descendant card currently owns focus. */
     onRowFocusChanged: ((Boolean) -> Unit)? = null,
     cardActions: (SectionItem) -> TvMediaCardActions = { TvMediaCardActions() },
+    /** Optional direct long-press action. Null keeps the card's context menu. */
+    longClickAction: (SectionItem) -> (() -> Unit)? = { null },
 ) {
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
@@ -337,6 +339,7 @@ fun TvMediaRow(
                 // owners) after a refresh that reclassifies the section while
                 // leaving the item equal (Codex).
                 val itemActions = remember(item, cardActions) { cardActions(item) }
+                val itemLongClick = remember(item, longClickAction) { longClickAction(item) }
                 when (cardLayout) {
                     TvRowCardLayout.ReferenceShelf -> TvReferenceShelfCard(
                         title = rowItem.shelfTitle,
@@ -350,6 +353,7 @@ fun TvMediaRow(
                         cardModifier = appliedCardModifier,
                         userState = item.userState,
                         actions = itemActions,
+                        onLongClick = itemLongClick,
                     )
                     TvRowCardLayout.Default -> when (style) {
                         TvRowStyle.Backdrop -> TvEpisodeCard(
@@ -367,6 +371,7 @@ fun TvMediaRow(
                             userState = item.userState,
                             overlay = rowItem.overlay,
                             actions = itemActions,
+                            onLongClick = itemLongClick,
                         )
                         TvRowStyle.Poster -> TvMediaCard(
                             title = item.title,
@@ -382,6 +387,7 @@ fun TvMediaRow(
                             cardModifier = appliedCardModifier,
                             overlay = rowItem.overlay,
                             actions = itemActions,
+                            onLongClick = itemLongClick,
                         )
                     }
                 }

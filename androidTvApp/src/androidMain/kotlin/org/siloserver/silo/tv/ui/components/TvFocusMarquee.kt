@@ -25,12 +25,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -251,50 +249,52 @@ private fun TvMarqueeBlock(
             }
         }
 
-        // Format spec line: the resolution / dynamic-range / audio trio, kept
-        // as quiet text under the credits so the rating stays the only chip.
-        content.specLine?.let { spec ->
-            Text(
-                text = spec,
-                color = SiloOnSurface.copy(alpha = 0.55f),
-                fontSize = MarqueeSpecSize,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = MarqueeSpecSize * 0.04f,
-                lineHeight = MarqueeSpecSize * 1.2f,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.offset(y = (-6).dp),
-            )
-        }
+        // tvOS keeps resolution, dynamic range and audio as separate outlined
+        // badges below the aired/cast line, rather than a dot-joined spec line.
+        content.specLine
+            ?.split(" · ")
+            ?.filter { it.isNotBlank() }
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { badges ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.offset(y = (-6).dp),
+                ) {
+                    badges.forEach { badge -> MarqueeBadge(badge.uppercase()) }
+                }
+            }
     }
 }
 
 @Composable
 private fun MarqueeBadge(label: String) {
-    val shape = RoundedCornerShape(5.dp)
-    // Solid, not outlined: the content rating is the one chip on the hero
-    // and has to read before the meta text next to it.
+    val shape = RoundedCornerShape(3.dp)
     Box(
         modifier = Modifier
-            .clip(shape)
-            .background(Color.White.copy(alpha = 0.92f))
-            .padding(horizontal = 9.dp, vertical = 3.dp),
+            .background(Color.White.copy(alpha = 0.08f), shape)
+            .border(
+                width = 0.5.dp,
+                color = Color.White.copy(alpha = 0.24f),
+                shape = shape,
+            )
+            .padding(horizontal = 6.dp, vertical = 2.5.dp),
     ) {
         Text(
             text = label,
-            color = Color.Black.copy(alpha = 0.92f),
+            color = Color.White.copy(alpha = 0.92f),
             fontSize = MarqueeBadgeSize,
             lineHeight = MarqueeBadgeSize * 1.25f,
-            letterSpacing = MarqueeBadgeSize * 0.08f,
+            letterSpacing = 0.55.sp,
             fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
         )
     }
 }
 
 // Skyline marquee metrics. Geometry stays ~0.5x of the tvOS 1920×1080 tokens;
-// text sizes are floored at 14sp (16sp for the synopsis body) for 10-ft
-// legibility — audit 2026-07-20.
+// body text stays at the 10-ft legibility floor; the compact outlined badges
+// intentionally follow the smaller tvOS metadata treatment.
 private val MarqueeContentWidth = 440.dp
 private val MarqueeSynopsisMaxWidth = 390.dp
 private val MarqueeLogoMaxWidth = 440.dp
@@ -304,5 +304,4 @@ private val MarqueeTitleSize = 44.sp
 private val MarqueeMetaSize = 14.sp
 private val MarqueeDetailSize = 14.sp
 private val MarqueeSynopsisSize = 16.sp
-private val MarqueeBadgeSize = 14.sp
-private val MarqueeSpecSize = 13.sp
+private val MarqueeBadgeSize = 10.5.sp

@@ -1,6 +1,7 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.EpisodesResponse
 import org.siloserver.silo.model.catalog.SeasonsResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
@@ -31,6 +32,7 @@ class CatalogRepositoryDetailCacheTest {
     private class FakeCache(
         val preset: ItemDetail? = null,
         val seasonsPreset: SeasonsResponse? = null,
+        val episodesPreset: EpisodesResponse? = null,
         val identityTransitions: IdentityTransitionBarrier? = null,
         val beforeItemCache: suspend () -> Unit = {},
     ) : CatalogCachePort {
@@ -50,6 +52,8 @@ class CatalogRepositoryDetailCacheTest {
         }
         override suspend fun getCachedItemDetail(contentId: String): ItemDetail? = preset
         override suspend fun getCachedSeasons(seriesId: String): SeasonsResponse? = seasonsPreset
+        override suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int): EpisodesResponse? =
+            episodesPreset
     }
 
     private fun repo(status: HttpStatusCode, body: String, cache: CatalogCachePort): CatalogRepository {
@@ -122,6 +126,20 @@ class CatalogRepositoryDetailCacheTest {
         val cache = FakeCache(seasonsPreset = SeasonsResponse(seasons = emptyList()))
         val result = repo(HttpStatusCode.ServiceUnavailable, "{}", cache).getSeasons("series-1")
         assertTrue(result is ApiResult.Success)
+    }
+
+    @Test
+    fun continueWatchingSeasonPrefetchUsesCachedNavigationWithoutNetwork() = runTest {
+        val cache = FakeCache(
+            seasonsPreset = SeasonsResponse(seasons = emptyList()),
+            episodesPreset = EpisodesResponse(episodes = emptyList()),
+        )
+        val repository = repoThatFailsOnNetwork(cache)
+
+        assertTrue(repository.getSeasonsForPrefetch("series-1") is ApiResult.Success)
+        assertTrue(repository.getEpisodesForPrefetch("series-1", 3) is ApiResult.Success)
+        assertEquals(cache.seasonsPreset, repository.getCachedSeasons("series-1"))
+        assertEquals(cache.episodesPreset, repository.getCachedEpisodes("series-1", 3))
     }
 
     @Test

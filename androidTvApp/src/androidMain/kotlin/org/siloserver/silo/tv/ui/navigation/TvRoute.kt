@@ -62,18 +62,26 @@ sealed class TvRoute(val route: String) {
     }
 
     // --- Detail & player (no drawer, immersive) ---
-    data class ItemDetail(val contentId: String, val seasonNumber: Int? = null) :
-        TvRoute(
-            if (seasonNumber != null) {
-                "item/${contentId.routeEncode()}?seasonNumber=$seasonNumber"
-            } else {
-                "item/${contentId.routeEncode()}"
-            },
-        ) {
+    data class ItemDetail(
+        val contentId: String,
+        val seasonNumber: Int? = null,
+        val episodeContentId: String? = null,
+    ) : TvRoute(
+        buildString {
+            append("item/${contentId.routeEncode()}")
+            val query = buildList {
+                seasonNumber?.let { add("seasonNumber=$it") }
+                episodeContentId?.let { add("episodeContentId=${it.routeEncode()}") }
+            }
+            if (query.isNotEmpty()) append("?${query.joinToString("&")}")
+        },
+    ) {
         companion object {
-            const val ROUTE = "item/{contentId}?seasonNumber={seasonNumber}"
+            const val ROUTE =
+                "item/{contentId}?seasonNumber={seasonNumber}&episodeContentId={episodeContentId}"
             const val ARG_CONTENT_ID = "contentId"
             const val ARG_SEASON_NUMBER = "seasonNumber"
+            const val ARG_EPISODE_CONTENT_ID = "episodeContentId"
         }
     }
 

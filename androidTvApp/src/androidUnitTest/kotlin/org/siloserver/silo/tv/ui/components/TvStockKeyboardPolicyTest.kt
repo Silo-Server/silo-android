@@ -51,4 +51,16 @@ class TvStockKeyboardPolicyTest {
             "these raise the stock TV keyboard without dismissing it on disposal: $offenders",
         )
     }
+
+    @Test
+    fun escapeUsesNormalBackDispatchSoPopupsCloseBeforeThePage() {
+        val source = File("src/androidMain/kotlin/org/siloserver/silo/tv/MainTvActivity.kt").readText()
+        val dispatch = source
+            .substringAfter("override fun dispatchKeyEvent(event: KeyEvent): Boolean")
+            .substringBefore("private fun handleIntent")
+
+        assertTrue(dispatch.contains("KeyEvent.KEYCODE_BACK"))
+        assertTrue(dispatch.contains("super.dispatchKeyEvent(translatedEvent)"))
+        assertFalse(dispatch.contains("onBackPressedDispatcher.onBackPressed()"))
+    }
 }

@@ -117,7 +117,7 @@ class PlaybackSessionManagerStagedReplanTest {
             // asynchronous cleanup still owns its first network attempt.
             harness.manager.stopSession("s2")
             releaseFirstCleanup.complete(Unit)
-            withTimeout(AWAIT_POLL_TIMEOUT_MS) {
+            withWallClockAwaitTimeout {
                 while (harness.manager.orphanedSessionIdsForTest().isNotEmpty()) {
                     yield()
                 }
@@ -596,9 +596,7 @@ class PlaybackSessionManagerStagedReplanTest {
         firstStopStarted.await()
         val secondDiscard = launch { harness.manager.discardStagedVideoReplan(second) }
         try {
-            withContext(Dispatchers.Default) {
-                withTimeout(AWAIT_POLL_TIMEOUT_MS) { secondStopStarted.await() }
-            }
+            withWallClockAwaitTimeout { secondStopStarted.await() }
             assertFalse(firstDiscard.isCompleted)
             assertTrue("s3" in harness.stopAttempts)
         } finally {
@@ -1631,12 +1629,12 @@ class PlaybackSessionManagerStagedReplanTest {
         }
 
         suspend fun awaitRouteEvent(event: String, planId: String): JsonObject =
-            withTimeout(AWAIT_POLL_TIMEOUT_MS) {
+            withWallClockAwaitTimeout {
                 while (true) {
                     routeEvents.firstOrNull { body ->
                         body["event"]?.jsonPrimitive?.content == event &&
                             body["plan_id"]?.jsonPrimitive?.content == planId
-                    }?.let { return@withTimeout it }
+                    }?.let { return@withWallClockAwaitTimeout it }
                     routeEventSignals.receive()
                 }
                 error("unreachable")
@@ -1777,4 +1775,10 @@ private object StagedReplanNoOpTokenManager : TokenManager {
  * a merely-slow test failed as if it had raced. The deadline exists to turn a
  * hang into a failure, not to police latency.
  */
+private suspend fun <T> withWallClockAwaitTimeout(
+    block: suspend CoroutineScope.() -> T,
+): T = withContext(Dispatchers.IO) {
+    withTimeout(AWAIT_POLL_TIMEOUT_MS, block)
+}
+
 private const val AWAIT_POLL_TIMEOUT_MS = 30_000L

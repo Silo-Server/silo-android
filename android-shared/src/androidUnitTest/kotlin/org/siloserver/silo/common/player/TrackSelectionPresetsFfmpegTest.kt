@@ -1,7 +1,9 @@
 package org.siloserver.silo.common.player
 
 import androidx.media3.common.MimeTypes
+import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
+import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.HdrCapabilities
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -102,7 +104,7 @@ class TrackSelectionPresetsFfmpegTest {
     }
 
     @Test
-    fun `TV desired order — E-AC-3 JOC beats TrueHD beats AC-3 beats AAC`() {
+    fun `TV desired order — TrueHD beats E-AC-3 JOC beats AC-3 beats AAC`() {
         val mimes = TrackSelectionPresets.buildTvAudioMimePreferences(
             caps = atmosAvrSink,
             ffmpegAvailable = false,
@@ -111,9 +113,134 @@ class TrackSelectionPresetsFfmpegTest {
         val truehdIdx = mimes.indexOf(MimeTypes.AUDIO_TRUEHD)
         val ac3Idx = mimes.indexOf(MimeTypes.AUDIO_AC3)
         val aacIdx = mimes.indexOf(MimeTypes.AUDIO_AAC)
-        assertTrue(jocIdx in 0 until truehdIdx, "JOC should precede TrueHD")
-        assertTrue(truehdIdx < ac3Idx, "TrueHD should precede AC-3")
+        assertTrue(truehdIdx in 0 until jocIdx, "TrueHD should precede JOC")
+        assertTrue(jocIdx < ac3Idx, "JOC should precede AC-3")
         assertTrue(ac3Idx < aacIdx, "AC-3 should precede AAC")
+    }
+
+    @Test
+    fun `automatic audio keeps preferred language and falls from unsupported TrueHD to E-AC-3`() {
+        val tracks = listOf(
+            AudioTrack(codec = "truehd", channels = 8, language = "ja"),
+            AudioTrack(codec = "eac3", channels = 6, language = "jpn"),
+            AudioTrack(codec = "aac", channels = 2, language = "en", isDefault = true),
+        )
+        val capabilities = ClientCodecCapabilities(codecsAudio = listOf("eac3", "aac"))
+
+        assertEquals(
+            1,
+            TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+                tracks = tracks,
+                preferredAudioLanguage = "ja",
+                capabilities = capabilities,
+            ),
+        )
+    }
+
+    @Test
+    fun `automatic audio uses English when preferred language is unavailable`() {
+        val tracks = listOf(
+            AudioTrack(codec = "aac", channels = 2, language = "de", isDefault = true),
+            AudioTrack(codec = "eac3", channels = 6, language = "eng"),
+        )
+
+        assertEquals(
+            1,
+            TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+                tracks = tracks,
+                preferredAudioLanguage = "fr",
+                capabilities = ClientCodecCapabilities(codecsAudio = listOf("eac3", "aac")),
+            ),
+        )
+    }
+
+    @Test
+    fun `automatic audio keeps available preferred language even when English is directly compatible`() {
+        val tracks = listOf(
+            AudioTrack(codec = "truehd", channels = 8, language = "fr", title = "Main"),
+            AudioTrack(codec = "aac", channels = 2, language = "en", isDefault = true),
+        )
+
+        assertEquals(
+            0,
+            TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+                tracks = tracks,
+                preferredAudioLanguage = "fr",
+                capabilities = ClientCodecCapabilities(codecsAudio = listOf("aac")),
+            ),
+        )
+    }
+
+    @Test
+    fun `automatic audio keeps adaptable preferred main mix over compatible commentary`() {
+        val tracks = listOf(
+            AudioTrack(codec = "truehd", channels = 8, language = "fr", title = "Main"),
+            AudioTrack(codec = "aac", channels = 2, language = "fra", title = "Director Commentary"),
+        )
+
+        assertEquals(
+            0,
+            TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+                tracks = tracks,
+                preferredAudioLanguage = "fr",
+                capabilities = ClientCodecCapabilities(codecsAudio = listOf("aac")),
+            ),
+        )
+    }
+
+    @Test
+    fun `automatic audio chooses TrueHD 7 point 1 when the output supports it`() {
+        val tracks = listOf(
+            AudioTrack(codec = "eac3", channels = 6, language = "en"),
+            AudioTrack(codec = "truehd", channels = 8, language = "en"),
+        )
+        val capabilities = ClientCodecCapabilities(
+            codecsAudio = listOf("eac3", "aac"),
+            audioPassthrough = AudioPassthroughCapabilities(
+                passthroughCodecs = listOf("truehd", "eac3"),
+                maxChannels = 8,
+            ),
+        )
+
+        assertEquals(
+            1,
+            TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+                tracks = tracks,
+                preferredAudioLanguage = "en",
+                capabilities = capabilities,
+            ),
+        )
+    }
+
+    @Test
+    fun `automatic audio does not promote a commentary mix over the main track`() {
+        val tracks = listOf(
+            AudioTrack(codec = "truehd", channels = 8, language = "en", title = "Director Commentary"),
+            AudioTrack(codec = "eac3", channels = 6, language = "en", title = "Main"),
+        )
+
+        assertEquals(
+            1,
+            TrackSelectionPresets.selectBestCompatibleAudioTrackOrdinal(
+                tracks = tracks,
+                preferredAudioLanguage = "en",
+                capabilities = ClientCodecCapabilities(codecsAudio = listOf("truehd", "eac3")),
+            ),
+        )
+    }
+
+    @Test
+    fun `preferred audio languages always include English exactly once`() {
+        assertEquals(listOf("fr", "en"), TrackSelectionPresets.preferredAudioLanguages("fr"))
+        assertEquals(listOf("eng"), TrackSelectionPresets.preferredAudioLanguages("eng"))
+        assertEquals(listOf("en"), TrackSelectionPresets.preferredAudioLanguages(null))
+    }
+
+    @Test
+    fun `phone only applies English fallback after an explicit language preference`() {
+        assertEquals(emptyList(), TrackSelectionPresets.explicitPreferredAudioLanguages(null))
+        assertEquals(emptyList(), TrackSelectionPresets.explicitPreferredAudioLanguages("  "))
+        assertEquals(listOf("fr", "en"), TrackSelectionPresets.explicitPreferredAudioLanguages("fr"))
     }
 
     // -----------------------------------------------------------------------

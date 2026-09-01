@@ -9,23 +9,27 @@ class SeasonDisplayOrderTest {
         specials: Boolean = false,
         id: String = "season-$number-$specials",
         title: String? = null,
+        episodeCount: Int = 10,
+        userData: SeasonUserData? = null,
     ) = Season(
         contentId = id,
         seasonNumber = number,
         isSpecials = specials,
         title = title,
+        episodeCount = episodeCount,
+        userData = userData,
     )
 
     @Test
-    fun `specials sort before regular seasons`() {
+    fun `specials sort after regular seasons`() {
         val result = listOf(season(2), season(0), season(1)).sortedForDisplay()
-        assertEquals(listOf(0, 1, 2), result.map(Season::seasonNumber))
+        assertEquals(listOf(1, 2, 0), result.map(Season::seasonNumber))
     }
 
     @Test
     fun `specials flag is authoritative even for nonzero season number`() {
         val result = listOf(season(1), season(99, specials = true), season(2)).sortedForDisplay()
-        assertEquals(listOf(99, 1, 2), result.map(Season::seasonNumber))
+        assertEquals(listOf(1, 2, 99), result.map(Season::seasonNumber))
     }
 
     @Test
@@ -33,6 +37,29 @@ class SeasonDisplayOrderTest {
         val result = listOf(season(0), season(2), season(1))
             .initialSeasonForDisplay(preferredSeasonNumber = null)
         assertEquals(1, result?.seasonNumber)
+    }
+
+    @Test
+    fun `opening preloads the season containing the in progress episode`() {
+        val result = listOf(
+            season(1),
+            season(3, userData = SeasonUserData(inProgressCount = 1)),
+            season(2),
+            season(0),
+        ).initialSeasonForDisplay(preferredSeasonNumber = null)
+
+        assertEquals(3, result?.seasonNumber)
+    }
+
+    @Test
+    fun `opening falls back to a partially watched season`() {
+        val result = listOf(
+            season(1, userData = SeasonUserData(played = true, watchedCount = 10)),
+            season(2, userData = SeasonUserData(watchedCount = 4)),
+            season(3),
+        ).initialSeasonForDisplay(preferredSeasonNumber = null)
+
+        assertEquals(2, result?.seasonNumber)
     }
 
     @Test
@@ -74,7 +101,7 @@ class SeasonDisplayOrderTest {
         val plan = listOf(season(2), season(0), season(1))
             .initialSeasonDisplayPlan(preferredSeasonNumber = null)
 
-        assertEquals(listOf(0, 1, 2), plan.seasons.map(Season::seasonNumber))
+        assertEquals(listOf(1, 2, 0), plan.seasons.map(Season::seasonNumber))
         assertEquals(1, plan.selectedSeasonNumber)
         assertEquals(1, plan.episodeRequestSeasonNumber)
     }
