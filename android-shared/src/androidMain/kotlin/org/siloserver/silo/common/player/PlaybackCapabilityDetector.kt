@@ -7,6 +7,7 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
 import androidx.annotation.OptIn
+import androidx.compose.runtime.RememberObserver
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Tracks
@@ -114,8 +115,17 @@ class PlaybackCapabilityDetector(
      * assigned: the incoming player binds while the outgoing one is still
      * composed, and the outgoing player's release must not clear the newer
      * binding. Each binding releases only itself.
+     *
+     * The binding is a [RememberObserver] because the claim is taken inside
+     * the `remember` factory, before the composition commits. A
+     * `DisposableEffect` cannot clean that up: if the composition is
+     * abandoned before it applies, the effect never enters the composition
+     * and its `onDispose` is never installed. Compose calls [onAbandoned]
+     * in exactly that case and [onForgotten] on ordinary disposal, so a
+     * remembered binding releases itself on both paths without any effect
+     * at the call site.
      */
-    inner class PlaybackDisplayBinding internal constructor(val displayId: Int?) {
+    inner class PlaybackDisplayBinding internal constructor(val displayId: Int?) : RememberObserver {
         val isActive: Boolean get() = playbackDisplayOwner === this
 
         /** Clears the display id only while this binding still owns it. */
@@ -126,6 +136,10 @@ class PlaybackCapabilityDetector(
                 playbackDisplayId = null
             }
         }
+
+        override fun onRemembered() = Unit
+        override fun onForgotten() = release()
+        override fun onAbandoned() = release()
     }
 
     /**

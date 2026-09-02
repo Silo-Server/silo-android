@@ -1176,17 +1176,13 @@ fun TvAppNavigation(
             val playerContext = androidx.compose.ui.platform.LocalContext.current
             val capabilityDetector = koinInject<org.siloserver.silo.common.player.PlaybackCapabilityDetector>()
             // This early binding is superseded when TvPlayerScreen binds its
-            // own during composition. It is still released here: a
-            // composition abandoned before the screen commits would
-            // otherwise leave the singleton holding a display nobody owns.
-            // The owned release is a no-op once the screen's binding has
-            // taken over.
+            // own during composition. The binding is a RememberObserver, so
+            // Compose releases it on ordinary disposal and on an abandoned
+            // composition alike; the owned release is a no-op once the
+            // screen's binding has taken over.
             val earlyPlaybackDisplayId = playerContext.playbackDisplayId()
-            val earlyPlaybackDisplayBinding = remember(earlyPlaybackDisplayId, capabilityDetector) {
+            remember(earlyPlaybackDisplayId, capabilityDetector) {
                 capabilityDetector.bindPlaybackDisplay(earlyPlaybackDisplayId)
-            }
-            androidx.compose.runtime.DisposableEffect(earlyPlaybackDisplayBinding) {
-                onDispose { earlyPlaybackDisplayBinding.release() }
             }
             TvPlayerScreen(
                 contentId = contentId,

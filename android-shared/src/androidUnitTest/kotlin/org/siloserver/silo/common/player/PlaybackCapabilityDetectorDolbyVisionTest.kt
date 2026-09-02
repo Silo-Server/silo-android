@@ -532,4 +532,38 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
         assertEquals(5, detector.playbackDisplayId, "the retired binding must not undo the move")
         assertTrue(onSecondDisplay.isActive)
     }
+
+    @Test
+    fun bindingReleasesItselfWhenComposeForgetsOrAbandonsIt() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        // A composition abandoned before it commits: Compose calls
+        // onAbandoned and never onRemembered. The claim taken in the
+        // remember factory must still be released.
+        val abandoned = detector.bindPlaybackDisplay(1)
+        assertEquals(1, detector.playbackDisplayId)
+        abandoned.onAbandoned()
+        assertEquals(null, detector.playbackDisplayId, "an abandoned composition must not leak its claim")
+
+        // Ordinary lifecycle: remembered, then forgotten on disposal.
+        val remembered = detector.bindPlaybackDisplay(2)
+        remembered.onRemembered()
+        assertEquals(2, detector.playbackDisplayId)
+        remembered.onForgotten()
+        assertEquals(null, detector.playbackDisplayId)
+
+        // An abandoned early binding must not undo the screen's later claim.
+        val early = detector.bindPlaybackDisplay(3)
+        val screen = detector.bindPlaybackDisplay(3)
+        screen.onRemembered()
+        early.onAbandoned()
+        assertEquals(3, detector.playbackDisplayId, "the screen's binding owns the display now")
+        assertTrue(screen.isActive)
+    }
 }
