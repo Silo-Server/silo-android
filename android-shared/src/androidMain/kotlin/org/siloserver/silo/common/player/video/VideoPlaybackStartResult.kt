@@ -74,6 +74,15 @@ sealed interface VideoPlaybackStartResult {
     ) : VideoPlaybackStartResult
 }
 
+/**
+ * The user-visible text for a server playback terminal. `terminal.message` is
+ * written by the server for end users and can stand alone; the terminal reason
+ * slug (e.g. "transcode_start_failed") belongs in diagnostics/telemetry only,
+ * never in the on-screen sentence.
+ */
+fun serverTerminalUserMessage(message: String): String =
+    message.trim().ifEmpty { "Playback is unavailable right now." }
+
 @JvmInline
 value class PlaybackDiagnosticsCode private constructor(val wireValue: String) {
     companion object {
