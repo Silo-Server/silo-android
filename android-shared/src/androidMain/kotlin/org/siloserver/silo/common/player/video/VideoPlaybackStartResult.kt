@@ -104,6 +104,9 @@ value class PlaybackDiagnosticsCode private constructor(val wireValue: String) {
             "source_metadata_incomplete",
             "source_unavailable",
             "transcoding_disabled",
+            "transcode_start_failed",
+            "transcode_node_unavailable",
+            "transcode_node_capability_unavailable",
         )
     }
 }
