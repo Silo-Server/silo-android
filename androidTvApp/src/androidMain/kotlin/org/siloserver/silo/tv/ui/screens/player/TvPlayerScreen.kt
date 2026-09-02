@@ -107,7 +107,7 @@ import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.player.ActivePlayerHolder
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.DisplayHdrProbe
-import org.siloserver.silo.common.player.findActivity
+import org.siloserver.silo.common.player.playbackDisplayId
 import org.siloserver.silo.common.player.HdrDisplayController
 import org.siloserver.silo.common.player.LetterboxInsets
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
@@ -364,7 +364,19 @@ fun TvPlayerScreen(
     val latestSiloCastSubtitleAppearance by rememberUpdatedState(subtitleAppearance)
     val context = LocalContext.current
     val hdrDisplayController = remember { HdrDisplayController() }
-    val displayHdr = remember { DisplayHdrProbe.probe(context) }
+    // Bind the playback display before anything plans: the ViewModel's
+    // initializer starts loading as soon as it exists, so the binding has to
+    // happen during composition, not in a later effect.
+    remember(context, capabilityDetector) {
+        capabilityDetector.playbackDisplayId = context.playbackDisplayId()
+        true
+    }
+    // Re-probe whenever the output route generation moves, so track
+    // selection sees the same display facts as capability detection.
+    val outputRouteGeneration by audioCapabilityManager.outputRouteGeneration.collectAsState()
+    val displayHdr = remember(outputRouteGeneration) {
+        DisplayHdrProbe.probe(context, capabilityDetector.playbackDisplayId)
+    }
     val audioCaps by audioCapabilityManager.capabilities.collectAsState()
     val rootFocus = remember { FocusRequester() }
     var playerRootHasFocus by remember { mutableStateOf(false) }
@@ -1427,18 +1439,8 @@ fun TvPlayerScreen(
         }
     }
 
-    // Tell capability detection which display owns this player so the
-    // output context and preflight describe the panel showing the video
-    // rather than the default display.
-    DisposableEffect(context) {
-        val activity = context.findActivity()
-        capabilityDetector.playbackDisplayId = if (
-            activity != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R
-        ) {
-            runCatching { activity.display?.displayId }.getOrNull()
-        } else {
-            null
-        }
+    // Release the playback display binding when this player leaves.
+    DisposableEffect(capabilityDetector) {
         onDispose { capabilityDetector.playbackDisplayId = null }
     }
 
