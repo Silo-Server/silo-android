@@ -77,8 +77,8 @@ fun TrackSelectorRow(
         modifier = modifier
             .fillMaxWidth()
             .then(if (interactive) Modifier.clickable(onClick = onClick) else Modifier)
-            .height(44.dp)
-            .padding(horizontal = 14.dp),
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -100,8 +100,6 @@ fun TrackSelectorRow(
             text = value,
             fontSize = 14.sp,
             color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1f),
@@ -129,7 +127,7 @@ fun PlaybackSelectorCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .height(133.dp)
+            .heightIn(min = 133.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Color.White.copy(alpha = 0.05f))
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(12.dp)),
