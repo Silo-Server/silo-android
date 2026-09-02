@@ -147,8 +147,128 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
 
         assertTrue(
             transformations.isEmpty(),
-            "Runtime prerequisites cannot be promoted to validated v3 capability claims.",
+            "An intersection alone is not evidence the transformed stream can render.",
         )
+    }
+
+    @Test
+    fun profile7ToProfile81IsAdvertisedFromHardwareDecoderAndConfirmedDolbyVisionPanel() {
+        val hdr = HdrCapabilities(hdr10 = true, dolbyVisionProfiles = listOf(5, 8))
+        val advertised = advertisedClientDolbyVisionTransformations(
+            hdrDetails = hdr,
+            nativeRpuConverterAvailable = true,
+            hardwareProfile8Decoder = true,
+            displayConfirmsDolbyVision = true,
+        )
+        assertEquals(listOf(CLIENT_DV7_TO_DV81), advertised.map { it.name })
+        assertFalse(
+            CLIENT_DV7_TO_HDR10 in advertised.map { it.name },
+            "the HDR10 recipe stays behind fixture validation; the server strip covers it",
+        )
+
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = hdr,
+                nativeRpuConverterAvailable = true,
+                hardwareProfile8Decoder = false,
+                displayConfirmsDolbyVision = true,
+            ).isEmpty(),
+            "a software Profile 8 decoder is not a route",
+        )
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = hdr,
+                nativeRpuConverterAvailable = true,
+                hardwareProfile8Decoder = true,
+                displayConfirmsDolbyVision = false,
+            ).isEmpty(),
+            "an unknown or HDR10-only panel cannot carry Profile 8.1",
+        )
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = hdr,
+                nativeRpuConverterAvailable = false,
+                hardwareProfile8Decoder = true,
+                displayConfirmsDolbyVision = true,
+            ).isEmpty(),
+            "no packaged converter, no recipe",
+        )
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = HdrCapabilities(hdr10 = true, dolbyVisionProfiles = listOf(5)),
+                nativeRpuConverterAvailable = true,
+                hardwareProfile8Decoder = true,
+                displayConfirmsDolbyVision = true,
+            ).isEmpty(),
+            "the Dolby Vision policy can still withdraw Profile 8 from the intersection",
+        )
+    }
+
+    @Test
+    fun aQuarantinedTransformationIsNotAdvertisedEvenWithFullEvidence() {
+        val advertised = advertisedClientDolbyVisionTransformations(
+            hdrDetails = HdrCapabilities(hdr10 = true, dolbyVisionProfiles = listOf(8)),
+            nativeRpuConverterAvailable = true,
+            fixtureValidatedTransformations = setOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10),
+            hardwareProfile8Decoder = true,
+            displayConfirmsDolbyVision = true,
+            quarantined = setOf(CLIENT_DV7_TO_DV81),
+        )
+
+        assertEquals(listOf(CLIENT_DV7_TO_HDR10), advertised.map { it.name })
+    }
+
+    @Test
+    fun profile8DecoderAndDolbyVisionPanelEvidenceReadTheProbeShapes() {
+        val hardwareP8 = ClientCodecCapabilities(
+            videoDecode = listOf(
+                org.siloserver.silo.model.playback.VideoDecodeCapability(
+                    codec = "dolby_vision",
+                    decoderName = "c2.mtk.dvhe.sth.decoder",
+                    profiles = listOf("profile 8"),
+                    hardware = true,
+                ),
+            ),
+        )
+        val softwareP8 = ClientCodecCapabilities(
+            videoDecode = listOf(
+                org.siloserver.silo.model.playback.VideoDecodeCapability(
+                    codec = "dolby_vision",
+                    profiles = listOf("profile 8"),
+                    hardware = false,
+                ),
+            ),
+        )
+        val hardwareP5Only = ClientCodecCapabilities(
+            videoDecode = listOf(
+                org.siloserver.silo.model.playback.VideoDecodeCapability(
+                    codec = "dolby_vision",
+                    profiles = listOf("profile 5"),
+                    hardware = true,
+                ),
+            ),
+        )
+        assertTrue(hasHardwareDolbyVisionProfile8Decoder(hardwareP8))
+        assertFalse(hasHardwareDolbyVisionProfile8Decoder(softwareP8))
+        assertFalse(hasHardwareDolbyVisionProfile8Decoder(hardwareP5Only))
+
+        assertTrue(
+            displayConfirmsDolbyVision(
+                DisplayHdrProbeResult.Exact(
+                    HdrCapabilities(dolbyVisionProfiles = DisplayHdrProbe.PANEL_DOLBY_VISION_PROFILES),
+                    displayId = 0,
+                ),
+            ),
+        )
+        assertFalse(
+            displayConfirmsDolbyVision(DisplayHdrProbeResult.Exact(HdrCapabilities(hdr10 = true), displayId = 0)),
+            "an HDR10-only panel is not a Dolby Vision panel",
+        )
+        assertFalse(
+            displayConfirmsDolbyVision(DisplayHdrProbeResult.Unknown(displayId = null, reason = "probe_failed")),
+            "unknown evidence never confirms the panel",
+        )
+        assertFalse(displayConfirmsDolbyVision(null))
     }
 
     @Test

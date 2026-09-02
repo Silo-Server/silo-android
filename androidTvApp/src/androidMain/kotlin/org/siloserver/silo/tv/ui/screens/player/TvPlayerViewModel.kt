@@ -79,6 +79,7 @@ import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.AutoSubtitleCandidate
+import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.AutoSubtitleContext
 import org.siloserver.silo.model.playback.AutoSubtitleResolution
 import org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates
@@ -2427,6 +2428,16 @@ class TvPlayerViewModel(
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
             coroutineContext.ensureActive()
             if (recoveryContentGeneration != contentLoadGeneration) return@launch
+            // A local Dolby Vision recipe that failed on this hardware is
+            // withdrawn before the replan context is built, so the server
+            // plans from what this device can still execute rather than
+            // handing back the route that just failed.
+            capabilityDetector.transformQuarantine.noteFailure(
+                classification = classification,
+                activeTransformations = state.playbackPlan
+                    ?.executableMedia3ClientTransformations()
+                    .orEmpty(),
+            )
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
             val playbackContext = capabilityDetector.detectPlaybackContext(
                 formFactor = "tv",

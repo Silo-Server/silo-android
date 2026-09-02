@@ -62,6 +62,7 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.PlaybackRouteFamily
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
@@ -1688,6 +1689,16 @@ class PlayerViewModel(
                     audioTracks = state.versions.getOrNull(state.selectedVersionIndex)?.audioTracks.orEmpty(),
                 )
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
+            // A local Dolby Vision recipe that failed on this hardware is
+            // withdrawn before the replan context is built, so the server
+            // plans from what this device can still execute rather than
+            // handing back the route that just failed.
+            capabilityDetector.transformQuarantine.noteFailure(
+                classification = classification,
+                activeTransformations = state.playbackPlan
+                    ?.executableMedia3ClientTransformations()
+                    .orEmpty(),
+            )
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
             val playbackContext = capabilityDetector.detectPlaybackContext(
                 formFactor = "mobile",

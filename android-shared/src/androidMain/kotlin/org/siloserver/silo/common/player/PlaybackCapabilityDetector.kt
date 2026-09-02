@@ -67,6 +67,12 @@ class PlaybackCapabilityDetector(
      * phone driving the cast, not the receiver.
      */
     val buildIdentity: SiloClientBuildIdentity,
+    /**
+     * Device-level memory of client Dolby Vision transformations that failed
+     * here, consulted before one is advertised again. The player ViewModels
+     * feed it from the failure classification that drove a replan.
+     */
+    val transformQuarantine: DolbyVisionTransformQuarantine = DolbyVisionTransformQuarantine(context),
 ) {
     val outputRouteGeneration: StateFlow<Long> = audioCapabilityManager.outputRouteGeneration
     private val planningSnapshots = PlaybackPlanningSnapshotRegistry(
@@ -353,6 +359,9 @@ class PlaybackCapabilityDetector(
         val clientVideoTransformations = advertisedClientDolbyVisionTransformations(
             hdrDetails = caps.hdrDetails,
             nativeRpuConverterAvailable = NativeDolbyVisionRpuConverter.isAvailable,
+            hardwareProfile8Decoder = hasHardwareDolbyVisionProfile8Decoder(caps),
+            displayConfirmsDolbyVision = displayConfirmsDolbyVision(lastDisplayProbe),
+            quarantined = transformQuarantine.quarantined(),
         )
         return ClientPlaybackContext(
             formFactor = formFactor,
@@ -671,26 +680,37 @@ internal fun advertisedAudioDecodeCodecs(
 /**
  * Client-side Dolby Vision transformations safe to expose to the v3 planner.
  *
- * A packaged converter and a compatible output range are prerequisites, not
- * end-to-end evidence. In particular, the SM-F976U1 can decode HDR10 and run
- * the packaged RPU bridge, yet a transformed Profile 7 stream renders one
- * frame and then makes no forward progress. Advertising the transformation in
- * that state makes every fresh session select the same unusable route before
- * runtime recovery can ask the server for its validated transformation.
+ * Profile 7 to Profile 8.1 is advertised from runtime evidence that names the
+ * whole path the transformed stream takes: the packaged RPU converter, a
+ * hardware `video/dolby-vision` decoder that lists Profile 8, and a panel
+ * that confirmed Dolby Vision with exact evidence. The decoder ∩ display
+ * intersection in [hdrDetails] carries the last two, but on its own it is not
+ * enough: a device can meet it and still fail. The SM-F976U1 decoded HDR10,
+ * ran the RPU bridge, rendered one frame of a transformed stream, and then
+ * made no forward progress, and while the transformation stayed advertised
+ * every fresh session picked the same route. The startup stall detector now
+ * classifies that wedge as `dv7_transform_stall`, the replan asks the server
+ * for its own recipe, and [DolbyVisionTransformQuarantine] withdraws the
+ * advertisement on this device build so the next session never tries it.
  *
- * Keep the default evidence set empty. A transformation may be added only
- * after the playback fixture matrix validates the complete extractor,
- * transformation, decoder, and display path for the Android device class.
+ * Profile 7 to HDR10 stays behind [fixtureValidatedTransformations]: the
+ * server's own RPU strip covers that case, so the client recipe only earns a
+ * place once the fixture matrix validates it for a device class.
  */
 internal fun advertisedClientDolbyVisionTransformations(
     hdrDetails: org.siloserver.silo.model.playback.HdrCapabilities?,
     nativeRpuConverterAvailable: Boolean,
     fixtureValidatedTransformations: Set<String> = emptySet(),
+    hardwareProfile8Decoder: Boolean = false,
+    displayConfirmsDolbyVision: Boolean = false,
+    quarantined: Set<String> = emptySet(),
 ): List<PlaybackTransformationV3> = buildList {
     if (
-        CLIENT_DV7_TO_DV81 in fixtureValidatedTransformations &&
+        CLIENT_DV7_TO_DV81 !in quarantined &&
         8 in hdrDetails?.dolbyVisionProfiles.orEmpty() &&
-        nativeRpuConverterAvailable
+        nativeRpuConverterAvailable &&
+        (CLIENT_DV7_TO_DV81 in fixtureValidatedTransformations ||
+            (hardwareProfile8Decoder && displayConfirmsDolbyVision))
     ) {
         add(
             PlaybackTransformationV3(
@@ -706,6 +726,7 @@ internal fun advertisedClientDolbyVisionTransformations(
         )
     }
     if (
+        CLIENT_DV7_TO_HDR10 !in quarantined &&
         CLIENT_DV7_TO_HDR10 in fixtureValidatedTransformations &&
         hdrDetails?.hdr10 == true
     ) {
@@ -762,6 +783,23 @@ internal fun canAdvertiseDv8BaseLayerFallback(
     val panel = display as? DisplayHdrProbeResult.Exact ?: return false
     return !panel.hdr.hdr10 && !panel.hdr.hlg && panel.hdr.dolbyVisionProfiles.isEmpty()
 }
+
+/**
+ * A hardware `video/dolby-vision` decoder that lists Profile 8. The Profile 7
+ * to 8.1 recipe hands the converted stream to this decoder under a `dvhe.08`
+ * codec string, so the software fallbacks Media3 would otherwise pick are not
+ * evidence the route can render.
+ */
+internal fun hasHardwareDolbyVisionProfile8Decoder(caps: ClientCodecCapabilities): Boolean =
+    caps.videoDecode.any { it.codec == "dolby_vision" && it.hardware && "profile 8" in it.profiles }
+
+/**
+ * The panel itself reported Dolby Vision with exact evidence. An unknown probe
+ * or a panel that reports only HDR10 cannot carry a Profile 8.1 presentation
+ * however capable the decoder is.
+ */
+internal fun displayConfirmsDolbyVision(display: DisplayHdrProbeResult?): Boolean =
+    (display as? DisplayHdrProbeResult.Exact)?.hdr?.dolbyVisionProfiles?.contains(8) == true
 
 private fun HdrCapabilities.withDolbyVisionPolicy(dolbyVision: DolbyVisionPolicy.Snapshot): HdrCapabilities {
     val profiles = DolbyVisionPolicy.advertisableProfiles(dolbyVisionProfiles, dolbyVision)
