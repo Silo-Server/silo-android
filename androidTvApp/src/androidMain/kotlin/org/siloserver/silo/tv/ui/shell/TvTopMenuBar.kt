@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,6 +46,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +62,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.tv.R
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
 import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
@@ -131,7 +135,7 @@ private sealed class TvTopMenuFocus {
  * The custom top menu bar — the Skyline grammar from tvOS `TVTopMenuBar.swift`.
  *
  * Layout (three zones):
- * - Leading: the tracked SILO wordmark used by tvOS (see [TvSiloWordmark]).
+ * - Leading: the Silo brand lockup image (see [TvSiloWordmark]).
  * - Center: Search icon · `Home` · one inverted-capsule tab per visible
  *   library-type · `Calendar`, derived from [destinations] (the shell's
  *   `visibleRoots`), with an invisible search-size twin trailing the tabs so
@@ -671,22 +675,22 @@ data class TvAccountState(
     val serverName: String = "",
 )
 
-/**
- * The approved Apple TV bar deliberately uses a heavy text mark rather than
- * the multicolour image lockup: 26pt with 0.34-em tracking. Android's TV canvas
- * is half scale, with a 14sp floor for ten-foot readability.
- */
+/** The Silo brand lockup image, sized to the bar. */
 @Composable
 private fun TvSiloWordmark() {
-    Text(
-        text = "SILO",
-        color = Color.White,
-        fontSize = 14.sp,
-        fontWeight = FontWeight.ExtraBold,
-        letterSpacing = 4.42.sp,
-        maxLines = 1,
+    Image(
+        painter = painterResource(id = R.drawable.silo_wordmark),
+        contentDescription = "Silo",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .height(TvSiloWordmarkHeight)
+            .width(TvSiloWordmarkHeight * TvSiloWordmarkAspect),
     )
 }
+
+/** Brand lockup height inside the 32dp bar; the PNG is 764×400. */
+private val TvSiloWordmarkHeight = 26.dp
+private const val TvSiloWordmarkAspect = 764f / 400f
 
 /**
  * A center-cluster type tab with inverted-capsule chrome (§5.1):

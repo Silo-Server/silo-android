@@ -1375,8 +1375,11 @@ private fun TvPlaybackSummaryItem(
     value: String?,
     itemWidth: androidx.compose.ui.unit.Dp,
 ) {
+    // Items size to their text instead of a fixed width so long audio or
+    // subtitle labels are never cut off. The skeleton keeps a fixed width so
+    // the loading row stays stable until the values arrive.
     Row(
-        modifier = Modifier.width(itemWidth),
+        modifier = if (value == null) Modifier.width(itemWidth) else Modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -1393,12 +1396,10 @@ private fun TvPlaybackSummaryItem(
         } else {
             Text(
                 text = value,
-                modifier = Modifier.weight(1f),
                 fontWeight = FontWeight.Medium,
                 fontSize = 11.5.sp,
                 color = Color.White.copy(alpha = 0.82f),
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
     }

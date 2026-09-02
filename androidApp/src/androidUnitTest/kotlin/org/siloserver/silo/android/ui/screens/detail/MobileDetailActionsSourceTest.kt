@@ -309,8 +309,11 @@ class MobileDetailActionsSourceTest {
         assertTrue(detailShared.contains(".height(38.dp)"))
         assertTrue(detailShared.contains("minLines = if (reserveCollapsedSpace && !expanded) 3 else 1"))
         assertTrue(mediaSelectors.contains("repeat(3)"))
-        assertTrue(mediaSelectors.contains(".height(44.dp)"))
-        assertTrue(mediaSelectors.contains(".height(133.dp)"))
+        // Rows and the card keep their loading footprint as a floor but grow
+        // when a Version / Audio / Subtitles value wraps instead of truncating.
+        assertTrue(mediaSelectors.contains(".heightIn(min = 44.dp)"))
+        assertTrue(mediaSelectors.contains(".heightIn(min = 133.dp)"))
+        assertFalse(mediaSelectors.contains("overflow = TextOverflow.Ellipsis,\n            fontWeight = FontWeight.SemiBold"))
     }
 
     @Test

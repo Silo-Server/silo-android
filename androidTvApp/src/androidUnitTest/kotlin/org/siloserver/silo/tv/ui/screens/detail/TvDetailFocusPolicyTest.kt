@@ -135,7 +135,10 @@ class TvDetailFocusPolicyTest {
         assertTrue(playbackReadout.contains("Arrangement.spacedBy(6.dp)"))
         assertTrue(playbackReadout.contains("Modifier.height(TV_PLAYBACK_SUMMARY_HEIGHT)"))
         assertTrue(playbackReadout.contains("TvPlaybackSummarySkeleton(modifier = Modifier.weight(1f))"))
-        assertTrue(playbackReadout.contains("modifier = Modifier.width(itemWidth)"))
+        // Loaded values size to their text so long audio / subtitle labels never
+        // truncate; only the skeleton keeps the fixed per-item width.
+        assertTrue(playbackReadout.contains("modifier = if (value == null) Modifier.width(itemWidth) else Modifier"))
+        assertFalse(playbackReadout.contains("overflow = TextOverflow.Ellipsis"))
         assertTrue(playbackReadout.contains("TV_PLAYBACK_VERSION_ITEM_WIDTH = 120.dp"))
         assertTrue(playbackReadout.contains("TV_PLAYBACK_AUDIO_ITEM_WIDTH = 160.dp"))
         assertTrue(playbackReadout.contains("TV_PLAYBACK_SUBTITLE_ITEM_WIDTH = 130.dp"))

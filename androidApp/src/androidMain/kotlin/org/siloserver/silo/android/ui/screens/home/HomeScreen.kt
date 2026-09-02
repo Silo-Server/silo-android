@@ -52,11 +52,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import coil3.imageLoader
 import coil3.request.ImageRequest
+import org.siloserver.silo.android.ui.components.SiloWordmark
 import org.siloserver.silo.android.ui.components.TabTopBarActions
 import org.siloserver.silo.android.ui.components.TopBarIconButton
 import kotlinx.coroutines.async
@@ -445,14 +444,7 @@ fun HomeScreen(
                                     .padding(horizontal = 16.dp),
                                 verticalAlignment = Alignment.Top,
                             ) {
-                                Text(
-                                    text = "SILO",
-                                    color = Color.White,
-                                    fontSize = 26.sp,
-                                    lineHeight = 31.sp,
-                                    fontWeight = FontWeight.Black,
-                                    letterSpacing = (26f * 0.34f).sp,
-                                )
+                                SiloWordmark()
                             }
                         }
 

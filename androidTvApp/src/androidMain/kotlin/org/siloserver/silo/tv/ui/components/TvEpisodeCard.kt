@@ -84,7 +84,6 @@ fun TvEpisodeCard(
 
     val cardShape = TvEpisodeCardShape
     val cardFocus = siloCardDefaults(shape = cardShape, focusedScale = 1.04f)
-    val episodeBadge = formatEpisodeTag(seasonNumber, episodeNumber)
 
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -136,6 +135,8 @@ fun TvEpisodeCard(
 
                 // Card-overlay badge layer. Over the still + scrim, under the
                 // play affordance + progress bar. Never intercepts focus.
+                // The bottom inset matches the side inset plus the 3dp progress
+                // bar so the lower badges sit in the corner like the upper ones.
                 if (overlayState.enabled && overlay != null) {
                     CardOverlays(
                         data = overlay,
@@ -143,6 +144,7 @@ fun TvEpisodeCard(
                         variant = CardOverlayVariant.Wide,
                         scale = TvCardOverlayScale,
                         forceOpaqueBackground = false,
+                        bottomInset = TvEpisodeCardOverlayBottomInset,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -162,22 +164,6 @@ fun TvEpisodeCard(
                                 .background(ProgressFill),
                         )
                     }
-                }
-
-                if (episodeBadge != null) {
-                    Text(
-                        text = episodeBadge,
-                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 14.sp),
-                        color = Color.White,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(7.dp)
-                            .background(
-                                Color.Black.copy(alpha = 0.65f),
-                                RoundedCornerShape(percent = 50),
-                            )
-                            .padding(horizontal = 7.dp, vertical = 3.5.dp),
-                    )
                 }
             }
         }
@@ -222,13 +208,6 @@ fun TvEpisodeCard(
     }
 }
 
-private fun formatEpisodeTag(season: Int?, episode: Int?): String? {
-    if (season == null && episode == null) return null
-    val s = season?.let { "S$it" }
-    val e = episode?.let { "E$it" }
-    return listOfNotNull(s, e).joinToString(" · ")
-}
-
 /**
  * Default width for episode / next-up cards. tvOS uses 360×200pt; Skyline maps
  * that to Android TV as 180×100dp.
@@ -241,3 +220,6 @@ fun tvEpisodeCardWidth(): Dp = TvEpisodeCardWidth.cardScaled()
 
 /** Hoisted so every card shares one instance instead of allocating a shape per composition. */
 private val TvEpisodeCardShape = RoundedCornerShape(8.dp)
+
+/** Unscaled: 8dp side inset + 3dp progress bar, scaled by [TvCardOverlayScale]. */
+private val TvEpisodeCardOverlayBottomInset = 12.dp

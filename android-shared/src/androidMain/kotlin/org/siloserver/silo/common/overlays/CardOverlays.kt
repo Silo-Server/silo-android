@@ -55,6 +55,8 @@ enum class CardOverlayVariant {
  * ```
  *
  * @param scale optical multiplier for wide/hero cards; posters measure their actual width.
+ * @param bottomInset overrides the variant's bottom corner inset (unscaled)
+ *   for cards that draw nothing but a thin progress bar along the bottom edge.
  */
 @Composable
 fun CardOverlays(
@@ -64,6 +66,7 @@ fun CardOverlays(
     variant: CardOverlayVariant = CardOverlayVariant.Poster,
     scale: Float = 1f,
     forceOpaqueBackground: Boolean = false,
+    bottomInset: Dp? = null,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         // The web Home carousel's 185-unit overlay layer is the cross-platform
@@ -89,6 +92,7 @@ fun CardOverlays(
                 variant = variant,
                 scale = resolvedScale,
                 forceOpaqueBackground = forceOpaqueBackground,
+                bottomInset = bottomInset,
             )
         }
     }
@@ -103,6 +107,7 @@ private fun androidx.compose.foundation.layout.BoxScope.CornerStack(
     variant: CardOverlayVariant,
     scale: Float,
     forceOpaqueBackground: Boolean,
+    bottomInset: Dp?,
 ) {
     // Resolved once per (item, prefs, preset): this runs for four corners of
     // every card on every card composition, and rails recompose a lot.
@@ -115,7 +120,7 @@ private fun androidx.compose.foundation.layout.BoxScope.CornerStack(
     Column(
         modifier = Modifier
             .align(anchor(position))
-            .padding(insets(position, variant, scale)),
+            .padding(insets(position, variant, scale, bottomInset)),
         horizontalAlignment = horizontalAlignment(position),
         verticalArrangement = Arrangement.spacedBy(preset.gap),
     ) {
@@ -148,13 +153,20 @@ private fun horizontalAlignment(position: OverlayPosition): Alignment.Horizontal
  * block / progress bar typically sits under the image. Mirrors Apple's
  * `insets(for:)`.
  */
-private fun insets(position: OverlayPosition, variant: CardOverlayVariant, scale: Float): PaddingValues {
+private fun insets(
+    position: OverlayPosition,
+    variant: CardOverlayVariant,
+    scale: Float,
+    bottomInsetOverride: Dp?,
+): PaddingValues {
     val safeScale = scale.coerceAtLeast(0.1f)
-    val bottomInset: Dp = when (variant) {
-        CardOverlayVariant.Poster -> 8.dp
-        CardOverlayVariant.Wide -> 24.dp
-        CardOverlayVariant.Hero -> 16.dp
-    } * safeScale
+    val bottomInset: Dp = (
+        bottomInsetOverride ?: when (variant) {
+            CardOverlayVariant.Poster -> 8.dp
+            CardOverlayVariant.Wide -> 24.dp
+            CardOverlayVariant.Hero -> 16.dp
+        }
+    ) * safeScale
     val sideInset: Dp = (if (variant == CardOverlayVariant.Hero) 16.dp else 8.dp) * safeScale
     val topInset: Dp = (if (variant == CardOverlayVariant.Hero) 16.dp else 8.dp) * safeScale
     return when (position) {
