@@ -444,4 +444,70 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
             "no 10-bit hardware HEVC decoder, no claim",
         )
     }
+
+    @Test
+    fun baseLayerPlanRejectsAMissingBaseRangeInsteadOfAssumingSdr() {
+        val route = plannedVideoRouteFor(
+            decisionReason = org.siloserver.silo.model.playback.DECISION_REASON_CLIENT_DV8_BASE_LAYER,
+            effectiveDynamicRange = null,
+            clientTransformations = emptyList(),
+        )
+        assertEquals(PlannedVideoRoute.DolbyVisionProfile8BaseLayer(""), route)
+
+        val verdict = evaluateDolbyVisionRoute(
+            profile = 8,
+            route = route,
+            nativeHdr = HdrCapabilities(hdr10 = true, hlg = true),
+        )
+        assertEquals(
+            Playability.DvBaseLayerOutputMismatch(profile = 8, baseRange = ""),
+            verdict,
+            "a base-layer plan that names no range cannot be verified and must not be read as SDR",
+        )
+        assertEquals(
+            Playability.Supported,
+            evaluateDolbyVisionRoute(
+                profile = 8,
+                route = PlannedVideoRoute.DolbyVisionProfile8BaseLayer("sdr"),
+                nativeHdr = HdrCapabilities(),
+            ),
+            "an explicit SDR base needs no HDR output",
+        )
+    }
+
+    @Test
+    fun playbackDisplayBindingReleasesOnlyItsOwnClaim() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        // Player-to-player navigation: the incoming player binds while the
+        // outgoing player is still composed, then the outgoing one disposes.
+        val outgoing = detector.bindPlaybackDisplay(1)
+        assertEquals(1, detector.playbackDisplayId)
+        val incoming = detector.bindPlaybackDisplay(2)
+        assertEquals(2, detector.playbackDisplayId)
+        assertFalse(outgoing.isActive)
+        assertTrue(incoming.isActive)
+
+        outgoing.release()
+        assertEquals(2, detector.playbackDisplayId, "the stale player must not clear the newer binding")
+        assertTrue(incoming.isActive)
+
+        incoming.release()
+        assertEquals(null, detector.playbackDisplayId)
+        assertFalse(incoming.isActive)
+
+        // Releasing twice, or releasing after a later rebind, stays a no-op.
+        val rebound = detector.bindPlaybackDisplay(3)
+        incoming.release()
+        outgoing.release()
+        assertEquals(3, detector.playbackDisplayId)
+        rebound.release()
+        assertEquals(null, detector.playbackDisplayId)
+    }
 }

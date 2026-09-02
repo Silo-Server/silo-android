@@ -1175,9 +1175,11 @@ fun TvAppNavigation(
             // describes the panel that will show the video.
             val playerContext = androidx.compose.ui.platform.LocalContext.current
             val capabilityDetector = koinInject<org.siloserver.silo.common.player.PlaybackCapabilityDetector>()
+            // This early binding is superseded when TvPlayerScreen binds its
+            // own during composition; the screen's release then leaves the
+            // display bound to whichever player claimed it last.
             remember(playerContext, capabilityDetector) {
-                capabilityDetector.playbackDisplayId = playerContext.playbackDisplayId()
-                true
+                capabilityDetector.bindPlaybackDisplay(playerContext.playbackDisplayId())
             }
             TvPlayerScreen(
                 contentId = contentId,

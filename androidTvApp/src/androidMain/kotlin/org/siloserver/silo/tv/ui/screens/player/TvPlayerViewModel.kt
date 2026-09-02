@@ -3,6 +3,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
+import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
 import org.siloserver.silo.common.player.failureClassification
 
@@ -2397,6 +2398,7 @@ class TvPlayerViewModel(
         state: UiState,
         qualityPreference: String? = null,
         diagnostics: Map<String, String> = emptyMap(),
+        failedTrackType: Int? = null,
         subtitleTrackIndexOverride: Int? = null,
     ) {
         if (recoveryJob?.isActive == true) {
@@ -2437,6 +2439,7 @@ class TvPlayerViewModel(
                 activeTransformations = state.playbackPlan
                     ?.executableMedia3ClientTransformations()
                     .orEmpty(),
+                failedTrackType = failedTrackType,
             )
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
             val playbackContext = capabilityDetector.detectPlaybackContext(
@@ -5408,6 +5411,7 @@ class TvPlayerViewModel(
                     message,
                     state,
                     diagnostics = diagnostics,
+                    failedTrackType = error.failedRendererTrackType(),
                 )
             }
             return
