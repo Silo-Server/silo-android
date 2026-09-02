@@ -154,8 +154,23 @@ class AudioCapabilityManager(
     // and triggers the bounded output_change replan.
     private var lastDisplayHdr = DisplayHdrProbe.probeDetailed(appContext)
 
+    /**
+     * The display that owns the playback surface, mirrored from
+     * [PlaybackCapabilityDetector.playbackDisplayId]. The change detector
+     * below must watch the same panel the capability probe describes, or a
+     * mode change on a secondary display never rotates the output context.
+     * Setting it re-probes immediately so a switch of owning display is itself
+     * an output change.
+     */
+    @Volatile
+    var playbackDisplayId: Int? = null
+        set(value) {
+            field = value
+            publishDisplayCapabilitiesIfChanged()
+        }
+
     private fun publishDisplayCapabilitiesIfChanged() {
-        val next = DisplayHdrProbe.probeDetailed(appContext)
+        val next = DisplayHdrProbe.probeDetailed(appContext, playbackDisplayId)
         if (next == lastDisplayHdr) return
         lastDisplayHdr = next
         bumpOutputRouteGeneration()

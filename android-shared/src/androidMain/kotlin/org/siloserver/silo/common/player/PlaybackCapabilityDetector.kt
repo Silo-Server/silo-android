@@ -91,6 +91,12 @@ class PlaybackCapabilityDetector(
      */
     @Volatile
     var playbackDisplayId: Int? = null
+        set(value) {
+            field = value
+            // The audio-route manager owns the display-change listener that
+            // rotates the output context; it must watch the same panel.
+            audioCapabilityManager.playbackDisplayId = value
+        }
 
     /** Decoder-only HDR facts from the most recent [detect], for diagnostics. */
     @Volatile
