@@ -31,6 +31,20 @@ const val NATIVE_HLS_PLAYBACK_V1_FEATURE = "native_hls_playback_v1"
 const val CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM = "client_selected_audio_track_v1"
 
 /**
+ * Delivery-scoped claim that the original-file player decodes a single-layer
+ * Dolby Vision Profile 8 stream through an ordinary HEVC decoder and presents
+ * its standards-compatible base layer (HDR10, HLG, or SDR by `dv_bl_compat_id`)
+ * when the active output lacks native Dolby Vision. The bytes are untouched;
+ * the plan's `effective_recipe.dynamic_range` names the base range and the
+ * plan never claims Dolby Vision output. Not a transformation and not the
+ * broad `client_managed_dynamic_range_v1` promise.
+ */
+const val CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM = "client_dv8_base_layer_fallback_v1"
+
+/** Server decision reason for a plan that used [CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM]. */
+const val DECISION_REASON_CLIENT_DV8_BASE_LAYER = "client_dv8_base_layer"
+
+/**
  * How a capability list was obtained. The server validates strictly against
  * [CAPABILITY_EVIDENCE_EXACT] and only grants audio passthrough at that tier;
  * weaker tiers exist so a platform that cannot enumerate decoders does not have
@@ -639,3 +653,21 @@ private fun List<PlaybackTransformationV3>.executableMedia3ClientTransformations
             it.name in setOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10)
     }
     .map { it.name }
+
+/**
+ * Delivery-scoped claims the plan's decision relies on, derived from the
+ * decision reason. The server does not echo claims back; the decision reason
+ * is the contract for which claim an original_http plan exercised.
+ */
+fun PlaybackExecutionPlan.activeOriginalHttpClaims(): List<String> =
+    activeOriginalHttpClaimsFor(delivery, decisionTrace.firstOrNull())
+
+fun PlaybackPlanV3.activeOriginalHttpClaims(): List<String> =
+    activeOriginalHttpClaimsFor(delivery, decisionReason)
+
+private fun activeOriginalHttpClaimsFor(delivery: PlaybackDelivery, decisionReason: String?): List<String> =
+    if (delivery == PlaybackDelivery.ORIGINAL_HTTP && decisionReason == DECISION_REASON_CLIENT_DV8_BASE_LAYER) {
+        listOf(CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM)
+    } else {
+        emptyList()
+    }

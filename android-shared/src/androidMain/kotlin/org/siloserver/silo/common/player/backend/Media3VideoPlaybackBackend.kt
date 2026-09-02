@@ -26,6 +26,9 @@ class Media3VideoPlaybackBackend(
 
     private var mountedSpec: VideoPlayerMediaSpec? = null
 
+    override val baseLayerDecoderMismatch: kotlinx.coroutines.flow.StateFlow<String?>
+        get() = playerFactory.baseLayerDecoderMismatch
+
     override fun mount(
         spec: VideoPlayerMediaSpec,
         startPositionMs: Long,

@@ -107,6 +107,7 @@ import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.player.ActivePlayerHolder
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.DisplayHdrProbe
+import org.siloserver.silo.common.player.playbackDisplayId
 import org.siloserver.silo.common.player.HdrDisplayController
 import org.siloserver.silo.common.player.LetterboxInsets
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
@@ -132,6 +133,7 @@ import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlaybackSourceMetadata
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
+import org.siloserver.silo.model.playback.activeOriginalHttpClaims
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.model.settings.legacyPosition
@@ -362,7 +364,19 @@ fun TvPlayerScreen(
     val latestSiloCastSubtitleAppearance by rememberUpdatedState(subtitleAppearance)
     val context = LocalContext.current
     val hdrDisplayController = remember { HdrDisplayController() }
-    val displayHdr = remember { DisplayHdrProbe.probe(context) }
+    // Bind the playback display before anything plans: the ViewModel's
+    // initializer starts loading as soon as it exists, so the binding has to
+    // happen during composition, not in a later effect.
+    remember(context, capabilityDetector) {
+        capabilityDetector.playbackDisplayId = context.playbackDisplayId()
+        true
+    }
+    // Re-probe whenever the output route generation moves, so track
+    // selection sees the same display facts as capability detection.
+    val outputRouteGeneration by audioCapabilityManager.outputRouteGeneration.collectAsState()
+    val displayHdr = remember(outputRouteGeneration) {
+        DisplayHdrProbe.probe(context, capabilityDetector.playbackDisplayId)
+    }
     val audioCaps by audioCapabilityManager.capabilities.collectAsState()
     val rootFocus = remember { FocusRequester() }
     var playerRootHasFocus by remember { mutableStateOf(false) }
@@ -473,6 +487,23 @@ fun TvPlayerScreen(
     LaunchedEffect(videoBackend) {
         videoBackend?.let { backend ->
             viewModel.onBackendCapabilities(backend.capabilities)
+        }
+    }
+    // A plan that promised the Dolby Vision Profile 8 base-layer route is
+    // only valid while an ordinary HEVC decoder is reading the stream. The
+    // renderer reports the decoder it actually opened; anything else becomes
+    // a typed replan rather than an unverified presentation.
+    LaunchedEffect(videoBackend) {
+        val backend = videoBackend ?: return@LaunchedEffect
+        backend.baseLayerDecoderMismatch.collect { decoderName ->
+            if (decoderName == null) return@collect
+            val plan = viewModel.uiState.value.playbackPlan
+            viewModel.onUnsupportedPlayback(
+                org.siloserver.silo.common.player.Playability.DvBaseLayerDecoderUnavailable(
+                    decoderName = decoderName,
+                    baseRange = plan?.source?.hdrFormat.orEmpty(),
+                ),
+            )
         }
     }
     val latestSiloCastMediaController by rememberUpdatedState(mediaController)
@@ -1408,6 +1439,11 @@ fun TvPlayerScreen(
         }
     }
 
+    // Release the playback display binding when this player leaves.
+    DisposableEffect(capabilityDetector) {
+        onDispose { capabilityDetector.playbackDisplayId = null }
+    }
+
     // Preflight listener — falls back to a transcoded stream if the selected
     // Tracks can't be direct-played (DV P7, TrueHD without passthrough, …).
     DisposableEffect(mediaController) {
@@ -1419,6 +1455,14 @@ fun TvPlayerScreen(
                 detector = capabilityDetector,
                 onUnsupported = { verdict -> viewModel.onUnsupportedPlayback(verdict) },
                 onError = { error -> viewModel.onPlayerError(error) },
+                plannedRoute = {
+                    val plan = viewModel.uiState.value.playbackPlan
+                    org.siloserver.silo.common.player.plannedVideoRouteFor(
+                        decisionReason = plan?.decisionTrace?.firstOrNull(),
+                        effectiveDynamicRange = plan?.source?.hdrFormat,
+                        clientTransformations = plan?.executableMedia3ClientTransformations().orEmpty(),
+                    )
+                },
             )
             controller.addListener(preflight)
             onDispose { controller.removeListener(preflight) }
@@ -1746,6 +1790,7 @@ fun TvPlayerScreen(
             expectedColorRange = plan.validatedColorRangeFallback(),
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
+            activeClaims = plan?.activeOriginalHttpClaims().orEmpty(),
         )
         state.sessionId?.let { sessionId ->
             PlaybackRuntimeCorrectionMetrics.reset()
@@ -1813,6 +1858,7 @@ fun TvPlayerScreen(
             expectedColorRange = plan.validatedColorRangeFallback(),
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
+            activeClaims = plan?.activeOriginalHttpClaims().orEmpty(),
         )
         backend.refresh(mediaSpec)
     }

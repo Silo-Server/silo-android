@@ -15,6 +15,7 @@ import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_PROGRESSIVE
 import org.siloserver.silo.model.playback.NATIVE_HLS_PLAYBACK_V1_FEATURE
 import org.siloserver.silo.model.playback.CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM
+import org.siloserver.silo.model.playback.CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -146,8 +147,128 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
 
         assertTrue(
             transformations.isEmpty(),
-            "Runtime prerequisites cannot be promoted to validated v3 capability claims.",
+            "An intersection alone is not evidence the transformed stream can render.",
         )
+    }
+
+    @Test
+    fun profile7ToProfile81IsAdvertisedFromHardwareDecoderAndConfirmedDolbyVisionPanel() {
+        val hdr = HdrCapabilities(hdr10 = true, dolbyVisionProfiles = listOf(5, 8))
+        val advertised = advertisedClientDolbyVisionTransformations(
+            hdrDetails = hdr,
+            nativeRpuConverterAvailable = true,
+            hardwareProfile8Decoder = true,
+            displayConfirmsDolbyVision = true,
+        )
+        assertEquals(listOf(CLIENT_DV7_TO_DV81), advertised.map { it.name })
+        assertFalse(
+            CLIENT_DV7_TO_HDR10 in advertised.map { it.name },
+            "the HDR10 recipe stays behind fixture validation; the server strip covers it",
+        )
+
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = hdr,
+                nativeRpuConverterAvailable = true,
+                hardwareProfile8Decoder = false,
+                displayConfirmsDolbyVision = true,
+            ).isEmpty(),
+            "a software Profile 8 decoder is not a route",
+        )
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = hdr,
+                nativeRpuConverterAvailable = true,
+                hardwareProfile8Decoder = true,
+                displayConfirmsDolbyVision = false,
+            ).isEmpty(),
+            "an unknown or HDR10-only panel cannot carry Profile 8.1",
+        )
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = hdr,
+                nativeRpuConverterAvailable = false,
+                hardwareProfile8Decoder = true,
+                displayConfirmsDolbyVision = true,
+            ).isEmpty(),
+            "no packaged converter, no recipe",
+        )
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = HdrCapabilities(hdr10 = true, dolbyVisionProfiles = listOf(5)),
+                nativeRpuConverterAvailable = true,
+                hardwareProfile8Decoder = true,
+                displayConfirmsDolbyVision = true,
+            ).isEmpty(),
+            "the Dolby Vision policy can still withdraw Profile 8 from the intersection",
+        )
+    }
+
+    @Test
+    fun aQuarantinedTransformationIsNotAdvertisedEvenWithFullEvidence() {
+        val advertised = advertisedClientDolbyVisionTransformations(
+            hdrDetails = HdrCapabilities(hdr10 = true, dolbyVisionProfiles = listOf(8)),
+            nativeRpuConverterAvailable = true,
+            fixtureValidatedTransformations = setOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10),
+            hardwareProfile8Decoder = true,
+            displayConfirmsDolbyVision = true,
+            quarantined = setOf(CLIENT_DV7_TO_DV81),
+        )
+
+        assertEquals(listOf(CLIENT_DV7_TO_HDR10), advertised.map { it.name })
+    }
+
+    @Test
+    fun profile8DecoderAndDolbyVisionPanelEvidenceReadTheProbeShapes() {
+        val hardwareP8 = ClientCodecCapabilities(
+            videoDecode = listOf(
+                org.siloserver.silo.model.playback.VideoDecodeCapability(
+                    codec = "dolby_vision",
+                    decoderName = "c2.mtk.dvhe.sth.decoder",
+                    profiles = listOf("profile 8"),
+                    hardware = true,
+                ),
+            ),
+        )
+        val softwareP8 = ClientCodecCapabilities(
+            videoDecode = listOf(
+                org.siloserver.silo.model.playback.VideoDecodeCapability(
+                    codec = "dolby_vision",
+                    profiles = listOf("profile 8"),
+                    hardware = false,
+                ),
+            ),
+        )
+        val hardwareP5Only = ClientCodecCapabilities(
+            videoDecode = listOf(
+                org.siloserver.silo.model.playback.VideoDecodeCapability(
+                    codec = "dolby_vision",
+                    profiles = listOf("profile 5"),
+                    hardware = true,
+                ),
+            ),
+        )
+        assertTrue(hasHardwareDolbyVisionProfile8Decoder(hardwareP8))
+        assertFalse(hasHardwareDolbyVisionProfile8Decoder(softwareP8))
+        assertFalse(hasHardwareDolbyVisionProfile8Decoder(hardwareP5Only))
+
+        assertTrue(
+            displayConfirmsDolbyVision(
+                DisplayHdrProbeResult.Exact(
+                    HdrCapabilities(dolbyVisionProfiles = DisplayHdrProbe.PANEL_DOLBY_VISION_PROFILES),
+                    displayId = 0,
+                ),
+            ),
+        )
+        assertFalse(
+            displayConfirmsDolbyVision(DisplayHdrProbeResult.Exact(HdrCapabilities(hdr10 = true), displayId = 0)),
+            "an HDR10-only panel is not a Dolby Vision panel",
+        )
+        assertFalse(
+            displayConfirmsDolbyVision(DisplayHdrProbeResult.Unknown(displayId = null, reason = "probe_failed")),
+            "unknown evidence never confirms the panel",
+        )
+        assertFalse(displayConfirmsDolbyVision(null))
     }
 
     @Test
@@ -167,6 +288,160 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
         assertEquals(
             listOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10),
             transformations.map { it.name },
+        )
+    }
+
+    @Test
+    fun baseLayerPlanAcceptsProfile8WhenOutputCarriesPromisedRange() {
+        val verdict = evaluateDolbyVisionRoute(
+            profile = 8,
+            route = PlannedVideoRoute.DolbyVisionProfile8BaseLayer(baseRange = "hdr10"),
+            nativeHdr = HdrCapabilities(hdr10 = true),
+        )
+
+        assertEquals(Playability.Supported, verdict)
+    }
+
+    @Test
+    fun baseLayerPlanRejectsProfile8WhenOutputLostPromisedRange() {
+        val verdict = evaluateDolbyVisionRoute(
+            profile = 8,
+            route = PlannedVideoRoute.DolbyVisionProfile8BaseLayer(baseRange = "hlg"),
+            nativeHdr = HdrCapabilities(hdr10 = true),
+        )
+
+        assertEquals(Playability.DvBaseLayerOutputMismatch(profile = 8, baseRange = "hlg"), verdict)
+        assertEquals("dv8_base_layer_output_mismatch", verdict.failureClassification())
+    }
+
+    @Test
+    fun baseLayerPlanRejectsTrackThatIsNotProfile8() {
+        val verdict = evaluateDolbyVisionRoute(
+            profile = 5,
+            route = PlannedVideoRoute.DolbyVisionProfile8BaseLayer(baseRange = "hdr10"),
+            nativeHdr = HdrCapabilities(hdr10 = true),
+        )
+
+        assertEquals(Playability.DvBaseLayerMetadataMismatch(profile = 5, baseRange = "hdr10"), verdict)
+    }
+
+    @Test
+    fun nativeOrUnspecifiedPlanStillRequiresDecoderAndDisplayProfile() {
+        listOf(PlannedVideoRoute.NativeDolbyVision, PlannedVideoRoute.Unspecified).forEach { route ->
+            assertEquals(
+                Playability.UnsupportedDvProfile(8),
+                evaluateDolbyVisionRoute(profile = 8, route = route, nativeHdr = HdrCapabilities(hdr10 = true)),
+                "$route must not admit Dolby Vision on an output without native DV",
+            )
+        }
+    }
+
+    @Test
+    fun plannedRouteIsDerivedFromDecisionReasonAndRecipe() {
+        assertEquals(
+            PlannedVideoRoute.DolbyVisionProfile8BaseLayer("hdr10"),
+            plannedVideoRouteFor(
+                decisionReason = org.siloserver.silo.model.playback.DECISION_REASON_CLIENT_DV8_BASE_LAYER,
+                effectiveDynamicRange = "HDR10",
+                clientTransformations = emptyList(),
+            ),
+        )
+        assertEquals(
+            PlannedVideoRoute.NativeDolbyVision,
+            plannedVideoRouteFor("validated_original_playback", "dolby_vision", emptyList()),
+        )
+        assertEquals(
+            PlannedVideoRoute.ClientTransformed,
+            plannedVideoRouteFor("client_dv7_to_hdr10", "hdr10", listOf(CLIENT_DV7_TO_HDR10)),
+        )
+        assertEquals(PlannedVideoRoute.Unspecified, plannedVideoRouteFor(null, null, emptyList()))
+    }
+
+    @Test
+    fun originalHttpAdvertisesBaseLayerClaimOnlyWithTenBitHardwareHevc() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+        val hevc10 = org.siloserver.silo.model.playback.VideoDecodeCapability(
+            codec = "hevc",
+            bitDepths = listOf(8, 10),
+            hardware = true,
+        )
+        val withHevc = detector.detectPlaybackContext(
+            formFactor = "tv",
+            appVersion = "test",
+            capabilities = ClientCodecCapabilities(
+                videoDecode = listOf(hevc10),
+                hdrDetails = HdrCapabilities(hdr10 = true),
+            ),
+        )
+        val hevcWithoutRange = detector.detectPlaybackContext(
+            formFactor = "tv",
+            appVersion = "test",
+            capabilities = ClientCodecCapabilities(videoDecode = listOf(hevc10)),
+        )
+        val without = detector.detectPlaybackContext(
+            formFactor = "tv",
+            appVersion = "test",
+            capabilities = ClientCodecCapabilities(),
+        )
+
+        assertTrue(
+            CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in withHevc.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP).validatedClaims,
+        )
+        assertFalse(
+            CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in without.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP).validatedClaims,
+        )
+        assertFalse(
+            CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in hevcWithoutRange.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP).validatedClaims,
+            "a Main10-only decoder with an unprobed display must not claim a route preflight would refuse",
+        )
+        assertFalse(
+            CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in withHevc.deliveries.getValue(DELIVERY_CLASS_HLS).validatedClaims,
+            "the base-layer claim is scoped to original_http",
+        )
+        assertTrue(
+            withHevc.output.display?.hdrEvidence in setOf(
+                org.siloserver.silo.model.playback.OUTPUT_HDR_EVIDENCE_EXACT,
+                org.siloserver.silo.model.playback.OUTPUT_HDR_EVIDENCE_UNKNOWN,
+            ),
+            "the output context must carry the display evidence tier",
+        )
+    }
+
+    @Test
+    fun baseLayerClaimGateAcceptsConfirmedSdrPanelForSdrBases() {
+        val hevc10 = ClientCodecCapabilities(
+            videoDecode = listOf(
+                org.siloserver.silo.model.playback.VideoDecodeCapability(
+                    codec = "hevc",
+                    bitDepths = listOf(8, 10),
+                    hardware = true,
+                ),
+            ),
+        )
+        assertTrue(
+            canAdvertiseDv8BaseLayerFallback(hevc10, DisplayHdrProbeResult.Exact(HdrCapabilities(), displayId = 0)),
+            "a confirmed SDR panel can present a compat-2 SDR base through the Main10 path",
+        )
+        assertFalse(
+            canAdvertiseDv8BaseLayerFallback(hevc10, DisplayHdrProbeResult.Unknown(displayId = null, reason = "probe_failed")),
+            "an unknown display never earns the claim",
+        )
+        assertFalse(
+            canAdvertiseDv8BaseLayerFallback(
+                hevc10,
+                DisplayHdrProbeResult.Exact(HdrCapabilities(hdr10 = true), displayId = 0),
+            ),
+            "an HDR panel with no HDR range in the intersection means the decoder cannot signal it; no claim",
+        )
+        assertFalse(
+            canAdvertiseDv8BaseLayerFallback(ClientCodecCapabilities(), DisplayHdrProbeResult.Exact(HdrCapabilities(), displayId = 0)),
+            "no 10-bit hardware HEVC decoder, no claim",
         )
     }
 }

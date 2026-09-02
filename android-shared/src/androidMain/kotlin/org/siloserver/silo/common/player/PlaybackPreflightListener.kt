@@ -21,12 +21,18 @@ class PlaybackPreflightListener(
     private val detector: PlaybackCapabilityDetector,
     private val onUnsupported: (Playability) -> Unit,
     private val onError: (PlaybackException) -> Unit = {},
+    /**
+     * The video route the active plan promised. Read on every track change so
+     * a replan that swaps a native Dolby Vision plan for a base-layer plan is
+     * validated against the new promise, not the old one.
+     */
+    private val plannedRoute: () -> PlannedVideoRoute = { PlannedVideoRoute.Unspecified },
 ) : Player.Listener {
 
     private var lastSignaled: Playability? = null
 
     override fun onTracksChanged(tracks: Tracks) {
-        val verdict = detector.evaluateTracks(tracks)
+        val verdict = detector.evaluateTracks(tracks, plannedRoute())
         if (verdict != Playability.Supported && verdict != lastSignaled) {
             lastSignaled = verdict
             onUnsupported(verdict)

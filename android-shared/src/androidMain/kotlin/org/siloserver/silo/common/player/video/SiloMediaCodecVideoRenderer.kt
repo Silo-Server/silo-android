@@ -9,15 +9,18 @@ import androidx.media3.decoder.DecoderInputBuffer
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.FormatHolder
 import androidx.media3.exoplayer.mediacodec.MediaCodecAdapter
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import androidx.media3.exoplayer.video.VideoRendererEventListener
+import org.siloserver.silo.model.playback.CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM
 import org.siloserver.silo.model.playback.CLIENT_DV8_HDR10_PLUS_SANITIZER
 
 /** Media3 video renderer with narrowly gated, independently tested fixes. */
 @UnstableApi
 internal class SiloMediaCodecVideoRenderer(
-    context: Context,
+    private val context: Context,
     codecAdapterFactory: MediaCodecAdapter.Factory,
     mediaCodecSelector: MediaCodecSelector,
     allowedJoiningTimeMs: Long,
@@ -25,6 +28,13 @@ internal class SiloMediaCodecVideoRenderer(
     eventHandler: Handler,
     eventListener: VideoRendererEventListener,
     runtimeCorrectionEnabled: (String) -> Boolean,
+    /**
+     * Invoked with the decoder name when a plan that promised the Profile 8
+     * base-layer route ended up on a decoder that cannot honour it. The
+     * player turns this into a typed `dv8_base_layer_decoder_unavailable`
+     * replan instead of playing with an unverified presentation.
+     */
+    private val onBaseLayerDecoderMismatch: (String) -> Unit = {},
 ) : MediaCodecVideoRenderer(
     MediaCodecVideoRenderer.Builder(context)
         .setCodecAdapterFactory(codecAdapterFactory)
@@ -39,6 +49,37 @@ internal class SiloMediaCodecVideoRenderer(
     private var nativeDolbyVisionDecoder = false
     private var profile8Input = false
 
+    private val baseLayerRouteActive: Boolean
+        get() = runtimeCorrectionEnabled(CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM)
+
+    /**
+     * Media3 only swaps a Dolby Vision format onto an ordinary HEVC/AVC
+     * decoder when the *default* display lacks Dolby Vision. That private
+     * decision is what the server's base-layer plan depends on, so when the
+     * plan named that route the renderer makes the choice explicitly: for a
+     * single-layer Profile 8 stream the alternative (base-layer) decoders are
+     * offered first, and the Dolby Vision decoder is not offered at all. The
+     * bytes are untouched; only the decoder that reads them changes.
+     */
+    override fun getDecoderInfos(
+        mediaCodecSelector: MediaCodecSelector,
+        format: Format,
+        requiresSecureDecoder: Boolean,
+    ): List<MediaCodecInfo> {
+        if (baseLayerRouteActive && isDolbyVisionProfile8(format)) {
+            val alternatives = MediaCodecUtil.getAlternativeDecoderInfos(
+                mediaCodecSelector,
+                format,
+                requiresSecureDecoder,
+                /* requiresTunnelingDecoder = */ false,
+            ).filter { it.hardwareAccelerated }
+            if (alternatives.isNotEmpty()) {
+                return MediaCodecUtil.getDecoderInfosSortedByFormatSupport(context, alternatives, format)
+            }
+        }
+        return super.getDecoderInfos(mediaCodecSelector, format, requiresSecureDecoder)
+    }
+
     override fun onCodecInitialized(
         name: String,
         configuration: MediaCodecAdapter.Configuration,
@@ -50,6 +91,13 @@ internal class SiloMediaCodecVideoRenderer(
             ignoreCase = true,
         ) && configuration.codecInfo.hardwareAccelerated
         profile8Input = isDolbyVisionProfile8(configuration.format)
+        if (baseLayerRouteActive && profile8Input) {
+            val honoursBaseLayer = configuration.codecInfo.codecMimeType.equals(
+                MimeTypes.VIDEO_H265,
+                ignoreCase = true,
+            ) && configuration.codecInfo.hardwareAccelerated
+            if (!honoursBaseLayer) onBaseLayerDecoderMismatch(name)
+        }
         super.onCodecInitialized(name, configuration, initializedTimestampMs, initializationDurationMs)
     }
 

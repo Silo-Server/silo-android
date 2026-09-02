@@ -148,10 +148,29 @@ class AudioCapabilityManager(
         _outputRouteGeneration.value = generation
     }
 
-    private var lastDisplayHdr = DisplayHdrProbe.probe(appContext)
+    // Compared as the detailed result so an evidence-tier change (a probe
+    // that went from unknown to a confirmed SDR panel, or a display hot-plug
+    // that swapped the owning display) also rotates the output context id
+    // and triggers the bounded output_change replan.
+    private var lastDisplayHdr = DisplayHdrProbe.probeDetailed(appContext)
+
+    /**
+     * The display that owns the playback surface, mirrored from
+     * [PlaybackCapabilityDetector.playbackDisplayId]. The change detector
+     * below must watch the same panel the capability probe describes, or a
+     * mode change on a secondary display never rotates the output context.
+     * Setting it re-probes immediately so a switch of owning display is itself
+     * an output change.
+     */
+    @Volatile
+    var playbackDisplayId: Int? = null
+        set(value) {
+            field = value
+            publishDisplayCapabilitiesIfChanged()
+        }
 
     private fun publishDisplayCapabilitiesIfChanged() {
-        val next = DisplayHdrProbe.probe(appContext)
+        val next = DisplayHdrProbe.probeDetailed(appContext, playbackDisplayId)
         if (next == lastDisplayHdr) return
         lastDisplayHdr = next
         bumpOutputRouteGeneration()

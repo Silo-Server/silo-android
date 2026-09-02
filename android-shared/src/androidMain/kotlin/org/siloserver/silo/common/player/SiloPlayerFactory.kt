@@ -95,6 +95,14 @@ class SiloPlayerFactory(
     @Volatile private var resumableDirectPlayUri: android.net.Uri? = null
     private val runtimeCorrectionState = PlaybackRuntimeCorrectionState()
 
+    /**
+     * Name of the decoder the renderer opened for a plan that promised the
+     * Profile 8 base-layer route but which cannot produce it (a native Dolby
+     * Vision decoder, or a non-HEVC decoder). Null while the promise holds.
+     * Observed by the player screens, which turn it into a typed replan.
+     */
+    val baseLayerDecoderMismatch = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
     private val dataSourceFactory = AuthenticatedDataSourceFactory(
         context = context,
         httpDataSourceFactory = httpDataSourceFactory,
@@ -238,6 +246,9 @@ class SiloPlayerFactory(
                     eventHandler = eventHandler,
                     eventListener = eventListener,
                     runtimeCorrectionEnabled = runtimeCorrectionState::isEnabled,
+                    onBaseLayerDecoderMismatch = { decoderName ->
+                        baseLayerDecoderMismatch.value = decoderName
+                    },
                 )
             }
         }.apply {
@@ -287,6 +298,7 @@ class SiloPlayerFactory(
             mode: DolbyVisionTransformMode,
             expectedDynamicRange: String? = null,
             expectedColorRange: String? = null,
+            dolbyVisionBaseLayerRoute: Boolean = false,
         ) =
             DefaultMediaSourceFactory(
                 context,
@@ -295,6 +307,7 @@ class SiloPlayerFactory(
                     mode,
                     expectedDynamicRange = expectedDynamicRange,
                     expectedColorRange = expectedColorRange,
+                    dolbyVisionBaseLayerRoute = dolbyVisionBaseLayerRoute,
                 ),
             )
             .setDataSourceFactory(dataSourceFactory)
@@ -462,9 +475,13 @@ class SiloPlayerFactory(
         expectedColorRange: String? = null,
         transformations: List<String> = emptyList(),
         runtimeCorrections: List<String> = emptyList(),
+        activeClaims: List<String> = emptyList(),
     ): MediaItem {
         this.serverUrl = serverUrl
-        runtimeCorrectionState.activate(runtimeCorrections)
+        // Runtime corrections and plan-scoped claims share one activation
+        // set: both are per-mount switches the renderer consults by name.
+        runtimeCorrectionState.activate(runtimeCorrections + activeClaims)
+        baseLayerDecoderMismatch.value = null
         subtitleOffsetHolder.setTimelineOffsetSeconds(timelineOffsetSeconds)
         val absoluteUrl = buildAbsoluteUrl(serverUrl, streamUrl)
         resumableDirectPlayUri = if (delivery == PlaybackDelivery.ORIGINAL_HTTP) {
@@ -493,6 +510,8 @@ class SiloPlayerFactory(
                     },
                     expectedDynamicRange = expectedDynamicRange,
                     expectedColorRange = expectedColorRange,
+                    dolbyVisionBaseLayerRoute =
+                        org.siloserver.silo.model.playback.CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in activeClaims,
                 ),
             )
 
@@ -555,6 +574,7 @@ class SiloPlayerFactory(
             DolbyVisionTransformMode,
             String?,
             String?,
+            Boolean,
         ) -> MediaSource.Factory,
         private val hlsFactory: MediaSource.Factory,
         private val dataSourceFactory: DataSource.Factory,
@@ -620,6 +640,7 @@ class SiloPlayerFactory(
                 tag?.dolbyVisionMode ?: DolbyVisionTransformMode.DISABLED,
                 tag?.expectedDynamicRange,
                 tag?.expectedColorRange,
+                tag?.dolbyVisionBaseLayerRoute ?: false,
             ).also { factory ->
                 drmSessionManagerProvider?.let(factory::setDrmSessionManagerProvider)
                 factory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)

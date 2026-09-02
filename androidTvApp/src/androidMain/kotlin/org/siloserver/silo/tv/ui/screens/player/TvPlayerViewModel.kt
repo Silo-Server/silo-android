@@ -4,6 +4,7 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failureDiagnostics
+import org.siloserver.silo.common.player.failureClassification
 
 import org.siloserver.silo.tv.BuildConfig
 
@@ -78,6 +79,7 @@ import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.AutoSubtitleCandidate
+import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.AutoSubtitleContext
 import org.siloserver.silo.model.playback.AutoSubtitleResolution
 import org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates
@@ -2339,6 +2341,11 @@ class TvPlayerViewModel(
         val notice = when (reason) {
             is org.siloserver.silo.common.player.Playability.UnsupportedDvProfile ->
                 "This device cannot play Dolby Vision Profile ${reason.profile}. Falling back to transcoded stream."
+            is org.siloserver.silo.common.player.Playability.DvBaseLayerMetadataMismatch,
+            is org.siloserver.silo.common.player.Playability.DvBaseLayerOutputMismatch,
+            is org.siloserver.silo.common.player.Playability.DvBaseLayerDecoderUnavailable,
+            ->
+                "The Dolby Vision base-layer route could not be verified on this output. Requesting another route."
             is org.siloserver.silo.common.player.Playability.UnsupportedAudioCodec ->
                 "Lossless audio not supported on this output. Falling back to transcoded stream."
             is org.siloserver.silo.common.player.Playability.UnsupportedChannelCount ->
@@ -2421,6 +2428,16 @@ class TvPlayerViewModel(
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
             coroutineContext.ensureActive()
             if (recoveryContentGeneration != contentLoadGeneration) return@launch
+            // A local Dolby Vision recipe that failed on this hardware is
+            // withdrawn before the replan context is built, so the server
+            // plans from what this device can still execute rather than
+            // handing back the route that just failed.
+            capabilityDetector.transformQuarantine.noteFailure(
+                classification = classification,
+                activeTransformations = state.playbackPlan
+                    ?.executableMedia3ClientTransformations()
+                    .orEmpty(),
+            )
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
             val playbackContext = capabilityDetector.detectPlaybackContext(
                 formFactor = "tv",
@@ -2674,14 +2691,6 @@ class TvPlayerViewModel(
                 )
             }
         }
-    }
-
-    private fun org.siloserver.silo.common.player.Playability.failureClassification(): String = when (this) {
-        is org.siloserver.silo.common.player.Playability.UnsupportedDvProfile -> "unsupported_dolby_vision_profile"
-        is org.siloserver.silo.common.player.Playability.UnsupportedAudioCodec -> "unsupported_audio_encoding"
-        is org.siloserver.silo.common.player.Playability.UnsupportedChannelCount -> "unsupported_audio_layout"
-        is org.siloserver.silo.common.player.Playability.StartupStalled -> classification
-        org.siloserver.silo.common.player.Playability.Supported -> "none"
     }
 
     private fun androidx.media3.common.PlaybackException.failureClassification(): String =

@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failureDiagnostics
+import org.siloserver.silo.common.player.failureClassification
 
 import android.os.SystemClock
 import android.util.Log
@@ -61,6 +62,7 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.PlaybackRouteFamily
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
@@ -1441,6 +1443,11 @@ class PlayerViewModel(
         val notice = when (reason) {
             is Playability.UnsupportedDvProfile ->
                 "This device cannot play Dolby Vision Profile ${reason.profile}. Falling back to transcoded stream."
+            is Playability.DvBaseLayerMetadataMismatch,
+            is Playability.DvBaseLayerOutputMismatch,
+            is Playability.DvBaseLayerDecoderUnavailable,
+            ->
+                "The Dolby Vision base-layer route could not be verified on this output. Requesting another route."
             is Playability.UnsupportedAudioCodec ->
                 "Lossless audio not supported on this output. Falling back to transcoded stream."
             is Playability.UnsupportedChannelCount ->
@@ -1682,6 +1689,16 @@ class PlayerViewModel(
                     audioTracks = state.versions.getOrNull(state.selectedVersionIndex)?.audioTracks.orEmpty(),
                 )
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
+            // A local Dolby Vision recipe that failed on this hardware is
+            // withdrawn before the replan context is built, so the server
+            // plans from what this device can still execute rather than
+            // handing back the route that just failed.
+            capabilityDetector.transformQuarantine.noteFailure(
+                classification = classification,
+                activeTransformations = state.playbackPlan
+                    ?.executableMedia3ClientTransformations()
+                    .orEmpty(),
+            )
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
             val playbackContext = capabilityDetector.detectPlaybackContext(
                 formFactor = "mobile",
@@ -1947,14 +1964,6 @@ class PlayerViewModel(
                 )
             }
         }
-    }
-
-    private fun Playability.failureClassification(): String = when (this) {
-        is Playability.UnsupportedDvProfile -> "unsupported_dolby_vision_profile"
-        is Playability.UnsupportedAudioCodec -> "unsupported_audio_encoding"
-        is Playability.UnsupportedChannelCount -> "unsupported_audio_layout"
-        is Playability.StartupStalled -> classification
-        Playability.Supported -> "none"
     }
 
     private fun androidx.media3.common.PlaybackException.failureClassification(): String =
