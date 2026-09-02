@@ -12,7 +12,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -54,7 +53,7 @@ class ProfileSelectionAdminGateTest {
             authRepository = authRepo,
         )
         // The mock HTTP calls complete on Ktor's own dispatcher, not the test
-        // scheduler, so advanceUntilIdle() can return before the load lands.
+        // scheduler, so advancing the test scheduler can return before the load lands.
         // Wait for the load itself to finish instead of the scheduler.
         val loaded = viewModel.uiState.first { !it.isLoading }
 
@@ -71,9 +70,9 @@ class ProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
-        advanceUntilIdle()
+        val loaded = viewModel.uiState.first { !it.isLoading }
 
-        assertFalse(viewModel.uiState.value.canManageProfiles)
+        assertFalse(loaded.canManageProfiles)
     }
 
     @Test
@@ -87,9 +86,9 @@ class ProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
-        advanceUntilIdle()
+        val loaded = viewModel.uiState.first { !it.isLoading }
 
-        assertFalse(viewModel.uiState.value.canManageProfiles)
+        assertFalse(loaded.canManageProfiles)
     }
 
     @Test
@@ -99,9 +98,9 @@ class ProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = null,
         )
-        advanceUntilIdle()
+        val loaded = viewModel.uiState.first { !it.isLoading }
 
-        assertFalse(viewModel.uiState.value.canManageProfiles)
+        assertFalse(loaded.canManageProfiles)
     }
 
     @Test
@@ -115,7 +114,7 @@ class ProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.isLoading }
 
         viewModel.toggleManageMode()
         assertFalse(viewModel.uiState.value.isManageMode)
