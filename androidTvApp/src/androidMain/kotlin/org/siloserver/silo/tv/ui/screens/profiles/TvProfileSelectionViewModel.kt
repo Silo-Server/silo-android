@@ -6,6 +6,7 @@ import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileCommitResult
 import org.siloserver.silo.repository.ProfileRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +17,7 @@ import kotlinx.coroutines.launch
 
 data class TvProfileSelectionUiState(
     val profiles: List<Profile> = emptyList(),
+    val canManageProfiles: Boolean = false,
     val isLoading: Boolean = true,
     val error: String? = null,
     val selectedProfileId: String? = null,
@@ -37,6 +39,7 @@ data class TvProfileSelectionUiState(
  */
 class TvProfileSelectionViewModel(
     private val profileRepository: ProfileRepository,
+    private val authRepository: AuthRepository? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvProfileSelectionUiState())
@@ -68,6 +71,7 @@ class TvProfileSelectionViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             val scope = profileRepository.captureIdentityScope()
+            val isAdmin = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data?.role?.equals("admin", ignoreCase = true) == true
             val listed = profileRepository.listProfiles()
             // Two separate reasons to drop this response: a newer load
             // superseded it, or the identity it was fetched under is gone.
@@ -75,7 +79,15 @@ class TvProfileSelectionViewModel(
             if (!profileRepository.identityScopeUnchanged(scope)) {
                 // The displayed grid is gone, so its scope must go with it.
                 gridScope = null
-                _uiState.update { it.copy(isLoading = false, profiles = emptyList()) }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        profiles = emptyList(),
+                        canManageProfiles = false,
+                        isManageMode = false,
+                        deleteCandidate = null,
+                    )
+                }
                 return@launch
             }
             when (val result = listed) {
@@ -86,7 +98,13 @@ class TvProfileSelectionViewModel(
                     // qualified by the NEW scope.
                     gridScope = scope
                     _uiState.update {
-                        it.copy(isLoading = false, profiles = result.data)
+                        it.copy(
+                            isLoading = false,
+                            profiles = result.data,
+                            canManageProfiles = isAdmin,
+                            isManageMode = if (isAdmin) it.isManageMode else false,
+                            deleteCandidate = if (isAdmin) it.deleteCandidate else null,
+                        )
                     }
                 }
                 is ApiResult.Error -> {
@@ -107,6 +125,7 @@ class TvProfileSelectionViewModel(
     }
 
     fun toggleManageMode() {
+        if (!_uiState.value.canManageProfiles) return
         _uiState.update {
             it.copy(
                 isManageMode = !it.isManageMode,
@@ -237,6 +256,7 @@ class TvProfileSelectionViewModel(
 
     /** Opens the delete confirmation for [profile] (manage mode). */
     fun requestDelete(profile: Profile) {
+        if (!_uiState.value.canManageProfiles) return
         _uiState.update { it.copy(deleteCandidate = profile) }
     }
 

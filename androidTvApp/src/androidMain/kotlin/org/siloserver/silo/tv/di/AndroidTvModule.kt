@@ -370,7 +370,7 @@ val androidTvModule = module {
     viewModel { org.siloserver.silo.tv.ui.screens.auth.TvSetupViewModel(get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.auth.TvSignupViewModel(get()) }
     viewModel { TvLoginViewModel(get(), get(), get()) }
-    viewModel { TvProfileSelectionViewModel(get()) }
+    viewModel { TvProfileSelectionViewModel(get(), get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.profiles.TvCreateProfileViewModel(get()) }
     viewModel { params ->
         org.siloserver.silo.tv.ui.screens.profiles.TvEditProfileViewModel(

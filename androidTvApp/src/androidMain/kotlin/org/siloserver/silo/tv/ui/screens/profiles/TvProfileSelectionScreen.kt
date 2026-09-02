@@ -160,15 +160,17 @@ fun TvProfileSelectionScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TvHeroActionPill(
-                        label = if (state.isManageMode) "Done" else "Manage",
-                        icon = Icons.Filled.Edit,
-                        variant = TvPillVariant.Hollow,
-                        heightOverride = ProfileUtilityChipHeight,
-                        horizontalPaddingOverride = 10.dp,
-                        labelStyle = MaterialTheme.typography.labelMedium,
-                        onClick = viewModel::toggleManageMode,
-                    )
+                    if (state.canManageProfiles) {
+                        TvHeroActionPill(
+                            label = if (state.isManageMode) "Done" else "Manage",
+                            icon = Icons.Filled.Edit,
+                            variant = TvPillVariant.Hollow,
+                            heightOverride = ProfileUtilityChipHeight,
+                            horizontalPaddingOverride = 10.dp,
+                            labelStyle = MaterialTheme.typography.labelMedium,
+                            onClick = viewModel::toggleManageMode,
+                        )
+                    }
                     TvHeroActionPill(
                         label = "Change Server",
                         icon = Icons.Filled.Dns,
@@ -266,6 +268,7 @@ fun TvProfileSelectionScreen(
                     }
                     ProfileTileGrid(
                         profiles = state.profiles,
+                        canAddProfile = state.canManageProfiles,
                         focusRequesterFor = { id ->
                             tileFocusRequesters.getOrPut(id) { FocusRequester() }
                         },
@@ -329,6 +332,7 @@ fun TvProfileSelectionScreen(
 @Composable
 private fun ProfileTileGrid(
     profiles: List<Profile>,
+    canAddProfile: Boolean,
     focusRequesterFor: (String) -> FocusRequester,
     // Null means no profile tile owns focus — the Add tile has it, or focus
     // left the grid entirely. Restoration must not re-request a tile then.
@@ -339,7 +343,7 @@ private fun ProfileTileGrid(
     onDeleteProfile: (Profile) -> Unit,
     onAddProfile: () -> Unit,
 ) {
-    val itemCount = profiles.size + 1
+    val itemCount = profiles.size + (if (canAddProfile) 1 else 0)
     val rowCount = (itemCount + ProfileGridColumns - 1) / ProfileGridColumns
     Column(
         modifier = Modifier
@@ -382,7 +386,7 @@ private fun ProfileTileGrid(
                                         },
                                 )
                             }
-                            itemIndex == profiles.size -> TvAddProfileCard(
+                            itemIndex == profiles.size && canAddProfile -> TvAddProfileCard(
                                 onClick = onAddProfile,
                                 modifier = Modifier.onFocusChanged {
                                     if (it.isFocused) onProfileFocused(null)

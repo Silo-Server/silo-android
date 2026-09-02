@@ -448,7 +448,7 @@ val androidModule = module {
     viewModel { SignupViewModel(get()) }
     viewModel { InviteClaimViewModel(get(), get()) }
     viewModel { OnboardingTourViewModel(get(), get(), get(), get(), get()) }
-    viewModel { ProfileSelectionViewModel(get()) }
+    viewModel { ProfileSelectionViewModel(get(), get()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
     viewModel { ServerListViewModel(get(), get()) }
