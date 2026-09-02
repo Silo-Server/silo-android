@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
+import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
 import org.siloserver.silo.common.player.failureClassification
 
@@ -1500,7 +1501,15 @@ class PlayerViewModel(
      * Previously the mobile player had no error handling at all: a decoder or
      * IO failure left the screen on a stale frame/spinner forever.
      */
-    fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+    /**
+     * @param servicePlayer the in-process player the error came from, when the
+     * screen has it. The controller-side [error] has lost its renderer
+     * attribution; the service player still knows which renderer failed.
+     */
+    fun onPlayerError(
+        error: androidx.media3.common.PlaybackException,
+        servicePlayer: androidx.media3.common.Player? = null,
+    ) {
         val state = _uiState.value
         val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
             ?: "Playback failed. Please try again."
@@ -1639,6 +1648,7 @@ class PlayerViewModel(
                     message,
                     state,
                     diagnostics = diagnostics,
+                    failedTrackType = error.failedRendererTrackType(servicePlayer),
                 )
             }
             return
@@ -1658,6 +1668,7 @@ class PlayerViewModel(
         notice: String,
         state: PlayerUiState,
         diagnostics: Map<String, String> = emptyMap(),
+        failedTrackType: Int? = null,
         audioTrackIndexOverride: Int? = null,
     ) {
         if (recoveryJob?.isActive == true || serverSeekRecoveryInFlight) {
@@ -1698,6 +1709,7 @@ class PlayerViewModel(
                 activeTransformations = state.playbackPlan
                     ?.executableMedia3ClientTransformations()
                     .orEmpty(),
+                failedTrackType = failedTrackType,
             )
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
             val playbackContext = capabilityDetector.detectPlaybackContext(

@@ -97,11 +97,50 @@ class PlaybackCapabilityDetector(
      */
     @Volatile
     var playbackDisplayId: Int? = null
-        set(value) {
+        private set(value) {
             field = value
             // The audio-route manager owns the display-change listener that
             // rotates the output context; it must watch the same panel.
             audioCapabilityManager.playbackDisplayId = value
+        }
+
+    /** The binding that currently owns [playbackDisplayId]; null when unbound. */
+    @Volatile
+    private var playbackDisplayOwner: PlaybackDisplayBinding? = null
+
+    /**
+     * A claim on the playback display. Two players overlap during a
+     * player-to-player transition, so the display id is owned rather than
+     * assigned: the incoming player binds while the outgoing one is still
+     * composed, and the outgoing player's release must not clear the newer
+     * binding. Each binding releases only itself.
+     */
+    inner class PlaybackDisplayBinding internal constructor(val displayId: Int?) {
+        val isActive: Boolean get() = playbackDisplayOwner === this
+
+        /** Clears the display id only while this binding still owns it. */
+        fun release() {
+            synchronized(this@PlaybackCapabilityDetector) {
+                if (playbackDisplayOwner !== this) return
+                playbackDisplayOwner = null
+                playbackDisplayId = null
+            }
+        }
+    }
+
+    /**
+     * Binds the display that owns the playback surface and returns the
+     * binding that must be released when that player leaves. Binding always
+     * takes the id, even when another binding is active: the newest player
+     * is the one about to render, and the older binding becomes a no-op on
+     * release.
+     */
+    fun bindPlaybackDisplay(displayId: Int?): PlaybackDisplayBinding =
+        synchronized(this) {
+            PlaybackDisplayBinding(displayId).also {
+                playbackDisplayOwner = it
+                playbackDisplayId = displayId
+            }
         }
 
     /** Decoder-only HDR facts from the most recent [detect], for diagnostics. */
@@ -863,11 +902,18 @@ internal fun evaluateDolbyVisionRoute(
         }
 }
 
+/**
+ * Whether the active output carries the base range a Profile 8 base-layer
+ * plan promised. The range must be named: the renderer forces the stream
+ * through an ordinary HEVC decoder on this route and the colour repair keys
+ * off the promised range, so a plan that omitted it cannot be verified and
+ * must not be read as SDR.
+ */
 private fun baseRangeSupported(baseRange: String, nativeHdr: HdrCapabilities): Boolean =
     when (baseRange.trim().lowercase()) {
         "hdr10" -> nativeHdr.hdr10
         "hlg" -> nativeHdr.hlg
-        "sdr", "" -> true
+        "sdr" -> true
         else -> false
     }
 

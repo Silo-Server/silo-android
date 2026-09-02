@@ -51,6 +51,43 @@ class DolbyVisionTransformQuarantineTest {
     }
 
     @Test
+    fun genericDecoderFailureCountsOnlyWhenTheVideoRendererRaisedIt() {
+        val store = MemoryStore()
+        val quarantine = DolbyVisionTransformQuarantine(store, fingerprint = "build-a", nowMs = { 1_000L })
+
+        assertTrue(
+            quarantine.noteFailure("decoder_failure", listOf(CLIENT_DV7_TO_DV81), failedTrackType = 1).isEmpty(),
+            "an audio renderer failing under a transformed plan says nothing about the video recipe",
+        )
+        assertTrue(
+            quarantine.noteFailure("decoder_failure", listOf(CLIENT_DV7_TO_DV81), failedTrackType = null).isEmpty(),
+            "a decoder failure with no renderer attribution must not quarantine",
+        )
+        assertFalse(quarantine.isQuarantined(CLIENT_DV7_TO_DV81))
+
+        assertEquals(
+            listOf(CLIENT_DV7_TO_DV81),
+            quarantine.noteFailure(
+                "decoder_failure",
+                listOf(CLIENT_DV7_TO_DV81),
+                failedTrackType = DolbyVisionTransformQuarantine.TRACK_TYPE_VIDEO,
+            ),
+        )
+        assertTrue(quarantine.isQuarantined(CLIENT_DV7_TO_DV81))
+    }
+
+    @Test
+    fun videoStallClassificationsNeedNoRendererAttribution() {
+        val quarantine = DolbyVisionTransformQuarantine(MemoryStore(), fingerprint = "build-a", nowMs = { 1_000L })
+
+        assertEquals(
+            listOf(CLIENT_DV7_TO_DV81),
+            quarantine.noteFailure("decoder_no_output", listOf(CLIENT_DV7_TO_DV81)),
+            "the stall detector watches the video decoder counters, so its verdict is already video-scoped",
+        )
+    }
+
+    @Test
     fun aFailureWithoutAnActiveTransformationIsIgnored() {
         val quarantine = DolbyVisionTransformQuarantine(MemoryStore(), fingerprint = "build-a", nowMs = { 1_000L })
 

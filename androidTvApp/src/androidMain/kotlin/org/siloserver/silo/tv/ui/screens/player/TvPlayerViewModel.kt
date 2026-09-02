@@ -3,6 +3,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
+import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
 import org.siloserver.silo.common.player.failureClassification
 
@@ -2397,6 +2398,7 @@ class TvPlayerViewModel(
         state: UiState,
         qualityPreference: String? = null,
         diagnostics: Map<String, String> = emptyMap(),
+        failedTrackType: Int? = null,
         subtitleTrackIndexOverride: Int? = null,
     ) {
         if (recoveryJob?.isActive == true) {
@@ -2437,6 +2439,7 @@ class TvPlayerViewModel(
                 activeTransformations = state.playbackPlan
                     ?.executableMedia3ClientTransformations()
                     .orEmpty(),
+                failedTrackType = failedTrackType,
             )
             val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
             val playbackContext = capabilityDetector.detectPlaybackContext(
@@ -5273,7 +5276,15 @@ class TvPlayerViewModel(
      * prepare). Without this the screen can sit on a stale spinner instead of
      * an actionable error. The error UI offers [retry].
      */
-    fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+    /**
+     * @param servicePlayer the in-process player the error came from, when the
+     * screen has it. The controller-side [error] has lost its renderer
+     * attribution; the service player still knows which renderer failed.
+     */
+    fun onPlayerError(
+        error: androidx.media3.common.PlaybackException,
+        servicePlayer: androidx.media3.common.Player? = null,
+    ) {
         val state = _uiState.value
         val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
             ?: "Playback failed. Please try again."
@@ -5408,6 +5419,7 @@ class TvPlayerViewModel(
                     message,
                     state,
                     diagnostics = diagnostics,
+                    failedTrackType = error.failedRendererTrackType(servicePlayer),
                 )
             }
             return
