@@ -105,9 +105,14 @@ class PlaybackCapabilityDetector(
             audioCapabilityManager.playbackDisplayId = value
         }
 
-    /** The binding that currently owns [playbackDisplayId]; null when unbound. */
-    @Volatile
-    private var playbackDisplayOwner: PlaybackDisplayBinding? = null
+    /**
+     * Live claims on the playback display, oldest first. The last entry owns
+     * [playbackDisplayId]. Kept as a stack rather than a single owner so a
+     * claim that is released while newer ones exist simply drops out, and a
+     * newest claim that is released hands the display back to the one
+     * beneath it instead of to nothing.
+     */
+    private val playbackDisplayClaims = ArrayList<PlaybackDisplayBinding>(2)
 
     /**
      * A claim on the playback display. Two players overlap during a
@@ -115,6 +120,11 @@ class PlaybackCapabilityDetector(
      * assigned: the incoming player binds while the outgoing one is still
      * composed, and the outgoing player's release must not clear the newer
      * binding. Each binding releases only itself.
+     *
+     * Release restores the previous live claim. A speculative composition
+     * that binds and is then abandoned while the current player is still
+     * committed would otherwise leave that player's binding retired and the
+     * detector on the default display until something rebinds.
      *
      * The binding is a [RememberObserver] because the claim is taken inside
      * the `remember` factory, before the composition commits. A
@@ -126,14 +136,19 @@ class PlaybackCapabilityDetector(
      * at the call site.
      */
     inner class PlaybackDisplayBinding internal constructor(val displayId: Int?) : RememberObserver {
-        val isActive: Boolean get() = playbackDisplayOwner === this
+        val isActive: Boolean
+            get() = synchronized(this@PlaybackCapabilityDetector) { playbackDisplayClaims.lastOrNull() === this }
 
-        /** Clears the display id only while this binding still owns it. */
+        /**
+         * Withdraws this claim. If it owned the display, ownership passes to
+         * the most recent claim still live; if none remains, the display is
+         * cleared. Releasing a claim that is not live is a no-op.
+         */
         fun release() {
             synchronized(this@PlaybackCapabilityDetector) {
-                if (playbackDisplayOwner !== this) return
-                playbackDisplayOwner = null
-                playbackDisplayId = null
+                val wasOwner = playbackDisplayClaims.lastOrNull() === this
+                if (!playbackDisplayClaims.remove(this)) return
+                if (wasOwner) playbackDisplayId = playbackDisplayClaims.lastOrNull()?.displayId
             }
         }
 
@@ -147,12 +162,12 @@ class PlaybackCapabilityDetector(
      * binding that must be released when that player leaves. Binding always
      * takes the id, even when another binding is active: the newest player
      * is the one about to render, and the older binding becomes a no-op on
-     * release.
+     * release unless the newer one goes away first.
      */
     fun bindPlaybackDisplay(displayId: Int?): PlaybackDisplayBinding =
         synchronized(this) {
             PlaybackDisplayBinding(displayId).also {
-                playbackDisplayOwner = it
+                playbackDisplayClaims.add(it)
                 playbackDisplayId = displayId
             }
         }

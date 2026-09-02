@@ -565,5 +565,34 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
         early.onAbandoned()
         assertEquals(3, detector.playbackDisplayId, "the screen's binding owns the display now")
         assertTrue(screen.isActive)
+        screen.onForgotten()
+        assertEquals(null, detector.playbackDisplayId)
+    }
+
+    @Test
+    fun abandoningASpeculativeClaimRestoresTheCommittedPlayersBinding() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        // A committed player owns display 1. A speculative composition for a
+        // second player binds display 2, then is abandoned before commit.
+        val committed = detector.bindPlaybackDisplay(1)
+        committed.onRemembered()
+        val speculative = detector.bindPlaybackDisplay(2)
+        assertEquals(2, detector.playbackDisplayId)
+        assertFalse(committed.isActive)
+
+        speculative.onAbandoned()
+
+        assertEquals(1, detector.playbackDisplayId, "the committed player's display must come back")
+        assertTrue(committed.isActive, "the committed player's binding must be live again")
+
+        committed.onForgotten()
+        assertEquals(null, detector.playbackDisplayId)
     }
 }
