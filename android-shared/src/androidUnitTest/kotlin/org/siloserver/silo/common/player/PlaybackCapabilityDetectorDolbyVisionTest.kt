@@ -246,18 +246,23 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
             libassBridge = LibassBridge(false),
             buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
         )
+        val hevc10 = org.siloserver.silo.model.playback.VideoDecodeCapability(
+            codec = "hevc",
+            bitDepths = listOf(8, 10),
+            hardware = true,
+        )
         val withHevc = detector.detectPlaybackContext(
             formFactor = "tv",
             appVersion = "test",
             capabilities = ClientCodecCapabilities(
-                videoDecode = listOf(
-                    org.siloserver.silo.model.playback.VideoDecodeCapability(
-                        codec = "hevc",
-                        bitDepths = listOf(8, 10),
-                        hardware = true,
-                    ),
-                ),
+                videoDecode = listOf(hevc10),
+                hdrDetails = HdrCapabilities(hdr10 = true),
             ),
+        )
+        val hevcWithoutRange = detector.detectPlaybackContext(
+            formFactor = "tv",
+            appVersion = "test",
+            capabilities = ClientCodecCapabilities(videoDecode = listOf(hevc10)),
         )
         val without = detector.detectPlaybackContext(
             formFactor = "tv",
@@ -270,6 +275,10 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
         )
         assertFalse(
             CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in without.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP).validatedClaims,
+        )
+        assertFalse(
+            CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in hevcWithoutRange.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP).validatedClaims,
+            "a Main10-only decoder with no HDR range in the intersection must not claim a route preflight would refuse",
         )
         assertFalse(
             CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in withHevc.deliveries.getValue(DELIVERY_CLASS_HLS).validatedClaims,

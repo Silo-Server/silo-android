@@ -415,10 +415,11 @@ class PlaybackCapabilityDetector(
                         // single-layer DV stream to an ordinary HEVC decoder
                         // when the plan names a base range, and preflight
                         // verifies the decoder and output before playback.
-                        // Only meaningful when an HDR-capable HEVC decoder
-                        // exists; the server further gates on the source's
-                        // compatibility id and the active output.
-                        if (caps.videoDecode.any { it.codec == "hevc" && 10 in it.bitDepths && it.hardware }) {
+                        // Gated on the same decoder ∩ display facts preflight
+                        // uses (an HDR10 or HLG range the HEVC path can carry
+                        // on this output), so a claim can never be issued
+                        // that preflight would immediately refuse.
+                        if (canAdvertiseDv8BaseLayerFallback(caps)) {
                             add(CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM)
                         }
                     },
@@ -717,6 +718,21 @@ internal fun isDirectPlayableDolbyVisionProfile(
     profile: Int,
     supportedHdr: org.siloserver.silo.model.playback.HdrCapabilities,
 ): Boolean = supportedHdr.dolbyVisionProfiles.contains(profile)
+
+/**
+ * The base-layer claim is only truthful when preflight would accept the plan
+ * it produces: an HDR-capable hardware HEVC decoder plus at least one base
+ * range (HDR10 or HLG) present in the decoder ∩ display intersection that
+ * [PlaybackCapabilityDetector.evaluateTracks] checks. A decoder that reports
+ * only the plain Main10 profile earns no HDR range from the codec probe and
+ * therefore no claim, instead of a claim that fails on the first track change.
+ * An SDR-base (compat 2) source is still served by the server's own gate.
+ */
+internal fun canAdvertiseDv8BaseLayerFallback(caps: ClientCodecCapabilities): Boolean {
+    val hevc10 = caps.videoDecode.any { it.codec == "hevc" && 10 in it.bitDepths && it.hardware }
+    val hdr = caps.hdrDetails ?: return false
+    return hevc10 && (hdr.hdr10 || hdr.hlg)
+}
 
 private fun HdrCapabilities.withDolbyVisionPolicy(dolbyVision: DolbyVisionPolicy.Snapshot): HdrCapabilities {
     val profiles = DolbyVisionPolicy.advertisableProfiles(dolbyVisionProfiles, dolbyVision)
