@@ -1178,8 +1178,9 @@ fun TvAppNavigation(
             // This early binding is superseded when TvPlayerScreen binds its
             // own during composition; the screen's release then leaves the
             // display bound to whichever player claimed it last.
-            remember(playerContext, capabilityDetector) {
-                capabilityDetector.bindPlaybackDisplay(playerContext.playbackDisplayId())
+            val earlyPlaybackDisplayId = playerContext.playbackDisplayId()
+            remember(earlyPlaybackDisplayId, capabilityDetector) {
+                capabilityDetector.bindPlaybackDisplay(earlyPlaybackDisplayId)
             }
             TvPlayerScreen(
                 contentId = contentId,

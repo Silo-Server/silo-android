@@ -142,10 +142,23 @@ class DolbyVisionTransformQuarantine internal constructor(
 /**
  * The track type of the renderer that raised this exception, or null when
  * the error did not come from a renderer (source, remote, unexpected).
+ *
+ * The screens receive errors through a MediaController, and MediaSession
+ * rebuilds the error as a base [androidx.media3.common.PlaybackException]
+ * on the way across, so the renderer attribution is gone by then. Pass the
+ * in-process [servicePlayer] when one is available: its own
+ * [androidx.media3.exoplayer.ExoPlayer.getPlayerError] still carries the
+ * typed exception for the same failure, matched here by error code and
+ * timestamp so a stale error from an earlier item is never attributed.
  */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-fun androidx.media3.common.PlaybackException.failedRendererTrackType(): Int? {
-    val exo = this as? androidx.media3.exoplayer.ExoPlaybackException ?: return null
+fun androidx.media3.common.PlaybackException.failedRendererTrackType(
+    servicePlayer: androidx.media3.common.Player? = null,
+): Int? {
+    val exo = this as? androidx.media3.exoplayer.ExoPlaybackException
+        ?: (servicePlayer as? androidx.media3.exoplayer.ExoPlayer)?.playerError
+            ?.takeIf { it.errorCode == errorCode && it.timestampMs == timestampMs }
+        ?: return null
     if (exo.type != androidx.media3.exoplayer.ExoPlaybackException.TYPE_RENDERER) return null
     val mime = exo.rendererFormat?.sampleMimeType ?: return null
     return androidx.media3.common.MimeTypes.getTrackType(mime)

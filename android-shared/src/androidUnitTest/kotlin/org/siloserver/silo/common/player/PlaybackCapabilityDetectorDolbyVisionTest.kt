@@ -510,4 +510,26 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
         rebound.release()
         assertEquals(null, detector.playbackDisplayId)
     }
+
+    @Test
+    fun rebindingOnADisplayChangeMovesTheIdAndRetiresTheOldBinding() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        // The screens key their binding on the display id, so an Activity
+        // that moves to another display produces a fresh binding and the
+        // old one's release must not clear it.
+        val onFirstDisplay = detector.bindPlaybackDisplay(0)
+        val onSecondDisplay = detector.bindPlaybackDisplay(5)
+        assertEquals(5, detector.playbackDisplayId)
+
+        onFirstDisplay.release()
+        assertEquals(5, detector.playbackDisplayId, "the retired binding must not undo the move")
+        assertTrue(onSecondDisplay.isActive)
+    }
 }

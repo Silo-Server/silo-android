@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -226,8 +227,11 @@ fun PlayerScreen(
     // The binding is owned: during a player-to-player transition the incoming
     // screen binds while the outgoing one is still composed, and the outgoing
     // screen's release only clears its own claim.
-    val playbackDisplayBinding = remember(context, capabilityDetector) {
-        capabilityDetector.bindPlaybackDisplay(context.playbackDisplayId())
+    // Keyed on the display id itself so an Activity that moves to another
+    // display rebinds and the next plan describes the new panel.
+    val currentPlaybackDisplayId = context.playbackDisplayId()
+    val playbackDisplayBinding = remember(currentPlaybackDisplayId, capabilityDetector) {
+        capabilityDetector.bindPlaybackDisplay(currentPlaybackDisplayId)
     }
     // Re-probe whenever the output route generation moves, so track
     // selection sees the same display facts as capability detection.
@@ -850,6 +854,9 @@ fun PlayerScreen(
     // Preflight listener: evaluates the resolved Tracks and triggers the
     // transcode fallback when the selected track combo can't actually be
     // played on this device.
+    // The preflight listener is keyed on the controller and outlives engine
+    // swaps; read the service player at error time, not at registration.
+    val latestServicePlayerForErrors = rememberUpdatedState(sessionPlayer)
     DisposableEffect(mediaController) {
         val controller = mediaController
         if (controller == null) {
@@ -862,7 +869,7 @@ fun PlayerScreen(
                 // same recovery ladder as preflight failures — previously the
                 // mobile player dropped these on the floor and the screen sat
                 // on a stale frame.
-                onError = { error -> viewModel.onPlayerError(error) },
+                onError = { error -> viewModel.onPlayerError(error, servicePlayer = latestServicePlayerForErrors.value) },
                 plannedRoute = {
                     val plan = viewModel.uiState.value.playbackPlan
                     plannedVideoRouteFor(

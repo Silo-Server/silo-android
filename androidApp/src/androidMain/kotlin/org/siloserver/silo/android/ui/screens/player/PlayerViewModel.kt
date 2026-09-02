@@ -1501,7 +1501,15 @@ class PlayerViewModel(
      * Previously the mobile player had no error handling at all: a decoder or
      * IO failure left the screen on a stale frame/spinner forever.
      */
-    fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+    /**
+     * @param servicePlayer the in-process player the error came from, when the
+     * screen has it. The controller-side [error] has lost its renderer
+     * attribution; the service player still knows which renderer failed.
+     */
+    fun onPlayerError(
+        error: androidx.media3.common.PlaybackException,
+        servicePlayer: androidx.media3.common.Player? = null,
+    ) {
         val state = _uiState.value
         val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
             ?: "Playback failed. Please try again."
@@ -1640,7 +1648,7 @@ class PlayerViewModel(
                     message,
                     state,
                     diagnostics = diagnostics,
-                    failedTrackType = error.failedRendererTrackType(),
+                    failedTrackType = error.failedRendererTrackType(servicePlayer),
                 )
             }
             return

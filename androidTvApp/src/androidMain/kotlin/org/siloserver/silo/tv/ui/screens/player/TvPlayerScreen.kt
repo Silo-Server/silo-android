@@ -370,8 +370,11 @@ fun TvPlayerScreen(
     // The binding is owned: during a player-to-player transition the incoming
     // screen binds while the outgoing one is still composed, and the outgoing
     // screen's release only clears its own claim.
-    val playbackDisplayBinding = remember(context, capabilityDetector) {
-        capabilityDetector.bindPlaybackDisplay(context.playbackDisplayId())
+    // Keyed on the display id itself so an Activity that moves to another
+    // display rebinds and the next plan describes the new panel.
+    val currentPlaybackDisplayId = context.playbackDisplayId()
+    val playbackDisplayBinding = remember(currentPlaybackDisplayId, capabilityDetector) {
+        capabilityDetector.bindPlaybackDisplay(currentPlaybackDisplayId)
     }
     // Re-probe whenever the output route generation moves, so track
     // selection sees the same display facts as capability detection.
@@ -1449,6 +1452,9 @@ fun TvPlayerScreen(
 
     // Preflight listener — falls back to a transcoded stream if the selected
     // Tracks can't be direct-played (DV P7, TrueHD without passthrough, …).
+    // The preflight listener is keyed on the controller and outlives engine
+    // swaps; read the service player at error time, not at registration.
+    val latestServicePlayerForErrors = rememberUpdatedState(sessionPlayer)
     DisposableEffect(mediaController) {
         val controller = mediaController
         if (controller == null) {
@@ -1457,7 +1463,7 @@ fun TvPlayerScreen(
             val preflight = PlaybackPreflightListener(
                 detector = capabilityDetector,
                 onUnsupported = { verdict -> viewModel.onUnsupportedPlayback(verdict) },
-                onError = { error -> viewModel.onPlayerError(error) },
+                onError = { error -> viewModel.onPlayerError(error, servicePlayer = latestServicePlayerForErrors.value) },
                 plannedRoute = {
                     val plan = viewModel.uiState.value.playbackPlan
                     org.siloserver.silo.common.player.plannedVideoRouteFor(
