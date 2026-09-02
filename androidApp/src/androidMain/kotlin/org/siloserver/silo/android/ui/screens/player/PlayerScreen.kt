@@ -223,9 +223,11 @@ fun PlayerScreen(
     // Bind the playback display before anything plans: the ViewModel's
     // initializer starts loading as soon as it exists, so the binding has to
     // happen during composition, not in a later effect.
-    remember(context, capabilityDetector) {
-        capabilityDetector.playbackDisplayId = context.playbackDisplayId()
-        true
+    // The binding is owned: during a player-to-player transition the incoming
+    // screen binds while the outgoing one is still composed, and the outgoing
+    // screen's release only clears its own claim.
+    val playbackDisplayBinding = remember(context, capabilityDetector) {
+        capabilityDetector.bindPlaybackDisplay(context.playbackDisplayId())
     }
     // Re-probe whenever the output route generation moves, so track
     // selection sees the same display facts as capability detection.
@@ -839,9 +841,10 @@ fun PlayerScreen(
         }
     }
 
-    // Release the playback display binding when this player leaves.
-    DisposableEffect(capabilityDetector) {
-        onDispose { capabilityDetector.playbackDisplayId = null }
+    // Release this player's own display binding when it leaves. A newer
+    // player that has already bound keeps its claim.
+    DisposableEffect(playbackDisplayBinding) {
+        onDispose { playbackDisplayBinding.release() }
     }
 
     // Preflight listener: evaluates the resolved Tracks and triggers the

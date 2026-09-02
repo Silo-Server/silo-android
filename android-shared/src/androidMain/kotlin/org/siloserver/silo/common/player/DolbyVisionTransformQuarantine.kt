@@ -65,12 +65,22 @@ class DolbyVisionTransformQuarantine internal constructor(
 
     /**
      * Withdraws every [activeTransformations] entry when [classification]
-     * describes a fault in the local recipe rather than in the source or the
-     * transport. Returns the names that were withdrawn.
+     * describes a fault in the local recipe rather than in the source, the
+     * transport, or another renderer. Returns the names that were withdrawn.
+     *
+     * @param failedTrackType the Media3 track type of the renderer that
+     * raised the error, when the failure came from a player exception. A
+     * generic decoder classification only counts against the video recipe
+     * when the video renderer raised it; an audio decoder failing under a
+     * transformed plan says nothing about the transformation.
      */
-    fun noteFailure(classification: String, activeTransformations: Collection<String>): List<String> {
+    fun noteFailure(
+        classification: String,
+        activeTransformations: Collection<String>,
+        failedTrackType: Int? = null,
+    ): List<String> {
         if (activeTransformations.isEmpty()) return emptyList()
-        if (!isDeviceFault(classification)) return emptyList()
+        if (!isDeviceFault(classification, failedTrackType)) return emptyList()
         val withdrawn = activeTransformations.filter { it in KNOWN_TRANSFORMATIONS }
         withdrawn.forEach { name ->
             Log.w(TAG, "Quarantining client transformation $name after $classification")
@@ -88,25 +98,55 @@ class DolbyVisionTransformQuarantine internal constructor(
         internal val KNOWN_TRANSFORMATIONS: Set<String> = setOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10)
 
         /**
-         * Classifications that mean the local recipe failed on this hardware.
-         * A source that is not what the plan described, an encrypted sample,
-         * or a network stall is not evidence against the device.
+         * Classifications raised by the transformation itself, which name the
+         * local recipe as the fault regardless of which renderer surfaced
+         * them. A source that is not what the plan described, an encrypted
+         * sample, or a network stall is not evidence against the device.
          */
-        private val DEVICE_FAULT_PREFIXES = listOf(
+        private val TRANSFORM_FAULT_PREFIXES = listOf(
             "dv7_transform_stall",
             "dv7_transform_unavailable",
             "dv7_transform_oversized",
             "dv7_transform_failed",
             "dv7_rpu_conversion_failed",
         )
-        private val DEVICE_FAULT_DECODER_CLASSIFICATIONS = setOf(
+
+        /**
+         * Video-progress classifications from the stall detector. They watch
+         * the video decoder counters, so no renderer type is needed.
+         */
+        private val VIDEO_STALL_CLASSIFICATIONS = setOf(
             "decoder_no_output",
             "render_startup_failure",
-            "decoder_failure",
         )
 
-        internal fun isDeviceFault(classification: String): Boolean =
-            DEVICE_FAULT_PREFIXES.any(classification::startsWith) ||
-                classification in DEVICE_FAULT_DECODER_CLASSIFICATIONS
+        /**
+         * Generic player-exception classifications. Media3 raises the same
+         * codes for every renderer, so these count only when the exception
+         * came from the video renderer.
+         */
+        private val RENDERER_DECODER_CLASSIFICATIONS = setOf("decoder_failure")
+
+        /** Media3's `C.TRACK_TYPE_VIDEO`, restated so this file stays free of Media3 types. */
+        internal const val TRACK_TYPE_VIDEO = 2
+
+        internal fun isDeviceFault(classification: String, failedTrackType: Int? = null): Boolean = when {
+            TRANSFORM_FAULT_PREFIXES.any(classification::startsWith) -> true
+            classification in VIDEO_STALL_CLASSIFICATIONS -> true
+            classification in RENDERER_DECODER_CLASSIFICATIONS -> failedTrackType == TRACK_TYPE_VIDEO
+            else -> false
+        }
     }
+}
+
+/**
+ * The track type of the renderer that raised this exception, or null when
+ * the error did not come from a renderer (source, remote, unexpected).
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+fun androidx.media3.common.PlaybackException.failedRendererTrackType(): Int? {
+    val exo = this as? androidx.media3.exoplayer.ExoPlaybackException ?: return null
+    if (exo.type != androidx.media3.exoplayer.ExoPlaybackException.TYPE_RENDERER) return null
+    val mime = exo.rendererFormat?.sampleMimeType ?: return null
+    return androidx.media3.common.MimeTypes.getTrackType(mime)
 }
