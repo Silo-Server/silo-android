@@ -79,6 +79,7 @@ internal data class MobileInitialTrackSelection(
  * Local/downloaded subtitle identities deliberately resolve to null and stay
  * on the Media3-only restore path after the server plan is mounted.
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun resolveMobileInitialTrackSelection(
     explicitAudioTrackIndex: Int?,
     explicitSubtitleTrackIndex: Int?,

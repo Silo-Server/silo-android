@@ -10,6 +10,7 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -52,9 +53,12 @@ class ProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
-        advanceUntilIdle()
+        // The mock HTTP calls complete on Ktor's own dispatcher, not the test
+        // scheduler, so advanceUntilIdle() can return before the load lands.
+        // Wait for the load itself to finish instead of the scheduler.
+        val loaded = viewModel.uiState.first { !it.isLoading }
 
-        assertTrue(viewModel.uiState.value.canManageProfiles)
+        assertTrue(loaded.canManageProfiles)
     }
 
     @Test
