@@ -1,7 +1,6 @@
 package org.siloserver.silo.common.player
 
 import android.content.Context
-import android.content.ContextWrapper
 import android.hardware.display.DisplayManager
 import android.hardware.display.HdrConversionMode
 import android.os.Build
@@ -67,8 +66,8 @@ object DisplayHdrProbe {
     internal val PANEL_DOLBY_VISION_PROFILES: List<Int> = (0..10).toList()
 
     /** Immutable, read-only evidence for diagnostics; never changes display state. */
-    fun diagnosticsSnapshot(context: Context): DisplayDiagnosticsSnapshot? {
-        val display = resolveDisplay(context) ?: return null
+    fun diagnosticsSnapshot(context: Context, displayId: Int? = null): DisplayDiagnosticsSnapshot? {
+        val display = resolveDisplay(context, displayId) ?: return null
         val mode = display.mode
         return DisplayDiagnosticsSnapshot(
             widthPx = mode.physicalWidth,
@@ -84,7 +83,7 @@ object DisplayHdrProbe {
             } else {
                 null
             },
-            hdr = probeDetailed(context).hdr,
+            hdr = probeDetailed(context, displayId).hdr,
         )
     }
 
@@ -93,12 +92,18 @@ object DisplayHdrProbe {
      * unknown probe collapses to the empty capability so native-output gates
      * fail closed; use [probeDetailed] when the evidence tier matters.
      */
-    fun probe(context: Context): HdrCapabilities = probeDetailed(context).hdr
+    fun probe(context: Context, displayId: Int? = null): HdrCapabilities = probeDetailed(context, displayId).hdr
 
-    /** The active display's HDR support with its evidence tier. */
-    fun probeDetailed(context: Context): DisplayHdrProbeResult {
-        val display = resolveDisplay(context)
-            ?: return DisplayHdrProbeResult.Unknown(displayId = null, reason = "no_display")
+    /**
+     * The active display's HDR support with its evidence tier.
+     *
+     * @param displayId the display that owns the playback surface, when the
+     * caller knows it. Without it an Activity context resolves its own
+     * display and any other context resolves the default display.
+     */
+    fun probeDetailed(context: Context, displayId: Int? = null): DisplayHdrProbeResult {
+        val display = resolveDisplay(context, displayId)
+            ?: return DisplayHdrProbeResult.Unknown(displayId = displayId, reason = "no_display")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             return DisplayHdrProbeResult.Unknown(displayId = display.displayId, reason = "api_below_24")
         }
@@ -200,16 +205,14 @@ object DisplayHdrProbe {
      * Activity on a secondary display is reported here but should be treated
      * as a device-class quirk rather than assumed to match Media3.
      */
-    private fun resolveDisplay(context: Context): Display? {
+    private fun resolveDisplay(context: Context, displayId: Int?): Display? {
         val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return null
+        if (displayId != null) {
+            return dm.getDisplay(displayId) ?: dm.getDisplay(Display.DEFAULT_DISPLAY)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            var current: Context? = context
-            while (current is ContextWrapper) {
-                if (current is android.app.Activity) {
-                    runCatching { current.display }.getOrNull()?.let { return it }
-                    break
-                }
-                current = current.baseContext
+            context.findActivity()?.let { activity ->
+                runCatching { activity.display }.getOrNull()?.let { return it }
             }
         }
         return dm.getDisplay(Display.DEFAULT_DISPLAY)

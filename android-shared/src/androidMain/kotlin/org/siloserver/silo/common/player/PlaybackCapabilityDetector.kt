@@ -81,6 +81,17 @@ class PlaybackCapabilityDetector(
     @Volatile
     private var lastDisplayProbe: DisplayHdrProbeResult? = null
 
+    /**
+     * The display that owns the playback surface. The detector is a process
+     * singleton built on the application context, which can only ever resolve
+     * the default display; the player screens set this when they attach to
+     * their Activity so capability planning, preflight, and the output
+     * context all describe the panel actually showing the video. Null means
+     * "no player attached", which falls back to the default display.
+     */
+    @Volatile
+    var playbackDisplayId: Int? = null
+
     /** Decoder-only HDR facts from the most recent [detect], for diagnostics. */
     @Volatile
     private var lastDecoderHdr: HdrCapabilities? = null
@@ -127,7 +138,7 @@ class PlaybackCapabilityDetector(
                 val profile = dvMatch.groupValues[2].toIntOrNull()
                 if (profile != null) {
                     val codecProbe = MediaCodecCapabilitiesProbe.probe()
-                    val displayHdr = DisplayHdrProbe.probe(context)
+                    val displayHdr = DisplayHdrProbe.probe(context, playbackDisplayId)
                     val supportedHdr = TvPlaybackOutputPolicy.effectiveHdrCapabilities(
                         codec = codecProbe.hdr,
                         display = displayHdr,
@@ -246,7 +257,7 @@ class PlaybackCapabilityDetector(
     ): ClientCodecCapabilities {
         val audioRoute = audioCapabilityManager.playbackRouteSnapshot()
         val codecProbe = MediaCodecCapabilitiesProbe.probe()
-        val displayProbe = DisplayHdrProbe.probeDetailed(context)
+        val displayProbe = DisplayHdrProbe.probeDetailed(context, playbackDisplayId)
         // With Dolby Vision off, stop advertising DV profiles (except 5,
         // which has no watchable base layer) so the server plans base-layer /
         // HDR10 delivery and local direct-play checks agree. Single decision
@@ -370,7 +381,7 @@ class PlaybackCapabilityDetector(
                 outputContextId = audioRoute.routeGeneration.toString(),
                 // Raw display facts with their evidence tier so a new server
                 // can distinguish a confirmed SDR panel from a failed probe.
-                display = (lastDisplayProbe ?: DisplayHdrProbe.probeDetailed(context)).toOutputDisplay(),
+                display = (lastDisplayProbe ?: DisplayHdrProbe.probeDetailed(context, playbackDisplayId)).toOutputDisplay(),
             ),
             deliveries = mapOf(
                 DELIVERY_CLASS_ORIGINAL_HTTP to DeliveryCapability(

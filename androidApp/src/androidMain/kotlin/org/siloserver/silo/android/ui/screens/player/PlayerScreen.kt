@@ -70,6 +70,7 @@ import org.siloserver.silo.common.player.ActivePlayerHolder
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.SiloPlaybackService
 import org.siloserver.silo.common.player.DisplayHdrProbe
+import org.siloserver.silo.common.player.findActivity
 import org.siloserver.silo.common.player.plannedVideoRouteFor
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.player.PlaybackPreflightListener
@@ -824,6 +825,21 @@ fun PlayerScreen(
                 controller.playWhenReady = desired
             }
         }
+    }
+
+    // Tell capability detection which display owns this player so the
+    // output context and preflight describe the panel showing the video
+    // rather than the default display.
+    DisposableEffect(context) {
+        val activity = context.findActivity()
+        capabilityDetector.playbackDisplayId = if (
+            activity != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R
+        ) {
+            runCatching { activity.display?.displayId }.getOrNull()
+        } else {
+            null
+        }
+        onDispose { capabilityDetector.playbackDisplayId = null }
     }
 
     // Preflight listener: evaluates the resolved Tracks and triggers the

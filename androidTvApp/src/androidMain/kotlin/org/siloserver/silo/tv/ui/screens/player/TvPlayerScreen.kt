@@ -107,6 +107,7 @@ import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.player.ActivePlayerHolder
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.DisplayHdrProbe
+import org.siloserver.silo.common.player.findActivity
 import org.siloserver.silo.common.player.HdrDisplayController
 import org.siloserver.silo.common.player.LetterboxInsets
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
@@ -1424,6 +1425,21 @@ fun TvPlayerScreen(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
+    }
+
+    // Tell capability detection which display owns this player so the
+    // output context and preflight describe the panel showing the video
+    // rather than the default display.
+    DisposableEffect(context) {
+        val activity = context.findActivity()
+        capabilityDetector.playbackDisplayId = if (
+            activity != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R
+        ) {
+            runCatching { activity.display?.displayId }.getOrNull()
+        } else {
+            null
+        }
+        onDispose { capabilityDetector.playbackDisplayId = null }
     }
 
     // Preflight listener — falls back to a transcoded stream if the selected
