@@ -10,8 +10,8 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -52,9 +52,11 @@ class TvProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
-        advanceUntilIdle()
+        // The mock HTTP calls complete on Ktor's own dispatcher, not the test
+        // scheduler, so advancing the test scheduler can return before the load lands.
+        val loaded = viewModel.uiState.first { !it.isLoading }
 
-        assertTrue(viewModel.uiState.value.canManageProfiles)
+        assertTrue(loaded.canManageProfiles)
     }
 
     @Test
@@ -67,9 +69,9 @@ class TvProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
-        advanceUntilIdle()
+        val loaded = viewModel.uiState.first { !it.isLoading }
 
-        assertFalse(viewModel.uiState.value.canManageProfiles)
+        assertFalse(loaded.canManageProfiles)
     }
 
     @Test
@@ -83,9 +85,9 @@ class TvProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
-        advanceUntilIdle()
+        val loaded = viewModel.uiState.first { !it.isLoading }
 
-        assertFalse(viewModel.uiState.value.canManageProfiles)
+        assertFalse(loaded.canManageProfiles)
     }
 
     @Test
@@ -95,9 +97,9 @@ class TvProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = null,
         )
-        advanceUntilIdle()
+        val loaded = viewModel.uiState.first { !it.isLoading }
 
-        assertFalse(viewModel.uiState.value.canManageProfiles)
+        assertFalse(loaded.canManageProfiles)
     }
 
     @Test
@@ -111,7 +113,7 @@ class TvProfileSelectionAdminGateTest {
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
-        advanceUntilIdle()
+        viewModel.uiState.first { !it.isLoading }
 
         viewModel.toggleManageMode()
         assertFalse(viewModel.uiState.value.isManageMode)

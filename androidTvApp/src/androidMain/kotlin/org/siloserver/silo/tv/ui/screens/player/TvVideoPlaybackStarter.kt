@@ -379,6 +379,7 @@ class TvVideoPlaybackStarter(
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun resolveTvInitialAudioTrackIndex(
     requestedAudioIndex: Int?,
     carriedAudioIndex: Int?,
