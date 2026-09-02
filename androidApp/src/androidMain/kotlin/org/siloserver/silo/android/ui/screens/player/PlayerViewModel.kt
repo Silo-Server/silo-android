@@ -48,6 +48,7 @@ import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
 import org.siloserver.silo.common.player.video.canPlayResolvedStreamDirectly
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
+import org.siloserver.silo.common.player.video.serverTerminalUserMessage
 import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
@@ -1899,8 +1900,7 @@ class PlayerViewModel(
                     }
                     is VideoSessionStartV3.Terminal -> {
                         val failedSessionId = state.sessionId ?: return@launch
-                        val terminalMessage =
-                            "Playback unavailable (${decision.reason}): ${decision.message}"
+                        val terminalMessage = serverTerminalUserMessage(decision.message)
                         val terminalStillCurrent = sessionLifecycle.stopTerminalSessionIfCurrent(
                             expectedSessionId = failedSessionId,
                             isCurrent = {

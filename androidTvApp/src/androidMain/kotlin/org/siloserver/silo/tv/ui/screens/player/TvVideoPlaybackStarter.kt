@@ -23,6 +23,7 @@ import org.siloserver.silo.common.player.video.EpisodeAudioMode
 import org.siloserver.silo.common.player.video.resolveEpisodeAudioIntent
 import org.siloserver.silo.common.player.video.resolveEpisodeSubtitleIntent
 import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
+import org.siloserver.silo.common.player.video.serverTerminalUserMessage
 import org.siloserver.silo.common.player.video.shouldReachServerForPlayback
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
@@ -227,7 +228,7 @@ class TvVideoPlaybackStarter(
                 is VideoSessionStartV3.Ready -> v3Start
                 is VideoSessionStartV3.Terminal -> return failure(
                     request.contentId,
-                    "Playback unavailable (${v3Start.reason}): ${v3Start.message}",
+                    serverTerminalUserMessage(v3Start.message),
                     diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal(v3Start.reason),
                 )
                 VideoSessionStartV3.ServerUpgradeRequired -> return failure(
