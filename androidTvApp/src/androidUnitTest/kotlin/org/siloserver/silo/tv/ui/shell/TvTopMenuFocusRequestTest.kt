@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 
 class TvTopMenuFocusRequestTest {
     @Test
-    fun shellPagesShareOneTopNavigationShadow() {
+    fun shellPagesDoNotDrawATopNavigationShadow() {
         val barSource = File(
             "src/androidMain/kotlin/org/siloserver/silo/tv/ui/shell/TvTopMenuBar.kt",
         ).readText()
@@ -20,9 +20,8 @@ class TvTopMenuFocusRequestTest {
             "src/androidMain/kotlin/org/siloserver/silo/tv/ui/components/TvRootHeroBackdrop.kt",
         ).readText()
 
-        assertTrue(barSource.contains("internal fun TvTopMenuDropShadow("))
-        assertTrue(shellSource.contains("TvTopMenuDropShadow("))
-        assertTrue(shellSource.contains("visibility = if (currentRoute == TvMainRoute.Settings.route)"))
+        assertFalse(barSource.contains("internal fun TvTopMenuDropShadow("))
+        assertFalse(shellSource.contains("TvTopMenuDropShadow("))
         assertFalse(rootBackdropSource.contains("TopScrimHeight"))
     }
 
