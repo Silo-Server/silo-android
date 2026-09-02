@@ -161,6 +161,12 @@ data class VideoPlayerMediaSpec(
     val expectedColorRange: String? = null,
     val transformations: List<String> = emptyList(),
     val runtimeCorrections: List<String> = emptyList(),
+    /**
+     * Delivery-scoped validated claims the plan relies on
+     * (for example [org.siloserver.silo.model.playback.CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM]),
+     * derived from the plan's decision reason. Drives renderer decoder routing.
+     */
+    val activeClaims: List<String> = emptyList(),
 ) {
     val startPositionMs: Long
         get() {

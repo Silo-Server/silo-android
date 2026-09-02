@@ -83,4 +83,22 @@ class TvPlaybackOutputPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `intersection keeps decoder profile bounds only for surviving profiles`() {
+        val effective = TvPlaybackOutputPolicy.effectiveHdrCapabilities(
+            codec = HdrCapabilities(
+                hdr10 = true,
+                dolbyVisionProfiles = listOf(5, 8),
+                dolbyVisionProfileLevels = listOf(
+                    org.siloserver.silo.model.playback.DolbyVisionProfileCapability(5, 9),
+                    org.siloserver.silo.model.playback.DolbyVisionProfileCapability(8, 9),
+                ),
+            ),
+            display = HdrCapabilities(hdr10 = true, dolbyVisionProfiles = listOf(8)),
+        )
+
+        assertEquals(listOf(8), effective.dolbyVisionProfiles)
+        assertEquals(listOf(8), effective.dolbyVisionProfileLevels.map { it.profile })
+    }
 }

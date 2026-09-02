@@ -25,6 +25,12 @@ internal data class SiloMediaTransformTag(
     val dolbyVisionMode: DolbyVisionTransformMode,
     val expectedDynamicRange: String? = null,
     val expectedColorRange: String? = null,
+    /**
+     * The plan authorised the Profile 8 base-layer fallback: the extractor
+     * repairs colour info from the base layer's compatibility id rather than
+     * assuming PQ, and [expectedDynamicRange] names the promised base range.
+     */
+    val dolbyVisionBaseLayerRoute: Boolean = false,
 )
 
 internal class DolbyVisionTransformException(

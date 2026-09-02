@@ -148,10 +148,14 @@ class AudioCapabilityManager(
         _outputRouteGeneration.value = generation
     }
 
-    private var lastDisplayHdr = DisplayHdrProbe.probe(appContext)
+    // Compared as the detailed result so an evidence-tier change (a probe
+    // that went from unknown to a confirmed SDR panel, or a display hot-plug
+    // that swapped the owning display) also rotates the output context id
+    // and triggers the bounded output_change replan.
+    private var lastDisplayHdr = DisplayHdrProbe.probeDetailed(appContext)
 
     private fun publishDisplayCapabilitiesIfChanged() {
-        val next = DisplayHdrProbe.probe(appContext)
+        val next = DisplayHdrProbe.probeDetailed(appContext)
         if (next == lastDisplayHdr) return
         lastDisplayHdr = next
         bumpOutputRouteGeneration()

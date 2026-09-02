@@ -37,6 +37,12 @@ internal class DolbyVisionColorInfoExtractorsFactory(
     private val converter: DolbyVisionRpuConverter = NativeDolbyVisionRpuConverter,
     private val expectedDynamicRange: String? = null,
     private val expectedColorRange: String? = null,
+    /**
+     * The plan authorised the Profile 8 base-layer route. The Dolby Vision
+     * colour repair then follows [expectedDynamicRange] (the promised base
+     * range) instead of assuming a PQ base layer.
+     */
+    private val dolbyVisionBaseLayerRoute: Boolean = false,
 ) : ExtractorsFactory {
     override fun createExtractors(): Array<Extractor> =
         delegate.createExtractors().map(::wrap).toTypedArray()
@@ -55,6 +61,7 @@ internal class DolbyVisionColorInfoExtractorsFactory(
             converter,
             expectedDynamicRange,
             expectedColorRange,
+            dolbyVisionBaseLayerRoute,
         )
 
     private class ColorInfoExtractor(
@@ -63,6 +70,7 @@ internal class DolbyVisionColorInfoExtractorsFactory(
         private val converter: DolbyVisionRpuConverter,
         private val expectedDynamicRange: String?,
         private val expectedColorRange: String?,
+        private val dolbyVisionBaseLayerRoute: Boolean,
     ) : Extractor by delegate {
         private var output: ColorInfoExtractorOutput? = null
 
@@ -73,6 +81,7 @@ internal class DolbyVisionColorInfoExtractorsFactory(
                 converter,
                 expectedDynamicRange,
                 expectedColorRange,
+                dolbyVisionBaseLayerRoute,
             )
             this.output = wrapped
             delegate.init(wrapped)
@@ -96,6 +105,7 @@ internal class DolbyVisionColorInfoExtractorsFactory(
         private val converter: DolbyVisionRpuConverter,
         private val expectedDynamicRange: String?,
         private val expectedColorRange: String?,
+        private val dolbyVisionBaseLayerRoute: Boolean,
     ) : ExtractorOutput {
         private val tracks = mutableMapOf<Int, TrackOutput>()
 
@@ -106,6 +116,7 @@ internal class DolbyVisionColorInfoExtractorsFactory(
                     output,
                     expectedDynamicRange,
                     expectedColorRange,
+                    dolbyVisionBaseLayerRoute,
                 )
                 if (transformMode != DolbyVisionTransformMode.DISABLED) {
                     DolbyVisionTransformingTrackOutput(colorInfoOutput, transformMode, converter)
@@ -130,6 +141,7 @@ internal class DolbyVisionColorInfoExtractorsFactory(
         private val delegate: TrackOutput,
         private val expectedDynamicRange: String?,
         private val expectedColorRange: String?,
+        private val dolbyVisionBaseLayerRoute: Boolean,
     ) : TrackOutput {
         override fun durationUs(durationUs: Long) = delegate.durationUs(durationUs)
 
@@ -138,7 +150,9 @@ internal class DolbyVisionColorInfoExtractorsFactory(
                 format
                     .withValidatedColorRange(expectedColorRange)
                     .withValidatedDynamicRangeColorInfo(expectedDynamicRange)
-                    .withDolbyVisionHdrColorInfo(),
+                    .withDolbyVisionHdrColorInfo(
+                        baseLayerRange = expectedDynamicRange.takeIf { dolbyVisionBaseLayerRoute },
+                    ),
             )
         }
 
@@ -218,9 +232,16 @@ internal fun Format.withValidatedDynamicRangeColorInfo(expectedDynamicRange: Str
     return buildUpon().setColorInfo(repaired).build()
 }
 
+/**
+ * @param baseLayerRange when the plan authorised the Profile 8 base-layer
+ * route, the promised base range (`hdr10`, `hlg`, `sdr`). A PQ repair is then
+ * applied only for `hdr10`; an HLG or SDR base layer is left to the HLG
+ * repair above or to the container's own signalling, never rewritten to PQ.
+ */
 @UnstableApi
-internal fun Format.withDolbyVisionHdrColorInfo(): Format {
+internal fun Format.withDolbyVisionHdrColorInfo(baseLayerRange: String? = null): Format {
     if (sampleMimeType != MimeTypes.VIDEO_DOLBY_VISION) return this
+    if (baseLayerRange != null && !baseLayerRange.equals("hdr10", ignoreCase = true)) return this
     val current = colorInfo
     // Do not rewrite a valid non-PQ base layer (notably Profile 8.4 HLG).
     // This repair exists only for containers where Media3 emitted no usable

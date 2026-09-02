@@ -24,6 +24,15 @@ interface VideoPlaybackBackend {
 
     fun refresh(spec: VideoPlayerMediaSpec)
 
+    /**
+     * Emits the decoder name when the mounted plan promised a Dolby Vision
+     * Profile 8 base-layer route and the engine opened a decoder that cannot
+     * honour it. Null while the promise holds or when the backend has no such
+     * check. Reset on every mount.
+     */
+    val baseLayerDecoderMismatch: kotlinx.coroutines.flow.StateFlow<String?>
+        get() = kotlinx.coroutines.flow.MutableStateFlow(null)
+
     fun selectSubtitle(track: VideoPlayerTrackEntry?): Boolean
 
     fun selectMountedSubtitle(

@@ -4,6 +4,7 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failureDiagnostics
+import org.siloserver.silo.common.player.failureClassification
 
 import org.siloserver.silo.tv.BuildConfig
 
@@ -2339,6 +2340,11 @@ class TvPlayerViewModel(
         val notice = when (reason) {
             is org.siloserver.silo.common.player.Playability.UnsupportedDvProfile ->
                 "This device cannot play Dolby Vision Profile ${reason.profile}. Falling back to transcoded stream."
+            is org.siloserver.silo.common.player.Playability.DvBaseLayerMetadataMismatch,
+            is org.siloserver.silo.common.player.Playability.DvBaseLayerOutputMismatch,
+            is org.siloserver.silo.common.player.Playability.DvBaseLayerDecoderUnavailable,
+            ->
+                "The Dolby Vision base-layer route could not be verified on this output. Requesting another route."
             is org.siloserver.silo.common.player.Playability.UnsupportedAudioCodec ->
                 "Lossless audio not supported on this output. Falling back to transcoded stream."
             is org.siloserver.silo.common.player.Playability.UnsupportedChannelCount ->
@@ -2674,14 +2680,6 @@ class TvPlayerViewModel(
                 )
             }
         }
-    }
-
-    private fun org.siloserver.silo.common.player.Playability.failureClassification(): String = when (this) {
-        is org.siloserver.silo.common.player.Playability.UnsupportedDvProfile -> "unsupported_dolby_vision_profile"
-        is org.siloserver.silo.common.player.Playability.UnsupportedAudioCodec -> "unsupported_audio_encoding"
-        is org.siloserver.silo.common.player.Playability.UnsupportedChannelCount -> "unsupported_audio_layout"
-        is org.siloserver.silo.common.player.Playability.StartupStalled -> classification
-        org.siloserver.silo.common.player.Playability.Supported -> "none"
     }
 
     private fun androidx.media3.common.PlaybackException.failureClassification(): String =

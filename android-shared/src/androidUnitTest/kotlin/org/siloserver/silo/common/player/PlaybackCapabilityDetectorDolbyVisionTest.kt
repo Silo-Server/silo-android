@@ -15,6 +15,7 @@ import org.siloserver.silo.model.playback.DELIVERY_CLASS_ORIGINAL_HTTP
 import org.siloserver.silo.model.playback.DELIVERY_CLASS_PROGRESSIVE
 import org.siloserver.silo.model.playback.NATIVE_HLS_PLAYBACK_V1_FEATURE
 import org.siloserver.silo.model.playback.CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM
+import org.siloserver.silo.model.playback.CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -167,6 +168,119 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
         assertEquals(
             listOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10),
             transformations.map { it.name },
+        )
+    }
+
+    @Test
+    fun baseLayerPlanAcceptsProfile8WhenOutputCarriesPromisedRange() {
+        val verdict = evaluateDolbyVisionRoute(
+            profile = 8,
+            route = PlannedVideoRoute.DolbyVisionProfile8BaseLayer(baseRange = "hdr10"),
+            nativeHdr = HdrCapabilities(hdr10 = true),
+        )
+
+        assertEquals(Playability.Supported, verdict)
+    }
+
+    @Test
+    fun baseLayerPlanRejectsProfile8WhenOutputLostPromisedRange() {
+        val verdict = evaluateDolbyVisionRoute(
+            profile = 8,
+            route = PlannedVideoRoute.DolbyVisionProfile8BaseLayer(baseRange = "hlg"),
+            nativeHdr = HdrCapabilities(hdr10 = true),
+        )
+
+        assertEquals(Playability.DvBaseLayerOutputMismatch(profile = 8, baseRange = "hlg"), verdict)
+        assertEquals("dv8_base_layer_output_mismatch", verdict.failureClassification())
+    }
+
+    @Test
+    fun baseLayerPlanRejectsTrackThatIsNotProfile8() {
+        val verdict = evaluateDolbyVisionRoute(
+            profile = 5,
+            route = PlannedVideoRoute.DolbyVisionProfile8BaseLayer(baseRange = "hdr10"),
+            nativeHdr = HdrCapabilities(hdr10 = true),
+        )
+
+        assertEquals(Playability.DvBaseLayerMetadataMismatch(profile = 5, baseRange = "hdr10"), verdict)
+    }
+
+    @Test
+    fun nativeOrUnspecifiedPlanStillRequiresDecoderAndDisplayProfile() {
+        listOf(PlannedVideoRoute.NativeDolbyVision, PlannedVideoRoute.Unspecified).forEach { route ->
+            assertEquals(
+                Playability.UnsupportedDvProfile(8),
+                evaluateDolbyVisionRoute(profile = 8, route = route, nativeHdr = HdrCapabilities(hdr10 = true)),
+                "$route must not admit Dolby Vision on an output without native DV",
+            )
+        }
+    }
+
+    @Test
+    fun plannedRouteIsDerivedFromDecisionReasonAndRecipe() {
+        assertEquals(
+            PlannedVideoRoute.DolbyVisionProfile8BaseLayer("hdr10"),
+            plannedVideoRouteFor(
+                decisionReason = org.siloserver.silo.model.playback.DECISION_REASON_CLIENT_DV8_BASE_LAYER,
+                effectiveDynamicRange = "HDR10",
+                clientTransformations = emptyList(),
+            ),
+        )
+        assertEquals(
+            PlannedVideoRoute.NativeDolbyVision,
+            plannedVideoRouteFor("validated_original_playback", "dolby_vision", emptyList()),
+        )
+        assertEquals(
+            PlannedVideoRoute.ClientTransformed,
+            plannedVideoRouteFor("client_dv7_to_hdr10", "hdr10", listOf(CLIENT_DV7_TO_HDR10)),
+        )
+        assertEquals(PlannedVideoRoute.Unspecified, plannedVideoRouteFor(null, null, emptyList()))
+    }
+
+    @Test
+    fun originalHttpAdvertisesBaseLayerClaimOnlyWithTenBitHardwareHevc() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+        val withHevc = detector.detectPlaybackContext(
+            formFactor = "tv",
+            appVersion = "test",
+            capabilities = ClientCodecCapabilities(
+                videoDecode = listOf(
+                    org.siloserver.silo.model.playback.VideoDecodeCapability(
+                        codec = "hevc",
+                        bitDepths = listOf(8, 10),
+                        hardware = true,
+                    ),
+                ),
+            ),
+        )
+        val without = detector.detectPlaybackContext(
+            formFactor = "tv",
+            appVersion = "test",
+            capabilities = ClientCodecCapabilities(),
+        )
+
+        assertTrue(
+            CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in withHevc.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP).validatedClaims,
+        )
+        assertFalse(
+            CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in without.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP).validatedClaims,
+        )
+        assertFalse(
+            CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in withHevc.deliveries.getValue(DELIVERY_CLASS_HLS).validatedClaims,
+            "the base-layer claim is scoped to original_http",
+        )
+        assertTrue(
+            withHevc.output.display?.hdrEvidence in setOf(
+                org.siloserver.silo.model.playback.OUTPUT_HDR_EVIDENCE_EXACT,
+                org.siloserver.silo.model.playback.OUTPUT_HDR_EVIDENCE_UNKNOWN,
+            ),
+            "the output context must carry the display evidence tier",
         )
     }
 }

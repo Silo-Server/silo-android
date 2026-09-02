@@ -30,6 +30,7 @@ fun mountVideoMedia(
         expectedColorRange = spec.expectedColorRange,
         transformations = spec.transformations,
         runtimeCorrections = spec.runtimeCorrections,
+        activeClaims = spec.activeClaims,
     )
     player.setMediaItem(mediaItem, startPositionMs.coerceAtLeast(0L))
     player.prepare()
@@ -62,6 +63,7 @@ fun refreshMountedVideoMedia(
         expectedColorRange = spec.expectedColorRange,
         transformations = spec.transformations,
         runtimeCorrections = spec.runtimeCorrections,
+        activeClaims = spec.activeClaims,
     )
     player.setMediaItem(mediaItem, resumePositionMs)
     player.prepare()

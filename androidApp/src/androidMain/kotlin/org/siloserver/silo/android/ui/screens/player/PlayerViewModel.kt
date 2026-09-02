@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failureDiagnostics
+import org.siloserver.silo.common.player.failureClassification
 
 import android.os.SystemClock
 import android.util.Log
@@ -1441,6 +1442,11 @@ class PlayerViewModel(
         val notice = when (reason) {
             is Playability.UnsupportedDvProfile ->
                 "This device cannot play Dolby Vision Profile ${reason.profile}. Falling back to transcoded stream."
+            is Playability.DvBaseLayerMetadataMismatch,
+            is Playability.DvBaseLayerOutputMismatch,
+            is Playability.DvBaseLayerDecoderUnavailable,
+            ->
+                "The Dolby Vision base-layer route could not be verified on this output. Requesting another route."
             is Playability.UnsupportedAudioCodec ->
                 "Lossless audio not supported on this output. Falling back to transcoded stream."
             is Playability.UnsupportedChannelCount ->
@@ -1947,14 +1953,6 @@ class PlayerViewModel(
                 )
             }
         }
-    }
-
-    private fun Playability.failureClassification(): String = when (this) {
-        is Playability.UnsupportedDvProfile -> "unsupported_dolby_vision_profile"
-        is Playability.UnsupportedAudioCodec -> "unsupported_audio_encoding"
-        is Playability.UnsupportedChannelCount -> "unsupported_audio_layout"
-        is Playability.StartupStalled -> classification
-        Playability.Supported -> "none"
     }
 
     private fun androidx.media3.common.PlaybackException.failureClassification(): String =

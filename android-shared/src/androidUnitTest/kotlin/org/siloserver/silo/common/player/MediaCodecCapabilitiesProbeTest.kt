@@ -167,4 +167,21 @@ class MediaCodecCapabilitiesProbeTest {
         assertFalse(MediaCodecCapabilitiesProbe.isLikelySoftwareDecoderName("OMX.Nvidia.mpeg2v.decode"))
         assertFalse(MediaCodecCapabilitiesProbe.isLikelySoftwareDecoderName("c2.amlogic.hevc.decoder"))
     }
+
+    @Test
+    fun `Dolby Vision decoders are listed with profile and level bounds`() {
+        assertEquals("dolby_vision", MediaCodecCapabilitiesProbe.codecName("video/dolby-vision"))
+        assertEquals(
+            "profile 8",
+            MediaCodecCapabilitiesProbe.profileName("dolby_vision", CodecProfileLevel.DolbyVisionProfileDvheSt),
+        )
+        assertEquals(
+            10,
+            MediaCodecCapabilitiesProbe.profileBitDepth("dolby_vision", CodecProfileLevel.DolbyVisionProfileDvheSt),
+        )
+        assertEquals(7, MediaCodecCapabilitiesProbe.dolbyVisionProfileNumber(CodecProfileLevel.DolbyVisionProfileDvheDtb))
+        assertEquals(9, MediaCodecCapabilitiesProbe.dolbyVisionLevelNumber(CodecProfileLevel.DolbyVisionLevelUhd60))
+        assertEquals(6, MediaCodecCapabilitiesProbe.normalizedLevel("dolby_vision", CodecProfileLevel.DolbyVisionLevelUhd24))
+        assertNull(MediaCodecCapabilitiesProbe.dolbyVisionLevelNumber(0))
+    }
 }
