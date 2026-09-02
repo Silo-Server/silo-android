@@ -278,7 +278,7 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
         )
         assertFalse(
             CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in hevcWithoutRange.deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP).validatedClaims,
-            "a Main10-only decoder with no HDR range in the intersection must not claim a route preflight would refuse",
+            "a Main10-only decoder with an unprobed display must not claim a route preflight would refuse",
         )
         assertFalse(
             CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM in withHevc.deliveries.getValue(DELIVERY_CLASS_HLS).validatedClaims,
@@ -290,6 +290,38 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
                 org.siloserver.silo.model.playback.OUTPUT_HDR_EVIDENCE_UNKNOWN,
             ),
             "the output context must carry the display evidence tier",
+        )
+    }
+
+    @Test
+    fun baseLayerClaimGateAcceptsConfirmedSdrPanelForSdrBases() {
+        val hevc10 = ClientCodecCapabilities(
+            videoDecode = listOf(
+                org.siloserver.silo.model.playback.VideoDecodeCapability(
+                    codec = "hevc",
+                    bitDepths = listOf(8, 10),
+                    hardware = true,
+                ),
+            ),
+        )
+        assertTrue(
+            canAdvertiseDv8BaseLayerFallback(hevc10, DisplayHdrProbeResult.Exact(HdrCapabilities(), displayId = 0)),
+            "a confirmed SDR panel can present a compat-2 SDR base through the Main10 path",
+        )
+        assertFalse(
+            canAdvertiseDv8BaseLayerFallback(hevc10, DisplayHdrProbeResult.Unknown(displayId = null, reason = "probe_failed")),
+            "an unknown display never earns the claim",
+        )
+        assertFalse(
+            canAdvertiseDv8BaseLayerFallback(
+                hevc10,
+                DisplayHdrProbeResult.Exact(HdrCapabilities(hdr10 = true), displayId = 0),
+            ),
+            "an HDR panel with no HDR range in the intersection means the decoder cannot signal it; no claim",
+        )
+        assertFalse(
+            canAdvertiseDv8BaseLayerFallback(ClientCodecCapabilities(), DisplayHdrProbeResult.Exact(HdrCapabilities(), displayId = 0)),
+            "no 10-bit hardware HEVC decoder, no claim",
         )
     }
 }

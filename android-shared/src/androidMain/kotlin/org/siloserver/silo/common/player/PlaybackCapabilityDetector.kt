@@ -419,7 +419,7 @@ class PlaybackCapabilityDetector(
                         // uses (an HDR10 or HLG range the HEVC path can carry
                         // on this output), so a claim can never be issued
                         // that preflight would immediately refuse.
-                        if (canAdvertiseDv8BaseLayerFallback(caps)) {
+                        if (canAdvertiseDv8BaseLayerFallback(caps, lastDisplayProbe)) {
                             add(CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM)
                         }
                     },
@@ -721,17 +721,29 @@ internal fun isDirectPlayableDolbyVisionProfile(
 
 /**
  * The base-layer claim is only truthful when preflight would accept the plan
- * it produces: an HDR-capable hardware HEVC decoder plus at least one base
- * range (HDR10 or HLG) present in the decoder ∩ display intersection that
- * [PlaybackCapabilityDetector.evaluateTracks] checks. A decoder that reports
- * only the plain Main10 profile earns no HDR range from the codec probe and
- * therefore no claim, instead of a claim that fails on the first track change.
- * An SDR-base (compat 2) source is still served by the server's own gate.
+ * it produces, using the same decoder ∩ display facts that
+ * [PlaybackCapabilityDetector.evaluateTracks] checks:
+ *
+ * - a 10-bit hardware HEVC decoder, and
+ * - either an HDR10 or HLG range in the intersection (for compat 1/4/6
+ *   bases), or a confirmed SDR display (for a compat 2 SDR base, which the
+ *   Main10 path presents without any HDR signalling).
+ *
+ * A decoder that reports only the plain Main10 profile on an HDR panel earns
+ * no HDR range from the codec probe and therefore no claim, instead of a
+ * claim that fails on the first track change. An unknown display probe never
+ * earns the claim: the server would fail closed on it anyway.
  */
-internal fun canAdvertiseDv8BaseLayerFallback(caps: ClientCodecCapabilities): Boolean {
+internal fun canAdvertiseDv8BaseLayerFallback(
+    caps: ClientCodecCapabilities,
+    display: DisplayHdrProbeResult?,
+): Boolean {
     val hevc10 = caps.videoDecode.any { it.codec == "hevc" && 10 in it.bitDepths && it.hardware }
-    val hdr = caps.hdrDetails ?: return false
-    return hevc10 && (hdr.hdr10 || hdr.hlg)
+    if (!hevc10) return false
+    val hdr = caps.hdrDetails ?: HdrCapabilities()
+    if (hdr.hdr10 || hdr.hlg) return true
+    val panel = display as? DisplayHdrProbeResult.Exact ?: return false
+    return !panel.hdr.hdr10 && !panel.hdr.hlg && panel.hdr.dolbyVisionProfiles.isEmpty()
 }
 
 private fun HdrCapabilities.withDolbyVisionPolicy(dolbyVision: DolbyVisionPolicy.Snapshot): HdrCapabilities {
