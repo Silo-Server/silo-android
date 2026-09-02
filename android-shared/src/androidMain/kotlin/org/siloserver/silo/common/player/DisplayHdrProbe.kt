@@ -60,6 +60,12 @@ sealed class DisplayHdrProbeResult {
  */
 object DisplayHdrProbe {
 
+    /**
+     * Every Dolby Vision profile the codec probe can report. The panel flag is
+     * generic, so it must not exclude a profile the decoder supports.
+     */
+    internal val PANEL_DOLBY_VISION_PROFILES: List<Int> = (0..10).toList()
+
     /** Immutable, read-only evidence for diagnostics; never changes display state. */
     fun diagnosticsSnapshot(context: Context): DisplayDiagnosticsSnapshot? {
         val display = resolveDisplay(context) ?: return null
@@ -112,11 +118,15 @@ object DisplayHdrProbe {
 
         val types: Set<Int>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             // Per-mode HDR types are the current API; a panel can carry HDR10
-            // at 4K60 but not at 4K120. Report the union so a later mode switch
-            // can only narrow, never surprise, the plan.
-            val perMode = display.supportedModes.flatMap { it.supportedHdrTypes.toList() }
-            if (perMode.isNotEmpty()) {
-                perMode.toSet()
+            // at 4K60 but not at 4K120. Report the *active* mode only: the
+            // refresh-rate matcher switches modes by resolution and rate, and
+            // the display listener re-probes on every change, so a switch
+            // onto a mode without HDR rotates the output context and replans
+            // instead of leaving a stale union in place.
+            val activeMode = runCatching { display.mode }.getOrNull()
+            val anyModeDeclares = display.supportedModes.any { it.supportedHdrTypes.isNotEmpty() }
+            if (activeMode != null && anyModeDeclares) {
+                activeMode.supportedHdrTypes.toSet()
             } else {
                 @Suppress("DEPRECATION")
                 display.hdrCapabilities?.supportedHdrTypes?.toSet()
@@ -141,16 +151,16 @@ object DisplayHdrProbe {
         // only reports whether the link/panel carries DV at all. The codec
         // probe (MediaCodecCapabilitiesProbe) enumerates actual profile
         // support (and already strips P7 without multi-instance HEVC), so
-        // this layer must list every profile we model or the intersection
-        // silently drops legitimate decoder claims — listing only [5, 8]
-        // here is what previously made native P7 support undetectable even
-        // on dual-layer-capable hardware.
+        // this layer lists every profile the codec probe can emit or the
+        // intersection silently drops legitimate decoder claims — listing
+        // only [5, 8] here is what previously made native P7 support
+        // undetectable even on dual-layer-capable hardware.
         return DisplayHdrProbeResult.Exact(
             HdrCapabilities(
                 hdr10 = hdr10,
                 hdr10Plus = hdr10p,
                 hlg = hlg,
-                dolbyVisionProfiles = if (dv) listOf(5, 7, 8) else emptyList(),
+                dolbyVisionProfiles = if (dv) PANEL_DOLBY_VISION_PROFILES else emptyList(),
             ),
             displayId,
         )
