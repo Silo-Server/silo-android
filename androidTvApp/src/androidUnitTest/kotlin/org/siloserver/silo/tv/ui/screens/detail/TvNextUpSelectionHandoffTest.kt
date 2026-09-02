@@ -71,6 +71,60 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvNextUpSelectionHandoffTest {
     @Test
+    fun cancelledPriorSeasonCannotEndReplacementLoad() = runDetailTest {
+        val scenario = Scenario(suffix = "-cancelled-season-owner")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+
+        scenario.seasonOneEpisodesGate = CompletableDeferred()
+        scenario.seasonTwoEpisodesGate = CompletableDeferred()
+        fixture.viewModel.onSeasonSelected(2)
+        awaitCondition {
+            fixture.viewModel.uiState.value.let { it.selectedSeason == 2 && it.episodesLoading }
+        }
+
+        fixture.viewModel.onSeasonSelected(1)
+        awaitCondition { fixture.viewModel.uiState.value.selectedSeason == 1 }
+        delay(20)
+
+        assertTrue(
+            fixture.viewModel.uiState.value.episodesLoading,
+            "a canceled season request must not end the replacement request's loading state",
+        )
+
+        scenario.seasonOneEpisodesGate?.complete(Unit)
+        scenario.seasonTwoEpisodesGate?.complete(Unit)
+        awaitCondition {
+            fixture.viewModel.uiState.value.let { state ->
+                !state.episodesLoading && state.episodes.all { it.seasonNumber == 1 }
+            }
+        }
+    }
+
+    @Test
+    fun seasonRefreshStartedAfterSelectionKeepsThatSelection() = runDetailTest {
+        val scenario = Scenario(suffix = "-season-refresh-after-selection")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+
+        fixture.viewModel.onSeasonSelected(2)
+        awaitCondition {
+            fixture.viewModel.uiState.value.episodes.any { it.seasonNumber == 2 }
+        }
+
+        val seasonsBeforeRefresh = scenario.seasonsRequests.get()
+        scenario.seasonsGate = CompletableDeferred()
+        fixture.viewModel.loadAll()
+        awaitCondition { scenario.seasonsRequests.get() > seasonsBeforeRefresh }
+
+        scenario.seasonsGate?.complete(Unit)
+        awaitCondition { !fixture.viewModel.uiState.value.seasonsLoading }
+
+        assertEquals(2, fixture.viewModel.uiState.value.selectedSeason)
+        assertTrue(fixture.viewModel.uiState.value.episodes.all { it.seasonNumber == 2 })
+    }
+
+    @Test
     fun delayedSeasonRefreshPreservesNewerSelectionAndInvalidatesOldPlayTarget() = runDetailTest {
         val scenario = Scenario(suffix = "-season-refresh")
         val fixture = createFixture(scenario)
@@ -658,6 +712,7 @@ class TvNextUpSelectionHandoffTest {
         var episodeTwoGate: CompletableDeferred<Unit>? = null
         var episodeOneWatchGate: CompletableDeferred<Unit>? = null
         var seasonsGate: CompletableDeferred<Unit>? = null
+        var seasonOneEpisodesGate: CompletableDeferred<Unit>? = null
         var seasonTwoEpisodesGate: CompletableDeferred<Unit>? = null
         val seasonsRequests = AtomicInteger()
         val episodeTwoRequests = AtomicInteger()
@@ -686,7 +741,10 @@ class TvNextUpSelectionHandoffTest {
                             ]}""".trimIndent(),
                         )
                     }
-                    "/api/v1/catalog/series/$seriesId/seasons/1/episodes" -> json(episodesJson())
+                    "/api/v1/catalog/series/$seriesId/seasons/1/episodes" -> {
+                        seasonOneEpisodesGate?.await()
+                        json(episodesJson())
+                    }
                     "/api/v1/catalog/series/$seriesId/seasons/2/episodes" -> {
                         seasonTwoEpisodesGate?.await()
                         json(

@@ -4,8 +4,54 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.siloserver.silo.model.calendar.CalendarItem
 
 class TvCalendarFocusRoutingTest {
+    @Test
+    fun episodeDetailTargetCarriesSeriesSeasonAndEpisode() {
+        assertEquals(
+            TvCalendarDetailTarget(
+                contentId = "series-1",
+                seasonNumber = 3,
+                episodeContentId = "episode-7",
+            ),
+            tvCalendarDetailTarget(
+                calendarItem(
+                    contentId = "episode-7",
+                    type = "episode",
+                    seriesId = "series-1",
+                    seasonNumber = 3,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun incompleteEpisodeHierarchyFallsBackToStandaloneDetail() {
+        assertEquals(
+            TvCalendarDetailTarget(contentId = "episode-7"),
+            tvCalendarDetailTarget(
+                calendarItem(
+                    contentId = "episode-7",
+                    type = "episode",
+                    seriesId = " ",
+                    seasonNumber = 3,
+                ),
+            ),
+        )
+        assertEquals(
+            TvCalendarDetailTarget(contentId = "episode-7"),
+            tvCalendarDetailTarget(
+                calendarItem(
+                    contentId = "episode-7",
+                    type = "episode",
+                    seriesId = "series-1",
+                    seasonNumber = null,
+                ),
+            ),
+        )
+    }
+
     @Test
     fun firstFocusableShelfReturnsToControls() {
         assertTrue(shouldReturnCalendarFocusToControls(2, 2, false))
@@ -119,4 +165,19 @@ class TvCalendarFocusRoutingTest {
             ),
         )
     }
+
+    private fun calendarItem(
+        contentId: String,
+        type: String,
+        seriesId: String? = null,
+        seasonNumber: Int? = null,
+    ) = CalendarItem(
+        contentId = contentId,
+        type = type,
+        title = contentId,
+        seriesId = seriesId,
+        seasonNumber = seasonNumber,
+        airDate = "2026-09-01",
+        localAirDate = "2026-09-01",
+    )
 }
