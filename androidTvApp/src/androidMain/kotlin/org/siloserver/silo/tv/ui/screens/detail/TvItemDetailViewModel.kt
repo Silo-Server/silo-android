@@ -496,6 +496,23 @@ class TvItemDetailViewModel(
         }
     }
 
+    /**
+     * Resolves the parent before replacing a standalone season/episode route.
+     * A failed or malformed parent leaves the current detail on screen instead
+     * of turning incomplete hierarchy metadata into a dead-end Series page.
+     */
+    suspend fun hasSeriesDetailForRedirect(seriesContentId: String): Boolean {
+        val cached = catalogRepository.getCachedItemDetail(seriesContentId)
+        if (cached.isMatchingSeriesDetail(seriesContentId)) return true
+
+        return when (val resolved = catalogRepository.getItemDetail(seriesContentId)) {
+            is ApiResult.Success -> resolved.data.isMatchingSeriesDetail(seriesContentId)
+            is ApiResult.Error,
+            is ApiResult.NetworkError,
+            -> false
+        }
+    }
+
     fun loadAll() {
         viewModelScope.launch {
             runCatching { playerSettingsStore.refreshFromServer() }
@@ -606,7 +623,14 @@ class TvItemDetailViewModel(
                     // Restore a durably-persisted audio/subtitle override (TM4).
                     seedPersistedTrackSelection(detail)
                     when (detail.type.lowercase()) {
-                        "series" -> loadSeasons(seriesContentId = detail.contentId)
+                        "series" -> loadSeasons(
+                            seriesContentId = detail.contentId,
+                            // Cached navigation may already have applied an
+                            // entry-route season before this fresh detail
+                            // response arrives. Carry it into the refresh so
+                            // the default/in-progress season cannot replace it.
+                            preferredSeasonNumber = _uiState.value.selectedSeason,
+                        )
                         "season",
                         "episode",
                         -> detail.seriesId?.takeIf { it.isNotBlank() }?.let { seriesId ->
@@ -1067,6 +1091,7 @@ class TvItemDetailViewModel(
     }
 
     private var episodeLoadJob: kotlinx.coroutines.Job? = null
+    private var episodeLoadRequestGeneration: Long = 0
 
     /**
      * How far through [TvFavoriteRevalidationSession] this screen has caught up.
@@ -1129,14 +1154,30 @@ class TvItemDetailViewModel(
         // Cancel any in-flight episode load so a slower response for a
         // previously-selected season can't overwrite episodes/next-up for the
         // season the user is now on (rapid season switches / the initial
-        // selected-season load racing a route-driven season load).
+        // selected-season load racing a route-driven season load). Cancellation
+        // alone is insufficient because the network wrapper converts a caught
+        // CancellationException into an error result; the generation remains
+        // the authoritative owner of the network result publications below.
+        episodeLoadRequestGeneration += 1
+        val requestGeneration = episodeLoadRequestGeneration
         episodeLoadJob?.cancel()
         episodeLoadJob = viewModelScope.launch {
+            fun ownsRequest(): Boolean =
+                requestGeneration == episodeLoadRequestGeneration &&
+                    _uiState.value.selectedSeason == seasonNumber
+
+            if (!ownsRequest()) return@launch
             if (!quiet) _uiState.update { it.copy(episodesLoading = true) }
             seedCachedEpisodes(seriesContentId, seasonNumber)
-            when (val r = catalogRepository.getEpisodes(seriesContentId, seasonNumber)) {
+            if (!ownsRequest()) return@launch
+            val result = catalogRepository.getEpisodes(seriesContentId, seasonNumber)
+            if (!ownsRequest()) return@launch
+            when (result) {
                 is ApiResult.Success -> {
-                    val episodes = withLocalProgress(r.data.episodes.sortedBy { ep -> ep.episodeNumber })
+                    val episodes = withLocalProgress(
+                        result.data.episodes.sortedBy { episode -> episode.episodeNumber },
+                    )
+                    if (!ownsRequest()) return@launch
                     loadedSeason = seasonNumber
                     episodeListGeneration += 1
                     _uiState.update { it.copy(episodesLoading = false, episodes = episodes) }
@@ -1148,7 +1189,7 @@ class TvItemDetailViewModel(
                     // the signal when the reload failed; advancing after a
                     // FAILED probe would drop it just as permanently, leaving
                     // that one episode stale with nothing left to retry it.
-                    if (revalidationComplete) {
+                    if (revalidationComplete && ownsRequest()) {
                         favoritesVersion?.let { favoritesRevalidatedThrough = it }
                     }
                 }

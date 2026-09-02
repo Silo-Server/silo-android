@@ -141,10 +141,34 @@ import org.siloserver.silo.viewmodel.CalendarViewModel
  * Mirrors [org.siloserver.silo.tv.ui.screens.recommendations.TvRecommendationsScreen]
  * for the koinViewModel + initial-focus-once pattern.
  */
+internal data class TvCalendarDetailTarget(
+    val contentId: String,
+    val seasonNumber: Int? = null,
+    val episodeContentId: String? = null,
+)
+
+/** Carries an aired episode into the exact mode of the combined Series page. */
+internal fun tvCalendarDetailTarget(item: CalendarItem): TvCalendarDetailTarget {
+    val seriesContentId = item.seriesId?.trim()?.takeIf { it.isNotEmpty() }
+    if (item.isEpisode && seriesContentId != null && item.seasonNumber != null) {
+        return TvCalendarDetailTarget(
+            contentId = seriesContentId,
+            seasonNumber = item.seasonNumber,
+            episodeContentId = item.contentId,
+        )
+    }
+
+    return TvCalendarDetailTarget(contentId = item.contentId)
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @Composable
 fun TvCalendarScreen(
-    onOpenItemDetail: (contentId: String) -> Unit,
+    onOpenItemDetailSelection: (
+        contentId: String,
+        seasonNumber: Int?,
+        episodeContentId: String?,
+    ) -> Unit,
     onInitialContentFocus: () -> Unit = {},
     onMoveUpToMenu: () -> Unit = {},
     focusRequest: Int = 0,
@@ -488,7 +512,7 @@ fun TvCalendarScreen(
                 onItemClicked = { date, item, index ->
                     recordReturnTarget(date, item, index)
                 },
-                onOpenItemDetail = onOpenItemDetail,
+                onOpenItemDetailSelection = onOpenItemDetailSelection,
             )
         }
     }
@@ -993,7 +1017,11 @@ private fun CalendarList(
     onShelfFocusConsumed: () -> Unit,
     onItemFocused: (date: String, item: CalendarItem, index: Int, focused: Boolean) -> Unit,
     onItemClicked: (date: String, item: CalendarItem, index: Int) -> Unit,
-    onOpenItemDetail: (contentId: String) -> Unit,
+    onOpenItemDetailSelection: (
+        contentId: String,
+        seasonNumber: Int?,
+        episodeContentId: String?,
+    ) -> Unit,
 ) {
     val snapScope = rememberCoroutineScope()
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
@@ -1187,7 +1215,7 @@ private fun CalendarList(
                         focusedShelfIndex = null
                     }
                 },
-                onOpenItemDetail = onOpenItemDetail,
+                onOpenItemDetailSelection = onOpenItemDetailSelection,
             )
         }
             }
@@ -1214,7 +1242,11 @@ private fun DayShelf(
     onItemClicked: (item: CalendarItem, index: Int) -> Unit = { _, _ -> },
     onShelfFocused: () -> Unit = {},
     onShelfFocusChanged: (Boolean) -> Unit = {},
-    onOpenItemDetail: (contentId: String) -> Unit,
+    onOpenItemDetailSelection: (
+        contentId: String,
+        seasonNumber: Int?,
+        episodeContentId: String?,
+    ) -> Unit,
 ) {
     val targetCardFocusRequester = remember { FocusRequester() }
     val rowState = rememberLazyListState()
@@ -1289,11 +1321,15 @@ private fun DayShelf(
                         onFocusChanged = { focused -> onItemFocusChanged(item, index, focused) },
                         onClick = {
                             onItemClicked(item, index)
-                            // detailContentId is where the card GOES; contentId
-                            // is what the card IS. Several episodes of one show
-                            // share a destination, so identity has to come from
-                            // the item, not from the route.
-                            onOpenItemDetail(item.detailContentId)
+                            // Identity still comes from the event contentId,
+                            // while the target carries its parent Series plus
+                            // the exact season/episode mode to restore.
+                            val target = tvCalendarDetailTarget(item)
+                            onOpenItemDetailSelection(
+                                target.contentId,
+                                target.seasonNumber,
+                                target.episodeContentId,
+                            )
                         },
                     )
                 }

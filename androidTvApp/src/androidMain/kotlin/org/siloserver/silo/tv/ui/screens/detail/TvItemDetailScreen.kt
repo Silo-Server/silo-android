@@ -143,6 +143,39 @@ import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherViewModel
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 
+internal data class TvSeriesDetailRedirect(
+    val seriesContentId: String,
+    val seasonNumber: Int,
+    val episodeContentId: String?,
+)
+
+/**
+ * Maps a standalone season or episode detail onto the combined Series page.
+ * Incomplete hierarchy data deliberately returns null so the existing detail
+ * remains available as a resilient fallback.
+ */
+internal fun tvSeriesDetailRedirect(detail: ItemDetail): TvSeriesDetailRedirect? {
+    val type = detail.type.trim().lowercase()
+    if (type != "season" && type != "episode") return null
+
+    val seriesContentId = detail.seriesId
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() && it != detail.contentId }
+        ?: return null
+    val seasonNumber = detail.seasonNumber ?: return null
+
+    return TvSeriesDetailRedirect(
+        seriesContentId = seriesContentId,
+        seasonNumber = seasonNumber,
+        episodeContentId = detail.contentId.takeIf { type == "episode" },
+    )
+}
+
+internal fun ItemDetail?.isMatchingSeriesDetail(expectedContentId: String): Boolean =
+    this != null &&
+        type.equals("series", ignoreCase = true) &&
+        contentId == expectedContentId
+
 @Composable
 fun TvItemDetailScreen(
     contentId: String,
@@ -151,6 +184,11 @@ fun TvItemDetailScreen(
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
     onItemDetailReplace: (contentId: String) -> Unit = onItemDetail,
+    onSeriesDetailReplace: (
+        seriesContentId: String,
+        seasonNumber: Int,
+        episodeContentId: String?,
+    ) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchTogether: (RoomSnapshot) -> Unit,
@@ -162,11 +200,39 @@ fun TvItemDetailScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val seriesRedirect = remember(state.detail) {
+        state.detail?.let(::tvSeriesDetailRedirect)
+    }
+    var seriesRedirectFailed by rememberSaveable(
+        contentId,
+        seriesRedirect?.seriesContentId,
+        seriesRedirect?.seasonNumber,
+        seriesRedirect?.episodeContentId,
+    ) {
+        mutableStateOf(false)
+    }
     var pendingEntrySeasonNumber by rememberSaveable(contentId, seasonNumber) {
         mutableStateOf(seasonNumber)
     }
 
     BackHandler(enabled = true) { onBack() }
+
+    LaunchedEffect(seriesRedirect, seriesRedirectFailed) {
+        val redirect = seriesRedirect ?: return@LaunchedEffect
+        if (seriesRedirectFailed) return@LaunchedEffect
+
+        if (viewModel.hasSeriesDetailForRedirect(redirect.seriesContentId)) {
+            onSeriesDetailReplace(
+                redirect.seriesContentId,
+                redirect.seasonNumber,
+                redirect.episodeContentId,
+            )
+        } else {
+            // Match tvOS's defensive behavior: if the parent is unavailable or
+            // does not resolve as a Series, keep the standalone page usable.
+            seriesRedirectFailed = true
+        }
+    }
 
     // Refresh on return (e.g. backing out of the player): the ViewModel loads
     // once in init, so without this the Play button keeps the resume label
@@ -233,9 +299,13 @@ fun TvItemDetailScreen(
             onRetry = viewModel::loadAll,
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
         )
+        seriesRedirect != null && !seriesRedirectFailed -> TvLoadingScreen(
+            modifier = Modifier.background(MaterialTheme.colorScheme.background),
+        )
         state.detail != null -> TvDetailContent(
             detail = state.detail!!,
             state = state,
+            initialSeasonNumber = seasonNumber,
             initialEpisodeContentId = initialEpisodeContentId,
             viewModel = viewModel,
             onPlay = onPlay,
@@ -254,6 +324,7 @@ fun TvItemDetailScreen(
 private fun TvDetailContent(
     detail: ItemDetail,
     state: TvItemDetailUiState,
+    initialSeasonNumber: Int?,
     initialEpisodeContentId: String?,
     viewModel: TvItemDetailViewModel,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
@@ -313,7 +384,30 @@ private fun TvDetailContent(
     val coroutineScope = rememberCoroutineScope()
     val isAudiobook = isAudiobookItemType(detail.type)
     val isSeriesDetail = detail.type == "series"
-    var isShowingSeriesOverview by rememberSaveable(detail.contentId) { mutableStateOf(true) }
+    var isShowingSeriesOverview by rememberSaveable(
+        detail.contentId,
+        initialSeasonNumber,
+        initialEpisodeContentId,
+    ) {
+        mutableStateOf(true)
+    }
+    LaunchedEffect(
+        initialSeasonNumber,
+        initialEpisodeContentId,
+        state.selectedSeason,
+        state.episodesLoading,
+        state.nextUpEpisode?.seasonNumber,
+    ) {
+        if (
+            initialSeasonNumber != null &&
+            initialEpisodeContentId == null &&
+            state.selectedSeason == initialSeasonNumber &&
+            !state.episodesLoading &&
+            (state.nextUpEpisode == null || state.nextUpEpisode.seasonNumber == initialSeasonNumber)
+        ) {
+            isShowingSeriesOverview = false
+        }
+    }
     LaunchedEffect(
         initialEpisodeContentId,
         state.entryEpisodeSelectionApplied,

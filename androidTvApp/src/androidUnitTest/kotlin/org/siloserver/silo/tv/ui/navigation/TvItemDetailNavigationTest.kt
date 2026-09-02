@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.navigation
 
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -112,6 +113,32 @@ class TvItemDetailNavigationTest {
                 episodeContentId = "episode/1",
             ).route,
         )
+    }
+
+    @Test
+    fun `season canonicalization route carries no episode selection`() {
+        assertEquals(
+            "item/series%2Fa?seasonNumber=3",
+            TvRoute.ItemDetail(
+                contentId = "series/a",
+                seasonNumber = 3,
+            ).route,
+        )
+    }
+
+    @Test
+    fun `canonical replacement is owned by the raw detail entry`() {
+        val source = File(
+            "src/androidMain/kotlin/org/siloserver/silo/tv/ui/navigation/TvAppNavigation.kt",
+        ).readText()
+        val replacement = source
+            .substringAfter("onSeriesDetailReplace = canonicalizeSeries@")
+            .substringBefore("onSeriesClick =")
+
+        assertTrue(replacement.contains("currentBackStackEntry?.id != backStack.id"))
+        assertTrue(replacement.contains("return@canonicalizeSeries"))
+        assertTrue(replacement.contains("episodeContentId = episodeContentId"))
+        assertTrue(replacement.contains("popUpTo(it) { inclusive = true }"))
     }
 
     @Test

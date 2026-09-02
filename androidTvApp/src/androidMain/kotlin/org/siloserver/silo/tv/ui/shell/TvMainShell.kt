@@ -1367,7 +1367,7 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Calendar.route) {
                     TvCalendarScreen(
-                        onOpenItemDetail = onOpenItemDetail,
+                        onOpenItemDetailSelection = onOpenItemDetailSelection,
                         onInitialContentFocus = {
                             focusState.closeProfileMenuForContent()
                             calendarFocusHandoffPending = false

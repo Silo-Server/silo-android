@@ -980,6 +980,24 @@ fun TvAppNavigation(
                         current?.let { popUpTo(it) { inclusive = true } }
                     }
                 },
+                onSeriesDetailReplace = canonicalizeSeries@{ seriesContentId, selectedSeason, episodeContentId ->
+                    // Parent resolution is asynchronous. If the viewer backed
+                    // out (or another destination won) while it was running,
+                    // this exiting detail must not replace the new top entry.
+                    if (navController.currentBackStackEntry?.id != backStack.id) {
+                        return@canonicalizeSeries
+                    }
+                    val current = backStack.destination.route
+                    navController.navigate(
+                        TvRoute.ItemDetail(
+                            contentId = seriesContentId,
+                            seasonNumber = selectedSeason,
+                            episodeContentId = episodeContentId,
+                        ).route,
+                    ) {
+                        current?.let { popUpTo(it) { inclusive = true } }
+                    }
+                },
                 onSeriesClick = { seriesId ->
                     navController.navigateToTvItemDetail(seriesId)
                 },

@@ -216,16 +216,21 @@ class TvDetailFocusPolicyTest {
         val source = File(
             "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/detail/TvItemDetailScreen.kt",
         ).readText()
-        val hydration = source
+        val routeSeasonState = source
             .substringAfter("var pendingEntrySeasonNumber")
-            .substringBefore("initialEpisodeContentId,")
-        val effectKeys = hydration
-            .substringAfter("LaunchedEffect(")
-            .substringBefore(") {")
+            .substringBefore("BackHandler(enabled = true)")
+        val hydration = source
+            .substringAfter(
+                "LaunchedEffect(state.detail?.contentId, pendingEntrySeasonNumber, state.seasons) {",
+            )
+            .substringBefore("\n    LaunchedEffect(\n        state.detail?.contentId,\n        seasonNumber,")
 
-        assertTrue(hydration.contains("rememberSaveable(contentId, seasonNumber)"))
-        assertTrue(effectKeys.contains("pendingEntrySeasonNumber"))
-        assertFalse(effectKeys.contains("state.selectedSeason"))
+        assertTrue(routeSeasonState.contains("rememberSaveable(contentId, seasonNumber)"))
+        assertTrue(
+            source.contains(
+                "LaunchedEffect(state.detail?.contentId, pendingEntrySeasonNumber, state.seasons) {",
+            ),
+        )
         assertTrue(hydration.contains("pendingEntrySeasonNumber = null"))
         assertTrue(
             hydration.indexOf("pendingEntrySeasonNumber = null") <
