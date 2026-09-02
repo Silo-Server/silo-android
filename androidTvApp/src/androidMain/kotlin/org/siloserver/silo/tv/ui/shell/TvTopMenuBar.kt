@@ -36,7 +36,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -112,36 +111,6 @@ object TvTopMenuLayout {
      * the menu band (bar top inset + bar height + breathing room).
      */
     val contentTopInset: Dp = 94.dp
-}
-
-/**
- * One shared, soft shadow behind the floating top navigation.
- *
- * Root artwork used to paint its own black top scrim while the shell painted a
- * second background-coloured gradient. Home therefore had a much heavier band
- * than flat pages, and the two different colours could expose a visible seam.
- * Keeping this layer beside the bar gives every route exactly one shadow and
- * lets it disappear with the bar on full-screen surfaces such as Settings.
- */
-@Composable
-internal fun TvTopMenuDropShadow(
-    visibility: Float,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(TvTopMenuLayout.contentTopInset)
-            .graphicsLayer { alpha = visibility.coerceIn(0f, 1f) }
-            .background(
-                Brush.verticalGradient(
-                    0.00f to Color.Black.copy(alpha = 0.58f),
-                    0.58f to Color.Black.copy(alpha = 0.42f),
-                    0.80f to Color.Black.copy(alpha = 0.14f),
-                    1.00f to Color.Transparent,
-                ),
-            ),
-    )
 }
 
 /**
