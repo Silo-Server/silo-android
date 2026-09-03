@@ -84,7 +84,8 @@ fun MediaRow(
 ) {
     val context = LocalContext.current
     val heroHandoff = LocalHeroSourceHandoff.current
-    val browseContentIds = remember(items) { items.map { it.contentId } }
+    val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
+    val browseContentIds = remember(uniqueItems) { uniqueItems.map { it.contentId } }
     val browseOrigin = remember(title, browseContentIds) { "media-row-$title-${browseContentIds.hashCode()}" }
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
@@ -95,8 +96,8 @@ fun MediaRow(
             diagnosticsKeySnapshot,
         )
     }
-    val rowItems = remember(items, showProgress, cardStyle) {
-        items.distinctBy { it.contentId }.map { item ->
+    val rowItems = remember(uniqueItems, showProgress, cardStyle) {
+        uniqueItems.map { item ->
             val pos = item.positionSeconds
             val dur = item.durationSeconds
             val progress = if (showProgress && pos != null && dur != null && dur > 0) {
