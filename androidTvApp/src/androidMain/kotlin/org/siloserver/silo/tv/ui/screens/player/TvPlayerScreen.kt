@@ -371,9 +371,12 @@ fun TvPlayerScreen(
     // screen binds while the outgoing one is still composed, and the outgoing
     // screen's release only clears its own claim.
     // Keyed on the display id itself so an Activity that moves to another
-    // display rebinds and the next plan describes the new panel.
+    // display rebinds and the next plan describes the new panel. The
+    // binding is a RememberObserver: Compose releases it when this player
+    // leaves, when the key changes, and when a composition is abandoned
+    // before it commits, and the owned release never clears a newer claim.
     val currentPlaybackDisplayId = context.playbackDisplayId()
-    val playbackDisplayBinding = remember(currentPlaybackDisplayId, capabilityDetector) {
+    remember(currentPlaybackDisplayId, capabilityDetector) {
         capabilityDetector.bindPlaybackDisplay(currentPlaybackDisplayId)
     }
     // Re-probe whenever the output route generation moves, so track
@@ -1442,12 +1445,6 @@ fun TvPlayerScreen(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
-    }
-
-    // Release this player's own display binding when it leaves. A newer
-    // player that has already bound keeps its claim.
-    DisposableEffect(playbackDisplayBinding) {
-        onDispose { playbackDisplayBinding.release() }
     }
 
     // Preflight listener — falls back to a transcoded stream if the selected
