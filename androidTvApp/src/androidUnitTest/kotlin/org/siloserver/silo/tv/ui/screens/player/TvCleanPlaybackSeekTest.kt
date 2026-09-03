@@ -24,71 +24,66 @@ class TvCleanPlaybackSeekTest {
 
     @Test
     fun manualTapsWalkTheSignedRateLadder() {
-        // A 90-minute item; its ladder ceiling is well above these rungs.
-        val durationSec = 5_400.0
-        assertEquals(4, adjustedCleanPlaybackSeekRate(2, adjustment = 1, durationSec = durationSec))
-        assertEquals(2, adjustedCleanPlaybackSeekRate(4, adjustment = -1, durationSec = durationSec))
-        assertEquals(-4, adjustedCleanPlaybackSeekRate(-2, adjustment = -1, durationSec = durationSec))
-        assertEquals(-2, adjustedCleanPlaybackSeekRate(-4, adjustment = 1, durationSec = durationSec))
-        assertEquals(32, adjustedCleanPlaybackSeekRate(16, adjustment = 1, durationSec = durationSec))
+        assertEquals(2, adjustedCleanPlaybackSeekRate(1, adjustment = 1))
+        assertEquals(1, adjustedCleanPlaybackSeekRate(2, adjustment = -1))
+        assertEquals(-2, adjustedCleanPlaybackSeekRate(-1, adjustment = -1))
+        assertEquals(-1, adjustedCleanPlaybackSeekRate(-2, adjustment = 1))
+        assertEquals(32, adjustedCleanPlaybackSeekRate(16, adjustment = 1))
+        assertEquals(32, adjustedCleanPlaybackSeekRate(32, adjustment = 1))
+        assertEquals(-32, adjustedCleanPlaybackSeekRate(-32, adjustment = -1))
+    }
+
+    /** Apple parity: the ladder is signed end to end, so 1× → -1× reverses. */
+    @Test
+    fun steppingPastOneReversesDirectionLikeApple() {
+        assertEquals(-1, adjustedCleanPlaybackSeekRate(1, adjustment = -1))
+        assertEquals(1, adjustedCleanPlaybackSeekRate(-1, adjustment = 1))
     }
 
     @Test
-    fun steppingBelowTheBaseRateStopsRatherThanReversingDirection() {
-        // The old signed ladder ran ... -1, 1 ... so stepping "slower" past the
-        // bottom silently flipped a forward scan into a backward one.
-        val durationSec = 5_400.0
-        assertEquals(2, adjustedCleanPlaybackSeekRate(2, adjustment = -1, durationSec = durationSec))
-        assertEquals(-2, adjustedCleanPlaybackSeekRate(-2, adjustment = 1, durationSec = durationSec))
-    }
-
-    @Test
-    fun rateAdjustmentClampsAtTheItemsDerivedCeiling() {
-        // 90 minutes needs ceil(5400 / 10) = 540x to cross in the target time,
-        // which rounds up to the 1024 rung.
-        val durationSec = 5_400.0
-        assertEquals(1024, adjustedCleanPlaybackSeekRate(1024, adjustment = 1, durationSec = durationSec))
-        assertEquals(-1024, adjustedCleanPlaybackSeekRate(-1024, adjustment = -1, durationSec = durationSec))
-    }
-
-    @Test
-    fun shortContentGetsALowerCeilingThanAFeature() {
-        // A 22-minute episode: ceil(1320 / 10) = 132x, rounded up to 256.
-        val episodeSec = 1_320.0
-        assertEquals(256, adjustedCleanPlaybackSeekRate(256, adjustment = 1, durationSec = episodeSec))
-    }
-
-    @Test
-    fun previewAdvancesByExactlyRateTimesRealTime() {
-        // 100ms tick, so one tick at 8x covers 0.8s of content — not the 16s
-        // the old flat 2s-per-tick base step produced for the same "8x" chip.
+    fun previewAdvancesByAppleBaseStepTimesRatePerTick() {
+        // 2s per 100ms tick at 1×, so one tick at 8× covers 16s of content.
         assertEquals(
-            100.8,
+            116.0,
             advanceCleanPlaybackSeekPreview(previewSec = 100.0, durationSec = 500.0, rate = 8),
         )
         assertEquals(
-            99.6,
+            92.0,
             advanceCleanPlaybackSeekPreview(previewSec = 100.0, durationSec = 500.0, rate = -4),
         )
     }
 
     @Test
+    fun previewScalesWithMeasuredElapsedTime() {
+        // A tick that lands late covers proportionally more, so a busy box
+        // still travels at the ladder's speed.
+        assertEquals(
+            124.0,
+            advanceCleanPlaybackSeekPreview(
+                previewSec = 100.0,
+                durationSec = 500.0,
+                rate = 8,
+                elapsedMillis = 150L,
+            ),
+        )
+    }
+
+    @Test
     fun previewClampsToKnownTimelineBounds() {
-        // Rates large enough that a single tick overshoots each end.
         assertEquals(
             0.0,
-            advanceCleanPlaybackSeekPreview(previewSec = 1.0, durationSec = 500.0, rate = -64),
+            advanceCleanPlaybackSeekPreview(previewSec = 1.0, durationSec = 500.0, rate = -32),
         )
         assertEquals(
             500.0,
-            advanceCleanPlaybackSeekPreview(previewSec = 499.0, durationSec = 500.0, rate = 64),
+            advanceCleanPlaybackSeekPreview(previewSec = 499.0, durationSec = 500.0, rate = 32),
         )
     }
 
     @Test
     fun unknownDurationStillAllowsForwardPreview() {
         assertEquals(
-            10.2,
+            14.0,
             advanceCleanPlaybackSeekPreview(previewSec = 10.0, durationSec = 0.0, rate = 2),
         )
     }
