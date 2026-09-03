@@ -9,9 +9,9 @@ import okhttp3.Interceptor
 import okhttp3.Response
 import kotlinx.coroutines.runBlocking
 import org.siloserver.silo.network.CleartextOriginConsent
-import org.siloserver.silo.network.CleartextOriginNotApprovedException
 import org.siloserver.silo.network.isSameHttpOrigin
 import org.siloserver.silo.network.requiresApproval
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -58,11 +58,14 @@ internal class CleartextConsentNetworkInterceptor(
     override fun intercept(chain: Interceptor.Chain): Response {
         val url = chain.request().url.toString()
         if (runBlocking { consent?.requiresApproval(url) == true }) {
-            throw CleartextOriginNotApprovedException(url)
+            throw CleartextMediaOriginNotApprovedException()
         }
         return chain.proceed(chain.request())
     }
 }
+
+internal class CleartextMediaOriginNotApprovedException :
+    IOException("Cleartext media origin is not approved")
 
 private fun Request.withoutCrossOriginCredentials(): Request =
     newBuilder()
