@@ -10,19 +10,6 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
-    <!--
-        Package visibility for the system speech recogniser. From Android 11 an
-        app cannot see packages it has not declared an interest in, so without
-        this the availability check comes back empty on every modern device and
-        the voice affordance silently never appears. Silo asks the recogniser to
-        listen; it never records audio itself, and so needs no RECORD_AUDIO.
-    -->
-    <queries>
-        <intent>
-            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
-        </intent>
-    </queries>
-
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
