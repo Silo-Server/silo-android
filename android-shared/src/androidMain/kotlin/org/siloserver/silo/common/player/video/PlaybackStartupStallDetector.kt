@@ -18,6 +18,7 @@ class PlaybackStartupStallDetector(
     private val startupGraceMs: Long = DEFAULT_STARTUP_GRACE_MS,
     private val midStreamGraceMs: Long = DEFAULT_MID_STREAM_GRACE_MS,
     private val clientTransformGraceMs: Long = DEFAULT_CLIENT_TRANSFORM_GRACE_MS,
+    private val clientTransformMinBufferedAheadMs: Long = DEFAULT_CLIENT_TRANSFORM_MIN_BUFFERED_AHEAD_MS,
     private val startedProgressMs: Long = DEFAULT_STARTED_PROGRESS_MS,
     private val bufferedProgressMs: Long = DEFAULT_BUFFERED_PROGRESS_MS,
 ) {
@@ -177,13 +178,30 @@ class PlaybackStartupStallDetector(
         // bounded progress deadline and identify the failed local recipe. This
         // deliberately does not cover a route with zero decoder evidence: a
         // genuine no-input network stall keeps the normal transport retry.
+        //
+        // A network rebuffer is not a wedged transform either: 4K Profile 7
+        // remuxes run at 70-110 Mbps, and a Shield on Wi-Fi drains its buffer
+        // and sits in BUFFERING with the decoder idle because it has nothing
+        // to decode. While BUFFERING, only call the recipe wedged when the
+        // player is holding enough media to have fed the decoder; otherwise
+        // the generic transport clock keeps ownership. A player that is
+        // PLAYING is a different case: audio is advancing from the same
+        // muxed source, so input is arriving and a silent video decoder is
+        // the recipe's fault however little is buffered. That is the shape
+        // of the SM-F976U1 wedge and must keep its dedicated deadline.
+        // Misclassifying a bandwidth stall as a recipe fault quarantines the
+        // route for 14 days and hands the title back to the server's
+        // AAC-converting HLS remux.
+        val bufferedAheadMs = (bufferedPositionMs - currentPositionMs).coerceAtLeast(0L)
+        val transformOwnsStall = isPlaying ||
+            (isBuffering && bufferedAheadMs >= clientTransformMinBufferedAheadMs)
         if (!signaled && hasClientTransformDecodeEvidence &&
-            (isBuffering || isPlaying) &&
+            transformOwnsStall &&
             nowMs - clientTransformProgressAtMs > clientTransformGraceMs
         ) {
             signaled = true
             return Playability.StartupStalled(
-                bufferedAheadMs = (bufferedPositionMs - currentPositionMs).coerceAtLeast(0L),
+                bufferedAheadMs = bufferedAheadMs,
                 stalledForMs = nowMs - clientTransformProgressAtMs,
                 classification = DV7_TRANSFORM_STALL_CLASSIFICATION,
             )
@@ -257,6 +275,14 @@ class PlaybackStartupStallDetector(
         const val DEFAULT_STARTUP_GRACE_MS: Long = 20_000L
         const val DEFAULT_MID_STREAM_GRACE_MS: Long = 20_000L
         const val DEFAULT_CLIENT_TRANSFORM_GRACE_MS: Long = 10_000L
+
+        /**
+         * Media the player must be holding before a stalled client transform
+         * is blamed on the recipe. Matches the load control's post-rebuffer
+         * restart threshold: below it Media3 is legitimately waiting on the
+         * network and the decoder is idle for want of input.
+         */
+        const val DEFAULT_CLIENT_TRANSFORM_MIN_BUFFERED_AHEAD_MS: Long = 5_000L
         const val DEFAULT_STARTED_PROGRESS_MS: Long = 1_500L
         const val DEFAULT_BUFFERED_PROGRESS_MS: Long = 250L
         const val DV7_TRANSFORM_STALL_CLASSIFICATION = "dv7_transform_stall"

@@ -328,6 +328,47 @@ class DolbyVisionProfile7TransformerTest {
     }
 
     @Test
+    fun hdr10FormatRewriteHandsThePqBaseLayerToAPlainHevcDecoder() {
+        val delegate = RecordingTrackOutput()
+        val output = DolbyVisionTransformingTrackOutput(
+            delegate,
+            DolbyVisionTransformMode.PROFILE7_TO_HDR10,
+            DolbyVisionRpuConverter { error("the HDR10 recipe never converts an RPU") },
+        )
+        val sps = nal(33, payload = byteArrayOf(0x01, 0x02))
+        output.format(
+            Format.Builder()
+                .setSampleMimeType(MimeTypes.VIDEO_DOLBY_VISION)
+                .setCodecs("dvhe.07.06")
+                .setInitializationData(
+                    listOf(
+                        hvcC(sps, nal(63, payload = byteArrayOf(0x09)), nal(62)),
+                        dolbyVisionConfig(profile = 7, level = 6),
+                    ),
+                )
+                .build(),
+        )
+
+        val rewritten = delegate.format ?: error("no format forwarded")
+        assertEquals(MimeTypes.VIDEO_H265, rewritten.sampleMimeType)
+        assertEquals(null, rewritten.codecs, "no Dolby Vision codec string survives the rewrite")
+        assertEquals(C.COLOR_TRANSFER_ST2084, rewritten.colorInfo?.colorTransfer)
+        assertEquals(C.COLOR_SPACE_BT2020, rewritten.colorInfo?.colorSpace)
+        assertEquals(C.COLOR_RANGE_LIMITED, rewritten.colorInfo?.colorRange)
+        assertTrue(rewritten.colorInfo?.hdrStaticInfo?.isNotEmpty() == true, "PQ needs static metadata for codec setup")
+        assertEquals(1, rewritten.initializationData.size, "the dvcC record is dropped with the enhancement layer")
+        val keptRecord = rewritten.initializationData.single()
+        assertEquals(1, keptRecord[22].toInt(), "only the base-layer parameter-set array remains")
+        assertTrue(keptRecord.size < hvcC(sps, nal(63, payload = byteArrayOf(0x09)), nal(62)).size)
+
+        // Samples then flow through the same base-layer-only path.
+        val access = accessUnit(nal(19, payload = byteArrayOf(7, 7, 7)), nal(62), nal(63, layer = 1))
+        output.sampleData(ParsableByteArray(access), access.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+        output.sampleMetadata(0L, C.BUFFER_FLAG_KEY_FRAME, access.size, 0, null)
+        assertContentEquals(accessUnit(nal(19, payload = byteArrayOf(7, 7, 7))), delegate.samples.single())
+    }
+
+    @Test
     fun serverDirectedTransformRejectsUnverifiedHevcMime() {
         val output = DolbyVisionTransformingTrackOutput(
             RecordingTrackOutput(),

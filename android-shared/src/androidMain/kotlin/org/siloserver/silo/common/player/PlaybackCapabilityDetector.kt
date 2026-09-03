@@ -176,6 +176,10 @@ class PlaybackCapabilityDetector(
     @Volatile
     private var lastDecoderHdr: HdrCapabilities? = null
 
+    /** Whether the most recent [detect] found a hardware HEVC decoder with an HDR10 profile. */
+    @Volatile
+    private var lastHevcHdr10Decoder: Boolean = false
+
     /** Decoder-only HDR support independent of the attached display. */
     val decoderHdrCapabilities: HdrCapabilities?
         get() = lastDecoderHdr
@@ -348,6 +352,7 @@ class PlaybackCapabilityDetector(
         ).withDolbyVisionPolicy(dolbyVision)
         lastDisplayProbe = displayProbe
         lastDecoderHdr = codecProbe.hdr.withDolbyVisionPolicy(dolbyVision)
+        lastHevcHdr10Decoder = codecProbe.hevcHdr10Decoder
 
         val platformAudio = detectPlatformSoftwareAudioCodecs()
         val ffmpegAudio = if (ffmpegAvailable) {
@@ -413,6 +418,12 @@ class PlaybackCapabilityDetector(
         ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
         dolbyVision: DolbyVisionPolicy.Snapshot = DolbyVisionPolicy.Snapshot(),
         capabilities: ClientCodecCapabilities? = null,
+        /**
+         * Whether a hardware HEVC decoder reports an HDR10 profile. Defaults
+         * to the last [detect] probe; injectable because [capabilities] can
+         * be supplied without a probe having run in this process.
+         */
+        hardwareHevcHdr10Decoder: Boolean = lastHevcHdr10Decoder,
     ): ClientPlaybackContext {
         val caps = capabilities ?: detect(ffmpegAvailable, dolbyVision)
         val audioRoute = planningSnapshots.resolve(
@@ -429,6 +440,8 @@ class PlaybackCapabilityDetector(
             nativeRpuConverterAvailable = NativeDolbyVisionRpuConverter.isAvailable,
             hardwareProfile8Decoder = hasHardwareDolbyVisionProfile8Decoder(caps),
             displayConfirmsDolbyVision = displayConfirmsDolbyVision(lastDisplayProbe),
+            hardwareHevcHdr10Decoder = hardwareHevcHdr10Decoder && hasHardwareHevcMain10Decoder(caps),
+            hdr10TransformRouteEnabled = clientDv7ToHdr10RouteEnabled(formFactor),
             quarantined = transformQuarantine.quarantined(),
         )
         return ClientPlaybackContext(
@@ -761,24 +774,35 @@ internal fun advertisedAudioDecodeCodecs(
  * for its own recipe, and [DolbyVisionTransformQuarantine] withdraws the
  * advertisement on this device build so the next session never tries it.
  *
- * Profile 7 to HDR10 stays behind [fixtureValidatedTransformations]: the
- * server's own RPU strip covers that case, so the client recipe only earns a
- * place once the fixture matrix validates it for a device class.
+ * Profile 7 to HDR10 needs no RPU conversion: the transformer drops the
+ * enhancement layer and RPU and hands the untouched HDR10 base layer to an
+ * ordinary HEVC decoder under PQ signalling. It is advertised when the
+ * decoder ∩ display intersection carries HDR10 (which requires exact display
+ * evidence), a hardware HEVC decoder itself reports an HDR10 profile (the
+ * intersection's HDR10 flag is aggregated across HEVC and AV1, so it alone
+ * could be vouched for by an AV1 decoder the route never uses), and
+ * [hdr10TransformRouteEnabled] says the device class runs the recipe. Without
+ * this route, a Profile 7 title on a non-DV output is forced onto a server HLS
+ * remux, and HLS cannot carry TrueHD or DTS: the viewer loses lossless audio
+ * and Atmos to a server AAC conversion even though the HDMI sink accepts the
+ * bitstream. The same [DolbyVisionTransformQuarantine] and stall detector
+ * cover this recipe, so a device that wedges falls back to the server strip.
  */
 internal fun advertisedClientDolbyVisionTransformations(
     hdrDetails: org.siloserver.silo.model.playback.HdrCapabilities?,
     nativeRpuConverterAvailable: Boolean,
-    fixtureValidatedTransformations: Set<String> = emptySet(),
     hardwareProfile8Decoder: Boolean = false,
     displayConfirmsDolbyVision: Boolean = false,
+    hardwareHevcHdr10Decoder: Boolean = false,
+    hdr10TransformRouteEnabled: Boolean = false,
     quarantined: Set<String> = emptySet(),
 ): List<PlaybackTransformationV3> = buildList {
     if (
         CLIENT_DV7_TO_DV81 !in quarantined &&
         8 in hdrDetails?.dolbyVisionProfiles.orEmpty() &&
         nativeRpuConverterAvailable &&
-        (CLIENT_DV7_TO_DV81 in fixtureValidatedTransformations ||
-            (hardwareProfile8Decoder && displayConfirmsDolbyVision))
+        hardwareProfile8Decoder &&
+        displayConfirmsDolbyVision
     ) {
         add(
             PlaybackTransformationV3(
@@ -795,7 +819,8 @@ internal fun advertisedClientDolbyVisionTransformations(
     }
     if (
         CLIENT_DV7_TO_HDR10 !in quarantined &&
-        CLIENT_DV7_TO_HDR10 in fixtureValidatedTransformations &&
+        hdr10TransformRouteEnabled &&
+        hardwareHevcHdr10Decoder &&
         hdrDetails?.hdr10 == true
     ) {
         add(
@@ -844,13 +869,34 @@ internal fun canAdvertiseDv8BaseLayerFallback(
     caps: ClientCodecCapabilities,
     display: DisplayHdrProbeResult?,
 ): Boolean {
-    val hevc10 = caps.videoDecode.any { it.codec == "hevc" && 10 in it.bitDepths && it.hardware }
-    if (!hevc10) return false
+    if (!hasHardwareHevcMain10Decoder(caps)) return false
     val hdr = caps.hdrDetails ?: HdrCapabilities()
     if (hdr.hdr10 || hdr.hlg) return true
     val panel = display as? DisplayHdrProbeResult.Exact ?: return false
     return !panel.hdr.hdr10 && !panel.hdr.hlg && panel.hdr.dolbyVisionProfiles.isEmpty()
 }
+
+/**
+ * A hardware HEVC decoder that accepts 10-bit input. Both base-layer routes
+ * (the Profile 8 fallback and the Profile 7 to HDR10 transform) hand a
+ * Main 10 PQ stream to this decoder, so a software or 8-bit-only decoder is
+ * not evidence the route can render.
+ */
+internal fun hasHardwareHevcMain10Decoder(caps: ClientCodecCapabilities): Boolean =
+    caps.videoDecode.any { it.codec == "hevc" && 10 in it.bitDepths && it.hardware }
+
+/**
+ * Whether this form factor runs the client Profile 7 to HDR10 recipe.
+ *
+ * TV is the population that pays for the missing route: it sits behind an
+ * HDMI sink that accepts TrueHD and DTS bitstreams, and the alternative HLS
+ * remux converts that audio to AAC. Phones and tablets have no passthrough
+ * sink, so the server strip costs them nothing but a remux, and the one
+ * device that wedged on a client Dolby Vision transform (SM-F976U1) was a
+ * phone. They stay on the server recipe until the fixture matrix covers them.
+ */
+internal fun clientDv7ToHdr10RouteEnabled(formFactor: String): Boolean =
+    formFactor.equals("tv", ignoreCase = true)
 
 /**
  * A hardware `video/dolby-vision` decoder that lists Profile 8. The Profile 7

@@ -383,15 +383,15 @@ class PlaybackStartupStallDetectorTest {
                 isPlaying = false,
                 isBuffering = true,
                 currentPositionMs = 0,
-                bufferedPositionMs = 0,
+                bufferedPositionMs = 20_000,
                 decoderInputBufferCount = 1,
                 decoderRenderedOutputBufferCount = 1,
             ),
         )
-        assertNull(detector.sample("dv7", 10_100, true, false, true, 0, 0, 1, 1))
+        assertNull(detector.sample("dv7", 10_100, true, false, true, 0, 20_000, 1, 1))
         assertEquals(
             PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
-            detector.sample("dv7", 10_101, true, false, true, 0, 0, 1, 1)?.classification,
+            detector.sample("dv7", 10_101, true, false, true, 0, 20_000, 1, 1)?.classification,
         )
     }
 
@@ -410,12 +410,12 @@ class PlaybackStartupStallDetectorTest {
         )
         detector.onFirstFrameRendered()
 
-        assertNull(detector.sample("dv7-progress", 100, true, false, true, 0, 0, 1, 1))
-        assertNull(detector.sample("dv7-progress", 5_000, true, true, false, 1_600, 5_000, 5, 5))
-        assertNull(detector.sample("dv7-progress", 15_000, true, false, true, 1_600, 1_600, 5, 5))
+        assertNull(detector.sample("dv7-progress", 100, true, false, true, 0, 20_000, 1, 1))
+        assertNull(detector.sample("dv7-progress", 5_000, true, true, false, 1_600, 25_000, 5, 5))
+        assertNull(detector.sample("dv7-progress", 15_000, true, false, true, 1_600, 25_000, 5, 5))
         assertEquals(
             PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
-            detector.sample("dv7-progress", 15_001, true, false, true, 1_600, 1_600, 5, 5)
+            detector.sample("dv7-progress", 15_001, true, false, true, 1_600, 25_000, 5, 5)
                 ?.classification,
         )
     }
@@ -435,12 +435,12 @@ class PlaybackStartupStallDetectorTest {
         )
         detector.onFirstFrameRendered()
 
-        assertNull(detector.sample("dv7-audio-only", 100, true, true, false, 0, 5_000, 1, 1))
-        assertNull(detector.sample("dv7-audio-only", 5_000, true, true, false, 1_600, 6_000, 1, 1))
-        assertNull(detector.sample("dv7-audio-only", 10_100, true, true, false, 3_200, 7_000, 1, 1))
+        assertNull(detector.sample("dv7-audio-only", 100, true, true, false, 0, 20_000, 1, 1))
+        assertNull(detector.sample("dv7-audio-only", 5_000, true, true, false, 1_600, 21_000, 1, 1))
+        assertNull(detector.sample("dv7-audio-only", 10_100, true, true, false, 3_200, 22_000, 1, 1))
         assertEquals(
             PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
-            detector.sample("dv7-audio-only", 10_101, true, true, false, 4_800, 8_000, 1, 1)
+            detector.sample("dv7-audio-only", 10_101, true, true, false, 4_800, 23_000, 1, 1)
                 ?.classification,
         )
     }
@@ -460,13 +460,78 @@ class PlaybackStartupStallDetectorTest {
         )
         detector.onFirstFrameRendered()
 
-        assertNull(detector.sample("dv7-backward-seek", 100, true, true, false, 5_000, 8_000, 1, 1))
-        assertNull(detector.sample("dv7-backward-seek", 9_000, true, true, false, 10_000, 13_000, 1, 1))
-        assertNull(detector.sample("dv7-backward-seek", 9_001, true, true, false, 2_000, 5_000, 1, 1))
-        assertNull(detector.sample("dv7-backward-seek", 19_001, true, true, false, 2_000, 5_000, 1, 1))
+        assertNull(detector.sample("dv7-backward-seek", 100, true, true, false, 5_000, 25_000, 1, 1))
+        assertNull(detector.sample("dv7-backward-seek", 9_000, true, true, false, 10_000, 30_000, 1, 1))
+        assertNull(detector.sample("dv7-backward-seek", 9_001, true, true, false, 2_000, 22_000, 1, 1))
+        assertNull(detector.sample("dv7-backward-seek", 19_001, true, true, false, 2_000, 22_000, 1, 1))
         assertEquals(
             PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
-            detector.sample("dv7-backward-seek", 19_002, true, true, false, 2_000, 5_000, 1, 1)
+            detector.sample("dv7-backward-seek", 19_002, true, true, false, 2_000, 22_000, 1, 1)
+                ?.classification,
+        )
+    }
+
+    @Test
+    fun dv7WedgeWhileAudioPlaysIsBlamedOnTheRecipeHoweverLittleIsBuffered() {
+        // The SM-F976U1 shape: one frame, then the video decoder goes silent
+        // while TrueHD keeps the position moving. The player is PLAYING, so
+        // input is reaching the pipeline; a thin buffer is not an excuse.
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 30_000,
+            clientTransformGraceMs = 10_000,
+            clientTransformMinBufferedAheadMs = 5_000,
+        )
+        detector.onMounted(
+            sessionKey = "dv7-thin-buffer-wedge",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+            clientTransformations = listOf(CLIENT_DV7_TO_HDR10),
+        )
+        detector.onFirstFrameRendered()
+
+        assertNull(detector.sample("dv7-thin-buffer-wedge", 100, true, true, false, 0, 1_500, 1, 1))
+        assertNull(detector.sample("dv7-thin-buffer-wedge", 5_000, true, true, false, 4_900, 6_000, 1, 1))
+        assertNull(detector.sample("dv7-thin-buffer-wedge", 10_100, true, true, false, 10_000, 11_000, 1, 1))
+        assertEquals(
+            PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
+            detector.sample("dv7-thin-buffer-wedge", 10_101, true, true, false, 10_001, 11_000, 1, 1)
+                ?.classification,
+        )
+    }
+
+    @Test
+    fun dv7DrainedBufferIsANetworkRebufferNotATransformStall() {
+        // A 4K Profile 7 remux on Wi-Fi: the transform decoded frames, then
+        // the buffer ran dry and the player sits in BUFFERING with the decoder
+        // idle for want of input. That is the transport clock's stall, not
+        // the recipe's; blaming the recipe would quarantine a working route.
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 30_000,
+            midStreamGraceMs = 20_000,
+            clientTransformGraceMs = 10_000,
+            clientTransformMinBufferedAheadMs = 5_000,
+        )
+        detector.onMounted(
+            sessionKey = "dv7-rebuffer",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+            clientTransformations = listOf(CLIENT_DV7_TO_HDR10),
+        )
+        detector.onFirstFrameRendered()
+
+        assertNull(detector.sample("dv7-rebuffer", 100, true, true, false, 0, 6_000, 10, 10))
+        assertNull(detector.sample("dv7-rebuffer", 5_000, true, true, false, 4_900, 6_000, 120, 120))
+        // Buffer drained; the decoder has nothing to chew on.
+        assertNull(detector.sample("dv7-rebuffer", 6_000, true, false, true, 6_000, 6_100, 145, 145))
+        assertNull(detector.sample("dv7-rebuffer", 16_100, true, false, true, 6_000, 6_500, 145, 145))
+        assertNull(detector.sample("dv7-rebuffer", 20_000, true, false, true, 6_000, 8_000, 145, 145))
+        // Twenty seconds without playback progress is the mid-stream transport
+        // stall, which reopens the same route rather than withdrawing it.
+        assertEquals(
+            "transport_stall",
+            detector.sample("dv7-rebuffer", 26_001, true, false, true, 6_000, 8_000, 145, 145)
                 ?.classification,
         )
     }
