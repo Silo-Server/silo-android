@@ -2,7 +2,9 @@
 
 package org.siloserver.silo.tv.di
 
+import org.siloserver.silo.model.image.ImageSize
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.PreferredImageSize
 import org.siloserver.silo.repository.SettingsRepository
 import org.siloserver.silo.tv.BuildConfig
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
@@ -80,6 +82,13 @@ import org.koin.dsl.module
  * [org.siloserver.silo.tv.SiloTvApplication].
  */
 val androidTvModule = module {
+    // TV draws posters, stills and backdrops at full-screen sizes, so it asks
+    // the server to bake the large variants into the image URLs it returns.
+    // ImageSizeSelector gates this on /api/v1/images/capability, so an older
+    // server simply keeps serving its defaults. The phone module registers no
+    // PreferredImageSize and therefore sends no image_size at all.
+    single { PreferredImageSize(ImageSize.LARGE) }
+
     single<CleartextConsentStore> { DataStoreCleartextConsentStore(androidContext()) }
     single<org.siloserver.silo.network.CleartextOriginConsent> { get<CleartextConsentStore>() }
     // Single encrypted prefs handle shared between the server registry and
