@@ -46,6 +46,7 @@ import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.player.AudiobookPlayerViewModel
 import org.siloserver.silo.common.player.SiloPlaybackService
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.android.ui.theme.SiloBackground
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
@@ -221,7 +222,10 @@ fun AudiobookPlayerScreen(
             .background(
                 audiobookPlayerBackgroundBrush(
                     tint = playerTint,
-                    background = MaterialTheme.colorScheme.background,
+                    // The player stays on black like the video player and the
+                    // iOS AudioPlayerBackground; only page canvases moved to
+                    // the charcoal Material background.
+                    background = SiloBackground,
                 ),
             ),
     ) {

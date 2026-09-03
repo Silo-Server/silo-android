@@ -48,7 +48,6 @@ import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.SiloTopBar
-import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.ProfileRepository
@@ -95,12 +94,12 @@ fun HomeSectionsEditor(onDismiss: () -> Unit) {
     ) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            containerColor = SiloBackground,
+            containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 SiloTopBar(
                     title = "Home Sections",
                     onBackClick = onDismiss,
-                    containerColor = SiloBackground,
+                    containerColor = MaterialTheme.colorScheme.background,
                 )
             },
         ) { padding ->
