@@ -7,7 +7,7 @@
     <color name="silo_icon_background">#FF010D9F</color>
 
     <!-- Dark surfaces -->
-    <color name="dark_background">#FF141417</color>
+    <color name="dark_background">#FF111111</color>
     <color name="dark_surface">#FF1C1C20</color>
     <color name="dark_surface_variant">#FF252528</color>
 

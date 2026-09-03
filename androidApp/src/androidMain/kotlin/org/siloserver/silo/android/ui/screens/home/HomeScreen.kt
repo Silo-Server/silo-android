@@ -85,7 +85,6 @@ import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.viewmodel.HomeViewModel
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
-import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
@@ -106,7 +105,7 @@ private data class WarmedSeriesArtwork(
 /**
  * Phone Home screen.
  *
- * Mirrors iOS `HomeView.swift` (phone) 1:1: a flat OLED background (no hero —
+ * Mirrors iOS `HomeView.swift` (phone) 1:1: the fixed charcoal page canvas (no hero —
  * a `featured` section renders as an ordinary row in its server order; the
  * phone apps have no hero surface at all), a runway spacer that
  * reserves room under the floating chrome, the resume-first section rows, and
@@ -245,31 +244,10 @@ fun HomeScreen(
             }
         }
     }
-    var focusedContinueWatchingItem by remember { mutableStateOf<SectionItem?>(null) }
-    val visibleFocusedItem = remember(focusedContinueWatchingItem, regularSections) {
-        focusedContinueWatchingItem?.takeIf { focused ->
-            regularSections.any { section ->
-                section.items.any { it.contentId == focused.contentId }
-            }
-        }
-    }
-    val tintArtworkUrl = visibleFocusedItem?.backdropUrl ?: visibleFocusedItem?.posterUrl
-    val tintArtworkThumbhash =
-        visibleFocusedItem?.backdropThumbhash ?: visibleFocusedItem?.posterThumbhash
-    val homeTint by rememberDominantColor(
-        imageUrl = tintArtworkUrl,
-        fallback = Color(0xFF0A1F24),
-        thumbhash = tintArtworkThumbhash,
-    )
-    // iOS Home paints the normalized artwork tint itself, then lowers its
-    // brightness slightly. Detail pages intentionally use the darker 42%-over-
-    // black composite; applying that detail formula here made Home too flat.
-    val homeSurface = Color(
-        red = (homeTint.red - 0.055f).coerceAtLeast(0f),
-        green = (homeTint.green - 0.055f).coerceAtLeast(0f),
-        blue = (homeTint.blue - 0.055f).coerceAtLeast(0f),
-        alpha = 1f,
-    )
+    // iOS Home no longer samples the centered Continue Watching artwork; it
+    // sits on the fixed page canvas so scrolling the row never recolors the
+    // page (silo-apple PR #222).
+    val homeSurface = MaterialTheme.colorScheme.background
     val diagnosticsContentState = when {
         state.isLoading && regularSections.isEmpty() -> DiagnosticsHomeContentState.LOADING
         state.error != null && regularSections.isEmpty() -> DiagnosticsHomeContentState.ERROR
@@ -513,11 +491,6 @@ fun HomeScreen(
                                 onDismissContinueWatching = { item ->
                                     item.progressUpdatedAt?.let { ts ->
                                         viewModel.dismissContinueWatching(item.contentId, ts)
-                                    }
-                                },
-                                onCenteredContinueWatchingItemChanged = { item ->
-                                    if (item?.contentId != focusedContinueWatchingItem?.contentId) {
-                                        focusedContinueWatchingItem = item
                                     }
                                 },
                             )

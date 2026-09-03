@@ -6,6 +6,14 @@ import androidx.compose.ui.graphics.Color
 // Pure-black backgrounds, EDEDED primary text, white-at-opacity for everything else.
 
 val SiloBackground = Color(0xFF000000)
+
+/**
+ * The signed-in page canvas. iOS paints `ContinuumPageBackdrop` (#111111) under
+ * every signed-in phone surface instead of pure black (silo-apple PR #222);
+ * `SiloBackground` stays black for the ink and player roles that mirror
+ * `continuumBackground`. Settings keeps `SiloSettingsBackground`.
+ */
+val SiloPageBackground = Color(0xFF111111)
 val SiloSurface = Color(0xFF0A0A0A)
 val SiloSurfaceVariant = Color(0xFF0E0F12)
 val SiloSurfaceElevated = Color(0xFF15171C)
@@ -88,7 +96,7 @@ val SiloWhiteSoft = SiloOnSurface
 val SiloWhiteMuted = SiloSecondaryText
 val SiloBlack = SiloBackground
 
-val DarkBackground = SiloBackground
+val DarkBackground = SiloPageBackground
 val DarkSurface = SiloSurface
 val DarkSurfaceVariant = SiloSurfaceVariant
 val DarkSurfaceHigh = SiloSurfaceElevated
