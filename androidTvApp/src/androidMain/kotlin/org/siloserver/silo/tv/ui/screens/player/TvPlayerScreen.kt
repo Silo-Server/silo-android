@@ -180,21 +180,13 @@ private data class TvIdleOverlayFocusRequest(
 )
 
 /**
- * Manual rate step for a hidden-controls hold-seek.
- *
- * Delegates to [TvSeekRateLadder] so this control and the focused scrubber's
- * hold-seek walk one ladder. They previously kept separate ones, and the
- * hidden path's was both dishonest about its multiples (see
- * [advanceCleanPlaybackSeekPreview]) and flipped direction when stepped below
- * 1× — so "slower" eventually meant "backwards".
+ * Manual rate step for a hidden-controls hold-seek. Delegates to
+ * [TvSeekRateLadder] so this control and the focused scrubber walk the same
+ * ladder as the Apple clients.
  */
-internal fun adjustedCleanPlaybackSeekRate(
-    currentRate: Int,
-    adjustment: Int,
-    durationSec: Double,
-): Int {
+internal fun adjustedCleanPlaybackSeekRate(currentRate: Int, adjustment: Int): Int {
     if (adjustment == 0) return currentRate
-    return TvSeekRateLadder.bumped(currentRate, adjustment, durationSec)
+    return TvSeekRateLadder.bumped(currentRate, adjustment)
 }
 
 /**
@@ -226,22 +218,17 @@ internal fun isCleanPlaybackSeekAdjustmentTap(
 ): Boolean = !repeated && pressDurationMs < CLEAN_SEEK_HOLD_THRESHOLD_MS
 
 /**
- * One hold-seek tick for the hidden-controls scan.
- *
- * Advances by [TvSeekRateLadder.tickSeconds], which is what makes the rate
- * chip mean what it says: rate × tick seconds per tick is exactly rate × real
- * time. This previously advanced a flat 2s per 100ms tick at 1×, so every
- * multiple on screen was a twentieth of the truth — a chip reading "8×" moved
- * at 160×, and the same gesture ran 20× faster with the chrome hidden than the
- * focused scrubber's hold-seek, which had already been corrected.
+ * One hold-seek tick for the hidden-controls scan. Advances by the ladder's
+ * content-per-elapsed-time so the speed matches tvOS `beginHoldSeek`.
  */
 internal fun advanceCleanPlaybackSeekPreview(
     previewSec: Double,
     durationSec: Double,
     rate: Int,
+    elapsedMillis: Long = TvSeekRateLadder.TICK_MILLIS,
 ): Double {
     val safePreview = previewSec.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
-    val next = (safePreview + TvSeekRateLadder.tickSeconds(rate)).coerceAtLeast(0.0)
+    val next = (safePreview + TvSeekRateLadder.elapsedSeconds(rate, elapsedMillis)).coerceAtLeast(0.0)
     return if (durationSec.isFinite() && durationSec > 0.0) {
         next.coerceAtMost(durationSec)
     } else {
@@ -802,35 +789,32 @@ fun TvPlayerScreen(
 
         cleanSeekTickJob?.cancel()
         cleanSeekTickJob = cleanPlaybackSeekScope.launch {
+            var lastTickAt = SystemClock.elapsedRealtime()
             while (isActive && cleanSeekRate != 0) {
+                val now = SystemClock.elapsedRealtime()
                 cleanSeekPreviewSec = advanceCleanPlaybackSeekPreview(
                     previewSec = cleanSeekPreviewSec,
                     durationSec = viewModel.uiState.value.duration,
                     rate = cleanSeekRate,
+                    elapsedMillis = now - lastTickAt,
                 )
+                lastTickAt = now
                 delay(TvSeekRateLadder.TICK_MILLIS)
             }
         }
 
-        // Ramp on the shared ladder rather than a fixed 2→4→8. Now that a tick
-        // covers rate × real time, a fixed ceiling cannot serve both ends: 8×
-        // would take over twenty minutes to cross a film. The ladder derives
-        // its top from the runtime so "hold until it arrives" costs about the
-        // same whatever you're watching.
+        // Sustained ramp, Apple `startHoldSeekAutoRamp`: 1 → 2 → 4 → 8 on a
+        // 1.2s beat, then the viewer taps to go faster. Each step only fires
+        // while the rate is still the one the previous step left, so a tap
+        // in the meantime (which is the viewer driving) wins.
         cleanSeekRampJob?.cancel()
         cleanSeekRampJob = cleanPlaybackSeekScope.launch {
-            val durationSec = viewModel.uiState.value.duration
             var previous = TvSeekRateLadder.BASE_RATE * sign
-            repeat(TvSeekRateLadder.rampSteps(durationSec)) { step ->
+            for (magnitude in TvSeekRateLadder.rampRates) {
                 delay(TvSeekRateLadder.RAMP_STEP_MILLIS)
-                // Only continue while the viewer is still holding at the rate
-                // the previous step left, so a release and a fresh press the
-                // other way isn't overwritten by this hold's timer.
                 if (cleanSeekRate != previous) return@launch
-                val next = TvSeekRateLadder.sustainedRate(step, sign, durationSec)
-                if (next == previous) return@launch
-                cleanSeekRate = next
-                previous = next
+                cleanSeekRate = magnitude * sign
+                previous = cleanSeekRate
             }
         }
     }
@@ -895,7 +879,6 @@ fun TvPlayerScreen(
         cleanSeekRate = adjustedCleanPlaybackSeekRate(
             currentRate = cleanSeekRate,
             adjustment = adjustment,
-            durationSec = viewModel.uiState.value.duration,
         )
     }
 
@@ -2550,7 +2533,6 @@ private fun TvPlayerIdleOverlay(
     // needed a Back (which hides the overlay, clearing the flag) before Down.
     var scrubberHasFocus by remember { mutableStateOf(false) }
     var transportHasFocus by remember { mutableStateOf(false) }
-    var currentRate by remember { mutableStateOf(0) }
     LaunchedEffect(focusRequest.nonce) {
         val overlayTarget = when (focusRequest.target) {
             TvIdleOverlayFocusTarget.Scrubber -> scrubberFocus
@@ -2682,7 +2664,6 @@ private fun TvPlayerIdleOverlay(
                     )
                 },
                 onExitWhenIdle = onClose,
-                onRateChanged = { currentRate = it },
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -2743,19 +2724,6 @@ private fun TvPlayerIdleOverlay(
             }
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 80.dp),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            TvHoldSeekIndicator(
-                isVisible = currentRate != 0,
-                rate = currentRate,
-                previewTimeSec = scrubPreviewSec,
-                durationSec = durationSec,
-            )
-        }
     }
 }
 

@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import android.os.SystemClock
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -45,6 +47,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -56,6 +59,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -68,10 +72,8 @@ import kotlin.math.roundToInt
  *
  * - **Tap left/right** (idle): ±10 s quick skip via [onSkipBack] / [onSkipForward].
  * - **Tap left/right** (timeline scrub): ±10 s nudge of the in-flight preview.
- * - **Hold left/right**: enter timeline auto-seek at ±2x, doubling every
- *   900 ms up to a ceiling derived from the item's runtime — ±256x for a
- *   22-minute episode, ±1024x for a feature — or tap again to bump the rate
- *   by hand. See [TvSeekRateLadder.maxRateFor].
+ * - **Hold left/right**: enter timeline auto-seek at 1x on the shared
+ *   [TvSeekRateLadder]; tap again to step the rate, as on tvOS.
  * - **OK / Select**: commit an in-flight preview (or enter timeline scrub).
  * - **Back / Down**: cancel the preview / move focus to transport.
  *
@@ -129,7 +131,6 @@ fun TvPlayerScrubber(
     canToggleAfterCommit: Boolean = true,
     onMoveDownToTransport: () -> Unit,
     onExitWhenIdle: () -> Unit,
-    onRateChanged: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -147,20 +148,19 @@ fun TvPlayerScrubber(
     var autoSeekRate by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     var autoSeekJob by remember { mutableStateOf<Job?>(null) }
-    // Speeds and ramp live in TvSeekRateLadder so the chip's number and the
-    // distance actually travelled cannot drift apart again.
-    var holdRampJob by remember { mutableStateOf<Job?>(null) }
+    // Direction of a Left/Right press whose tap action is waiting for KeyUp.
+    // tvOS classifies tap versus hold from the release (TVPressCaptureView),
+    // so a hold never fires the ±10/30s skip on its way into auto-seek. The
+    // first repeat clears this and starts the hold instead.
+    var pendingTapDirection by remember { mutableStateOf(0) }
 
     fun setRate(rate: Int) {
         autoSeekRate = rate
-        onRateChanged(rate)
     }
 
     fun stopAutoSeek() {
         autoSeekJob?.cancel()
         autoSeekJob = null
-        holdRampJob?.cancel()
-        holdRampJob = null
         setRate(0)
     }
 
@@ -171,46 +171,38 @@ fun TvPlayerScrubber(
         setRate(TvSeekRateLadder.BASE_RATE * sign)
         autoSeekJob?.cancel()
         autoSeekJob = scope.launch {
+            // Delay first so onBeginScrub's position seed lands in
+            // currentPreviewSec before the loop reads it (otherwise the first
+            // update would overwrite the seed and scanning starts at ~0).
+            delay(TvSeekRateLadder.TICK_MILLIS)
+            // The loop owns the running position. Pulling the preview back
+            // through recomposition each tick meant every tick advanced from
+            // whatever the UI had last managed to draw — under 4K decode load
+            // that lagged several ticks, so a chip reading 128× travelled at a
+            // fraction of it. Mirrors the hidden-controls path, which keeps
+            // its own counter for the same reason.
+            var previewSec = currentPreviewSec
+            var lastTickAt = SystemClock.elapsedRealtime()
             while (isActive) {
-                // Delay first so onBeginScrub's position seed lands in
-                // currentPreviewSec before the first tick reads it (otherwise the
-                // first update would overwrite the seed and scanning starts at ~0).
-                delay(TvSeekRateLadder.TICK_MILLIS)
                 val rate = autoSeekRate
                 if (rate == 0) break
-                val base = currentPreviewSec + TvSeekRateLadder.tickSeconds(rate)
-                onUpdateScrub(base)
+                val now = SystemClock.elapsedRealtime()
+                previewSec = clampTvScrubPreview(
+                    previewSec + TvSeekRateLadder.elapsedSeconds(rate, now - lastTickAt),
+                    durationSec,
+                )
+                lastTickAt = now
+                onUpdateScrub(previewSec)
+                delay(TvSeekRateLadder.TICK_MILLIS)
             }
         }
-        // Sustained progression through the ladder. Each step only fires if the
-        // viewer is still holding the same direction at the rate the previous
-        // step left — otherwise a release and a fresh press the other way would
-        // be overwritten by a timer from the abandoned hold.
-        holdRampJob?.cancel()
-        holdRampJob = scope.launch {
-            var previous = TvSeekRateLadder.BASE_RATE * sign
-            repeat(TvSeekRateLadder.rampSteps(durationSec)) { step ->
-                delay(TvSeekRateLadder.RAMP_STEP_MILLIS)
-                // Only continue while the viewer is still holding at the rate
-                // the previous step left; a release and a fresh press the other
-                // way must not be overwritten by this hold's timer.
-                if (autoSeekRate != previous) return@launch
-                val next = TvSeekRateLadder.sustainedRate(step, sign, durationSec)
-                if (next == previous) return@launch
-                setRate(next)
-                previous = next
-            }
-        }
+        // No sustained ramp on the focused bar: tvOS `beginTimelineAutoSeek`
+        // holds the rate the press started at and leaves speed to taps.
     }
 
     fun bumpRate(delta: Int) {
-        val next = TvSeekRateLadder.bumped(autoSeekRate, delta, durationSec)
-        if (next == autoSeekRate) return
-        // User-driven rate change cancels the time-based ramp so it doesn't
-        // overwrite the manual pick a beat later.
-        holdRampJob?.cancel()
-        holdRampJob = null
-        setRate(next)
+        val next = TvSeekRateLadder.bumped(autoSeekRate, delta)
+        if (next != autoSeekRate) setRate(next)
     }
 
     // Cancel any in-flight scrub on focus loss when the shell asks us to
@@ -280,15 +272,16 @@ fun TvPlayerScrubber(
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            // Auto-seek visualization is owned by [TvHoldSeekIndicator] rendered
-            // by the parent overlay so it can float top-center above the
-            // transport instead of crowding the scrubber.
 
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.Center)
-                .height(28.dp)
+                // Required, not preferred: the column above hands this box
+                // ~14dp once the clock row has taken its share, and a plain
+                // height() is coerced to that, squashing the puck and
+                // clipping the auto-seek chip.
+                .requiredHeight(28.dp)
                 .focusRequester(onRequestFocus)
                 .onFocusChanged { /* state collected via interactionSource */ }
                 .focusable(interactionSource = interactionSource)
@@ -297,58 +290,40 @@ fun TvPlayerScrubber(
                     val isUp = event.type == KeyEventType.KeyUp
                     val nativeRepeat = event.nativeKeyEvent.repeatCount
                     when (event.key) {
-                        Key.DirectionLeft -> {
-                            // KeyUp cancels the time-based ramp coroutine —
-                            // user has released the D-pad, so further rate
-                            // climbs would be unsolicited. The auto-seek loop
-                            // itself stays alive until commit/cancel.
+                        Key.DirectionLeft, Key.DirectionRight -> {
+                            val direction = if (event.key == Key.DirectionLeft) -1 else 1
                             if (isUp) {
-                                holdRampJob?.cancel()
-                                holdRampJob = null
+                                // Release before the first repeat: this was a
+                                // tap. ±10s/30s skip in idle, a nudge of the
+                                // in-flight preview, or a rate bump in auto-seek.
+                                if (pendingTapDirection == direction) {
+                                    pendingTapDirection = 0
+                                    when {
+                                        autoSeekRate != 0 -> bumpRate(direction)
+                                        // Forward nudge matches the 30s transport
+                                        // skip (back stays 10s), mirroring tvOS
+                                        // scrubForwardStep/scrubBackwardStep.
+                                        isTimelineScrubbing -> onUpdateScrub(
+                                            scrubPreviewSec + if (direction < 0) -10.0 else 30.0,
+                                        )
+                                        direction < 0 -> onSkipBack()
+                                        else -> onSkipForward()
+                                    }
+                                    return@onPreviewKeyEvent true
+                                }
                                 return@onPreviewKeyEvent false
                             }
                             if (!isDown) return@onPreviewKeyEvent false
-                            // First repeat (count==1) marks "long-press" —
-                            // engage timeline auto-seek mode. Standalone
-                            // taps (repeat==0 followed by KeyUp) fall back
-                            // to ±10s skip in idle, or chip rate-bump in
-                            // auto-seek.
+                            // First repeat (count==1) marks "long-press": engage
+                            // timeline auto-seek and forget the pending tap so
+                            // the hold does not also skip on the way in.
                             if (nativeRepeat == 1) {
-                                if (autoSeekRate == 0) beginAutoSeek(-1)
+                                pendingTapDirection = 0
+                                if (autoSeekRate == 0) beginAutoSeek(direction)
                                 return@onPreviewKeyEvent true
                             }
                             if (nativeRepeat > 1) return@onPreviewKeyEvent true
-                            if (autoSeekRate != 0) {
-                                bumpRate(-1)
-                            } else if (isTimelineScrubbing) {
-                                onUpdateScrub(scrubPreviewSec - 10.0)
-                            } else {
-                                onSkipBack()
-                            }
-                            true
-                        }
-                        Key.DirectionRight -> {
-                            if (isUp) {
-                                holdRampJob?.cancel()
-                                holdRampJob = null
-                                return@onPreviewKeyEvent false
-                            }
-                            if (!isDown) return@onPreviewKeyEvent false
-                            if (nativeRepeat == 1) {
-                                if (autoSeekRate == 0) beginAutoSeek(1)
-                                return@onPreviewKeyEvent true
-                            }
-                            if (nativeRepeat > 1) return@onPreviewKeyEvent true
-                            if (autoSeekRate != 0) {
-                                bumpRate(1)
-                            } else if (isTimelineScrubbing) {
-                                // Forward nudge matches the 30s transport skip
-                                // (back nudge stays 10s), mirroring tvOS
-                                // scrubForwardStep/scrubBackwardStep.
-                                onUpdateScrub(scrubPreviewSec + 30.0)
-                            } else {
-                                onSkipForward()
-                            }
+                            pendingTapDirection = direction
                             true
                         }
                         Key.DirectionDown -> {
@@ -511,10 +486,62 @@ fun TvPlayerScrubber(
                         .background(Color.White),
                 )
             }
+
+            // Auto-seek chip, after tvOS `timelineAutoSeekChip`: a small white
+            // pill with the direction glyph and rate, riding above the puck so
+            // the eye stays on the playhead. Kept inside the bar's width so it
+            // never hangs off either end. The bar's puck and clocks already
+            // show where the preview is, so the full [TvHoldSeekIndicator]
+            // overlay stays reserved for the hidden-controls session where
+            // nothing else is on screen.
+            if (autoSeekRate != 0) {
+                var chipWidthPx by remember { mutableStateOf(0) }
+                val chipLiftPx = with(density) { 40.dp.roundToPx() }
+                TvScrubberAutoSeekChip(
+                    rate = autoSeekRate,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .onSizeChanged { chipWidthPx = it.width }
+                        .offset {
+                            val maxX = (barWidthPx - chipWidthPx).roundToInt().coerceAtLeast(0)
+                            val x = (barWidthPx * totalProgress - chipWidthPx / 2f)
+                                .roundToInt()
+                                .coerceIn(0, maxX)
+                            IntOffset(x, -chipLiftPx)
+                        },
+                )
+            }
         }
     }
 }
 
+}
+
+@Composable
+private fun TvScrubberAutoSeekChip(rate: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .shadow(8.dp, RoundedCornerShape(percent = 50), clip = false)
+            .clip(RoundedCornerShape(percent = 50))
+            .background(Color.White)
+            .padding(horizontal = 9.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(
+            imageVector = if (rate < 0) Icons.Filled.FastRewind else Icons.Filled.FastForward,
+            contentDescription = null,
+            tint = Color.Black,
+            modifier = Modifier.size(12.dp),
+        )
+        Text(
+            text = "${abs(rate)}x",
+            color = Color.Black,
+            maxLines = 1,
+            softWrap = false,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+        )
+    }
 }
 
 private fun formatScrubberTime(seconds: Double): String = formatTimelineClock(seconds)
