@@ -104,9 +104,10 @@ fun CatalogGrid(
 ) {
     val gridState = rememberLazyGridState()
     val heroHandoff = LocalHeroSourceHandoff.current
-    val browseContentIds = remember(items) { items.map { it.contentId } }
-    val browseOrigin = remember(items.firstOrNull()?.contentId) {
-        "catalog-${items.firstOrNull()?.contentId.orEmpty()}"
+    val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
+    val browseContentIds = remember(uniqueItems) { uniqueItems.map { it.contentId } }
+    val browseOrigin = remember(uniqueItems.firstOrNull()?.contentId) {
+        "catalog-${uniqueItems.firstOrNull()?.contentId.orEmpty()}"
     }
     // The session density picks the base cell; the server-driven poster-size
     // preference multiplies it, shifting the adaptive column count.
@@ -164,7 +165,7 @@ fun CatalogGrid(
             }
 
             items(
-                items = items,
+                items = uniqueItems,
                 key = { it.contentId },
                 contentType = { item -> item.type },
             ) { item ->

@@ -96,7 +96,7 @@ fun MediaRow(
         )
     }
     val rowItems = remember(items, showProgress, cardStyle) {
-        items.map { item ->
+        items.distinctBy { it.contentId }.map { item ->
             val pos = item.positionSeconds
             val dur = item.durationSeconds
             val progress = if (showProgress && pos != null && dur != null && dur > 0) {
