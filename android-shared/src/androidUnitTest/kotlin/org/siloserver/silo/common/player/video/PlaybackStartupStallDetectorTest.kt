@@ -583,6 +583,46 @@ class PlaybackStartupStallDetectorTest {
     }
 
     @Test
+    fun dv7TransformDeadlineRestartsOnTheSampleThatReturnsOwnershipToTheTransform() {
+        // CodeRabbit on #289: if no poll lands while transport owns the stall
+        // (a lifecycle gap spanning the refill), the first transform-owned
+        // sample must not inherit a clock anchored at the last transport
+        // sample. The transition itself restarts the deadline.
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 30_000,
+            midStreamGraceMs = 20_000,
+            clientTransformGraceMs = 10_000,
+            clientTransformMinBufferedAheadMs = 5_000,
+        )
+        detector.onMounted(
+            sessionKey = "dv7-gap",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+            clientTransformations = listOf(CLIENT_DV7_TO_HDR10),
+        )
+        detector.onFirstFrameRendered()
+
+        assertNull(detector.sample("dv7-gap", 5_000, true, true, false, 4_900, 6_000, 120, 120))
+        // One transport-owned sample as the buffer drains, then no polls at
+        // all until the buffer has refilled 11.5 s later.
+        assertNull(detector.sample("dv7-gap", 6_000, true, false, true, 6_000, 6_100, 145, 145))
+        assertNull(
+            detector.sample("dv7-gap", 17_500, true, false, true, 6_000, 12_000, 145, 145),
+            "the sample that hands ownership back to the transform must not be blamed on the recipe",
+        )
+        // Playback resumes on audio but the video decoder stays silent: the
+        // deadline that restarted at the hand-back trips ten seconds on.
+        assertNull(detector.sample("dv7-gap", 18_000, true, true, false, 6_100, 12_000, 145, 145))
+        assertNull(detector.sample("dv7-gap", 27_500, true, true, false, 15_000, 20_000, 145, 145))
+        assertEquals(
+            PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
+            detector.sample("dv7-gap", 27_501, true, true, false, 15_001, 20_000, 145, 145)
+                ?.classification,
+        )
+    }
+
+    @Test
     fun dv7RouteWithoutDecoderEvidenceKeepsTransportDeadline() {
         val detector = PlaybackStartupStallDetector(
             startupGraceMs = 20_000,

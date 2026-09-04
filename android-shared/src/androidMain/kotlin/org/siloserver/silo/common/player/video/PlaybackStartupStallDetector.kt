@@ -33,6 +33,7 @@ class PlaybackStartupStallDetector(
     private var clientTransformPositionMs: Long = 0L
     private var clientTransformDecoderOutputCount: Int = 0
     private var clientTransformProgressAtMs: Long = 0L
+    private var clientTransformOwnedLastSample = true
     private var paused = false
     // Last time playback made forward progress (or the mount time before it
     // starts). The stall is measured from here, so the same logic covers a
@@ -73,6 +74,7 @@ class PlaybackStartupStallDetector(
         this.clientTransformPositionMs = this.startPositionMs
         this.clientTransformDecoderOutputCount = 0
         this.clientTransformProgressAtMs = nowMs
+        this.clientTransformOwnedLastSample = true
         this.paused = false
         this.lastProgressPositionMs = this.startPositionMs
         this.lastBufferedPositionMs = this.startPositionMs
@@ -195,16 +197,19 @@ class PlaybackStartupStallDetector(
         val bufferedAheadMs = (bufferedPositionMs - currentPositionMs).coerceAtLeast(0L)
         val transformOwnsStall = isPlaying ||
             (isBuffering && bufferedAheadMs >= clientTransformMinBufferedAheadMs)
-        if (!transformOwnsStall) {
+        if (!transformOwnsStall || !clientTransformOwnedLastSample) {
             // While transport owns the stall the decoder is idle for want of
             // input, so its silence is not evidence against the recipe. Keep
             // the transform clock anchored here; otherwise a rebuffer longer
             // than the transform grace would blame the recipe on the first
             // sample after the buffer refilled, before the decoder had a
             // chance to emit another frame. The deadline restarts from the
-            // moment ownership returns to the transform.
+            // sample on which ownership returns to the transform, so a gap
+            // between polls (a lifecycle pause, say) spanning the whole
+            // refill cannot leave the clock pointing into the rebuffer.
             clientTransformProgressAtMs = nowMs
         }
+        clientTransformOwnedLastSample = transformOwnsStall
         if (!signaled && hasClientTransformDecodeEvidence &&
             transformOwnsStall &&
             nowMs - clientTransformProgressAtMs > clientTransformGraceMs
