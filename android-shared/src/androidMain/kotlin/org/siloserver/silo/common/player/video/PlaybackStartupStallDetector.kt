@@ -195,6 +195,16 @@ class PlaybackStartupStallDetector(
         val bufferedAheadMs = (bufferedPositionMs - currentPositionMs).coerceAtLeast(0L)
         val transformOwnsStall = isPlaying ||
             (isBuffering && bufferedAheadMs >= clientTransformMinBufferedAheadMs)
+        if (!transformOwnsStall) {
+            // While transport owns the stall the decoder is idle for want of
+            // input, so its silence is not evidence against the recipe. Keep
+            // the transform clock anchored here; otherwise a rebuffer longer
+            // than the transform grace would blame the recipe on the first
+            // sample after the buffer refilled, before the decoder had a
+            // chance to emit another frame. The deadline restarts from the
+            // moment ownership returns to the transform.
+            clientTransformProgressAtMs = nowMs
+        }
         if (!signaled && hasClientTransformDecodeEvidence &&
             transformOwnsStall &&
             nowMs - clientTransformProgressAtMs > clientTransformGraceMs

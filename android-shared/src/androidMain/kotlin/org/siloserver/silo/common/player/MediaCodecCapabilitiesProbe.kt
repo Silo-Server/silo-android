@@ -44,6 +44,11 @@ object MediaCodecCapabilitiesProbe {
     fun probe(): ProbeResult =
         cached ?: synchronized(this) { cached ?: computeProbe().also { cached = it } }
 
+    /** Drops the cached probe so a test can re-run it against a shadowed codec list. */
+    internal fun resetCacheForTest() {
+        synchronized(this) { cached = null }
+    }
+
     /** Returns an immutable copy for diagnostics without reconfiguring or opening any codec. */
     fun diagnosticsSnapshot(): ProbeResult {
         val result = probe()

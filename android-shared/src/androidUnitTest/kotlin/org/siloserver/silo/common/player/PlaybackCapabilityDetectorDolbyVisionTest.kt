@@ -1,9 +1,14 @@
 package org.siloserver.silo.common.player
 
 import android.content.Context
+import android.media.MediaCodecInfo.CodecCapabilities
+import android.media.MediaCodecInfo.CodecProfileLevel
+import android.media.MediaFormat
 import androidx.test.core.app.ApplicationProvider
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.MediaCodecInfoBuilder
+import org.robolectric.shadows.ShadowMediaCodecList
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.libass.LibassBridge
 import org.siloserver.silo.model.playback.HdrCapabilities
@@ -348,6 +353,85 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
                 .isEmpty(),
             "client transformations are scoped to original_http",
         )
+    }
+
+    @Test
+    fun freshDetectorResolvesHevcHdr10EvidenceFromTheCodecProbeWhenCapabilitiesAreInjected() {
+        // CodeRabbit on #289: the HEVC HDR10 flag used to default to a field
+        // that only detect() populated. Every production caller injects
+        // capabilities, so a detector that had never run detect() advertised
+        // no Profile 7 to HDR10 route however capable the decoder was.
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val hevc10 = org.siloserver.silo.model.playback.VideoDecodeCapability(
+            codec = "hevc",
+            bitDepths = listOf(8, 10),
+            hardware = true,
+        )
+        val shieldLike = ClientCodecCapabilities(
+            videoDecode = listOf(hevc10),
+            hdrDetails = HdrCapabilities(hdr10 = true),
+        )
+
+        fun freshDetector() = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        fun transformationsFromProbe(): List<String> =
+            freshDetector().detectPlaybackContext(
+                formFactor = "tv",
+                appVersion = "test",
+                capabilities = shieldLike,
+            )
+                .deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP)
+                .transformations
+                .map { it.name }
+
+        fun hevcDecoder(vararg profiles: Int) = MediaCodecInfoBuilder.newBuilder()
+            .setName("c2.nvidia.hevc.decoder")
+            .setIsHardwareAccelerated(true)
+            .setIsSoftwareOnly(false)
+            .setCapabilities(
+                MediaCodecInfoBuilder.CodecCapabilitiesBuilder.newBuilder()
+                    .setMediaFormat(
+                        MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, 3840, 2160),
+                    )
+                    .setColorFormats(intArrayOf(CodecCapabilities.COLOR_FormatYUV420Flexible))
+                    .setProfileLevels(
+                        profiles.map { profile ->
+                            CodecProfileLevel().apply {
+                                this.profile = profile
+                                level = CodecProfileLevel.HEVCMainTierLevel51
+                            }
+                        }.toTypedArray(),
+                    )
+                    .build(),
+            )
+            .build()
+
+        try {
+            ShadowMediaCodecList.reset()
+            ShadowMediaCodecList.addCodec(hevcDecoder(CodecProfileLevel.HEVCProfileMain10HDR10))
+            MediaCodecCapabilitiesProbe.resetCacheForTest()
+            assertEquals(
+                listOf(CLIENT_DV7_TO_HDR10),
+                transformationsFromProbe(),
+                "a detector that never ran detect() must still read the probe's HEVC HDR10 evidence",
+            )
+
+            ShadowMediaCodecList.reset()
+            ShadowMediaCodecList.addCodec(hevcDecoder(CodecProfileLevel.HEVCProfileMain10))
+            MediaCodecCapabilitiesProbe.resetCacheForTest()
+            assertTrue(
+                transformationsFromProbe().isEmpty(),
+                "a Main10 decoder without an HDR10 profile does not earn the route",
+            )
+        } finally {
+            ShadowMediaCodecList.reset()
+            MediaCodecCapabilitiesProbe.resetCacheForTest()
+        }
     }
 
     @Test

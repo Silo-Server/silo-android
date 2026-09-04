@@ -537,6 +537,52 @@ class PlaybackStartupStallDetectorTest {
     }
 
     @Test
+    fun dv7TransformDeadlineRestartsWhenTheBufferRefillsAfterALongRebuffer() {
+        // Codex review on #289: a rebuffer longer than the transform grace
+        // used to leave the transform clock pointing at the last frame before
+        // the network stall. The first sample after the buffer refilled then
+        // blamed the recipe before the decoder had a chance to emit a frame,
+        // and the working route was quarantined for 14 days.
+        val detector = PlaybackStartupStallDetector(
+            startupGraceMs = 30_000,
+            midStreamGraceMs = 20_000,
+            clientTransformGraceMs = 10_000,
+            clientTransformMinBufferedAheadMs = 5_000,
+        )
+        detector.onMounted(
+            sessionKey = "dv7-refill",
+            playMethod = PlayMethod.DIRECT,
+            startPositionMs = 0,
+            nowMs = 0,
+            clientTransformations = listOf(CLIENT_DV7_TO_HDR10),
+        )
+        detector.onFirstFrameRendered()
+
+        assertNull(detector.sample("dv7-refill", 100, true, true, false, 0, 6_000, 10, 10))
+        assertNull(detector.sample("dv7-refill", 5_000, true, true, false, 4_900, 6_000, 120, 120))
+        // Buffer drains; transport owns the stall for twelve seconds.
+        assertNull(detector.sample("dv7-refill", 6_000, true, false, true, 6_000, 6_100, 145, 145))
+        assertNull(detector.sample("dv7-refill", 17_000, true, false, true, 6_000, 6_500, 145, 145))
+        // Refilled past the threshold, still BUFFERING, decoder not yet fed.
+        assertNull(
+            detector.sample("dv7-refill", 17_500, true, false, true, 6_000, 12_000, 145, 145),
+            "the first sample after a refill must not blame the recipe",
+        )
+        // Playback resumes and the decoder keeps producing frames.
+        assertNull(detector.sample("dv7-refill", 18_000, true, true, false, 6_100, 12_000, 150, 150))
+        assertNull(detector.sample("dv7-refill", 27_000, true, true, false, 15_000, 20_000, 400, 400))
+
+        // The clock restarted from the refill rather than being disabled: a
+        // real wedge after the rebuffer still trips the transform deadline.
+        assertNull(detector.sample("dv7-refill", 37_000, true, true, false, 25_000, 30_000, 400, 400))
+        assertEquals(
+            PlaybackStartupStallDetector.DV7_TRANSFORM_STALL_CLASSIFICATION,
+            detector.sample("dv7-refill", 37_001, true, true, false, 25_001, 30_000, 400, 400)
+                ?.classification,
+        )
+    }
+
+    @Test
     fun dv7RouteWithoutDecoderEvidenceKeepsTransportDeadline() {
         val detector = PlaybackStartupStallDetector(
             startupGraceMs = 20_000,
