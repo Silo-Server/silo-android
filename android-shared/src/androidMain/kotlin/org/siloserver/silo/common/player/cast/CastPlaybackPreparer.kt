@@ -205,7 +205,7 @@ class CastPlaybackPreparer(
         // the account access token: the server stamps a session-scoped ?st= on
         // the stream URL only, and the subtitle route rejects anything else
         // (observed: all subtitle fetches 401'd with the access token).
-        val streamToken = STREAM_TOKEN_VALUE_REGEX.find(castUrl)?.groupValues?.get(1)
+        val streamToken = STREAM_TOKEN_VALUE_REGEX.find(castUrl.substringBefore('#'))?.groupValues?.get(1)
         val inventory = castSubtitleInventory(plan)
         val labels = castSubtitleLabels(inventory)
         val selectedIndex = plan.resolvedSelectedSubtitleIndex()
@@ -220,9 +220,8 @@ class CastPlaybackPreparer(
                 trackId = item.trackId,
                 combinedIndex = item.combinedIndex,
                 receiverUrl = receiverUrl?.let { base ->
-                    if (streamToken != null && !STREAM_TOKEN_REGEX.containsMatchIn(base)) {
-                        val sep = if (base.contains('?')) '&' else '?'
-                        "$base${sep}st=$streamToken"
+                    if (streamToken != null) {
+                        appendCastStreamToken(base, streamToken)
                     } else {
                         signStreamUrl(base, token)
                     }
@@ -260,10 +259,7 @@ class CastPlaybackPreparer(
      */
     private fun signStreamUrl(url: String, token: String?): String {
         if (token.isNullOrBlank()) return url
-        if (STREAM_TOKEN_REGEX.containsMatchIn(url)) return url
-        val separator = if (url.contains('?')) '&' else '?'
-        val encoded = URLEncoder.encode(token, "UTF-8")
-        return "$url${separator}st=$encoded"
+        return appendCastStreamToken(url, URLEncoder.encode(token, "UTF-8"))
     }
 
     /**
@@ -320,7 +316,6 @@ class CastPlaybackPreparer(
         private const val TAG = "CastPlaybackPreparer"
         private const val VTT_EXTENSION = ".vtt"
 
-        private val STREAM_TOKEN_REGEX = Regex("[?&]st=")
         private val STREAM_TOKEN_VALUE_REGEX = Regex("[?&]st=([^&]+)")
 
         /**
@@ -799,4 +794,13 @@ internal fun castSubtitleUrlForTimeline(url: String, timelineOffsetSeconds: Doub
         .plus("timestamp_offset=${-timelineOffsetSeconds}")
         .joinToString("&")
     return "$path?$query" + if ('#' in url) "#$fragment" else ""
+}
+
+/** Adds an already-encoded Cast token to the HTTP query, never to the fragment. */
+internal fun appendCastStreamToken(url: String, encodedToken: String): String {
+    val base = url.substringBefore('#')
+    if (Regex("[?&]st=").containsMatchIn(base)) return url
+    val fragment = url.substringAfter('#', "")
+    val separator = if ('?' in base) '&' else '?'
+    return "$base${separator}st=$encodedToken" + if ('#' in url) "#$fragment" else ""
 }

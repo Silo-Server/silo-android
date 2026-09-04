@@ -16,6 +16,21 @@ import kotlin.test.assertTrue
 
 class CastPlaybackPreparerTest {
     @Test
+    fun shiftedSubtitleAuthenticationPrecedesFragment() {
+        val shifted = castSubtitleUrlForTimeline("https://server/subtitles/2.vtt?file_id=42#cue", 90.5)
+        assertEquals(
+            "https://server/subtitles/2.vtt?file_id=42&timestamp_offset=-90.5&st=signed%2Btoken#cue",
+            appendCastStreamToken(shifted, "signed%2Btoken"),
+        )
+        assertEquals(
+            "https://server/subtitles/2.vtt?st=signed%2Btoken#cue&st=fragment-only",
+            appendCastStreamToken("https://server/subtitles/2.vtt#cue&st=fragment-only", "signed%2Btoken"),
+        )
+        val alreadySigned = "https://server/subtitles/2.vtt?st=existing%2Btoken#cue"
+        assertEquals(alreadySigned, appendCastStreamToken(alreadySigned, "replacement"))
+    }
+
+    @Test
     fun resumedCastSubtitlesShiftIntoTransportClockWithoutChangingIdentityPins() {
         val url = "https://server/subtitles/2.vtt?file_id=42&provider_id=a%2Fb&st=signed%2Btoken"
         assertEquals("$url&timestamp_offset=-90.5", castSubtitleUrlForTimeline(url, 90.5))
