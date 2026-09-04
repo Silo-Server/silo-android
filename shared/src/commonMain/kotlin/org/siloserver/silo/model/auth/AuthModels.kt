@@ -32,7 +32,8 @@ data class RefreshResponse(
 
 @Serializable
 data class User(
-    val id: Int,
+    /** Opaque account id. v2 emits a string; v1 login bodies still carry a number, which lenient decoding accepts. */
+    val id: String,
     val username: String,
     val email: String,
     val role: String,
@@ -43,7 +44,7 @@ data class User(
 @Serializable
 data class ImpersonationInfo(
     val active: Boolean,
-    @SerialName("impersonator_user_id") val impersonatorUserId: Int,
+    @SerialName("impersonator_user_id") val impersonatorUserId: String,
     @SerialName("impersonator_username") val impersonatorUsername: String
 )
 

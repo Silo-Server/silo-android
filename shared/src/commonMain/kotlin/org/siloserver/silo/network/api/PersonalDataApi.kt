@@ -9,8 +9,17 @@ import org.siloserver.silo.model.personal.*
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.ProgressCollection
+import org.siloserver.silo.network.apiv2.safeApiV2Call
 
-class PersonalDataApi(private val client: HttpClient) {
+private const val PROGRESS_PAGE_SIZE = 200
+private const val PROGRESS_MAX_PAGES = 50
+
+class PersonalDataApi(
+    private val client: HttpClient,
+    private val apiV2Gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+) {
 
     // --- User Libraries ---
 
@@ -80,8 +89,39 @@ class PersonalDataApi(private val client: HttpClient) {
 
     // --- Progress ---
 
-    suspend fun listProgress(): ApiResult<ProgressListResponse> = safeApiCall {
-        client.get("/api/v1/progress")
+    // Pilot v2 operation (listProgress): v2 only, no v1 fallback. v1 returned
+    // the whole list; v2 pages by opaque cursor, so walk every page here.
+    suspend fun listProgress(): ApiResult<ProgressListResponse> {
+        val entries = mutableListOf<ProgressEntry>()
+        var cursor: String? = null
+        var pages = 0
+        while (true) {
+            val page = safeApiV2Call<ProgressCollection>(apiV2Gate) {
+                client.get("/api/v2/progress") {
+                    parameter("limit", PROGRESS_PAGE_SIZE)
+                    cursor?.let { parameter("cursor", it) }
+                }
+            }
+            val collection = when (page) {
+                is ApiResult.Success -> page.data
+                is ApiResult.Error -> return page
+                is ApiResult.NetworkError -> return page
+            }
+            collection.items.mapTo(entries) {
+                ProgressEntry(
+                    mediaItemId = it.mediaItemId,
+                    positionSeconds = it.positionSeconds,
+                    durationSeconds = it.durationSeconds,
+                    completed = it.completed,
+                    updatedAt = it.updatedAt,
+                )
+            }
+            val next = collection.page.nextCursor
+            pages++
+            if (!collection.page.hasMore || next == null || pages >= PROGRESS_MAX_PAGES) break
+            cursor = next
+        }
+        return ApiResult.Success(ProgressListResponse(progress = entries))
     }
 
     suspend fun syncProgress(

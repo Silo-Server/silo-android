@@ -54,6 +54,7 @@ val repositoryModule = module {
             serverRegistry = getOrNull(),
             healthApi = getOrNull(),
             brandingApi = getOrNull(),
+            apiV2Probe = getOrNull(),
         )
     }
     single { OnboardingRepository(get()) }
