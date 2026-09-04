@@ -861,12 +861,20 @@ fun PlayerScreen(
         } else {
             val preflight = PlaybackPreflightListener(
                 detector = capabilityDetector,
-                onUnsupported = { verdict -> viewModel.onUnsupportedPlayback(verdict) },
+                onUnsupported = { verdict ->
+                    viewModel.onUnsupportedPlayback(verdict, mountedMediaGeneration)
+                },
                 // Runtime errors (decoder init, source, mid-stream IO) walk the
                 // same recovery ladder as preflight failures — previously the
                 // mobile player dropped these on the floor and the screen sat
                 // on a stale frame.
-                onError = { error -> viewModel.onPlayerError(error, servicePlayer = latestServicePlayerForErrors.value) },
+                onError = { error ->
+                    viewModel.onPlayerError(
+                        error,
+                        servicePlayer = latestServicePlayerForErrors.value,
+                        mediaMountGeneration = mountedMediaGeneration,
+                    )
+                },
                 plannedRoute = {
                     val plan = viewModel.uiState.value.playbackPlan
                     plannedVideoRouteFor(
@@ -930,7 +938,7 @@ fun PlayerScreen(
                 override fun onRenderedFirstFrame() {
                     startupStallDetector.onFirstFrameRendered()
                     postResumeStallDetector.onFirstFrameRendered()
-                    viewModel.onFirstVideoFrameRendered()
+                    viewModel.onFirstVideoFrameRendered(mountedMediaGeneration)
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -1227,7 +1235,7 @@ fun PlayerScreen(
             surface = SiloPictureInPictureSurface.Mobile,
             state = SiloPictureInPicturePlaybackState(
                 enabled = pictureInPictureEnabled,
-                videoActive = uiState.streamUrl != null && !uiState.isLoading && uiState.error == null,
+                videoActive = uiState.streamUrl != null && uiState.error == null,
                 isPlaying = uiState.isPlaying && !uiState.isPaused,
                 videoWidth = pictureInPictureVideoWidth,
                 videoHeight = pictureInPictureVideoHeight,
@@ -1258,7 +1266,7 @@ fun PlayerScreen(
                 if (playerRootBounds != next) playerRootBounds = next
             },
     ) {
-        if (uiState.isLoading) {
+        if (uiState.isLoading && uiState.streamUrl == null) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
@@ -1410,6 +1418,10 @@ fun PlayerScreen(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
                             useController = false
+                            // The same SurfaceView spans Next Up mounts. Keep
+                            // the outgoing frame visible while Media3 resets
+                            // its item and decodes the successor's first frame.
+                            setKeepContentOnPlayerReset(true)
                             this.resizeMode = resizeMode
                             layoutParams = FrameLayout.LayoutParams(
                                 ViewGroup.LayoutParams.MATCH_PARENT,

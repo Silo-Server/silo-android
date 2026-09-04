@@ -59,6 +59,7 @@ import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.EpisodeAudioIntent
 import org.siloserver.silo.common.player.video.EpisodeAudioMode
 import org.siloserver.silo.common.player.video.EpisodeSelectionHandoff
+import org.siloserver.silo.common.player.video.NextUpTransitionGate
 import org.siloserver.silo.common.player.video.EpisodeSubtitleIntent
 import org.siloserver.silo.common.player.video.EpisodeSubtitleMode
 import org.siloserver.silo.common.player.video.ResolvedEpisodeSelection
@@ -392,6 +393,12 @@ internal class TvEpisodeSelectionHandoffSlot(
     }
 
     @Synchronized
+    fun replace(handoff: EpisodeSelectionHandoff) {
+        currentLease = null
+        pending = handoff
+    }
+
+    @Synchronized
     fun invalidate() {
         currentLease = null
         pending = null
@@ -673,13 +680,6 @@ data class TvPlayerLaunchArgs(
     val episodeSelectionHandoff: EpisodeSelectionHandoff? = null,
 )
 
-/** Emitted to ask the screen to navigate to the next episode (auto-advance / Continue). */
-data class PlayNextRequest(
-    val contentId: String,
-    val autoAdvanceCount: Int,
-    val episodeSelectionHandoff: EpisodeSelectionHandoff,
-)
-
 /**
  * Subtitle provider search/download state backing the TV subtitle search
  * dialog. `completedNonce` increments when a download lands and the track
@@ -803,7 +803,7 @@ class TvPlayerViewModel(
         }
     }
 
-    private val contentId: String = launchArgs.contentId
+    private var contentId: String = launchArgs.contentId
     /**
      * Preferred file version to play (chosen by the user in the detail
      * screen's playback selector row). When the
@@ -816,8 +816,8 @@ class TvPlayerViewModel(
      * to `versions.first()`, which for many titles is the lower-
      * resolution file because of the server's version sort order.
      */
-    private val preferredFileId: Int? = launchArgs.preferredFileId
-    private val preferredQuality: String? = launchArgs.preferredQuality
+    private var preferredFileId: Int? = launchArgs.preferredFileId
+    private var preferredQuality: String? = launchArgs.preferredQuality
     // Explicit session-level video-quality intent chosen in the player's
     // Quality menu. Null uses [preferredQuality] as the default output ceiling.
     // Wire values match
@@ -833,7 +833,7 @@ class TvPlayerViewModel(
     // server session start; subtitle is applied once the player's tracks land
     // (see [applyInitialSubtitleIfPending]). Cleared after the first apply so a
     // later user track change isn't overridden.
-    private val initialAudioTrackIndex: Int? = launchArgs.initialAudioTrackIndex
+    private var initialAudioTrackIndex: Int? = launchArgs.initialAudioTrackIndex
     private var pendingInitialSubtitleIndex: Int? = launchArgs.initialSubtitleTrackIndex
 
     /**
@@ -950,6 +950,7 @@ class TvPlayerViewModel(
     data class UiState(
         val isLoading: Boolean = true,
         val error: String? = null,
+        val contentId: String = "",
         /**
          * Distinct "Can't reach server" state (issue #33): when true, [error]
          * carries the reachability message and the error screen offers Retry
@@ -1103,6 +1104,8 @@ class TvPlayerViewModel(
         // means "the stream should be over" — it waits for the player to say
         // so rather than cutting the tail off.
         val showNextUp: Boolean = false,
+        /** Keep the outgoing frame/card mounted until the successor renders. */
+        val isNextUpTransitioning: Boolean = false,
         val nextUpVideoEnded: Boolean = false,
         val nextUpCountdownSeconds: Int? = null,
         val nextUpCountdownTotalSeconds: Int = NEXT_UP_COUNTDOWN_SECONDS,
@@ -1115,7 +1118,7 @@ class TvPlayerViewModel(
         val videoFillMode: VideoFillMode = VideoFillMode.Fit,
     )
 
-    private val _uiState = MutableStateFlow(UiState())
+    private val _uiState = MutableStateFlow(UiState(contentId = contentId))
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
     val presentationState: StateFlow<UiState> = uiState
         .map(UiState::withoutPlaybackClock)
@@ -1305,16 +1308,14 @@ class TvPlayerViewModel(
     val remoteMessage: StateFlow<RemoteMessage?> = _remoteMessage.asStateFlow()
 
     // ---- Next-episode auto-advance (F2) ----
-    private val autoAdvanceCount: Int = launchArgs.autoAdvanceCount
+    private var autoAdvanceCount: Int = launchArgs.autoAdvanceCount
     private var autoAdvanceHandled = false // once-per-item guard
+    private val nextUpTransitionGate = NextUpTransitionGate()
+    private var resolveNextEpisodeJob: Job? = null
     // Set when the credits/end point fired but nextEpisode hadn't resolved yet,
     // so the Up-Next overlay couldn't arm its countdown. Carries the "video has
     // ended" flag forward so the countdown re-arms once nextEpisode resolves.
     private var pendingApproachingEndVideoEnded: Boolean? = null
-    private val _playNextRequests = MutableSharedFlow<PlayNextRequest>(extraBufferCapacity = 1)
-    /** Screen collects this and navigates to the next episode's player. */
-    val playNextRequests: SharedFlow<PlayNextRequest> = _playNextRequests
-
     /**
      * Transient player notice (server reconnecting, suspend warnings, etc.) emitted by
      * [PlaybackSessionLifecycle]. `null` means show nothing.
@@ -1463,8 +1464,17 @@ class TvPlayerViewModel(
         lifecycleObserveJob = viewModelScope.launch {
             sessionLifecycle.state.collect { state ->
                 if (state is SessionState.Failed) {
+                    nextUpTransitionGate.cancel()
                     _uiState.update { current ->
-                        if (current.error == null) current.copy(error = state.message) else current
+                        if (current.error == null) {
+                            current.copy(
+                                error = state.message,
+                                showNextUp = false,
+                                isNextUpTransitioning = false,
+                            )
+                        } else {
+                            current
+                        }
                     }
                 }
             }
@@ -2094,6 +2104,10 @@ class TvPlayerViewModel(
                                     predecessorSessionId = predecessorUi.sessionId,
                                 )
                                 val transportMountNonce = nextTransportMountNonce(null)
+                                val preservesNextUp = nextUpTransitionGate.expectMount(
+                                    contentId = contentId,
+                                    mountToken = transportMountNonce,
+                                )
                                 // Paired with the UI publication so the exit
                                 // token is never staler than UI state — the
                                 // invariant that lets exitSessionId read it
@@ -2103,6 +2117,7 @@ class TvPlayerViewModel(
                                     it.copy(
                                 isLoading = false,
                                 error = null,
+                                contentId = contentId,
                                 title = result.title,
                                 artworkUrl = result.artworkUrl,
                                 sessionId = result.sessionId,
@@ -2148,11 +2163,13 @@ class TvPlayerViewModel(
                                 seriesId = result.seriesId,
                                 seasonNumber = result.seasonNumber,
                                 episodeNumber = result.episodeNumber,
-                                // Cleared until re-resolved for the new item.
-                                nextEpisode = null,
+                                // An in-place successor remains covered by the
+                                // outgoing card until this exact mount renders.
+                                nextEpisode = it.nextEpisode.takeIf { preservesNextUp },
                                 stillWatchingPrompt = false,
-                                showNextUp = false,
-                                nextUpVideoEnded = false,
+                                showNextUp = it.showNextUp && preservesNextUp,
+                                isNextUpTransitioning = preservesNextUp,
+                                nextUpVideoEnded = it.nextUpVideoEnded && preservesNextUp,
                                 nextUpCountdownSeconds = null,
                                 nextUpCountdownTotalSeconds = NEXT_UP_COUNTDOWN_SECONDS,
                                 // T11: clear the subtitle-refresh nonce on every
@@ -2229,7 +2246,7 @@ class TvPlayerViewModel(
                             )
                         }
                         startIntroAutoSkipObserver()
-                        resolveNextEpisode()
+                        if (!nextUpTransitionGate.isActive) resolveNextEpisode()
                     }
                     is VideoPlayerUiState.Error -> {
                         episodeSelectionHandoffSlot.retainForRetry(
@@ -2249,10 +2266,13 @@ class TvPlayerViewModel(
                             if (preserveCurrentPlaybackOnFailure) {
                                 failTvReplacementLoad(it, SERVER_UNREACHABLE_MESSAGE)
                             } else {
+                                nextUpTransitionGate.cancel()
                                 it.copy(
                                     isLoading = false,
                                     error = SERVER_UNREACHABLE_MESSAGE,
                                     serverUnreachable = true,
+                                    showNextUp = false,
+                                    isNextUpTransitioning = false,
                                 )
                             }
                         }
@@ -2328,7 +2348,15 @@ class TvPlayerViewModel(
     }
 
     private fun fail(message: String) {
-        _uiState.update { it.copy(isLoading = false, error = message) }
+        nextUpTransitionGate.cancel()
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                error = message,
+                showNextUp = false,
+                isNextUpTransitioning = false,
+            )
+        }
     }
 
     /**
@@ -2336,8 +2364,16 @@ class TvPlayerViewModel(
      * Fall back to a transcoded stream at the current position and show the
      * user the reason.
      */
-    fun onUnsupportedPlayback(reason: org.siloserver.silo.common.player.Playability) {
+    fun onUnsupportedPlayback(
+        reason: org.siloserver.silo.common.player.Playability,
+        transportMountNonce: Long? = null,
+    ) {
         val state = _uiState.value
+        if (state.isNextUpTransitioning &&
+            (state.isLoading || transportMountNonce != state.transportMountNonce)
+        ) {
+            return
+        }
         if (state.sessionId == null) return
 
         val notice = when (reason) {
@@ -2850,9 +2886,23 @@ class TvPlayerViewModel(
         }
     }
 
-    fun onFirstVideoFrameRendered() {
+    fun onFirstVideoFrameRendered(transportMountNonce: Long?) {
+        if (transportMountNonce != _uiState.value.transportMountNonce) return
         hasRenderedFirstFrame = true
         playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
+        if (nextUpTransitionGate.completeOnFirstFrame(transportMountNonce)) {
+            _uiState.update {
+                it.copy(
+                    nextEpisode = null,
+                    showNextUp = false,
+                    isNextUpTransitioning = false,
+                    nextUpVideoEnded = false,
+                    nextUpCountdownSeconds = null,
+                    nextUpCountdownTotalSeconds = NEXT_UP_COUNTDOWN_SECONDS,
+                )
+            }
+            resolveNextEpisode()
+        }
     }
 
     /**
@@ -3811,7 +3861,9 @@ class TvPlayerViewModel(
         val seriesId = state.seriesId ?: return
         val curSeason = state.seasonNumber ?: return
         val curEpisode = state.episodeNumber ?: return
-        viewModelScope.launch {
+        val forContentId = state.contentId
+        resolveNextEpisodeJob?.cancel()
+        resolveNextEpisodeJob = viewModelScope.launch {
             // Current season MUST load — otherwise the pool could contain only
             // the next season and we'd skip the rest of this one. Bail (no
             // auto-advance) on failure.
@@ -3838,7 +3890,10 @@ class TvPlayerViewModel(
                 stillUrl = next.stillUrl,
                 overview = next.overview,
             )
-            _uiState.update { it.copy(nextEpisode = nextState) }
+            _uiState.update {
+                if (it.contentId != forContentId) it else it.copy(nextEpisode = nextState)
+            }
+            if (_uiState.value.contentId != forContentId) return@launch
             // If the credits/end point already fired while we were still
             // resolving, the overlay couldn't arm — complete it now (re-arm the
             // countdown) with the strongest video-ended flag we observed.
@@ -3867,6 +3922,7 @@ class TvPlayerViewModel(
      * false at the credits-crossing while video is still rolling.
      */
     fun onApproachingEnd(videoEnded: Boolean = false) {
+        if (nextUpTransitionGate.isActive) return
         // Watch Together is authoritative — never auto-advance a room member
         // (it would silently leave/desync the room). Mirrors the remote-control
         // transport gate.
@@ -4045,7 +4101,14 @@ class TvPlayerViewModel(
         nextUpCountdownJob = null
         val state = _uiState.value
         val next = state.nextEpisode ?: return
-        _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
+        if (!nextUpTransitionGate.begin(next.contentId)) return
+        _uiState.update {
+            it.copy(
+                showNextUp = true,
+                isNextUpTransitioning = true,
+                nextUpCountdownSeconds = null,
+            )
+        }
         val activeVersion = state.fileVersions.firstOrNull { version ->
             version.fileId == (state.selectedFileId ?: state.mediaFileId)
         }
@@ -4067,11 +4130,37 @@ class TvPlayerViewModel(
             hasExplicitAudioSelection = manualAudioSelectionApplied,
             hasExplicitSubtitleSelection = manualSubtitleSelectionApplied,
         )
-        _playNextRequests.tryEmit(PlayNextRequest(next.contentId, nextAutoAdvanceCount, handoff))
+        val outgoingSessionId = exitSessionId
+        viewModelScope.launch {
+            // The lifecycle is process-scoped. Finish the predecessor before
+            // planning the successor, but keep the PlayerView/SurfaceView in
+            // place so Media3 can retain its last frame through the handoff.
+            sessionLifecycle.stop(expectedSessionId = outgoingSessionId)
+            if (!nextUpTransitionGate.isActive) return@launch
+
+            lastAdoptedSessionId = null
+            contentId = next.contentId
+            preferredFileId = null
+            preferredQuality = null
+            qualityOverride = null
+            initialAudioTrackIndex = null
+            pendingInitialSubtitleIndex = null
+            pendingInitialSubtitleAutoResolved = false
+            pendingInitialSubtitleAttempts = 0
+            autoAdvanceCount = nextAutoAdvanceCount
+            autoAdvanceHandled = false
+            pendingApproachingEndVideoEnded = null
+            episodeSelectionHandoffSlot.replace(handoff)
+            loadContent(
+                startPositionOverride = 0.0,
+                suppressResumeRewind = true,
+            )
+        }
     }
 
     /** Up-Next "Keep Watching" — dismiss the overlay and stay on the current episode. */
     fun dismissNextUp() {
+        if (nextUpTransitionGate.isActive) return
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
         _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
@@ -5172,6 +5261,8 @@ class TvPlayerViewModel(
 
     private fun prepareSessionExit() {
         contentLoadGeneration++
+        nextUpTransitionGate.cancel()
+        resolveNextEpisodeJob?.cancel()
         episodeSelectionHandoffSlot.invalidate()
         subtitleSnapshotSettlement.reset()
         resetSeekRecoveryForContentChange()
@@ -5284,8 +5375,14 @@ class TvPlayerViewModel(
     fun onPlayerError(
         error: androidx.media3.common.PlaybackException,
         servicePlayer: androidx.media3.common.Player? = null,
+        transportMountNonce: Long? = null,
     ) {
         val state = _uiState.value
+        if (state.isNextUpTransitioning &&
+            (state.isLoading || transportMountNonce != state.transportMountNonce)
+        ) {
+            return
+        }
         val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
             ?: "Playback failed. Please try again."
         val pendingSeekTarget = activeSeekTargetSec
