@@ -16,6 +16,24 @@ import kotlin.test.assertTrue
 
 class CastPlaybackPreparerTest {
     @Test
+    fun resumedCastSubtitlesShiftIntoTransportClockWithoutChangingIdentityPins() {
+        val url = "https://server/subtitles/2.vtt?file_id=42&provider_id=a%2Fb&st=signed%2Btoken"
+        assertEquals("$url&timestamp_offset=-90.5", castSubtitleUrlForTimeline(url, 90.5))
+        assertEquals(url, castSubtitleUrlForTimeline(url, 0.0))
+        assertEquals(url, castSubtitleUrlForTimeline(url, -0.0))
+        assertEquals("$url&timestamp_offset=12.0", castSubtitleUrlForTimeline(url, -12.0))
+    }
+
+    @Test
+    fun castSubtitleShiftReplacesOldOffsetAndPreservesFragment() {
+        assertEquals(
+            "/subtitles/2.vtt?file_id=42&timestamp_offset=-120.0#cue",
+            castSubtitleUrlForTimeline("/subtitles/2.vtt?timestamp_offset=-60&file_id=42#cue", 120.0),
+        )
+        assertEquals("/subtitles/2.vtt?timestamp_offset=-15.0", castSubtitleUrlForTimeline("/subtitles/2.vtt", 15.0))
+    }
+
+    @Test
     fun castContextDoesNotAdvertiseThePreNeutralSidecarFeature() {
         assertFalse(
             "external_text_sidecar_set_v1" in

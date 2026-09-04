@@ -1245,16 +1245,20 @@ class TvPlayerViewModel(
         onCommittedPlayback = ::adoptSubtitlePlayback,
         onCommittedPlaybackConfirmed = ::confirmSubtitlePlaybackPublication,
         onCommittedPlaybackRollback = ::rollbackSubtitlePlaybackPublication,
+        onEmbeddedSubtitleFailure = { serverIndex ->
+            startProtocolV3Replan(
+                classification = "subtitle_embedded_failed",
+                notice = "Embedded subtitles couldn't load. Retrying with a sidecar.",
+                state = _uiState.value,
+                subtitleTrackIndexOverride = serverIndex,
+            )
+        },
         onCommittedPlaybackFailure = { message ->
             _uiState.update { it.copy(error = message) }
         },
         hasMountableTracks = { _uiState.value.subtitleTracks.isNotEmpty() },
         isLocallyMountable = { identity ->
-            // Row-aware on purpose: a v3 inventory row describing a track muxed
-            // into a direct-play stream is still typed `delivery = sidecar`, so
-            // asking the identity resolver alone answered "not mounted" for the
-            // track Media3 already had, and every app-derived pick of it took
-            // the staged-replan path (see tvResolveMountedSubtitleTrack).
+            // Server-native and sidecar decisions require exact mounted IDs.
             val state = _uiState.value
             tvResolveMountedSubtitleTrack(
                 identity = identity,

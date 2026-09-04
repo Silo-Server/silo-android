@@ -507,6 +507,14 @@ class PlayerViewModel(
         },
         onSnapshotChanged = ::applyMobileSubtitleSnapshot,
         onCommittedPlayback = ::adoptMobileSubtitlePlayback,
+        onEmbeddedSubtitleFailure = { serverIndex ->
+            startProtocolV3Replan(
+                classification = "subtitle_embedded_failed",
+                notice = "Embedded subtitles couldn't load. Retrying with a sidecar.",
+                state = _uiState.value,
+                subtitleTrackIndexOverride = serverIndex,
+            )
+        },
         onCommittedPlaybackFailure = ::recoverFromSubtitleAdoptionFailure,
     )
 
@@ -1663,6 +1671,7 @@ class PlayerViewModel(
         diagnostics: Map<String, String> = emptyMap(),
         failedTrackType: Int? = null,
         audioTrackIndexOverride: Int? = null,
+        subtitleTrackIndexOverride: Int? = null,
     ) {
         if (recoveryJob?.isActive == true || serverSeekRecoveryInFlight) {
             // Never silently drop a user selection: queue it (newest wins) and
@@ -1683,7 +1692,7 @@ class PlayerViewModel(
         val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId ?: return
         val recoveryGeneration = playbackRecoveryGeneration
         recoveryJob = viewModelScope.launch {
-            val selectedSubtitleTrackIndex = selectedServerSubtitleTrackIndex(
+            val selectedSubtitleTrackIndex = subtitleTrackIndexOverride ?: selectedServerSubtitleTrackIndex(
                 selectedOrdinal = state.selectedSubtitleIndex,
                 subtitleTracks = state.subtitleTracks,
             )

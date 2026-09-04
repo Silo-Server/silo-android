@@ -267,6 +267,7 @@ internal class TvSubtitleTransactionAdapter(
         Boolean,
     ) -> Boolean = { _, _ -> true },
     private val onCommittedPlaybackFailure: suspend (String) -> Unit = {},
+    private val onEmbeddedSubtitleFailure: (Int) -> Unit = {},
     /**
      * Whether the player currently exposes any text track to mount against.
      * The mount deadline must not run while the answer is "none": a freshly
@@ -2144,6 +2145,15 @@ internal class TvSubtitleTransactionAdapter(
         val ownedSelection = pendingLocalSelection?.generation == generation
         val ownedRestore = pendingLocalRestore?.generation == generation
         if (!ownedSelection && !ownedRestore) return
+        val failedIdentity = (if (ownedSelection) pendingLocalSelection?.identity else pendingLocalRestore?.identity)
+            as? SubtitleIdentity.Embedded
+        if (failedIdentity?.containerTrackId != null) {
+            invalidateLocalMount()
+            failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
+            publish()
+            onEmbeddedSubtitleFailure(failedIdentity.serverIndex)
+            return
+        }
         val selection = pendingLocalSelection
         if (ownedSelection && selection?.committedPlayback != null) {
             requestCompensationSettlement(selection)
@@ -2490,6 +2500,10 @@ private fun TvStagedSubtitleCandidate.validationFailure(
             ?: return "The adapted candidate omitted its selected subtitle identity."
         return validationFailure(returnedIdentity)
     }
+    if (selectedSubtitleIdentity is SubtitleIdentity.Embedded &&
+        selectedSubtitleIdentity.containerTrackId != null &&
+        selectedSubtitleIndex == expectedSubtitleIndex && subtitleMode == PlaybackSubtitleModeV3.RENDER && !hasSidecar
+    ) return null
     return when (requested.identity) {
         is SubtitleIdentity.Embedded,
         is SubtitleIdentity.Downloaded,
@@ -2589,7 +2603,9 @@ private fun TvStagedSubtitleCandidate.validationFailure(
             "The candidate did not burn in the requested subtitle."
         else -> null
     }
-    is SubtitleIdentity.Embedded,
+    is SubtitleIdentity.Embedded -> if (identity.containerTrackId != null &&
+        selectedSubtitleIndex == identity.serverIndex && subtitleMode == PlaybackSubtitleModeV3.RENDER && !hasSidecar
+    ) null else "The candidate omitted the exact embedded subtitle."
     is SubtitleIdentity.Downloaded,
     is SubtitleIdentity.LocalMedia3,
     -> "A local subtitle identity unexpectedly reached staged validation."

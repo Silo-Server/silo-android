@@ -1450,12 +1450,46 @@ class MobileSubtitleTransactionAdapterTest {
         assertEquals(listOf(downloaded), harness.persistence.persisted.map { it.identity })
     }
 
+    @Test
+    fun `native decision commits exact identity and requests sidecar recovery on mount timeout`() = runTest {
+        val failures = mutableListOf<Int>()
+        val harness = harness(backgroundScope, onEmbeddedFailure = failures::add)
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.completeStage(candidate("native", 4, hasSidecar = false, selectedSubtitleIdentity = native))
+        runCurrent()
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(listOf(4), failures)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+    }
+
+    @Test
+    fun `native decision only persists after exact mounted selection succeeds`() = runTest {
+        val harness = harness(backgroundScope)
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.completeStage(candidate("native", 4, hasSidecar = false, selectedSubtitleIdentity = native))
+        runCurrent()
+        assertTrue(harness.persistence.persisted.isEmpty())
+        harness.adapter.reportMountedSelection(native, selected = true, snapshotKey = "native19", settled = true)
+        runCurrent()
+        assertEquals(native, harness.adapter.snapshot.committedIdentity)
+        assertEquals(listOf(native), harness.persistence.persisted.map { it.identity })
+    }
+
     private fun harness(
         scope: CoroutineScope,
         sessionId: String? = "s1",
         tracks: List<PlayerSubtitleInfo> = emptyList(),
         adoption: AdoptionControl = AdoptionControl(),
         durablePersistenceScope: CoroutineScope = scope,
+        onEmbeddedFailure: (Int) -> Unit = {},
     ): Harness {
         val port = FakeStagedPort()
         val persistence = RecordingPersistence()
@@ -1465,6 +1499,7 @@ class MobileSubtitleTransactionAdapterTest {
             stagedPort = port,
             persistencePort = persistence,
             durablePersistenceScope = durablePersistenceScope,
+            onEmbeddedSubtitleFailure = onEmbeddedFailure,
             onCommittedPlayback = { adoptionRequest ->
                 adoption.started += 1
                 adoption.requestedSourcePositions += adoptionRequest.requestedSourcePositionSeconds

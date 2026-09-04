@@ -71,6 +71,10 @@ fun resolveMountedSubtitle(
     identity: SubtitleIdentity,
     tracks: List<MountedSubtitleTrack>,
 ): MountedSubtitleMatch? {
+    if (identity is SubtitleIdentity.Embedded && identity.containerTrackId != null) {
+        return tracks.filter { trackIdDenotes(it.trackId, requireNotNull(identity.containerTrackId)) }
+            .singleOrNull()?.let(::MountedSubtitleMatch)
+    }
     val expectedTrackId = identity.expectedMediaTrackId()
     if (expectedTrackId != null) {
         tracks.firstOrNull { trackIdDenotes(it.trackId, expectedTrackId) }
@@ -122,6 +126,9 @@ fun resolveMountedSubtitle(
     subtitle: PlayerSubtitleInfo,
     tracks: List<MountedSubtitleTrack>,
 ): MountedSubtitleMatch? {
+    if (subtitle.nativeContainerTrackId != null || subtitle.serverDelivery != null) {
+        return resolveMountedSubtitle(org.siloserver.silo.playback.playbackSubtitleIdentity(subtitle), tracks)
+    }
     val explicitSource = subtitle.effectiveSubtitleSource()
     val isEmbedded = when {
         subtitle.url.isNotBlank() -> false

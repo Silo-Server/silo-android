@@ -211,7 +211,10 @@ class CastPlaybackPreparer(
         val selectedIndex = plan.resolvedSelectedSubtitleIndex()
         return inventory.mapIndexed { index, item ->
             val receiverUrl = item.takeIf { it.isCastableAsVtt() }?.let {
-                forceVttExtension(resolvePlaybackStreamUrl(serverUrl, it.url.orEmpty()))
+                castSubtitleUrlForTimeline(
+                    forceVttExtension(resolvePlaybackStreamUrl(serverUrl, it.url.orEmpty())),
+                    plan.timeline.timelineOffsetSeconds,
+                )
             }
             CastSubtitleTrack(
                 trackId = item.trackId,
@@ -783,3 +786,17 @@ fun chromecastPlaybackContext(
             ),
         ),
     )
+
+/** Cast renders VTT in the transport clock; canonical subtitle cues use source time. */
+internal fun castSubtitleUrlForTimeline(url: String, timelineOffsetSeconds: Double): String {
+    require(timelineOffsetSeconds.isFinite()) { "Subtitle timeline offset must be finite" }
+    if (timelineOffsetSeconds == 0.0) return url
+    val fragment = url.substringAfter('#', "")
+    val base = url.substringBefore('#')
+    val path = base.substringBefore('?')
+    val query = base.substringAfter('?', "").split('&')
+        .filter { it.isNotEmpty() && it.substringBefore('=') != "timestamp_offset" }
+        .plus("timestamp_offset=${-timelineOffsetSeconds}")
+        .joinToString("&")
+    return "$path?$query" + if ('#' in url) "#$fragment" else ""
+}

@@ -1780,6 +1780,9 @@ open class PlaybackSessionManager(
             PlaybackSubtitleModeV3.CONVERT,
             PlaybackSubtitleModeV3.RENDER,
             -> {
+                if (subtitle.embedded != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.ORIGINAL_HTTP &&
+                    subtitle.embedded?.containerTrackId != null && subtitle.artifact == null
+                ) return null
                 val artifact = subtitle.artifact
                 if (artifact == null ||
                     artifact.url.isBlank() ||
