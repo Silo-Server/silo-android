@@ -123,6 +123,7 @@ import org.siloserver.silo.repository.SubtitlesRepository
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailTrackSelectionSession
+import org.siloserver.silo.watchtogether.shouldNavigateToLocalNext
 import kotlin.math.ceil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -4099,6 +4100,10 @@ class TvPlayerViewModel(
     private fun advanceToNextEpisode(nextAutoAdvanceCount: Int) {
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
+        // Watch Together owns the room timeline. The previous navigation
+        // collector enforced this guard; keep it here now that TV advances
+        // in place so a remote Next command cannot desynchronise the room.
+        if (!shouldNavigateToLocalNext(inWatchTogetherRoom = roomId != null)) return
         val state = _uiState.value
         val next = state.nextEpisode ?: return
         if (!nextUpTransitionGate.begin(next.contentId)) return
