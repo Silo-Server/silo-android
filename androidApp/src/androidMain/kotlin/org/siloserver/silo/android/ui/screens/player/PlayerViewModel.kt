@@ -638,11 +638,11 @@ class PlayerViewModel(
     private var transientNetworkRetries = 0
     private var recoveryJob: Job? = null
 
-    // Latest user track/quality/route change (classification to notice) that
+    // Latest user change or embedded-subtitle failure that
     // arrived while a recovery held the replan single-flight guard. Re-driven
     // once that flight completes so the selection isn't silently dropped;
     // last-write-wins because only the newest selection matters.
-    private var queuedInvalidationReplan: Pair<String, String>? = null
+    private var queuedInvalidationReplan: MobileRecoveryReplan? = null
 
     private enum class ServerSeekRecoveryMode {
         REANCHOR,
@@ -1673,18 +1673,20 @@ class PlayerViewModel(
         audioTrackIndexOverride: Int? = null,
         subtitleTrackIndexOverride: Int? = null,
     ) {
+        val queuedRequest = MobileRecoveryReplan(classification, notice, subtitleTrackIndexOverride)
         if (recoveryJob?.isActive == true || serverSeekRecoveryInFlight) {
             // Never silently drop a user selection: queue it (newest wins) and
             // re-drive it when the in-flight recovery completes. Failure-driven
-            // replans stay dropped — onPlayerError re-raises those.
-            if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
-                queuedInvalidationReplan = classification to notice
+            // replans stay dropped — onPlayerError re-raises those. Native
+            // subtitle failures have no player-error retry, so retain them.
+            if (queuedRequest.shouldQueue) {
+                queuedInvalidationReplan = queuedRequest
             }
             return
         }
         if (mobileSubtitleTransactions.hasActiveTransaction) {
             if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
-                queuedInvalidationReplan = classification to notice
+                queuedInvalidationReplan = queuedRequest
                 return
             }
             mobileSubtitleTransactions.invalidate()
@@ -1950,11 +1952,16 @@ class PlayerViewModel(
     }
 
     private fun redriveQueuedInvalidationReplan() {
-        val (classification, notice) = queuedInvalidationReplan ?: return
+        val queued = queuedInvalidationReplan ?: return
         queuedInvalidationReplan = null
         // Current state, not the queuing-time state, so the replan carries the
         // latest committed track/quality selection.
-        startProtocolV3Replan(classification, notice, _uiState.value)
+        startProtocolV3Replan(
+            queued.classification,
+            queued.notice,
+            _uiState.value,
+            subtitleTrackIndexOverride = queued.subtitleTrackIndexOverride,
+        )
     }
 
     /**

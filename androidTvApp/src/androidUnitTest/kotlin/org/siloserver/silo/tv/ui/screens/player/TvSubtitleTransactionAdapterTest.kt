@@ -2219,6 +2219,47 @@ class TvSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `native fallback waits for rollback before replanning the failed track`() = runTest {
+        val failures = mutableListOf<Int>()
+        val harness = harness(backgroundScope, onEmbeddedFailure = failures::add)
+        harness.port.abandonGate = kotlinx.coroutines.CompletableDeferred()
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.completeStage(candidate("native", 4, hasSidecar = false, selectedSubtitleIdentity = native, sessionId = "s2"))
+        runCurrent()
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertTrue(failures.isEmpty())
+        assertTrue(harness.port.abandoned.isEmpty())
+        harness.port.abandonGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("s2"), harness.port.abandoned)
+        assertEquals(listOf(4), failures)
+        assertEquals(sidecar(3), harness.adapter.snapshot.committedIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+    }
+
+    @Test
+    fun `content reset during native rollback does not retry the old track`() = runTest {
+        val failures = mutableListOf<Int>()
+        val harness = harness(backgroundScope, onEmbeddedFailure = failures::add)
+        harness.port.abandonGate = kotlinx.coroutines.CompletableDeferred()
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.completeStage(candidate("native", 4, hasSidecar = false, selectedSubtitleIdentity = native))
+        runCurrent()
+        advanceTimeBy(5_000)
+        runCurrent()
+        harness.adapter.resetContent(context(contentId = "next-content"), SubtitleIdentity.Off)
+        harness.port.abandonGate!!.complete(Unit)
+        runCurrent()
+        assertTrue(failures.isEmpty())
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.committedIdentity)
+    }
+
+    @Test
     fun `native decision only persists after exact mounted selection succeeds`() = runTest {
         val harness = harness(backgroundScope)
         val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
@@ -2533,7 +2574,10 @@ class TvSubtitleTransactionAdapterTest {
             }
         }
 
+        var abandonGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
         override suspend fun abandonCommitted(playback: TvSubtitleCommittedPlayback) {
+            abandonGate?.await()
             abandoned += playback.sessionId
         }
 

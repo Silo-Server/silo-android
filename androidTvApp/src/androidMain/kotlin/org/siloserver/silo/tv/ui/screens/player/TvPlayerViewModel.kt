@@ -180,7 +180,7 @@ internal fun authoritativePlaybackQualityOptions(
 ): List<VideoQualityOption> = available.map { quality ->
     VideoQualityOption(
         id = quality.label,
-        label = quality.label,
+        label = quality.displayName?.takeIf { it.isNotBlank() } ?: quality.label,
         isSelected = quality.label == selectedLabel,
         resolution = quality.height.takeIf { it > 0 }?.let { "${it}p" },
     )
@@ -2398,8 +2398,11 @@ class TvPlayerViewModel(
         if (recoveryJob?.isActive == true) {
             // Never silently drop a user selection: queue it (newest wins) and
             // re-drive it when the in-flight recovery completes. Failure-driven
-            // replans stay dropped — onPlayerError re-raises those.
-            if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
+            // replans stay dropped — onPlayerError re-raises those. Embedded
+            // mount failures have no player-error retry, so retain those too.
+            if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
+                classification == "subtitle_embedded_failed"
+            ) {
                 queuedRecoveryReplan = QueuedRecoveryReplan(
                     classification = classification,
                     notice = notice,
@@ -2596,6 +2599,10 @@ class TvPlayerViewModel(
                         )
                     }
                     is VideoSessionStartV3.Terminal -> {
+                        if (classification == "subtitle_embedded_failed") {
+                            onReplanRequestFailed(classification, notice, decision.message)
+                            return@launch
+                        }
                         val failedSessionId = state.sessionId ?: return@launch
                         val terminalMessage = serverTerminalUserMessage(decision.message)
                         cancelPendingCatalogSubtitle()
@@ -2627,6 +2634,10 @@ class TvPlayerViewModel(
                     }
                     VideoSessionStartV3.ServerUpgradeRequired -> {
                         cancelPendingCatalogSubtitle()
+                        if (classification == "subtitle_embedded_failed") {
+                            onReplanRequestFailed(classification, notice, "Server upgrade required")
+                            return@launch
+                        }
                         _uiState.update {
                             it.copy(
                                 error = "This Silo server must be updated to support playback recovery.",
@@ -2675,7 +2686,9 @@ class TvPlayerViewModel(
      * tear playback down with a fatal error banner.
      */
     private fun onReplanRequestFailed(classification: String, notice: String, detail: String?) {
-        if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
+        if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
+            classification == "subtitle_embedded_failed"
+        ) {
             Log.w(TAG, "Invalidation replan failed ($classification): $detail")
             _uiState.update { it.copy(isLoading = false, isBuffering = false) }
         } else {

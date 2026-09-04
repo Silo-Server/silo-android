@@ -2148,10 +2148,28 @@ internal class TvSubtitleTransactionAdapter(
         val failedIdentity = (if (ownedSelection) pendingLocalSelection?.identity else pendingLocalRestore?.identity)
             as? SubtitleIdentity.Embedded
         if (failedIdentity?.containerTrackId != null) {
-            invalidateLocalMount()
-            failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
-            publish()
-            onEmbeddedSubtitleFailure(failedIdentity.serverIndex)
+            val selection = pendingLocalSelection.takeIf { ownedSelection }
+            if (selection?.committedPlayback != null) {
+                // Regular replans wait for publication settlement. Restore the
+                // healthy predecessor before starting the sidecar request.
+                val failedContentGeneration = contentGeneration
+                val failedIntentGeneration = subtitleIntentGeneration
+                val rollback = requestSupersessionSettlement(selection, restoreUi = true)
+                settlementScope.launch {
+                    if (rollback.await() && failedContentGeneration == contentGeneration &&
+                        failedIntentGeneration == subtitleIntentGeneration
+                    ) {
+                        failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
+                        publish()
+                        onEmbeddedSubtitleFailure(failedIdentity.serverIndex)
+                    }
+                }
+            } else {
+                invalidateLocalMount()
+                failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
+                publish()
+                onEmbeddedSubtitleFailure(failedIdentity.serverIndex)
+            }
             return
         }
         val selection = pendingLocalSelection
