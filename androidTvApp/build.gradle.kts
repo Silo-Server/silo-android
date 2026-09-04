@@ -135,7 +135,6 @@ kotlin {
             // Watch Next launcher tiles (sub-project B).
             implementation(libs.androidx.tvprovider)
             implementation(libs.androidx.work.runtime.ktx)
-            implementation(libs.koin.androidx.workmanager)
 
             // QR-code rendering for device-login (sub-project C).
             implementation(libs.zxing.core)

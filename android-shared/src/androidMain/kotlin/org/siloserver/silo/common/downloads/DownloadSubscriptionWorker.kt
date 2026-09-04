@@ -4,13 +4,10 @@ import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import androidx.work.workDataOf
 import java.util.concurrent.TimeUnit
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.DownloadSubscriptionRepository
@@ -84,22 +81,6 @@ class DownloadSubscriptionWorker(
         const val KEY_PROFILE_ID = "profile_id"
         private const val PERIODIC_UNIQUE_NAME = "download-subscriptions-periodic"
         private const val PERIODIC_INTERVAL_HOURS = 6L
-
-        fun enqueueNow(context: Context, serverId: String, profileId: String) {
-            val request = OneTimeWorkRequestBuilder<DownloadSubscriptionWorker>()
-                .setInputData(
-                    workDataOf(
-                        KEY_SERVER_ID to serverId,
-                        KEY_PROFILE_ID to profileId,
-                    ),
-                )
-                .build()
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
-                "download-subscriptions-$serverId-$profileId",
-                ExistingWorkPolicy.REPLACE,
-                request,
-            )
-        }
 
         fun enqueuePeriodic(context: Context) {
             val request = PeriodicWorkRequestBuilder<DownloadSubscriptionWorker>(

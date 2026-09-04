@@ -14,9 +14,3 @@ val TV_QUALITY_OPTIONS = listOf("Auto", "4K", "1080p", "720p", "480p")
 
 /** Available subtitle modes. "Off" maps to a null mode. */
 val TV_SUBTITLE_MODES = listOf("Off", "Default", "Always", "Forced Only")
-
-/** Display label for a stored subtitle-mode value (e.g. "forced_only" -> "Forced Only"). */
-fun subtitleModeLabel(stored: String?): String =
-    stored?.replace("_", " ")?.split(" ")
-        ?.joinToString(" ") { word -> word.replaceFirstChar { it.uppercaseChar() } }
-        ?: "Off"

@@ -14,10 +14,6 @@ interface AndroidPushTokenProvider {
     suspend fun token(): String?
 }
 
-class DisabledAndroidPushTokenProvider : AndroidPushTokenProvider {
-    override suspend fun token(): String? = null
-}
-
 class FirebaseAndroidPushTokenProvider(
     private val context: Context,
 ) : AndroidPushTokenProvider {

@@ -26,9 +26,3 @@ data class LibraryPlaybackPrefRequest(
     @SerialName("subtitle_mode") val subtitleMode: String? = null,
     @SerialName("show_forced_subtitles") val showForcedSubtitles: Boolean? = null,
 )
-
-object PlaybackPrefSentinel {
-    const val Inherit = "__inherit__"
-    const val None = "__none__"
-    const val OriginalLanguage = "original"
-}

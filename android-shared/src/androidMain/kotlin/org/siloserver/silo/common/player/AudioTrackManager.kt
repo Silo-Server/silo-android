@@ -4,7 +4,6 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
-import org.siloserver.silo.model.catalog.AudioTrack
 
 /**
  * Manages audio track selection on the player.
@@ -42,28 +41,5 @@ class AudioTrackManager {
                 audioGroupIndex++
             }
         }
-    }
-
-    /**
-     * Returns a display label for an audio track.
-     * Prefers the title, falls back to language, then a generic index label.
-     */
-    fun getTrackLabel(track: AudioTrack, index: Int): String {
-        val parts = mutableListOf<String>()
-
-        track.title?.let { parts.add(it) }
-        if (parts.isEmpty()) {
-            track.language?.let { parts.add(it.uppercase()) }
-        }
-
-        track.channelLayout?.let { layout ->
-            parts.add(layout)
-        } ?: track.channels?.let { ch ->
-            parts.add("${ch}ch")
-        }
-
-        track.codec?.uppercase()?.let { parts.add(it) }
-
-        return if (parts.isEmpty()) "Audio ${index + 1}" else parts.joinToString(" - ")
     }
 }

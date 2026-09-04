@@ -23,7 +23,6 @@ data class MediaModeCapabilities(
 
     fun mobileModes(): List<MediaMode> = modes
     fun tvModes(): List<MediaMode> = modes.filterNot { it == MediaMode.Reading }
-    fun firstTvMode(): MediaMode? = tvModes().firstOrNull()
 }
 
 private val videoLibraryTypes = setOf(

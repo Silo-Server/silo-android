@@ -290,22 +290,6 @@ fun resolveEpisodeSubtitleIntent(
     )
 }
 
-fun resolveEpisodeSelectionHandoff(
-    handoff: EpisodeSelectionHandoff?,
-    targetVersions: List<FileVersion>,
-    targetSubtitles: List<PlayerSubtitleInfo>,
-): ResolvedEpisodeSelection {
-    val subtitle = resolveEpisodeSubtitleIntent(
-        handoff?.subtitle ?: EpisodeSubtitleIntent.auto(),
-        targetSubtitles,
-    )
-    return ResolvedEpisodeSelection(
-        fileId = resolveEpisodeSourceIntent(handoff?.source, targetVersions),
-        subtitleTrackIndex = subtitle.trackIndex,
-        subtitleIntentSpecified = subtitle.intentSpecified,
-    )
-}
-
 fun encodeEpisodeSelectionHandoff(handoff: EpisodeSelectionHandoff): String =
     episodeSelectionHandoffJson.encodeToString(handoff)
 

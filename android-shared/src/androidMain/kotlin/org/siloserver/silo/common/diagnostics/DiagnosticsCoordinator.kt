@@ -360,7 +360,7 @@ class DefaultDiagnosticsCoordinator(
                 profileEligible = cached?.profileEligible == true,
                 consent = cachedConsent,
                 debugLogging = runCatching { settings.debugLogging() }.getOrDefault(false),
-                pending = cachedReports.map { report -> report.summary(cached?.retentionDays ?: 7) },
+                pending = cachedReports.map { report -> report.summary() },
                 prompt = null,
                 sentHistory = cached?.let { context ->
                     runCatching { settings.sentHistory(context.binding) }.getOrDefault(emptyList())
@@ -490,7 +490,7 @@ class DefaultDiagnosticsCoordinator(
         val consent = guardedRefresh.consent
         val debugLogging = guardedRefresh.debugLogging
         val pendingReports = guardedRefresh.pendingReports
-        val summaries = pendingReports.map { report -> report.summary(resolved.retentionDays) }
+        val summaries = pendingReports.map { report -> report.summary() }
         val promptReports = pendingReports.filter { report ->
             consent.mode == DiagnosticsConsentMode.ASK &&
                 report.state.status != PendingReportStatus.PROCESSING &&
@@ -987,7 +987,7 @@ private fun DiagnosticsAvailabilityStatus.toUiAvailability(): DiagnosticsAvailab
     DiagnosticsAvailabilityStatus.STORAGE_UNAVAILABLE -> DiagnosticsAvailabilityUi.STORAGE_UNAVAILABLE
 }
 
-private fun PendingReport.summary(@Suppress("UNUSED_PARAMETER") retentionDays: Int): DiagnosticsReportSummary = DiagnosticsReportSummary(
+private fun PendingReport.summary(): DiagnosticsReportSummary = DiagnosticsReportSummary(
     id = id,
     type = manifest.report.type,
     capturedAt = manifest.report.capturedAt,

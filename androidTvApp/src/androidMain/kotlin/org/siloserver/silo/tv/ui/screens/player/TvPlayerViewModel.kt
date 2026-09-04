@@ -6,9 +6,7 @@ import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
 import org.siloserver.silo.common.player.failureClassification
-
 import org.siloserver.silo.tv.BuildConfig
-
 import android.os.SystemClock
 import android.util.Log
 import org.siloserver.silo.common.player.SubDiag
@@ -67,7 +65,6 @@ import org.siloserver.silo.common.player.video.captureEpisodeSubtitleIntent
 import org.siloserver.silo.common.player.video.resolveAudioSelectionAcrossVersions
 import org.siloserver.silo.common.player.normalizedSubtitleCodecFamily
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
-import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.player.video.serverTerminalUserMessage
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
@@ -93,13 +90,11 @@ import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
-import org.siloserver.silo.model.playback.PlaybackRouteFamily
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlaybackTimeline
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
-import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleChoices
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
@@ -114,10 +109,8 @@ import org.siloserver.silo.model.subtitles.SubtitleTranslateRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.playback.nextEpisodeAfter
-import org.siloserver.silo.playback.subtitleTrackFingerprint
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
-import org.siloserver.silo.player.DolbyVisionPolicy
 import org.siloserver.silo.repository.SubtitlesRepository
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
@@ -1058,13 +1051,11 @@ class TvPlayerViewModel(
         // the screen renders the Popups above the open HUD.
         val showSubtitleSearchDialog: Boolean = false,
         val showAiTranslateDialog: Boolean = false,
-        val showSubtitleStyleDialog: Boolean = false,
         // Overlay visibility (Phase E — driven by the screen but stored here
         // so the overlay can react to play/pause state changes).
         val showControls: Boolean = true,
         val controlsVisibilityNonce: Int = 0,
         val hudOpen: Boolean = false,
-        val showSubtitleMenu: Boolean = false,
         val preferredAudioLanguage: String? = null,
         val preferredTextLanguage: String? = null,
         val preferredSubtitleMode: String? = null,
@@ -1365,8 +1356,6 @@ class TvPlayerViewModel(
     val pendingRemoteSubtitleIndex: StateFlow<Int?> = _pendingRemoteSubtitleIndex.asStateFlow()
     // compareAndSet so a command arriving during the suspending apply isn't
     // clobbered by the clear of the one we just handled.
-    fun clearPendingRemoteAudio(applied: Int) { _pendingRemoteAudioIndex.compareAndSet(applied, null) }
-    fun clearPendingRemoteSubtitle(applied: Int) { _pendingRemoteSubtitleIndex.compareAndSet(applied, null) }
 
     // ---- Player settings flows (per-profile, DataStore-backed) -----------------
     val playbackSpeed: StateFlow<Double> = playerSettingsStore.playbackSpeedFlow
@@ -3707,16 +3696,6 @@ class TvPlayerViewModel(
         _uiState.update { it.copy(isBuffering = false, error = message) }
     }
 
-    private inline fun updateSeekRecoveryIfCurrent(
-        request: TvSeekRecoveryRequest,
-        transform: (UiState) -> UiState,
-    ) {
-        if (!isCurrentSeekRecovery(request)) return
-        _uiState.update { state ->
-            if (isCurrentSeekRecovery(request)) transform(state) else state
-        }
-    }
-
     // ---- Remote-control adapters (TvPlaybackRealtimeController calls these) ----
     /** True while in a Watch Together room — remote transport is gated (the room is authoritative). */
     val remoteTransportSuppressed: Boolean get() = roomId != null
@@ -4431,22 +4410,6 @@ class TvPlayerViewModel(
         }
     }
 
-    /**
-     * Selects a subtitle by SERVER catalog row index ([PlayerSubtitleInfo.index]),
-     * phone-parity for the HUD/quick-picker menus. Catalog-only rows (blank URL)
-     * have no mounted Media3 track until the V3 planner materializes them, so
-     * the menus must not be keyed off live player tracks. Returns the mounted
-     * Media3 track index when one already exists (caller applies it through the
-     * normal backend path), or null after scheduling a materializing replan
-     * whose track is auto-selected by label once it arrives.
-     */
-    fun onSelectCatalogSubtitle(serverIndex: Int): Int? {
-        val state = _uiState.value
-        val row = state.subtitleUrls.firstOrNull { it.index == serverIndex } ?: return null
-        selectSubtitleOption(tvSubtitleIdentity(row))
-        return null
-    }
-
     fun selectSubtitleOption(identity: SubtitleIdentity) {
         manualSubtitleSelectionApplied = true
         // The viewer is choosing: drop the automatic marker so this commit
@@ -4520,10 +4483,6 @@ class TvPlayerViewModel(
         }
     }
 
-    fun onManualSubtitleSelectionIntent(index: Int) {
-        manualSubtitleSelectionApplied = true
-    }
-
     fun beginScrub() {
         _uiState.update { it.copy(isScrubbing = true, scrubPreviewSec = it.position, showControls = true) }
     }
@@ -4582,7 +4541,7 @@ class TvPlayerViewModel(
             controlsVisibleBeforeHud = _uiState.value.showControls
         }
         Log.d(TAG, "hud open (controlsBefore=$controlsVisibleBeforeHud, wasOpen=${_uiState.value.hudOpen})")
-        _uiState.update { it.copy(hudOpen = true, showSubtitleMenu = false, showControls = true) }
+        _uiState.update { it.copy(hudOpen = true, showControls = true) }
     }
 
     fun closeHUD() {
@@ -4590,14 +4549,6 @@ class TvPlayerViewModel(
         _uiState.update {
             it.copy(hudOpen = false, showControls = controlsVisibleBeforeHud)
         }
-    }
-
-    fun openSubtitleMenu() {
-        _uiState.update { it.copy(showSubtitleMenu = true, hudOpen = false, showControls = true) }
-    }
-
-    fun closeSubtitleMenu() {
-        _uiState.update { it.copy(showSubtitleMenu = false) }
     }
 
     fun onVideoFillModeChanged(mode: VideoFillMode) {
@@ -4692,14 +4643,6 @@ class TvPlayerViewModel(
 
     fun closeSubtitleSearchDialog() {
         _uiState.update { it.copy(showSubtitleSearchDialog = false) }
-    }
-
-    fun openSubtitleStyleDialog() {
-        _uiState.update { it.copy(showSubtitleStyleDialog = true) }
-    }
-
-    fun closeSubtitleStyleDialog() {
-        _uiState.update { it.copy(showSubtitleStyleDialog = false) }
     }
 
     fun openAiTranslateDialog() {
@@ -4851,7 +4794,6 @@ class TvPlayerViewModel(
             existing = state.subtitleUrls,
             downloaded = downloaded,
             sessionId = sessionId,
-            serverUrl = state.serverUrl,
         )
         // The adapter's answer, not an assumption. applyRefresh returns false
         // when the refresh lost ownership before it could be applied — so a

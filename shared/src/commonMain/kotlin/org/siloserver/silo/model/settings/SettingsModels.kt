@@ -10,11 +10,6 @@ data class SettingEntry(
 )
 
 @Serializable
-data class SettingsListResponse(
-    val settings: List<SettingEntry>,
-)
-
-@Serializable
 data class UpdateSettingRequest(
     val value: String,
 )

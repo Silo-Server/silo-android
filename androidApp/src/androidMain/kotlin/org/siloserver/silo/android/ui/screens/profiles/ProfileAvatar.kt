@@ -52,21 +52,6 @@ object AvatarOptions {
         "preset:dicebear:fun-emoji:lunar-meteor",
     )
 
-    /** Deterministic colour for a given avatar string so the same profile always gets the same colour. */
-    fun colorForAvatar(avatar: String): Color {
-        val palette = listOf(
-            Color(0xFF544F47),
-            Color(0xFF6C6257),
-            Color(0xFF7D7062),
-            Color(0xFF4A504C),
-            Color(0xFF655B50),
-            Color(0xFF505862),
-            Color(0xFF776A5C),
-            Color(0xFF4B4C55),
-        )
-        val index = avatar.hashCode().let { if (it < 0) -it else it } % palette.size
-        return palette[index]
-    }
 }
 
 /**

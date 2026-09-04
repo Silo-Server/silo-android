@@ -214,27 +214,3 @@ enum class AccentStrategy(val raw: String) {
     Text("text"),
     Dot("dot"),
 }
-
-/**
- * Curated accent palette shown in the settings UI. Mirrors the web
- * `ACCENT_PALETTE` so a color picked on one platform looks the same on
- * the other.
- */
-object OverlayAccentPalette {
-    data class Entry(val label: String, val hex: String)
-
-    val entries: List<Entry> = listOf(
-        Entry("Gold", "#f5c518"),
-        Entry("Tomato", "#fa320a"),
-        Entry("Orange", "#f97316"),
-        Entry("Amber", "#f59e0b"),
-        Entry("Emerald", "#10b981"),
-        Entry("Cyan", "#06b6d4"),
-        Entry("Blue", "#3b82f6"),
-        Entry("Indigo", "#6366f1"),
-        Entry("Violet", "#8b5cf6"),
-        Entry("Pink", "#ec4899"),
-        Entry("Slate", "#64748b"),
-        Entry("White", "#ffffff"),
-    )
-}

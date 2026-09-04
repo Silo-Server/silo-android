@@ -1376,7 +1376,6 @@ class AudiobookPlayerViewModel(
     }
 
     fun startSleepTimer(minutes: Int) = applySleepTimer(SleepTimerChoice.Minutes(minutes))
-    fun cancelSleepTimer() = applySleepTimer(SleepTimerChoice.Off)
 
     // ── Bookmarks ────────────────────────────────────────────────────────
 

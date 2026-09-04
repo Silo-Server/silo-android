@@ -44,14 +44,6 @@ data class CollectionGroup(
 )
 
 @Serializable
-data class CollectionItem(
-    @SerialName("collection_id") val collectionId: String,
-    @SerialName("media_item_id") val mediaItemId: String,
-    val position: Int = 0,
-    @SerialName("added_at") val addedAt: String? = null
-)
-
-@Serializable
 data class CreateCollectionRequest(
     val name: String,
     @SerialName("collection_type") val collectionType: String? = null,
@@ -134,17 +126,6 @@ data class UserLibrary(
     val type: String,
     @SerialName("sort_order") val sortOrder: Int = 0,
     @SerialName("poster_url") val posterUrl: String? = null
-)
-
-@Serializable
-data class LibraryPlaybackPreference(
-    @SerialName("profile_id") val profileId: String,
-    @SerialName("library_id") val libraryId: Int,
-    @SerialName("audio_language") val audioLanguage: String? = null,
-    @SerialName("subtitle_language") val subtitleLanguage: String? = null,
-    @SerialName("subtitle_mode") val subtitleMode: String? = null,
-    @SerialName("show_forced_subtitles") val showForcedSubtitles: Boolean? = null,
-    @SerialName("updated_at") val updatedAt: String? = null
 )
 
 @Serializable

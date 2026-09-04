@@ -35,7 +35,6 @@ class MobileFreshSubtitleRestoreTest {
             mediaFileId = 7,
             mountedSubtitles = listOf(authoritative),
             sessionId = "fresh-session",
-            serverUrl = "https://silo.test",
             persistedPreference = null,
             authoritativeInventory = true,
             loadDownloadedSubtitles = {
@@ -54,7 +53,6 @@ class MobileFreshSubtitleRestoreTest {
             mediaFileId = 7,
             mountedSubtitles = listOf(serverTrack()),
             sessionId = "fresh-session",
-            serverUrl = "https://silo.test",
             persistedPreference = encodeSubtitleIdentityPreference(
                 SubtitleIdentity.Downloaded(
                     downloadId = 312,
@@ -92,7 +90,6 @@ class MobileFreshSubtitleRestoreTest {
             mediaFileId = 7,
             mountedSubtitles = listOf(serverTrack()),
             sessionId = "fresh-session",
-            serverUrl = "https://silo.test",
             persistedPreference = subtitleTrackFingerprint(oldMountedDownload),
             loadDownloadedSubtitles = {
                 ApiResult.Success(DownloadedSubtitlesResponse(listOf(downloadedTrack(417))))
@@ -113,7 +110,6 @@ class MobileFreshSubtitleRestoreTest {
             mediaFileId = 7,
             mountedSubtitles = listOf(committedServerTrack),
             sessionId = "fresh-session",
-            serverUrl = "https://silo.test",
             persistedPreference = encodeSubtitleIdentityPreference(
                 SubtitleIdentity.Downloaded(
                     downloadId = 512,
@@ -140,7 +136,6 @@ class MobileFreshSubtitleRestoreTest {
                 mediaFileId = 7,
                 mountedSubtitles = listOf(serverTrack()),
                 sessionId = "stale-session",
-                serverUrl = "https://silo.test",
                 persistedPreference = null,
                 loadDownloadedSubtitles = {
                     throw CancellationException("newer load owns the player")

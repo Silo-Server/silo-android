@@ -101,7 +101,6 @@ val playerInfraModule = module {
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
             serverSettingsFlusher = get(),
-            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             profileChangeSignal = profileChangeSignal,
             serverChangeSignal = serverChangeSignal,
             settingsRepository = get<SettingsRepository>(),

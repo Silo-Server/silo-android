@@ -13,9 +13,6 @@ internal data class TvPlayerLoadOwner(
     val preferredQuality: String?,
 )
 
-internal class TvPlayerLoadSupersededException :
-    kotlinx.coroutines.CancellationException("TV playback load was superseded.")
-
 /**
  * Carries a fresh-load owner through the shared playback coordinator without
  * teaching the shared API about the TV ViewModel's ownership implementation.

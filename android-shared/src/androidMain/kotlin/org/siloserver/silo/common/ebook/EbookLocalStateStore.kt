@@ -44,42 +44,6 @@ class EbookLocalStateStore(baseDir: File) {
         store.write(progressFile(serverId, profileId, contentId), snapshot)
     }
 
-    /** A stored progress snapshot together with the scope it lives under. */
-    data class ProgressEntry(
-        val serverId: String,
-        val profileId: String,
-        val contentId: String,
-        val snapshot: ProgressSnapshot,
-    )
-
-    /**
-     * Every reading-progress snapshot on disk, across all (server, profile)
-     * scopes. Used by the progress syncer to push offline reading back to the
-     * server. Walks `ebook_state/<server>/<profile>/<contentId>.progress.json`.
-     */
-    fun listAllProgress(): List<ProgressEntry> {
-        val root = store.rootDirectory()
-        val result = mutableListOf<ProgressEntry>()
-        val serverDirs = root.listFiles()?.filter { it.isDirectory } ?: return result
-        for (serverDir in serverDirs) {
-            val profileDirs = serverDir.listFiles()?.filter { it.isDirectory } ?: continue
-            for (profileDir in profileDirs) {
-                val files = profileDir.listFiles()
-                    ?.filter { it.isFile && it.name.endsWith(".progress.json") }
-                    ?: continue
-                for (file in files) {
-                    val snapshot = store.read<ProgressSnapshot>(file) ?: continue
-                    result += ProgressEntry(
-                        serverId = serverDir.name,
-                        profileId = profileDir.name,
-                        contentId = file.name.removeSuffix(".progress.json"),
-                        snapshot = snapshot,
-                    )
-                }
-            }
-        }
-        return result
-    }
 
     fun listBookmarks(serverId: String, profileId: String, contentId: String): List<BookmarkSnapshot> =
         store.read<List<BookmarkSnapshot>>(bookmarksFile(serverId, profileId, contentId))

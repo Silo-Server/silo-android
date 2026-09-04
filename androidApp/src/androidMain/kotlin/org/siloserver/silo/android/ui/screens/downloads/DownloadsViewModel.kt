@@ -361,17 +361,6 @@ class DownloadsViewModel(
         }
     }
 
-    fun refreshSubscriptions() {
-        viewModelScope.launch {
-            runCatching { refreshSubscriptionsInternal() }
-                .onFailure { error ->
-                    _uiState.update {
-                        it.copy(error = error.message ?: "Failed to refresh monitored downloads")
-                    }
-                }
-        }
-    }
-
     fun runMonitoredDownloadsNow() {
         viewModelScope.launch {
             _uiState.update { it.copy(isRunningMonitoredDownloads = true) }

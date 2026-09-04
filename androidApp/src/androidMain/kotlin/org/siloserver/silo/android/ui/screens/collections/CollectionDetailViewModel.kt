@@ -5,7 +5,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.personal.Collection
-import org.siloserver.silo.model.personal.UpdateCollectionRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CollectionRepository
 import org.siloserver.silo.repository.SectionRepository
@@ -25,9 +24,6 @@ data class CollectionDetailUiState(
     val error: String? = null,
     val hasMore: Boolean = true,
     val total: Int = 0,
-    val showRenameDialog: Boolean = false,
-    val renameText: String = "",
-    val isRenaming: Boolean = false,
     val showDeleteConfirm: Boolean = false,
     val isDeleting: Boolean = false,
     val deleted: Boolean = false,
@@ -241,48 +237,6 @@ class CollectionDetailViewModel(
                     items = state.items.filter { it.contentId != itemId },
                     total = (state.total - 1).coerceAtLeast(0),
                 )
-            }
-        }
-    }
-
-    fun showRenameDialog() {
-        if (libraryId != null) return
-        _uiState.update {
-            it.copy(showRenameDialog = true, renameText = it.collection?.name ?: "")
-        }
-    }
-
-    fun hideRenameDialog() {
-        _uiState.update { it.copy(showRenameDialog = false) }
-    }
-
-    fun onRenameTextChanged(text: String) {
-        _uiState.update { it.copy(renameText = text) }
-    }
-
-    fun renameCollection() {
-        if (libraryId != null) return
-        val newName = _uiState.value.renameText.trim()
-        if (newName.isBlank()) return
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(isRenaming = true) }
-            when (val result = collectionRepository.updateCollection(
-                id = collectionId,
-                request = UpdateCollectionRequest(name = newName),
-            )) {
-                is ApiResult.Success -> {
-                    _uiState.update {
-                        it.copy(
-                            collection = result.data,
-                            isRenaming = false,
-                            showRenameDialog = false,
-                        )
-                    }
-                }
-                is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update { it.copy(isRenaming = false) }
-                }
             }
         }
     }

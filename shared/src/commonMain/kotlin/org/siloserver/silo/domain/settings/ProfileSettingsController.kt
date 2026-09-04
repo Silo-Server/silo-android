@@ -9,7 +9,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -216,12 +215,6 @@ class ProfileSettingsController(
         fun Map<String, EffectiveSettingValue>.boolOr(key: String, fallback: Boolean): Boolean {
             val value = this[key]?.value ?: return fallback
             return runCatching { value.jsonPrimitive.booleanOrNull }.getOrNull() ?: fallback
-        }
-
-        fun Map<String, EffectiveSettingValue>.intOrNull(key: String): Int? {
-            val value = this[key]?.value ?: return null
-            if (value is JsonNull) return null
-            return runCatching { value.jsonPrimitive.intOrNull }.getOrNull()
         }
     }
 }

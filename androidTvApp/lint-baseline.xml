@@ -3043,17 +3043,6 @@
         errorLine1="    modifier: Modifier = Modifier,"
         errorLine2="    ~~~~~~~~">
         <location
-            file="src/androidMain/kotlin/org/siloserver/silo/tv/ui/components/TvHomeHeroCarousel.kt"
-            line="82"
-            column="5"/>
-    </issue>
-
-    <issue
-        id="ModifierParameter"
-        message="Modifier parameter should be the first optional parameter"
-        errorLine1="    modifier: Modifier = Modifier,"
-        errorLine2="    ~~~~~~~~">
-        <location
             file="src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/detail/TvItemDetailScreen.kt"
             line="1653"
             column="5"/>
@@ -3356,17 +3345,6 @@
             file="src/androidMain/kotlin/org/siloserver/silo/tv/ui/components/TvCatalogGrid.kt"
             line="150"
             column="45"/>
-    </issue>
-
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
-        errorLine1="    var activeIndex by remember { mutableStateOf(0) }"
-        errorLine2="                                  ~~~~~~~~~~~~~~">
-        <location
-            file="src/androidMain/kotlin/org/siloserver/silo/tv/ui/components/TvFeaturedCarousel.kt"
-            line="88"
-            column="35"/>
     </issue>
 
     <issue

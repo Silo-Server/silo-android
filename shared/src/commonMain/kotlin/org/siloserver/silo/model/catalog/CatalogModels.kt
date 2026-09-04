@@ -66,14 +66,6 @@ data class BrowseItem(
 )
 
 @Serializable
-data class BrowseResponse(
-    val total: Int = 0,
-    @SerialName("total_exact") val totalExact: Boolean? = null,
-    @SerialName("has_more") val hasMore: Boolean = false,
-    val items: List<BrowseItem> = emptyList()
-)
-
-@Serializable
 data class CatalogResponse(
     val total: Int = 0,
     @SerialName("total_exact") val totalExact: Boolean? = null,

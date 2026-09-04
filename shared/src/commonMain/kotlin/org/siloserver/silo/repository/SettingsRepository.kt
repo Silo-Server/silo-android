@@ -17,11 +17,6 @@ import kotlinx.serialization.json.JsonElement
 class SettingsRepository(
     private val settingsApi: SettingsApi,
 ) {
-    suspend fun listSettings(): ApiResult<Map<String, String>> =
-        settingsApi.getSettings().map { response ->
-            response.settings.associate { it.key to it.value }
-        }
-
     suspend fun getSetting(key: String): ApiResult<String> =
         settingsApi.getSetting(key).map { it.value }
 
