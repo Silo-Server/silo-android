@@ -86,22 +86,18 @@ import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
 import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
-import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
 import org.siloserver.silo.common.player.video.mountedAudioTracks
 import org.siloserver.silo.common.player.video.selectedMountedAudioOrdinal
 import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
 import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
 import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
-import org.siloserver.silo.model.playback.PlayMethod
-import org.siloserver.silo.model.playback.PlaybackSourceMetadata
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.activeOriginalHttpClaims
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
-import org.siloserver.silo.player.DolbyVisionDetection
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -421,7 +417,6 @@ fun PlayerScreen(
         backendPlayer?.let { player ->
             backendFactory.create(
                 player = player,
-                request = VideoPlaybackBackendRequest(),
             )
         }
     }
@@ -1614,7 +1609,6 @@ private fun produceRoomClosedState(
     val soloClosedReason = remember { MutableStateFlow<String?>(null) }
     return (controller?.closedReason ?: soloClosedReason).collectAsState()
 }
-
 
 private fun PlaybackExecutionPlan?.validatedPassthroughCodecs(): List<String> {
     val plan = this ?: return emptyList()

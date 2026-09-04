@@ -21,7 +21,6 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleAppearanceProjection
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SettingsRepository
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -47,7 +46,6 @@ class AndroidPlayerSettingsStore(
     private val getActiveProfileId: suspend () -> String?,
     private val getServerUrl: suspend () -> String?,
     private val serverSettingsFlusher: ServerSettingsFlusher,
-    @Suppress("unused") private val scope: CoroutineScope,
     private val profileChangeSignal: Flow<Unit> = flowOf(Unit),
     private val settingsRepository: SettingsRepository? = null,
     private val getDeviceId: suspend () -> String? = { null },

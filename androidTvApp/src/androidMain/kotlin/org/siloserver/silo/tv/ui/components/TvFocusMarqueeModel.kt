@@ -344,9 +344,6 @@ class TvFocusMarqueeState internal constructor() {
         enrichmentRequests -= contentId
     }
 
-    internal fun isEnrichmentRequestInFlight(contentId: String): Boolean =
-        contentId in enrichmentRequests
-
     /** Cache freshly-fetched enrichment and publish it only if the matching
      *  card still owns the hero. A stale response warms its cache without
      *  mutating the active card. */

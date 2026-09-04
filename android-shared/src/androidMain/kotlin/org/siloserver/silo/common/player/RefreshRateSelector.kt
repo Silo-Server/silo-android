@@ -13,15 +13,6 @@ import kotlin.math.roundToInt
  */
 internal object RefreshRateSelector {
 
-    /** Closest refresh rate wins; integer-multiple rates get a small bonus. */
-    fun pickByRefreshRate(
-        modes: Array<Display.Mode>,
-        frameRateHz: Float,
-    ): Display.Mode? {
-        if (modes.isEmpty() || frameRateHz <= 0f) return null
-        return modes.minByOrNull { scoreMode(it, frameRateHz) }
-    }
-
     /** Overload that filters candidates first (e.g. by resolution on a TV panel). */
     fun pickByRefreshRateAmong(
         candidates: List<Display.Mode>,

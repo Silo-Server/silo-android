@@ -1,6 +1,5 @@
 package org.siloserver.silo.di
 
-import org.siloserver.silo.domain.GetHomeDataUseCase
 import org.siloserver.silo.domain.ManagePlaybackUseCase
 import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.feature.RequestsFeatureStore
@@ -166,7 +165,6 @@ val repositoryModule = module {
     }
 
     // Domain use cases
-    single { GetHomeDataUseCase(get(), get()) }
     single { ManagePlaybackUseCase(get(), get()) }
     single { MediaActionsCoordinator(get()) }
 }

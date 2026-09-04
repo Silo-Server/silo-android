@@ -16,9 +16,7 @@ class VideoPlaybackBackendFactory(
     @OptIn(UnstableApi::class)
     fun create(
         player: Player,
-        request: VideoPlaybackBackendRequest = VideoPlaybackBackendRequest(),
     ): VideoPlaybackBackend {
-        check(VideoPlaybackBackendSelector.select(request) == VideoPlaybackBackendKind.Media3)
         return Media3VideoPlaybackBackend(
             playerFactory = playerFactory,
             audioTrackManager = audioTrackManager,

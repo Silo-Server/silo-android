@@ -3164,17 +3164,6 @@
         errorLine1="    modifier: Modifier = Modifier,"
         errorLine2="    ~~~~~~~~">
         <location
-            file="src/androidMain/kotlin/org/siloserver/silo/android/ui/components/GenreChip.kt"
-            line="25"
-            column="5"/>
-    </issue>
-
-    <issue
-        id="ModifierParameter"
-        message="Modifier parameter should be the first optional parameter"
-        errorLine1="    modifier: Modifier = Modifier,"
-        errorLine2="    ~~~~~~~~">
-        <location
             file="src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/home/HomeScreen.kt"
             line="104"
             column="5"/>

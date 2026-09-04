@@ -51,7 +51,7 @@ fun PersonalListsScreen(
             when (selectedTabIndex) {
                 0 -> {
                     val controls = rememberPersonalListControls(PersonalListSource.Favorites)
-                    val query by controls.queryState()
+                    val query = controls.currentQuery()
                     FavoritesGridContent(
                         onItemClick = onItemClick,
                         modifier = Modifier
@@ -63,7 +63,7 @@ fun PersonalListsScreen(
                 }
                 else -> {
                     val controls = rememberPersonalListControls(PersonalListSource.Watchlist)
-                    val query by controls.queryState()
+                    val query = controls.currentQuery()
                     WatchlistGridContent(
                         onItemClick = onItemClick,
                         modifier = Modifier

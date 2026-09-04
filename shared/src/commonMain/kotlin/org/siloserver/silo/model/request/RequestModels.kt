@@ -195,8 +195,3 @@ data class RequestsListResponse(
 data class RequestsFeatureStatus(
     @SerialName("requests_enabled") val requestsEnabled: Boolean,
 )
-
-@Serializable
-data class RequestDecisionBody(
-    val reason: String = "",
-)

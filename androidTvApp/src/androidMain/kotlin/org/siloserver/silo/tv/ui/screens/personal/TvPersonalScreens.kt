@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -686,7 +685,3 @@ private fun EmptyState(
         }
     }
 }
-
-// Unused import suppressor (Movie icon retained for future use).
-@Suppress("unused")
-private val _unused = Icons.Filled.Movie

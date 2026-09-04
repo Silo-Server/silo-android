@@ -240,27 +240,6 @@ open class ProfileRepository(
         return profiles.firstOrNull { it.id == activeId }
     }
 
-    suspend fun getActiveProfileResult(): ApiResult<Profile> {
-        val activeId = getActiveProfileId()
-            ?: return ApiResult.Error(
-                code = 400,
-                error = "bad_request",
-                message = "No active profile selected",
-            )
-        return when (val result = listProfiles()) {
-            is ApiResult.Success -> {
-                result.data.firstOrNull { it.id == activeId }?.let { ApiResult.Success(it) }
-                    ?: ApiResult.Error(
-                        code = 404,
-                        error = "not_found",
-                        message = "Active profile not found",
-                    )
-            }
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-        }
-    }
-
     /** Clears the active profile selection and its token. */
     suspend fun clearProfile() {
         identityTransitions.changing(IdentityTransitionKind.PROFILE_SWITCH) {

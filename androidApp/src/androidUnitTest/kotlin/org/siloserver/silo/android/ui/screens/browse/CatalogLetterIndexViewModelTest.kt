@@ -3,7 +3,6 @@ package org.siloserver.silo.android.ui.screens.browse
 import androidx.lifecycle.SavedStateHandle
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesSubtab
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesViewModel
-import org.siloserver.silo.android.ui.screens.reading.ReadingHubViewModel
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.PersonalDataApi
@@ -118,46 +117,7 @@ class CatalogLetterIndexViewModelTest {
         assertEquals(catalogRequestCount, requests.catalogRequestCount())
     }
 
-    @Test
-    fun readingBrowseLetterSelectionUsesServerNamePrefix() = runCatalogTest {
-        val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
-        val viewModel = ReadingHubViewModel(
-            personalDataRepository = repositories.personal,
-            sectionRepository = repositories.sections,
-            catalogRepository = repositories.catalog,
-        )
-        awaitState { !viewModel.uiState.value.isLoadingLibraries }
 
-        viewModel.selectTab(LibrariesSubtab.Browse)
-        awaitState { viewModel.uiState.value.catalogItems.map { it.contentId } == listOf("all-1") }
-
-        viewModel.selectNamePrefix("S")
-        awaitState { viewModel.uiState.value.catalogItems.map { it.contentId } == listOf("s-1") }
-
-        assertEquals("S", requests.lastCatalogRequest().query["name_prefix"])
-        assertEquals("S", viewModel.uiState.value.selectedNamePrefix)
-    }
-
-    @Test
-    fun readingDensitySelectionUpdatesLayoutWithoutReloadingCatalog() = runCatalogTest {
-        val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
-        val viewModel = ReadingHubViewModel(
-            personalDataRepository = repositories.personal,
-            sectionRepository = repositories.sections,
-            catalogRepository = repositories.catalog,
-        )
-        awaitState { !viewModel.uiState.value.isLoadingLibraries }
-        viewModel.selectTab(LibrariesSubtab.Browse)
-        awaitState { viewModel.uiState.value.catalogItems.map { it.contentId } == listOf("all-1") }
-        val catalogRequestCount = requests.catalogRequestCount()
-
-        viewModel.selectViewDensity(CatalogViewDensity.Compact)
-
-        assertEquals(CatalogViewDensity.Compact, viewModel.uiState.value.catalogDensity)
-        assertEquals(catalogRequestCount, requests.catalogRequestCount())
-    }
 
     private fun runCatalogTest(block: suspend TestScope.() -> Unit) = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))

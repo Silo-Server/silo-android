@@ -8,7 +8,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -23,32 +22,6 @@ import org.siloserver.silo.tv.ui.theme.SiloBlue
 import org.siloserver.silo.tv.ui.theme.DarkOnPrimary
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
-
-/**
- * Static pill-shaped chip for displaying metadata (year, runtime, genre, rating).
- * Not focusable — purely decorative. For interactive chips (filter selections),
- * see [TvFilterChip] below.
- */
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-fun TvMetadataChip(
-    text: String,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(100.dp))
-            .background(Color.White.copy(alpha = 0.1f))
-            .padding(horizontal = 16.dp, vertical = 9.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-    }
-}
 
 /**
  * Focusable filter chip. Resting state stays quiet, selection reads as a white

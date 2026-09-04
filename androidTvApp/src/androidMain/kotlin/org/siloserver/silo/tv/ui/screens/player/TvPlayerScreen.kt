@@ -26,11 +26,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -64,7 +62,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
@@ -88,13 +85,10 @@ import androidx.tv.material3.Text
 import com.google.common.util.concurrent.MoreExecutors
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -121,7 +115,6 @@ import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
-import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
 import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
 import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
@@ -130,16 +123,13 @@ import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
-import org.siloserver.silo.model.playback.PlaybackSourceMetadata
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.activeOriginalHttpClaims
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
-import org.siloserver.silo.model.settings.legacyPosition
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
-import org.siloserver.silo.player.DolbyVisionDetection
 import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.cast.SiloCastVolumeState
@@ -472,7 +462,6 @@ fun TvPlayerScreen(
         backendPlayer?.let { player ->
             backendFactory.create(
                 player = player,
-                request = VideoPlaybackBackendRequest(),
             )
         }
     }
@@ -951,8 +940,6 @@ fun TvPlayerScreen(
             // through to hiding the controls or exiting the player.
             latestIntroSkipState.isVisible -> viewModel.onDismissIntroPrompt()
             showQuickSubtitlePicker -> showQuickSubtitlePicker = false
-            state.showSubtitleStyleDialog -> viewModel.closeSubtitleStyleDialog()
-            state.showSubtitleMenu -> viewModel.closeSubtitleMenu()
             // On the Up-Next overlay, Back exits the player (matches tvOS, where
             // the Up-Next "Back" button dismisses the whole player).
             state.showNextUp -> stopPlaybackAndExit()
@@ -1105,8 +1092,7 @@ fun TvPlayerScreen(
                 viewModel.setControlsVisible(true)
             }
             if (latestShowQuickSubtitlePicker ||
-                playerState.hudOpen || playerState.showSubtitleMenu ||
-                playerState.showSubtitleStyleDialog || latestShowLeaveDialog ||
+                playerState.hudOpen || latestShowLeaveDialog ||
                 // The Up-Next overlay is a focus-trapping Compose surface that
                 // owns its own remote input (Play Now / Keep Watching / Back) —
                 // don't let the transport bridge toggle play/pause underneath it.
@@ -1184,8 +1170,6 @@ fun TvPlayerScreen(
                 !playerState.isPaused &&
                 !playerState.hudOpen &&
                 !playerState.showNextUp &&
-                !playerState.showSubtitleMenu &&
-                !playerState.showSubtitleStyleDialog &&
                 !latestShowQuickSubtitlePicker &&
                 !latestShowLeaveDialog
             ) {
@@ -1989,8 +1973,6 @@ fun TvPlayerScreen(
         state.controlsVisibilityNonce,
         state.isPaused,
         state.hudOpen,
-        state.showSubtitleMenu,
-        state.showSubtitleStyleDialog,
         state.isScrubbing,
         state.showNextUp,
     ) {
@@ -2002,7 +1984,6 @@ fun TvPlayerScreen(
         // focus-owning surface: letting the timer fire under it hides the
         // controls and pulls focus to the root, off the primary action.
         if (state.showControls && !state.isPaused && !state.hudOpen &&
-            !state.showSubtitleMenu && !state.showSubtitleStyleDialog &&
             !state.isScrubbing && !state.showNextUp
         ) {
             delay(CONTROLS_AUTO_HIDE_MS)
@@ -3069,7 +3050,6 @@ private fun TvCountdownRing(seconds: Int, totalSeconds: Int) {
     }
 }
 
-
 @Composable
 private fun TvRoomCloseConfirmDialog(
     onClose: () -> Unit,
@@ -3127,15 +3107,6 @@ private fun TvRoomCloseConfirmDialog(
             }
         }
     }
-}
-
-private fun formatPlayerTime(seconds: Double): String {
-    if (seconds <= 0 || seconds.isNaN()) return "0:00"
-    val total = seconds.toInt()
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
 
 private fun PlayerTrackEntry.toVideoTrackEntry(): VideoPlayerTrackEntry =
@@ -3460,7 +3431,6 @@ private fun TvPlayerClockScope(
     content(clock)
 }
 
-
 /**
  * Apply (or clear, for [VIDEO_QUALITY_AUTO_ID]) a video quality override on the
  * player. Mirrors [AudioTrackManager]'s override approach but targets a specific
@@ -3495,7 +3465,6 @@ internal fun selectVideoQuality(player: Player, id: String): Boolean {
     }
     return false
 }
-
 
 /**
  * The overlay layer stacked above the player surface: lifecycle notice, remote

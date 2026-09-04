@@ -3,7 +3,6 @@ package org.siloserver.silo.tv.ui.screens.collections
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.personal.UpdateCollectionRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CollectionRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
@@ -16,8 +15,7 @@ import kotlinx.coroutines.launch
 /**
  * ViewModel for an individual collection's item grid. Receives `collectionId`
  * and `title` via Koin `parametersOf()` at construction time. Reached only for
- * the user's own collections (the user grid), so rename/delete are available
- * (mirrors the phone's manageable detail).
+ * the user's own collections (the user grid), with deletion available.
  */
 class TvCollectionDetailViewModel(
     private val collectionRepository: CollectionRepository,
@@ -33,9 +31,6 @@ class TvCollectionDetailViewModel(
         val hasMore: Boolean = false,
         val total: Int = 0,
         val error: String? = null,
-        val showRenameDialog: Boolean = false,
-        val isRenaming: Boolean = false,
-        val renameError: String? = null,
         val showDeleteConfirm: Boolean = false,
         val isDeleting: Boolean = false,
         val deleteError: String? = null,
@@ -65,35 +60,7 @@ class TvCollectionDetailViewModel(
 
     fun retry() = load(reset = true)
 
-    // --- Rename / delete (manageable user collections) ---
-
-    fun showRenameDialog() = _uiState.update { it.copy(showRenameDialog = true, renameError = null) }
-    fun hideRenameDialog() = _uiState.update { it.copy(showRenameDialog = false, renameError = null) }
-
-    fun rename(name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isBlank()) {
-            _uiState.update { it.copy(renameError = "Name is required") }
-            return
-        }
-        viewModelScope.launch {
-            _uiState.update { it.copy(isRenaming = true, renameError = null) }
-            when (val r = collectionRepository.updateCollection(
-                collectionId,
-                UpdateCollectionRequest(name = trimmed),
-            )) {
-                is ApiResult.Success -> _uiState.update {
-                    it.copy(name = r.data.name, isRenaming = false, showRenameDialog = false)
-                }
-                is ApiResult.Error -> _uiState.update {
-                    it.copy(isRenaming = false, renameError = r.message.ifBlank { "Failed to rename" })
-                }
-                is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(isRenaming = false, renameError = "Network error")
-                }
-            }
-        }
-    }
+    // --- Delete manageable user collections ---
 
     fun showDeleteConfirm() = _uiState.update { it.copy(showDeleteConfirm = true, deleteError = null) }
     fun hideDeleteConfirm() = _uiState.update { it.copy(showDeleteConfirm = false, deleteError = null) }

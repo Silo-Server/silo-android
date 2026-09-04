@@ -34,10 +34,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -46,7 +44,6 @@ import org.siloserver.silo.android.ui.screens.personal.FavoritesGridContent
 import org.siloserver.silo.android.ui.screens.personal.WatchlistGridContent
 import org.siloserver.silo.android.ui.screens.personal.PersonalListControlsRow
 import org.siloserver.silo.android.ui.screens.personal.PersonalListSource
-import org.siloserver.silo.android.ui.screens.personal.queryState
 import org.siloserver.silo.android.ui.screens.personal.rememberPersonalListControls
 import org.siloserver.silo.viewmodel.PersonalListUiState
 import androidx.compose.ui.Alignment
@@ -68,6 +65,7 @@ import org.siloserver.silo.android.ui.theme.SiloOpaqueControl
 import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
 import org.siloserver.silo.android.ui.theme.SiloOpaqueControlSelected
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.android.ui.screens.personal.currentQuery
 
 /**
  * Phone Recommendations ("For You") screen.
@@ -326,7 +324,7 @@ private fun SavedListGrid(
         ForYouList.Favorites -> PersonalListSource.Favorites
     }
     val controls = rememberPersonalListControls(source)
-    val query by controls.queryState()
+    val query = controls.currentQuery()
     val gridHeader: @Composable (PersonalListUiState) -> Unit = { state ->
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             header()
@@ -350,7 +348,6 @@ private fun SavedListGrid(
         )
     }
 }
-
 
 /**
  * Watchlist / Favorites pill row. Mirrors iOS `SavedShortcutsRow` (phone):

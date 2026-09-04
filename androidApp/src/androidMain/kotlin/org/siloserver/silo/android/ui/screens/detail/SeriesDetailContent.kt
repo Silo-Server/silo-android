@@ -92,7 +92,6 @@ fun SeriesDetailContent(
     var showAudioPicker by remember { mutableStateOf(false) }
     var showSubtitlePicker by remember { mutableStateOf(false) }
 
-    val eyebrow = HeroMetadata.seriesEyebrow(detail)
     val sourceTokens = HeroMetadata.seriesSourceTokens(detail)
     val factsLine = HeroMetadata.seriesFactsLine(detail)
 
@@ -224,7 +223,7 @@ fun SeriesDetailContent(
         item(contentType = "detail-hero") {
             AdaptiveDetailHero(
                 detail = detail,
-                eyebrow = if (isExpandedDetailLayout) null else eyebrow,
+                eyebrow = null,
                 sourceTokens = sourceTokens,
                 factsLine = factsLine,
                 dominantColor = dominantColor,
@@ -328,7 +327,6 @@ fun SeriesDetailContent(
                     SectionHeader(title = "Cast & Crew")
                     CastCrewSection(
                         cast = detail.cast,
-                        crew = detail.crew,
                         onPersonClick = onPersonClick,
                     )
                 }

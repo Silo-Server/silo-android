@@ -121,7 +121,7 @@ fun MovieDetailContent(
     val eyebrow = if (detail.type == "episode") {
         HeroMetadata.episodeEyebrow(detail)
     } else {
-        HeroMetadata.movieEyebrow(detail)
+        null
     }
     val sourceTokens = HeroMetadata.movieSourceTokens(detail)
     val factsLine = HeroMetadata.movieFactsLine(detail)
@@ -327,7 +327,6 @@ fun MovieDetailContent(
                     SectionHeader(title = "Cast & Crew")
                     CastCrewSection(
                         cast = detail.cast,
-                        crew = detail.crew,
                         onPersonClick = onPersonClick,
                     )
                 }

@@ -20,7 +20,6 @@ internal suspend fun prepareMobileFreshSubtitleRestore(
     mediaFileId: Int?,
     mountedSubtitles: List<PlayerSubtitleInfo>,
     sessionId: String,
-    serverUrl: String,
     persistedPreference: String?,
     authoritativeInventory: Boolean = false,
     loadDownloadedSubtitles: suspend (Int) -> ApiResult<DownloadedSubtitlesResponse>,
@@ -46,7 +45,6 @@ internal suspend fun prepareMobileFreshSubtitleRestore(
             existing = mountedSubtitles,
             downloaded = downloaded,
             sessionId = sessionId,
-            serverUrl = serverUrl,
         )
     }
     val preference = persistedPreference?.trim()?.takeIf(String::isNotEmpty)

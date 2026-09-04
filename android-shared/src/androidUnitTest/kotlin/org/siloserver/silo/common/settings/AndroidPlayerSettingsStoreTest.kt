@@ -22,7 +22,6 @@ import io.ktor.client.HttpClient
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -68,7 +67,6 @@ class AndroidPlayerSettingsStoreTest {
             getActiveProfileId = { profileId },
             getServerUrl = { server },
             serverSettingsFlusher = fakeFlusher,
-            scope = TestScope(),
             profileChangeSignal = flowOf(Unit),
             settingsRepository = repository,
             getDeviceId = { deviceId },
@@ -100,7 +98,6 @@ class AndroidPlayerSettingsStoreTest {
             getActiveProfileId = { activeProfileId },
             getServerUrl = { serverUrl },
             serverSettingsFlusher = fakeFlusher,
-            scope = TestScope(),
             profileChangeSignal = flowOf(Unit),
             getDeviceId = { null },
             dataStoreFactory = { shared },

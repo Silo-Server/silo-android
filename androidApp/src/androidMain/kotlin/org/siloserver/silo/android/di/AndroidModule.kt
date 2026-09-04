@@ -82,7 +82,6 @@ import org.siloserver.silo.viewmodel.RequestsViewModel
 import org.siloserver.silo.viewmodel.WatchlistViewModel
 import org.siloserver.silo.android.ui.screens.player.MobileVideoPlaybackStarter
 import org.siloserver.silo.android.ui.screens.player.PlayerViewModel
-import org.siloserver.silo.android.ui.screens.reading.ReadingHubViewModel
 import org.siloserver.silo.android.ui.screens.search.SearchViewModel
 import org.siloserver.silo.android.ui.screens.settings.SettingsViewModel
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
@@ -373,7 +372,6 @@ val androidModule = module {
             get<org.siloserver.silo.android.ui.screens.browse.BrowsePrefsStore>(),
         )
     }
-    viewModel { ReadingHubViewModel(get(), get(), get()) }
     viewModel { RecommendationsViewModel(get()) }
     viewModel { SearchViewModel(get()) }
     single {

@@ -52,7 +52,6 @@ class SubtitleTrackMergeTest {
                     releaseName = "Dune Part Three", provider = "subdl"),
             ),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
 
         assertEquals(4, merged.size)
@@ -81,13 +80,11 @@ class SubtitleTrackMergeTest {
             existing = listOf(track(0, source = "embedded")),
             downloaded = listOf(downloaded(id = 312), downloaded(id = 313)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
         val reordered = mergeDownloadedSubtitles(
             existing = listOf(track(0, source = "embedded")),
             downloaded = listOf(downloaded(id = 313), downloaded(id = 312)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
 
         assertEquals(1, first.single { it.downloadId == 312 }.index)
@@ -101,13 +98,11 @@ class SubtitleTrackMergeTest {
             existing = listOf(track(0, source = "embedded")),
             downloaded = listOf(downloaded(id = 312), downloaded(id = 313)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
         val afterDeletion = mergeDownloadedSubtitles(
             existing = listOf(track(0, source = "embedded")),
             downloaded = listOf(downloaded(id = 313)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
 
         assertEquals(2, beforeDeletion.single { it.downloadId == 313 }.index)
@@ -121,13 +116,11 @@ class SubtitleTrackMergeTest {
             existing = listOf(track(0, source = "embedded")),
             downloaded = listOf(downloaded(id = 312)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
         val expandedCatalog = mergeDownloadedSubtitles(
             existing = listOf(track(0, source = "embedded"), track(7, source = "external")),
             downloaded = listOf(downloaded(id = 312)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
 
         assertEquals(1, shortCatalog.single { it.source == "downloaded" }.index)
@@ -144,7 +137,6 @@ class SubtitleTrackMergeTest {
             existing = existing,
             downloaded = emptyList(),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
 
         assertSame(existing, merged)
@@ -156,7 +148,6 @@ class SubtitleTrackMergeTest {
             existing = listOf(track(0, source = "embedded")),
             downloaded = listOf(downloaded(id = 312)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
         assertEquals(2, firstMerge.size)
 
@@ -164,7 +155,6 @@ class SubtitleTrackMergeTest {
             existing = firstMerge,
             downloaded = listOf(downloaded(id = 312), downloaded(id = 313)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
 
         assertEquals(3, secondMerge.size)  // 1 embedded + 2 downloaded, no duplicate of 312
@@ -181,7 +171,6 @@ class SubtitleTrackMergeTest {
             existing = existing,
             downloaded = listOf(downloaded(id = 312)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
 
         assertEquals(4, merged.last().index)  // max(0,3)+1, not size (2)
@@ -194,22 +183,9 @@ class SubtitleTrackMergeTest {
             existing = emptyList(),
             downloaded = listOf(downloaded(id = 312)),
             sessionId = "sess-1",
-            serverUrl = "https://silo.example",
         )
 
         assertEquals(0, merged.single().index)
-        assertEquals("/stream/sess-1/subtitles/0.vtt", merged.single().url)
-    }
-
-    @Test
-    fun `trims trailing slash on server url`() {
-        val merged = mergeDownloadedSubtitles(
-            existing = emptyList(),
-            downloaded = listOf(downloaded(id = 312)),
-            sessionId = "sess-1",
-            serverUrl = "https://silo.example/",
-        )
-
         assertEquals("/stream/sess-1/subtitles/0.vtt", merged.single().url)
     }
 }

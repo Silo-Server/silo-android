@@ -34,7 +34,6 @@ import org.siloserver.silo.playback.subtitleTrackFingerprint
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.update
@@ -264,56 +263,6 @@ class ItemDetailViewModel(
         _downloadStartEvents.emit(result is ApiResult.Success)
     }
 
-    /**
-     * Per-episode download tap. Picks the best file for the episode (first
-     * entry in the server-sorted files list) and queues it. If the episode
-     * has no files (rare — orphaned record), no-ops.
-     */
-    fun onEpisodeDownloadTapped(
-        episode: EpisodeListItem,
-        downloadQuality: DownloadQuality? = null,
-    ) {
-        val fileId = episode.files.firstOrNull()?.fileId ?: return
-        val detail = _uiState.value.detail ?: return
-        // Branch on current state like the movie/audiobook path: a downloaded
-        // episode is a no-op (manage via the Downloads tab); an in-flight one
-        // cancels; otherwise start. Previously it always re-enqueued.
-        val existing = downloads.value.firstOrNull { it.mediaFileId == fileId }
-        when (detailDownloadTapAction(existing?.statusEnum(), forceRedownloadMissingLocal = false)) {
-            DetailDownloadTapAction.Ignore -> Unit
-            DetailDownloadTapAction.Cancel -> existing?.let { record ->
-                val cancelScope = downloadEnqueuer.captureCancelScope()
-                viewModelScope.launch {
-                    downloadEnqueuer.cancel(record.id, fileId, cancelScope)
-                    downloadsRepository.delete(record.id)
-                }
-            }
-            DetailDownloadTapAction.Start, DetailDownloadTapAction.ReplaceAndStart -> viewModelScope.launch {
-                // Episode pages load the episode itself as `detail`, so the
-                // parent reference supplies the series id/title for grouping.
-                downloadEnqueuer.startEpisode(
-                    seriesContentId = if (detail.type == "series") {
-                        detail.contentId
-                    } else {
-                        detail.seriesId ?: detail.contentId
-                    },
-                    episodeContentId = episode.contentId,
-                    fileId = fileId,
-                    seriesTitle = if (detail.type == "series") {
-                        detail.title
-                    } else {
-                        detail.seriesTitle ?: detail.title
-                    },
-                    seasonNumber = episode.seasonNumber,
-                    episodeNumber = episode.episodeNumber,
-                    episodeTitle = episode.title,
-                    posterUrl = detail.posterUrl,
-                    downloadQualityOverride = downloadQuality,
-                )
-            }
-        }
-    }
-
     /** Series-level "Download series" — uses the server's batch endpoint
      *  (one POST → N records sharing a batchId). */
     fun onSeriesDownloadTapped(downloadQuality: DownloadQuality? = null) {
@@ -321,22 +270,6 @@ class ItemDetailViewModel(
         viewModelScope.launch {
             downloadEnqueuer.startSeries(
                 seriesContentId = detail.contentId,
-                downloadQualityOverride = downloadQuality,
-            )
-        }
-    }
-
-    /** Per-season "Download season" — server has no season-batch endpoint
-     *  so this loops POST-per-episode locally inside the enqueuer. */
-    fun onSeasonDownloadTapped(
-        seasonNumber: Int,
-        downloadQuality: DownloadQuality? = null,
-    ) {
-        val detail = _uiState.value.detail ?: return
-        viewModelScope.launch {
-            downloadEnqueuer.startSeason(
-                seriesContentId = detail.contentId,
-                seasonNumber = seasonNumber,
                 downloadQualityOverride = downloadQuality,
             )
         }
@@ -1108,7 +1041,6 @@ class ItemDetailViewModel(
             }
         }
     }
-
 
     /**
      * Fire (or auto-fire once, when [auto] is set) the description

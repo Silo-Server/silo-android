@@ -9,7 +9,6 @@ import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.SettingValueWriteRequest
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
-import org.siloserver.silo.model.settings.SettingsListResponse
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.UpdateSettingRequest
@@ -86,10 +85,6 @@ sealed class SettingsCapabilitiesResult {
 fun newSettingMutationId(): String = Uuid.random().toString()
 
 open class SettingsApi(private val client: HttpClient) {
-
-    open suspend fun getSettings(): ApiResult<SettingsListResponse> = safeApiCall {
-        client.get("/api/v1/settings")
-    }
 
     open suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = safeApiCall {
         client.get("/api/v1/settings/overlay-config")

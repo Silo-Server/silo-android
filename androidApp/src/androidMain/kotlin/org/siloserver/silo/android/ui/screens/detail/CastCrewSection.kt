@@ -29,7 +29,6 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.CastMember
-import org.siloserver.silo.model.catalog.CrewMember
 
 /**
  * Horizontal scrolling row of cast members with circular portraits,
@@ -39,7 +38,6 @@ import org.siloserver.silo.model.catalog.CrewMember
 @Composable
 fun CastCrewSection(
     cast: List<CastMember>,
-    @Suppress("UNUSED_PARAMETER") crew: List<CrewMember>,
     onPersonClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {

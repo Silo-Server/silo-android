@@ -17,7 +17,6 @@ import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.matchesSubtitleMediaIdentity
 import org.siloserver.silo.playback.resolveCatalogSubtitlePreferenceOrdinal
 import org.siloserver.silo.playback.resolveDownloadedSubtitlePreferenceOrdinal
-import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 import org.siloserver.silo.playback.subtitleTrackFingerprint
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 
@@ -223,20 +222,6 @@ internal fun failTvReplacementLoad(
     serverUnreachable = false,
     subtitleFailureMessage = message,
 )
-
-internal suspend fun stopReplacedTvSessionAfterPublication(
-    replacedSessionId: String?,
-    publishedSessionId: String?,
-    stopSession: suspend (String) -> Unit,
-) {
-    val stale = replacedSessionId
-        ?.takeIf(String::isNotBlank)
-        ?.takeUnless { it == publishedSessionId }
-        ?: return
-    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-        runCatching { stopSession(stale) }
-    }
-}
 
 internal fun tvAudioTrackPersistenceUpdate(
     committedAudioTrackIndex: Int?,

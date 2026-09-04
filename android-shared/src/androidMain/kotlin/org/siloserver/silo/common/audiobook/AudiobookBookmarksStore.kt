@@ -56,23 +56,5 @@ class AudiobookBookmarksStore(baseDir: File) {
         }
     }
 
-    /** Replace the bookmark with matching [id]'s note. */
-    fun updateNote(
-        serverId: String,
-        profileId: String,
-        contentId: String,
-        bookmarkId: String,
-        note: String?,
-    ): List<AudiobookBookmark> {
-        val target = store.fileFor(serverId, profileId, contentId)
-        return store.withTargetLock(target) {
-            val updated = store.read<List<AudiobookBookmark>>(target).orEmpty().map {
-                if (it.id == bookmarkId) it.copy(note = note?.takeIf { n -> n.isNotBlank() }) else it
-            }
-            store.write(target, updated)
-            updated
-        }
-    }
-
     companion object { private const val TAG = "AudiobookBookmarksStore" }
 }

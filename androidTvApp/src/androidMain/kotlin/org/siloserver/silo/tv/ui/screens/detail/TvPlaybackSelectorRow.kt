@@ -3,7 +3,6 @@ package org.siloserver.silo.tv.ui.screens.detail
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,15 +24,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Icon
-import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.tv.ui.components.TvAnchoredSelectorMenu
 import org.siloserver.silo.tv.ui.components.TvSelectorOption
@@ -515,40 +509,6 @@ private fun PlaybackSelectorCapsule(
             verticalAlignment = Alignment.CenterVertically,
             content = content,
         )
-    }
-}
-
-/**
- * Non-focusable loading state shown while a newly focused episode's playback
- * detail resolves. It deliberately uses [PlaybackSelectorCapsule], so moving
- * across episodes can change the value but never flash a rectangular control.
- */
-@Composable
-internal fun TvVersionPillPlaceholder(modifier: Modifier = Modifier) {
-    PlaybackSelectorCapsule(modifier = modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .height(23.dp)
-                .clip(CircleShape)
-                .padding(horizontal = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Tv,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.75f),
-                modifier = Modifier.size(15.dp),
-            )
-            Text(
-                text = "Version",
-                color = Color.White.copy(alpha = 0.75f),
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp,
-                lineHeight = 17.sp,
-                maxLines = 1,
-            )
-        }
     }
 }
 

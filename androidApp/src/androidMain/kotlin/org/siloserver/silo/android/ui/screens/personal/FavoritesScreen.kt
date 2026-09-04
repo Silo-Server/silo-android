@@ -30,7 +30,7 @@ fun FavoritesScreen(
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         val controls = rememberPersonalListControls(PersonalListSource.Favorites)
-        val query by controls.queryState()
+        val query = controls.currentQuery()
         FavoritesGridContent(
             onItemClick = onItemClick,
             contentPadding = padding,

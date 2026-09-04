@@ -26,7 +26,7 @@ fun WatchlistScreen(
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         val controls = rememberPersonalListControls(PersonalListSource.Watchlist)
-        val query by controls.queryState()
+        val query = controls.currentQuery()
         WatchlistGridContent(
             onItemClick = onItemClick,
             contentPadding = padding,

@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -41,12 +40,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LocalMovies
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.VideoLibrary
-import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -60,7 +55,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,10 +89,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.mutableIntStateOf
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import androidx.compose.material.icons.filled.Cancel
-import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.IconButton
 import org.siloserver.silo.android.ui.screens.browse.BrowsePrefsStore
 import org.siloserver.silo.android.ui.screens.browse.CatalogGrid
 import org.siloserver.silo.android.ui.screens.browse.CatalogViewDensity
@@ -110,7 +100,6 @@ import org.siloserver.silo.catalog.filter.CatalogFacet
 import org.siloserver.silo.catalog.filter.CatalogFilterQueryBuilder
 import org.siloserver.silo.catalog.filter.CatalogFilterState
 import org.siloserver.silo.common.cards.LocalCardPresentation
-import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
@@ -118,7 +107,6 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.android.ui.screens.home.HomeSectionRow
-import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -1624,16 +1612,6 @@ private fun LibrarySelectorRow(
         }
     }
 }
-
-@Composable
-private fun libraryChipColors(selected: Boolean) = FilterChipDefaults.filterChipColors(
-    selectedContainerColor = Color.White,
-    selectedLabelColor = Color.Black,
-    selectedLeadingIconColor = Color.Black,
-    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-    labelColor = if (selected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant,
-    iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-)
 
 private fun libraryIcon(type: String): ImageVector = when (type.lowercase()) {
     "movies", "movie" -> Icons.Default.LocalMovies

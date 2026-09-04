@@ -164,10 +164,6 @@ class AuthRepository(
         }
     }
 
-    /** Returns true when a refresh token is present (user has previously logged in). */
-    suspend fun isLoggedIn(): Boolean =
-        tokenManager.getRefreshToken() != null
-
     /** Returns the currently configured server URL. */
     suspend fun getServerUrl(): String =
         tokenManager.getServerUrl()

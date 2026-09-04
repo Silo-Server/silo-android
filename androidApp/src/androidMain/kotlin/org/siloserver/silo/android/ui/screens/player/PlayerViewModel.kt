@@ -4,7 +4,6 @@ import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
 import org.siloserver.silo.common.player.failureClassification
-
 import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -46,8 +45,6 @@ import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
-import org.siloserver.silo.common.player.video.canPlayResolvedStreamDirectly
-import org.siloserver.silo.common.player.video.resolvedPlaybackDelivery
 import org.siloserver.silo.common.player.video.serverTerminalUserMessage
 import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.settings.PlayerSettingsStore
@@ -65,8 +62,6 @@ import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
-import org.siloserver.silo.model.playback.PlaybackRouteFamily
-import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.CommittedSubtitle
 import org.siloserver.silo.model.playback.SubtitleIdentity
@@ -76,10 +71,8 @@ import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
-import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
 import org.siloserver.silo.playback.PlaybackSubtitleReady
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
-import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiJob
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
@@ -1237,7 +1230,6 @@ class PlayerViewModel(
             mediaFileId = version?.fileId ?: playbackState.fileId,
             mountedSubtitles = playbackState.subtitleUrls,
             sessionId = playbackState.sessionId.orEmpty(),
-            serverUrl = playbackState.serverUrl,
             persistedPreference = localTrackSelection
                 ?.subtitleFingerprint
                 ?.takeUnless { explicitSubtitlePickResolved || isSessionRenewal },
@@ -3598,7 +3590,6 @@ class PlayerViewModel(
             existing = current.subtitleTracks,
             downloaded = downloaded,
             sessionId = sessionId,
-            serverUrl = current.serverUrl,
         )
         val autoIndex = autoSelectSubtitleId?.let { id -> downloadedTrackIndex(merged, downloaded, id) }
         _uiState.update {
@@ -4219,12 +4210,6 @@ class PlayerViewModel(
         }
     }
 
-    /** Show controls and reset the auto-hide timer. */
-    fun onShowControls() {
-        _uiState.update { it.copy(showControls = true) }
-        scheduleControlsHide()
-    }
-
     /** Called when the user exits the player. */
     fun onExit() {
         if (!exitPrepared.compareAndSet(false, true)) return
@@ -4332,7 +4317,6 @@ class PlayerViewModel(
         )
         return watchDetail.versions.indexOfFirst { it.fileId == selected.fileId }.takeIf { it >= 0 } ?: 0
     }
-
 
     /**
      * Offline-first playback path. Returns true (and populates UiState with a

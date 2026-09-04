@@ -889,39 +889,6 @@ private fun OverviewBlock(
     }
 }
 
-@Composable
-private fun FactsRow(
-    tokens: List<String>,
-    horizontalAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
-) {
-    // iOS FlowingFactsRow: tokens 13pt medium (0.78 alpha), middle-dot
-    // separators 13pt semibold (0.4 alpha), spacing 8, top pad 4.
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp, horizontalAlignment),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        tokens.forEachIndexed { index, token ->
-            if (index > 0) {
-                Text(
-                    text = "·",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = DetailPrimaryText.copy(alpha = 0.4f),
-                )
-            }
-            Text(
-                text = token,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = DetailPrimaryText.copy(alpha = 0.78f),
-            )
-        }
-    }
-}
-
 // ── Action buttons ────────────────────────────────────────────
 
 /**
@@ -1374,13 +1341,6 @@ fun SeasonChips(
 // ── Hero metadata helpers (mirror PhoneHeroMetadata.swift) ────
 
 object HeroMetadata {
-
-    // iOS does not float a provider rating above movie artwork/title. Ratings
-    // that belong in the facts row remain there; the standalone TMDB/IMDb pill
-    // made the logo stack look vertically off-centre on tablets and folds.
-    fun movieEyebrow(@Suppress("UNUSED_PARAMETER") detail: ItemDetail): String? = null
-
-    fun seriesEyebrow(detail: ItemDetail): String? = movieEyebrow(detail)
 
     fun episodeEyebrow(detail: ItemDetail): String? {
         val s = detail.seasonNumber

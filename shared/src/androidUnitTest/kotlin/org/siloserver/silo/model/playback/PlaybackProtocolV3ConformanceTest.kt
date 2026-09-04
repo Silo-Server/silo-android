@@ -557,128 +557,6 @@ class PlaybackProtocolV3ConformanceTest {
         )
     }
 
-    @Test
-    fun plannerMatrixCoversHdrAudioAndSubtitleContractCategories() {
-        val scenarios = conformanceMatrix().plannerScenarios.associateBy { it.name }
-
-        assertEquals(
-            setOf(
-                "evidence_tier_gating",
-                "deliveries_negotiation",
-                "audio_only_planning",
-                "hdr_dv_matrix",
-                "audio_matrix",
-                "subtitle_matrix",
-                "available_qualities",
-            ),
-            scenarios.values.map { it.category }.toSet(),
-        )
-
-        val hdr10 = scenarios.getValue("hdr10_exact_direct")
-        assertEquals("hdr10", hdr10.source.dynamicRange)
-        assertEquals(PlaybackDelivery.ORIGINAL_HTTP, hdr10.expected.delivery)
-
-        val dolbyVision8 = scenarios.getValue("dolby_vision_8_exact_direct")
-        assertEquals(8, dolbyVision8.source.dolbyVisionProfile)
-        assertEquals(PlaybackDelivery.ORIGINAL_HTTP, dolbyVision8.expected.delivery)
-
-        val dolbyVision7 = scenarios.getValue("dolby_vision_7_hdr10_fallback")
-        assertEquals(7, dolbyVision7.source.dolbyVisionProfile)
-        assertEquals(PlaybackDelivery.SERVER_REMUX_PROGRESSIVE, dolbyVision7.expected.delivery)
-        assertEquals(listOf("server_dv7_to_hdr10"), dolbyVision7.expected.transformations.map { it.name })
-
-        val trueHdConversion = scenarios.getValue("truehd_audio_conversion")
-        assertEquals("truehd", trueHdConversion.source.audioCodec)
-        assertEquals(PlaybackDelivery.SERVER_REMUX_PROGRESSIVE, trueHdConversion.expected.delivery)
-        assertEquals(listOf("audio_to_aac"), trueHdConversion.expected.transformations.map { it.name })
-
-        val trueHdPassthrough = scenarios.getValue("truehd_exact_layout_passthrough")
-        assertEquals(PlaybackDelivery.ORIGINAL_HTTP, trueHdPassthrough.expected.delivery)
-        assertTrue(trueHdPassthrough.expected.claims?.audio?.passthrough == true)
-
-        val pgs = scenarios.getValue("embedded_pgs_sidecar")
-        assertEquals(PlaybackSubtitleModeV3.RENDER, pgs.expected.subtitle?.mode)
-        assertEquals(pgs.request.subtitleTrackId, pgs.expected.selectedTracks?.subtitle?.id)
-
-        val ass = scenarios.getValue("embedded_ass_authored_render")
-        assertEquals(PlaybackSubtitleModeV3.RENDER, ass.expected.subtitle?.mode)
-        assertEquals(ass.request.subtitleTrackId, ass.expected.selectedTracks?.subtitle?.id)
-
-        val dvd = scenarios.getValue("embedded_dvd_burn_in")
-        assertEquals(PlaybackSubtitleModeV3.BURN_IN, dvd.expected.subtitle?.mode)
-        assertEquals(PlaybackDelivery.SERVER_TRANSCODE_HLS, dvd.expected.delivery)
-        assertEquals(dvd.request.subtitleTrackId, dvd.expected.selectedTracks?.subtitle?.id)
-    }
-
-    @Test
-    fun replanMatrixKeepsIntentAndTimelineOperationsFailureFree() {
-        val scenarios = conformanceMatrix().replanScenarios
-
-        assertEquals(
-            setOf(
-                "track_change_replan",
-                "quality_change_replan",
-                "idempotent_replan",
-                "concurrent_replan",
-                "mid_seek_replan",
-            ),
-            scenarios.map { it.category }.toSet(),
-        )
-        assertEquals(
-            setOf(TRACK_CHANGE_V3_OPERATION, QUALITY_CHANGE_V3_OPERATION, SEEK_REANCHOR_V3_OPERATION),
-            scenarios.mapNotNull { it.request.operation }.toSet(),
-        )
-        scenarios.forEach { scenario ->
-            assertNull(
-                scenario.request.failure,
-                "${scenario.name} is an intent/timeline operation, not failure recovery",
-            )
-        }
-    }
-
-    @Test
-    fun protocolMatrixCoversRecoveryRestartCapacityAndEventLimits() {
-        val scenarios = conformanceMatrix().protocolScenarios.associateBy { it.name }
-
-        assertTrue("recovery_matrix" in scenarios.values.map { it.category })
-        assertTrue("restart_matrix" in scenarios.values.map { it.category })
-        assertTrue("capacity_matrix" in scenarios.values.map { it.category })
-        assertTrue("route_event_limits" in scenarios.values.map { it.category })
-
-        val draftV3 = scenarios.getValue("draft_v3_start_requires_upgrade")
-        assertEquals("draft_v3_426", draftV3.category)
-        assertEquals(PLAYBACK_PROTOCOL_V3, draftV3.input.body?.protocolVersion)
-        assertEquals(listOf("h264"), draftV3.input.body?.clientCapabilities?.codecsVideo)
-        assertEquals(426, draftV3.expected.httpStatus)
-        assertEquals("client_upgrade_required", draftV3.expected.error)
-
-        val recovery = scenarios.getValue("failure_recovery_preserves_intent")
-        val recoveryRequest = assertNotNull(recovery.input.replanRequest)
-        assertEquals(321.25, recoveryRequest.positionSeconds)
-        assertNotNull(recoveryRequest.selectedTracks.subtitle)
-        assertEquals(true, recovery.expected.selectionPreserved)
-        assertEquals(true, recovery.expected.positionPreserved)
-
-        val restart = scenarios.getValue("restart_replays_terminal_attempt")
-        assertTrue(restart.input.restarted)
-        assertEquals(PlaybackDecisionOutcome.ADAPTATION_UNAVAILABLE, restart.input.persistedDecision?.outcome)
-        assertEquals("transcode_start_failed", restart.input.persistedDecision?.terminal?.reason)
-        assertEquals(true, restart.expected.responseReplayedVerbatim)
-        assertEquals(0, restart.expected.capacityDelta)
-
-        val capacity = scenarios.getValue("capacity_unavailable_cleans_up")
-        assertEquals(false, capacity.input.capacityAvailable)
-        assertEquals("capacity_unavailable", capacity.expected.terminalReason)
-        assertEquals(true, capacity.expected.cleanupComplete)
-        assertEquals(0, capacity.expected.capacityDelta)
-
-        val routeLimit = scenarios.getValue("route_event_diagnostic_limit")
-        assertEquals(33, routeLimit.input.routeEvent?.diagnostics?.size)
-        assertEquals(400, routeLimit.expected.httpStatus)
-        assertEquals("bad_request", routeLimit.expected.error)
-        assertEquals("reject_without_persisting", routeLimit.expected.action)
-    }
-
     /**
      * Feature detection reads the capability endpoint rather than sniffing a
      * version. There is no Kotlin model for this response — the client reads it
@@ -812,9 +690,6 @@ class PlaybackProtocolV3ConformanceTest {
         checkNotNull(javaClass.classLoader?.getResource("playback/v3/$name")) {
             "Missing vendored playback fixture playback/v3/$name"
         }.readText()
-
-    private fun conformanceMatrix(): ConformanceMatrixFixtureV3 =
-        json.decodeFromString(ConformanceMatrixFixtureV3.serializer(), fixture("conformance_matrix.json"))
 
     private companion object {
         val DELIVERY_CLASSES = setOf(

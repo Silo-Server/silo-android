@@ -33,12 +33,10 @@ const val SUBTITLE_SOURCE_DOWNLOADED = "downloaded"
  * `mergedSize - downloaded.size + downloaded.indexOfFirst { it.id == id }`,
  * which is what auto-select-after-download callers rely on.
  */
-@Suppress("UNUSED_PARAMETER")
 fun mergeDownloadedSubtitles(
     existing: List<PlayerSubtitleInfo>,
     downloaded: List<DownloadedSubtitle>,
     sessionId: String,
-    serverUrl: String,
 ): List<PlayerSubtitleInfo> {
     if (downloaded.isEmpty()) return existing
 
