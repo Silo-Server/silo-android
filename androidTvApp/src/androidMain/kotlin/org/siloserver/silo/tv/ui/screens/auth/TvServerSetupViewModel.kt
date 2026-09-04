@@ -6,6 +6,9 @@ import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.cleartextOrigin
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
+import org.siloserver.silo.model.server.ServerContract
+import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
+import org.siloserver.silo.repository.toServerContract
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
@@ -45,6 +48,8 @@ internal sealed class TvServerSetupProbeResult {
     data class Success(
         val serverUrl: String,
         val destination: TvServerSetupDestination,
+        /** Verdict of the v2 contract probe, or null when no probe ran / it failed without a verdict. */
+        val contract: ServerContract? = null,
     ) : TvServerSetupProbeResult()
 
     data class Failure(
@@ -73,6 +78,10 @@ class TvServerSetupViewModel(
     },
     private val getSignupStatus: suspend (String) -> ApiResult<SignupStatusResponse> = {
         authRepository.getSignupStatus(it)
+    },
+    /** v2 contract probe for a candidate; null when no probe is wired in. */
+    private val probeContract: suspend (String) -> ApiV2ProbeResult? = {
+        authRepository.probeServerContract(it)
     },
 ) : ViewModel() {
 
@@ -120,9 +129,10 @@ class TvServerSetupViewModel(
                 candidates = candidates,
                 getSetupStatus = getSetupStatus,
                 getSignupStatus = getSignupStatus,
+                probeContract = probeContract,
             )) {
                 is TvServerSetupProbeResult.Success -> {
-                    handleSuccessfulConnection(result.serverUrl, result.destination)
+                    handleSuccessfulConnection(result.serverUrl, result.destination, result.contract)
                 }
                 is TvServerSetupProbeResult.Failure -> {
                     _uiState.update {
@@ -145,7 +155,7 @@ class TvServerSetupViewModel(
             cleartextConsentStore.approve(pending.origin)
             if (pendingCleartextConnection !== pending) return@launch
             pendingCleartextConnection = null
-            persistAndNavigate(pending.serverUrl, pending.destination)
+            persistAndNavigate(pending.serverUrl, pending.destination, pending.contract)
         }
     }
 
@@ -163,6 +173,7 @@ class TvServerSetupViewModel(
     private suspend fun handleSuccessfulConnection(
         serverUrl: String,
         destination: TvServerSetupDestination,
+        contract: ServerContract?,
     ) {
         if (serverUrl.startsWith("http://", ignoreCase = true)) {
             val origin = cleartextOrigin(serverUrl)
@@ -178,13 +189,14 @@ class TvServerSetupViewModel(
                 return
             }
             if (cleartextConsentStore.isApproved(origin)) {
-                persistAndNavigate(serverUrl, destination)
+                persistAndNavigate(serverUrl, destination, contract)
                 return
             }
             pendingCleartextConnection = PendingTvCleartextConnection(
                 serverUrl = serverUrl,
                 origin = origin,
                 destination = destination,
+                contract = contract,
             )
             _uiState.update {
                 it.copy(
@@ -195,14 +207,15 @@ class TvServerSetupViewModel(
             }
             return
         }
-        persistAndNavigate(serverUrl, destination)
+        persistAndNavigate(serverUrl, destination, contract)
     }
 
     private suspend fun persistAndNavigate(
         serverUrl: String,
         destination: TvServerSetupDestination,
+        contract: ServerContract?,
     ) {
-        authRepository.setServerUrl(serverUrl)
+        authRepository.setServerUrl(serverUrl, contract)
         _uiState.update {
             it.copy(
                 serverUrl = serverUrl,
@@ -218,15 +231,28 @@ private data class PendingTvCleartextConnection(
     val serverUrl: String,
     val origin: String,
     val destination: TvServerSetupDestination,
+    val contract: ServerContract?,
 )
 
 internal suspend fun probeTvServerSetupCandidates(
     candidates: List<String>,
     getSetupStatus: suspend (String) -> ApiResult<SetupStatusResponse>,
     getSignupStatus: suspend (String) -> ApiResult<SignupStatusResponse>,
+    probeContract: suspend (String) -> ApiV2ProbeResult? = { null },
 ): TvServerSetupProbeResult {
     for ((index, candidate) in candidates.withIndex()) {
         val isLastCandidate = index == candidates.lastIndex
+
+        // One contract probe per established connection: a v1-only server is
+        // the explicit update-server state, never a v1 retry.
+        val probe = probeContract(candidate)
+        if (probe is ApiV2ProbeResult.UpdateServer) {
+            return TvServerSetupProbeResult.Failure(
+                serverUrl = candidate,
+                message = ServerContract.UPDATE_REQUIRED_MESSAGE,
+            )
+        }
+        val contract = probe?.toServerContract()
 
         when (val result = getSetupStatus(candidate)) {
             is ApiResult.Success -> {
@@ -234,6 +260,7 @@ internal suspend fun probeTvServerSetupCandidates(
                     return TvServerSetupProbeResult.Success(
                         serverUrl = candidate,
                         destination = TvServerSetupDestination.Setup,
+                        contract = contract,
                     )
                 }
             }
@@ -259,6 +286,7 @@ internal suspend fun probeTvServerSetupCandidates(
         return TvServerSetupProbeResult.Success(
             serverUrl = candidate,
             destination = TvServerSetupDestination.Login(signupEnabled = signupEnabled),
+            contract = contract,
         )
     }
 

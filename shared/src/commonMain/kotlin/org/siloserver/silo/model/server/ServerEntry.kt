@@ -23,6 +23,8 @@ data class ServerEntry(
     val userOverrideName: String? = null,
     val profileId: String? = null,
     val lastUsedAtEpochMs: Long = 0L,
+    /** Native API contract learned on connect; see [ServerContract]. */
+    val contract: ServerContract = ServerContract.UNKNOWN,
 ) {
     val displayName: String
         get() = userOverrideName?.takeIf { it.isNotBlank() }

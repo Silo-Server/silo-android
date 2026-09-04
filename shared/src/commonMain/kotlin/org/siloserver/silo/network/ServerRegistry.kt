@@ -1,5 +1,6 @@
 package org.siloserver.silo.network
 
+import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.model.server.ServerEntry
 import kotlinx.coroutines.flow.StateFlow
 
@@ -48,6 +49,12 @@ interface ServerRegistry {
 
     /** Persist the per-server selected profile so a future switch restores it. */
     suspend fun setProfileId(serverId: String, profileId: String?)
+
+    /**
+     * Records what the v2 contract probe learned about [serverId]. Default is a
+     * no-op so single-purpose fakes need not track it.
+     */
+    suspend fun setContract(serverId: String, contract: ServerContract) {}
 
     /** Remove an entry entirely. If it was active, fall back to the next-MRU server. */
     suspend fun remove(serverId: String)

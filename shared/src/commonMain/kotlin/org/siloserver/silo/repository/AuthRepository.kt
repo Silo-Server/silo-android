@@ -7,6 +7,9 @@ import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupRequest
 import org.siloserver.silo.model.auth.SignupStatusResponse
 import org.siloserver.silo.model.auth.User
+import org.siloserver.silo.model.server.ServerContract
+import org.siloserver.silo.network.apiv2.ApiV2Probe
+import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
@@ -21,6 +24,7 @@ class AuthRepository(
     private val serverRegistry: ServerRegistry? = null,
     private val healthApi: HealthApi? = null,
     private val brandingApi: BrandingApi? = null,
+    private val apiV2Probe: ApiV2Probe? = null,
 ) {
     /**
      * Persists a successful auth response's tokens into the active server's
@@ -180,12 +184,15 @@ class AuthRepository(
      * reactivating an existing one). The auth/profile/token state for that
      * server (if any) is restored automatically.
      */
-    suspend fun setServerUrl(url: String) {
+    suspend fun setServerUrl(url: String, contract: ServerContract? = null) {
         if (serverRegistry != null) {
             val id = serverRegistry.addOrUpdate(url)
             serverRegistry.switchTo(id)
             tokenManager.switchActiveServer(id)
             refreshActiveServerName()
+            // The connect path already probed the candidate; record that
+            // verdict instead of probing twice. Other callers probe now.
+            if (contract != null) recordServerContract(contract) else refreshServerContract()
         } else {
             tokenManager.setServerUrl(url)
         }
@@ -214,4 +221,48 @@ class AuthRepository(
     }
 
     private fun String?.usableServerName(): String? = this?.trim()?.takeIf { it.isNotBlank() }
+
+    /** The active server's learned [ServerContract]; [ServerContract.UNKNOWN] without a registry. */
+    fun activeServerContract(): ServerContract =
+        serverRegistry?.activeEntry?.value?.contract ?: ServerContract.UNKNOWN
+
+    /**
+     * Runs the v2 contract probe against [serverUrl] (a candidate the app is
+     * not connected to yet) without recording anything. Null when no probe is
+     * wired in (single-server hosts, tests).
+     */
+    suspend fun probeServerContract(serverUrl: String): ApiV2ProbeResult? =
+        apiV2Probe?.probe(serverUrl)
+
+    /**
+     * Records [contract] on the active registry entry when it is a verdict
+     * ([ServerContract.V2] or [ServerContract.UPDATE_REQUIRED]); an
+     * [ServerContract.UNKNOWN] result leaves the stored state alone, because a
+     * transport, TLS, auth, rate-limit, or server error says nothing about
+     * the contract.
+     */
+    suspend fun recordServerContract(contract: ServerContract) {
+        if (contract == ServerContract.UNKNOWN) return
+        val registry = serverRegistry ?: return
+        val activeId = registry.activeServerId.value ?: return
+        registry.setContract(activeId, contract)
+    }
+
+    /**
+     * Runs the v2 contract probe once against the active server and records
+     * the verdict. Called when a connection is established or its identity is
+     * refreshed, never per request.
+     */
+    suspend fun refreshServerContract(): ApiV2ProbeResult? {
+        val result = apiV2Probe?.probe() ?: return null
+        recordServerContract(result.toServerContract())
+        return result
+    }
+}
+
+/** Maps a probe outcome to the stored state; failures are [ServerContract.UNKNOWN] (no verdict). */
+fun ApiV2ProbeResult.toServerContract(): ServerContract = when (this) {
+    is ApiV2ProbeResult.V2 -> ServerContract.V2
+    ApiV2ProbeResult.UpdateServer -> ServerContract.UPDATE_REQUIRED
+    is ApiV2ProbeResult.Failure -> ServerContract.UNKNOWN
 }
