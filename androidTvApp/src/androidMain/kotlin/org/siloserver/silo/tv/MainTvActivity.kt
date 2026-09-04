@@ -303,6 +303,12 @@ class MainTvActivity : ComponentActivity() {
         val activeEntry = registry.activeEntry.value
             ?: return TvRoute.ServerSetup.route
 
+        // Restored servers were probed by whichever build saved them (or never,
+        // before the v2 pilot); re-establish the contract verdict once per launch.
+        lifecycleScope.launch(Dispatchers.IO) {
+            get<AuthRepository>(AuthRepository::class.java).refreshActiveServerName()
+        }
+
         val cleartextConsent = get<org.siloserver.silo.network.CleartextOriginConsent>(
             org.siloserver.silo.network.CleartextOriginConsent::class.java,
         )

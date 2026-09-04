@@ -64,8 +64,8 @@ class TvServerListViewModel(
         if (_uiState.value.activeId == serverId) return
         _uiState.update { it.copy(pendingSwitchToId = serverId) }
         viewModelScope.launch {
-            serverRegistry.switchTo(serverId)
-            tokenManager.switchActiveServer(serverId)
+            // Switch the registry + token scope and probe the target server.s contract.
+            authRepository.switchToServer(serverId)
 
             // Land on the deepest screen the new server's stored credentials
             // can reach — preserves the signed-in user when tokens are present.

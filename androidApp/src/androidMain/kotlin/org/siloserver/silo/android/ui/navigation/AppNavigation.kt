@@ -142,6 +142,7 @@ fun AppNavigation(
 ) {
     val tokenManager: TokenManager = koinInject()
     val serverRegistry: org.siloserver.silo.network.ServerRegistry = koinInject()
+    val authRepository: org.siloserver.silo.repository.AuthRepository = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
     val siloCastController: SiloCastController = koinInject()
@@ -488,7 +489,7 @@ fun AppNavigation(
                         serverName = resolved.entry.displayName,
                         onSwitch = {
                             pairingScope.launch {
-                                serverRegistry.switchTo(resolved.entry.id)
+                                authRepository.switchToServer(resolved.entry.id)
                                 // Re-queue ONLY if the target server will send
                                 // the user through auth: that flow ends at
                                 // profile selection, whose popUpTo(0) wipes this

@@ -189,24 +189,46 @@ class AuthRepository(
             val id = serverRegistry.addOrUpdate(url)
             serverRegistry.switchTo(id)
             tokenManager.switchActiveServer(id)
-            refreshActiveServerName()
             // The connect path already probed the candidate; record that
             // verdict instead of probing twice. Other callers probe now.
-            if (contract != null) recordServerContract(contract) else refreshServerContract()
+            refreshActiveServerName(knownContract = contract)
         } else {
             tokenManager.setServerUrl(url)
         }
     }
 
     /**
-     * Best-effort: read the native branding identity and update the active
-     * registry entry's fetched name. Health is a fallback for older servers
-     * without the branding endpoint. Quietly no-ops if no usable name can be
-     * resolved — this is purely for nicer UX in the server list.
+     * The single entry point for activating an already-registered server:
+     * switches the registry and the token scope, then refreshes the server's
+     * identity and v2 contract verdict. Every "switch to server" UI path must
+     * go through here so a server saved by an older build gets probed. No-op
+     * without a registry.
      */
-    suspend fun refreshActiveServerName() {
+    suspend fun switchToServer(serverId: String) {
+        val registry = serverRegistry ?: return
+        registry.switchTo(serverId)
+        tokenManager.switchActiveServer(serverId)
+        refreshActiveServerName()
+    }
+
+    /**
+     * Best-effort: (re)establish the active server's v2 contract verdict, then
+     * read the native branding identity and update the active registry
+     * entry's fetched name. Health is a fallback for older servers without the
+     * branding endpoint. Quietly no-ops if no usable name can be resolved —
+     * this is purely for nicer UX in the server list.
+     *
+     * [knownContract] lets the connect path pass the verdict it already has
+     * instead of probing twice; every other caller probes now. Both the
+     * contract and the name are dropped if the active server changed while
+     * the request was in flight, so a slow answer from one server never
+     * relabels another.
+     */
+    suspend fun refreshActiveServerName(knownContract: ServerContract? = null) {
         val registry = serverRegistry ?: return
         val activeId = registry.activeServerId.value ?: return
+        if (knownContract != null) recordServerContract(activeId, knownContract) else refreshServerContract()
+        if (registry.activeServerId.value != activeId) return
         val brandingName = (brandingApi?.getBranding() as? ApiResult.Success)
             ?.data
             ?.serverName
@@ -242,20 +264,34 @@ class AuthRepository(
      * the contract.
      */
     suspend fun recordServerContract(contract: ServerContract) {
+        val activeId = serverRegistry?.activeServerId?.value ?: return
+        recordServerContract(activeId, contract)
+    }
+
+    /**
+     * Records [contract] for [serverId] only while it is still the active
+     * server, so a probe answer that arrives after a switch cannot overwrite
+     * the newer server's state.
+     */
+    private suspend fun recordServerContract(serverId: String, contract: ServerContract) {
         if (contract == ServerContract.UNKNOWN) return
         val registry = serverRegistry ?: return
-        val activeId = registry.activeServerId.value ?: return
-        registry.setContract(activeId, contract)
+        if (registry.activeServerId.value != serverId) return
+        registry.setContract(serverId, contract)
     }
 
     /**
      * Runs the v2 contract probe once against the active server and records
-     * the verdict. Called when a connection is established or its identity is
-     * refreshed, never per request.
+     * the verdict. Called when a connection is established, restored on
+     * launch, switched to, or its identity is refreshed — never per request.
+     * A failure records nothing (the stored state stays as it was), and a
+     * result for a server that is no longer active is dropped.
      */
     suspend fun refreshServerContract(): ApiV2ProbeResult? {
-        val result = apiV2Probe?.probe() ?: return null
-        recordServerContract(result.toServerContract())
+        val probe = apiV2Probe ?: return null
+        val activeId = serverRegistry?.activeServerId?.value
+        val result = probe.probe()
+        if (activeId != null) recordServerContract(activeId, result.toServerContract())
         return result
     }
 }

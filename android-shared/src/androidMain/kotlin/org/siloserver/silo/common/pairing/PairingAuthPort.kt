@@ -9,6 +9,7 @@ import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.CleartextOriginConsent
 import org.siloserver.silo.network.CleartextOriginNotApprovedException
 import org.siloserver.silo.network.requiresApproval
+import org.siloserver.silo.repository.AuthRepository
 
 /**
  * Narrow commit seam for the pairing receiver after a candidate server approves device
@@ -35,6 +36,7 @@ class RegistryPairingAuthPort(
     private val tokenManager: TokenManager,
     private val serverRegistry: ServerRegistry,
     private val cleartextOriginConsent: CleartextOriginConsent? = null,
+    private val authRepository: AuthRepository? = null,
 ) : PairingAuthPort {
     private val commitMutex = Mutex()
 
@@ -65,6 +67,9 @@ class RegistryPairingAuthPort(
                 if (previousServerId != null && serverRegistry.activeServerId.value != previousServerId) {
                     serverRegistry.switchTo(previousServerId)
                     tokenManager.switchActiveServer(previousServerId)
+                    // Restoring is a server switch too; re-establish its contract
+                    // verdict like every other switch path.
+                    authRepository?.refreshServerContract()
                 } else if (previousServerId == null) {
                     serverRegistry.remove(serverId)
                 }

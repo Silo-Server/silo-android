@@ -451,7 +451,7 @@ val androidModule = module {
     viewModel { ProfileSelectionViewModel(get(), get()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
-    viewModel { ServerListViewModel(get(), get()) }
+    viewModel { ServerListViewModel(get(), get(), get()) }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
         DevicePairingViewModel(

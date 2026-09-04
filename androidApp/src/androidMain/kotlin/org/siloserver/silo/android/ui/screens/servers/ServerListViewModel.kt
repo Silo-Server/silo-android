@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +38,7 @@ data class ServerListUiState(
 class ServerListViewModel(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerListUiState())
@@ -66,11 +68,9 @@ class ServerListViewModel(
         }
         _uiState.update { it.copy(pendingSwitchToId = serverId) }
         viewModelScope.launch {
-            serverRegistry.switchTo(serverId)
-            // Force the token manager to flush its cache and reload from the
-            // new server's slot before the navigator advances. Without this,
-            // the destination screen could read stale tokens for one frame.
-            tokenManager.switchActiveServer(serverId)
+            // Switch the registry + token scope (so the destination screen never
+            // reads stale tokens) and probe the target server.s contract.
+            authRepository.switchToServer(serverId)
 
             // Route to the deepest screen the new server's stored credentials
             // can populate. Mirrors MainActivity.resolveStartDestination so a
