@@ -20,6 +20,19 @@ class NextUpTransitionGateTest {
     }
 
     @Test
+    fun `queued predecessor frame cannot complete successor recovery mount`() {
+        val gate = NextUpTransitionGate()
+
+        assertTrue(gate.begin("episode-b"))
+        assertTrue(gate.expectMount("episode-b", 10L))
+        assertTrue(gate.expectMount("episode-b", 11L))
+        assertFalse(gate.completeOnFirstFrame(10L))
+        assertTrue(gate.isActive)
+        assertTrue(gate.completeOnFirstFrame(11L))
+        assertFalse(gate.isActive)
+    }
+
+    @Test
     fun `duplicate actions are rejected until completion or cancel`() {
         val gate = NextUpTransitionGate()
 

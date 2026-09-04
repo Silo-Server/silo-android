@@ -1906,6 +1906,10 @@ class PlayerViewModel(
                         currentCoroutineContext().ensureActive()
                         if (recoveryGeneration != playbackRecoveryGeneration) return@launch
                         val mountGeneration = expectNextMediaMount()
+                        nextUpTransitionGate.expectMount(
+                            contentId = _uiState.value.contentId,
+                            mountToken = mountGeneration,
+                        )
                         _uiState.update { current ->
                             current.copy(
                                 error = null,

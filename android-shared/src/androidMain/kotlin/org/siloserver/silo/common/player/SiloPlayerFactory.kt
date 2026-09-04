@@ -459,6 +459,7 @@ class SiloPlayerFactory(
      */
     fun buildMediaItem(
         contentId: String? = null,
+        mountToken: Long? = null,
         streamUrl: String,
         playMethod: PlayMethod,
         delivery: PlaybackDelivery? = null,
@@ -508,6 +509,7 @@ class SiloPlayerFactory(
                             DolbyVisionTransformMode.PROFILE7_TO_HDR10
                         else -> DolbyVisionTransformMode.DISABLED
                     },
+                    mountToken = mountToken,
                     expectedDynamicRange = expectedDynamicRange,
                     expectedColorRange = expectedColorRange,
                     dolbyVisionBaseLayerRoute =

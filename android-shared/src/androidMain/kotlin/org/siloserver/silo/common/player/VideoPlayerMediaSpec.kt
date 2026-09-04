@@ -1,5 +1,8 @@
 package org.siloserver.silo.common.player
 
+import androidx.media3.common.Timeline
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
@@ -143,6 +146,8 @@ data class VideoPlayerMediaSpec(
      * media-session identity and playback diagnostics.
      */
     val contentId: String? = null,
+    /** Immutable identity used to correlate asynchronous Media3 callbacks with this mount. */
+    val mountToken: Long? = null,
     val streamUrl: String,
     val playMethod: PlayMethod,
     val delivery: PlaybackDelivery? = null,
@@ -179,4 +184,12 @@ data class VideoPlayerMediaSpec(
             val seconds = durationSeconds.takeIf { it.isFinite() && it > 0.0 } ?: return null
             return (seconds * 1000.0).toLong().coerceAtLeast(1L)
         }
+}
+
+/** Returns the mount identity carried by the media item that produced this event. */
+@UnstableApi
+fun AnalyticsListener.EventTime.videoMountToken(): Long? {
+    if (windowIndex < 0 || windowIndex >= timeline.windowCount) return null
+    val mediaItem = timeline.getWindow(windowIndex, Timeline.Window()).mediaItem
+    return (mediaItem.localConfiguration?.tag as? SiloMediaTransformTag)?.mountToken
 }

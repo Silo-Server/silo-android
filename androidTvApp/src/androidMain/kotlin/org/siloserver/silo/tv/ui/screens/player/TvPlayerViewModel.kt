@@ -1562,6 +1562,7 @@ class TvPlayerViewModel(
             )
         }
         transportMountGate.expect(transportMountSequence)
+        nextUpTransitionGate.expectMount(contentId, transportMountSequence)
         return transportMountSequence
     }
 
@@ -1577,6 +1578,7 @@ class TvPlayerViewModel(
             subtitleRemountReselection.arm(identity, subtitleMountGeneration)
         }
         transportMountGate.expect(transportMountSequence)
+        nextUpTransitionGate.expectMount(contentId, transportMountSequence)
         return transportMountSequence
     }
 
@@ -2367,7 +2369,7 @@ class TvPlayerViewModel(
      */
     fun onUnsupportedPlayback(
         reason: org.siloserver.silo.common.player.Playability,
-        transportMountNonce: Long? = null,
+        transportMountNonce: Long,
     ) {
         val state = _uiState.value
         if (state.isNextUpTransitioning &&
@@ -4157,6 +4159,7 @@ class TvPlayerViewModel(
             pendingInitialSubtitleIndex = null
             pendingInitialSubtitleAutoResolved = false
             pendingInitialSubtitleAttempts = 0
+            autoTextSubtitleSelectionAttempted = false
             autoAdvanceCount = nextAutoAdvanceCount
             autoAdvanceHandled = false
             pendingApproachingEndVideoEnded = null

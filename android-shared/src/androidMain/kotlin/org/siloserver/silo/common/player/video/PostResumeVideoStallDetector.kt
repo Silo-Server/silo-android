@@ -41,11 +41,7 @@ class PostResumeVideoStallDetector(
         baselineRenderedCount = 0
     }
 
-    /**
-     * A frame rendered. Provenance unknown — see PlaybackStartupStallDetector
-     * for why neither a rebuilt key nor a counter baseline can supply it, and
-     * what the real fix is.
-     */
+    /** Marks a frame after the caller verifies the analytics event's immutable mount key. */
     fun onFirstFrameRendered() {
         firstFrameRendered = true
     }

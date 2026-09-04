@@ -79,6 +79,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.Timeline
 import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -120,6 +122,7 @@ import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
+import org.siloserver.silo.common.player.videoMountToken
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendRequest
 import org.siloserver.silo.common.player.validatedColorRangeFallback
@@ -485,12 +488,14 @@ fun TvPlayerScreen(
         val backend = videoBackend ?: return@LaunchedEffect
         backend.baseLayerDecoderMismatch.collect { decoderName ->
             if (decoderName == null) return@collect
+            val mountNonce = mountedTransportNonce ?: return@collect
             val plan = viewModel.uiState.value.playbackPlan
             viewModel.onUnsupportedPlayback(
                 org.siloserver.silo.common.player.Playability.DvBaseLayerDecoderUnavailable(
                     decoderName = decoderName,
                     baseRange = plan?.source?.hdrFormat.orEmpty(),
                 ),
+                mountNonce,
             )
         }
     }
@@ -1418,7 +1423,9 @@ fun TvPlayerScreen(
             val preflight = PlaybackPreflightListener(
                 detector = capabilityDetector,
                 onUnsupported = { verdict ->
-                    viewModel.onUnsupportedPlayback(verdict, mountedTransportNonce)
+                    mountedTransportNonce?.let { mountNonce ->
+                        viewModel.onUnsupportedPlayback(verdict, mountNonce)
+                    }
                 },
                 onError = { error ->
                     viewModel.onPlayerError(
@@ -1438,6 +1445,32 @@ fun TvPlayerScreen(
             )
             controller.addListener(preflight)
             onDispose { controller.removeListener(preflight) }
+        }
+    }
+
+    // MediaController's first-frame callback has no media identity. Read the
+    // immutable mount token from the ExoPlayer analytics event instead so a
+    // queued predecessor callback cannot complete the successor transition.
+    DisposableEffect(sessionPlayer) {
+        val player = sessionPlayer as? ExoPlayer
+        if (player == null) {
+            onDispose { }
+        } else {
+            val listener = object : AnalyticsListener {
+                override fun onRenderedFirstFrame(
+                    eventTime: AnalyticsListener.EventTime,
+                    output: Any,
+                    renderTimeMs: Long,
+                ) {
+                    val mountToken = eventTime.videoMountToken() ?: return
+                    if (mountToken != viewModel.uiState.value.transportMountNonce) return
+                    startupStallDetector.onFirstFrameRendered()
+                    postResumeStallDetector.onFirstFrameRendered()
+                    viewModel.onFirstVideoFrameRendered(mountToken)
+                }
+            }
+            player.addAnalyticsListener(listener)
+            onDispose { player.removeAnalyticsListener(listener) }
         }
     }
 
@@ -1491,11 +1524,6 @@ fun TvPlayerScreen(
                             renderedOutputBufferCount = rendered,
                         )
                     }
-                }
-                override fun onRenderedFirstFrame() {
-                    startupStallDetector.onFirstFrameRendered()
-                    postResumeStallDetector.onFirstFrameRendered()
-                    viewModel.onFirstVideoFrameRendered(mountedTransportNonce)
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     // Buffering during normal playback flips the centered
@@ -1621,7 +1649,7 @@ fun TvPlayerScreen(
                 )
                 if (reason != null) {
                     Log.i(TAG, "Startup stall fallback: $reason")
-                    viewModel.onUnsupportedPlayback(reason)
+                    viewModel.onUnsupportedPlayback(reason, state.transportMountNonce)
                     return@repeatOnLifecycle
                 }
                 val sanitizedSamples = PlaybackRuntimeCorrectionMetrics.consumeDolbyVisionHdr10PlusSamples()
@@ -1731,6 +1759,7 @@ fun TvPlayerScreen(
         val delivery = plan?.delivery ?: state.delivery
         val mediaSpec = VideoPlayerMediaSpec(
             contentId = state.contentId,
+            mountToken = state.transportMountNonce,
             streamUrl = url,
             playMethod = method,
             delivery = delivery,
@@ -1800,6 +1829,7 @@ fun TvPlayerScreen(
         val delivery = plan?.delivery ?: state.delivery
         val mediaSpec = VideoPlayerMediaSpec(
             contentId = state.contentId,
+            mountToken = state.transportMountNonce,
             streamUrl = url,
             playMethod = method,
             delivery = delivery,

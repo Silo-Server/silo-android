@@ -62,6 +62,8 @@ import androidx.media3.common.Player
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -80,6 +82,7 @@ import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
+import org.siloserver.silo.common.player.videoMountToken
 import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
@@ -724,6 +727,7 @@ fun PlayerScreen(
 
         val mediaSpec = VideoPlayerMediaSpec(
             contentId = uiState.contentId,
+            mountToken = uiState.mediaMountGeneration,
             streamUrl = effectiveStreamUrl,
             // Local files play as progressive (DIRECT), regardless of how
             // the server originally provisioned the session.
@@ -804,6 +808,7 @@ fun PlayerScreen(
 
         val mediaSpec = VideoPlayerMediaSpec(
             contentId = uiState.contentId,
+            mountToken = uiState.mediaMountGeneration,
             streamUrl = effectiveStreamUrl,
             playMethod = playMethod,
             delivery = delivery,
@@ -889,6 +894,32 @@ fun PlayerScreen(
         }
     }
 
+    // MediaController's first-frame callback has no media identity. Read the
+    // immutable mount token from the ExoPlayer analytics event instead so a
+    // queued predecessor callback cannot complete the successor transition.
+    DisposableEffect(sessionPlayer) {
+        val player = sessionPlayer as? ExoPlayer
+        if (player == null) {
+            onDispose { }
+        } else {
+            val listener = object : AnalyticsListener {
+                override fun onRenderedFirstFrame(
+                    eventTime: AnalyticsListener.EventTime,
+                    output: Any,
+                    renderTimeMs: Long,
+                ) {
+                    val mountToken = eventTime.videoMountToken() ?: return
+                    if (mountToken != viewModel.uiState.value.mediaMountGeneration) return
+                    startupStallDetector.onFirstFrameRendered()
+                    postResumeStallDetector.onFirstFrameRendered()
+                    viewModel.onFirstVideoFrameRendered(mountToken)
+                }
+            }
+            player.addAnalyticsListener(listener)
+            onDispose { player.removeAnalyticsListener(listener) }
+        }
+    }
+
     // Player event listener to feed state back to ViewModel + track video size for PiP
     DisposableEffect(mediaController, videoBackend, playWhenReadyReconciliationGate) {
         val controller = mediaController
@@ -933,12 +964,6 @@ fun PlayerScreen(
                             renderedOutputBufferCount = rendered,
                         )
                     }
-                }
-
-                override fun onRenderedFirstFrame() {
-                    startupStallDetector.onFirstFrameRendered()
-                    postResumeStallDetector.onFirstFrameRendered()
-                    viewModel.onFirstVideoFrameRendered(mountedMediaGeneration)
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
