@@ -4131,11 +4131,16 @@ class TvPlayerViewModel(
             hasExplicitSubtitleSelection = manualSubtitleSelectionApplied,
         )
         val outgoingSessionId = exitSessionId
+        resolveNextEpisodeJob?.cancel()
         viewModelScope.launch {
             // The lifecycle is process-scoped. Finish the predecessor before
             // planning the successor, but keep the PlayerView/SurfaceView in
             // place so Media3 can retain its last frame through the handoff.
-            sessionLifecycle.stop(expectedSessionId = outgoingSessionId)
+            if (!finishCurrentEpisodeForNextUp(outgoingSessionId)) {
+                nextUpTransitionGate.cancel()
+                _uiState.update { it.copy(isNextUpTransitioning = false) }
+                return@launch
+            }
             if (!nextUpTransitionGate.isActive) return@launch
 
             lastAdoptedSessionId = null
@@ -4156,6 +4161,37 @@ class TvPlayerViewModel(
                 suppressResumeRewind = true,
             )
         }
+    }
+
+    /** Finalizes the outgoing episode without clearing the mounted video UI. */
+    private suspend fun finishCurrentEpisodeForNextUp(expectedSessionId: String?): Boolean {
+        if (!subtitleTransactions.invalidateAndAwaitSettlement()) return false
+        playbackMutationFence.invalidateAll()
+        contentLoadGeneration++
+        resetSeekRecoveryForContentChange()
+        transportMountGate.beginLoad()
+
+        val state = _uiState.value
+        val fileId = state.selectedFileId ?: state.mediaFileId
+        val scope = finalPositionScope
+        maybeRecordPosition(state.position, state.duration, force = true)
+        if (scope != null && contentId.isNotBlank() && fileId != null) {
+            finalPlaybackPositionWriter.submit(
+                FinalPlaybackPosition(
+                    scope = scope,
+                    contentId = contentId,
+                    fileId = fileId,
+                    positionSeconds = state.position,
+                    durationSeconds = state.duration.takeIf { it > 0.0 },
+                ),
+            )
+        }
+        subtitleTransactions.persistCommittedSelectionAndFlush()
+        introObserveJob?.cancel()
+        introAutoSkipController.reset()
+        sessionLifecycle.stop(expectedSessionId = expectedSessionId)
+        finalPositionScope = null
+        return true
     }
 
     /** Up-Next "Keep Watching" — dismiss the overlay and stay on the current episode. */

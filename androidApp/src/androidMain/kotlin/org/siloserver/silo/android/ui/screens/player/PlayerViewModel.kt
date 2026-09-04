@@ -847,6 +847,7 @@ class PlayerViewModel(
                 val state = _uiState.value
                 val params = renewal.startParams
                 if (
+                    !nextUpTransitionGate.isActive &&
                     state.sessionId == renewal.staleSessionId &&
                     state.contentId == params.contentId
                 ) {
