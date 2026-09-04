@@ -2,6 +2,16 @@ package org.siloserver.silo.common.pairing
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import org.siloserver.silo.model.server.ServerContract
+import org.siloserver.silo.network.api.AuthApi
+import org.siloserver.silo.network.apiv2.ApiV2Probe
+import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
@@ -238,6 +248,89 @@ class RegistryPairingAuthPortTest {
         assertEquals("old-refresh", failingTokens.getRefreshToken())
         assertEquals("old-profile", failingTokens.getProfileId())
         assertFalse(prefs.contains(AndroidServerRegistry.serverScopedKey(newId, "access_token")))
+    }
+
+    @Test
+    fun rollbackToPreviousServerReprobesItsContractExactlyOnce() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("pairing-rollback-reprobe", Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val transitions = DefaultIdentityTransitionBarrier()
+        val registry = AndroidServerRegistry(prefs, transitions)
+        val oldId = registry.addOrUpdate("https://old.example")
+        registry.switchTo(oldId)
+        // The commit hook runs after the registry has already switched to the
+        // new server, so failing it exercises the restore-and-reprobe branch.
+        val tokens = EncryptedTokenManagerImpl(
+            prefs,
+            registry,
+            transitions,
+            afterAccountSessionCommit = { error("injected post-commit failure") },
+        )
+        tokens.saveTokens("old-access", "old-refresh", 3600)
+        var probes = 0
+        val client = HttpClient(
+            MockEngine { request ->
+                check(request.url.encodedPath == ApiV2Probe.PATH) { "unexpected request ${request.url}" }
+                probes += 1
+                respond("not found", HttpStatusCode.NotFound, headersOf(HttpHeaders.ContentType, "text/plain"))
+            },
+        )
+        val authRepository = AuthRepository(
+            authApi = AuthApi(client),
+            tokenManager = tokens,
+            serverRegistry = registry,
+            apiV2Probe = ApiV2Probe(client),
+        )
+
+        assertFailsWith<IllegalStateException> {
+            RegistryPairingAuthPort(tokens, registry, authRepository = authRepository).persistApprovedSession(
+                serverUrl = "https://new.example",
+                serverName = null,
+                accessToken = "new-access",
+                refreshToken = "new-refresh",
+                expiresIn = 7200,
+            )
+        }
+
+        assertEquals(oldId, registry.activeServerId.value)
+        assertEquals(oldId, tokens.getCurrentServerId())
+        assertEquals("old-access", tokens.getAccessToken())
+        assertEquals(1, probes)
+        assertEquals(ServerContract.UPDATE_REQUIRED, registry.entries.value.first { it.id == oldId }.contract)
+    }
+
+    @Test
+    fun rollbackToPreviousServerWithoutAuthRepositorySkipsTheProbe() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("pairing-rollback-no-repository", Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val transitions = DefaultIdentityTransitionBarrier()
+        val registry = AndroidServerRegistry(prefs, transitions)
+        val oldId = registry.addOrUpdate("https://old.example")
+        registry.switchTo(oldId)
+        val tokens = EncryptedTokenManagerImpl(
+            prefs,
+            registry,
+            transitions,
+            afterAccountSessionCommit = { error("injected post-commit failure") },
+        )
+        tokens.saveTokens("old-access", "old-refresh", 3600)
+
+        assertFailsWith<IllegalStateException> {
+            RegistryPairingAuthPort(tokens, registry).persistApprovedSession(
+                serverUrl = "https://new.example",
+                serverName = null,
+                accessToken = "new-access",
+                refreshToken = "new-refresh",
+                expiresIn = 7200,
+            )
+        }
+
+        assertEquals(oldId, registry.activeServerId.value)
+        assertEquals(oldId, tokens.getCurrentServerId())
+        assertEquals("old-access", tokens.getAccessToken())
+        assertEquals(ServerContract.UNKNOWN, registry.entries.value.first { it.id == oldId }.contract)
     }
 
     @Test
