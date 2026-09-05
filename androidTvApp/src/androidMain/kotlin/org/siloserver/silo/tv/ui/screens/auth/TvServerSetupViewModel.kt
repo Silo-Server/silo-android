@@ -8,7 +8,7 @@ import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
-import org.siloserver.silo.repository.toServerContract
+import org.siloserver.silo.repository.CONTRACT_PROVEN_BY_V2_RESPONSE
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
@@ -252,7 +252,11 @@ internal suspend fun probeTvServerSetupCandidates(
                 message = ServerContract.UPDATE_REQUIRED_MESSAGE,
             )
         }
-        val contract = probe?.toServerContract()
+        // Anything else the probe said (V2, a transient failure, or a timeout)
+        // is superseded by the v2 setup call succeeding below, which is proof
+        // of v2 on its own; a Failure must not be handed on as UNKNOWN, or a
+        // stale UPDATE_REQUIRED would survive.
+        val contract = CONTRACT_PROVEN_BY_V2_RESPONSE
 
         when (val result = getSetupStatus(candidate)) {
             is ApiResult.Success -> {

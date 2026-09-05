@@ -427,6 +427,19 @@ class AuthRepository(
     }
 }
 
+/**
+ * The verdict to record once a v2 operation (the connect path's
+ * `/api/v2/system/setup` call) has succeeded against a candidate: that answer
+ * is itself proof of v2, whatever the earlier bounded candidate probe said. A
+ * probe [ApiV2ProbeResult.Failure] or timeout is no verdict and must not be
+ * mapped through [toServerContract] into a non-null [ServerContract.UNKNOWN]
+ * here — [AuthRepository.refreshActiveServerName] neither records UNKNOWN
+ * nor re-probes when handed a known contract, so a stale UPDATE_REQUIRED
+ * would survive a successful v2 connection. Only the probe's
+ * [ApiV2ProbeResult.UpdateServer] is acted on, before the setup call.
+ */
+val CONTRACT_PROVEN_BY_V2_RESPONSE: ServerContract = ServerContract.V2
+
 /** Maps a probe outcome to the stored state; failures are [ServerContract.UNKNOWN] (no verdict). */
 fun ApiV2ProbeResult.toServerContract(): ServerContract = when (this) {
     is ApiV2ProbeResult.V2 -> ServerContract.V2

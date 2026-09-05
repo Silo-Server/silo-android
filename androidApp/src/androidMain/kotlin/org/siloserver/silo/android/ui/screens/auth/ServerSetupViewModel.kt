@@ -11,7 +11,7 @@ import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
-import org.siloserver.silo.repository.toServerContract
+import org.siloserver.silo.repository.CONTRACT_PROVEN_BY_V2_RESPONSE
 import java.net.URI
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -128,7 +128,11 @@ class ServerSetupViewModel(
                     }
                     return@launch
                 }
-                val contract = probe?.toServerContract()
+                // Anything else the probe said (V2, a transient failure, or a
+                // timeout) is superseded by the v2 setup call succeeding below,
+                // which is proof of v2 on its own; a Failure must not be handed
+                // on as UNKNOWN, or a stale UPDATE_REQUIRED would survive.
+                val contract = CONTRACT_PROVEN_BY_V2_RESPONSE
                 when (val setupResult = getSetupStatus(candidate)) {
                     is ApiResult.Success -> {
                         if (setupResult.data.needsSetup) {
