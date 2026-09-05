@@ -17,6 +17,7 @@ import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.api.BrandingApi
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.map
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -256,22 +257,37 @@ class AuthRepository(
 
     /**
      * The contract half of every "this server just became active" path
-     * ([switchToServer], pairing): awaits [refreshServerContractBounded] and,
-     * when that yields no verdict (bound elapsed, or the probe failed), hands
-     * the retry to a replacement unbounded probe pinned to [serverId] on
-     * [backgroundScope] so a stale UPDATE_REQUIRED stops gating the session
-     * once the server answers. Returns the bounded result; null means the
-     * stored verdict was left alone (and, with a scope and a probe wired in,
-     * that a replacement is now in flight). Skips the replacement when
-     * [serverId] is no longer active by the time the bound returns.
+     * ([switchToServer], pairing): runs [refreshServerContractBounded] and,
+     * when that yields no verdict (bound elapsed, or the probe failed), a
+     * replacement unbounded probe pinned to [serverId], so a stale
+     * UPDATE_REQUIRED stops gating the session once the server answers.
+     * Returns the bounded result; null means the stored verdict was left
+     * alone (and, with a scope and a probe wired in, that a replacement is
+     * now in flight). The replacement is skipped when [serverId] is no longer
+     * active by the time the bound returns.
+     *
+     * With [backgroundScope] wired in, the whole sequence is launched there
+     * before the caller starts waiting, and the caller only awaits the bounded
+     * verdict for at most [SWITCH_PROBE_TIMEOUT_MS]. Callers usually run in a
+     * UI scope (a server-list `viewModelScope`) that dies when the user
+     * presses Back during the bound; that cancels only this call's wait, not
+     * the probe, so the switched-to server does not stay UNKNOWN or stale
+     * UPDATE_REQUIRED for the session. Without a scope everything runs inline
+     * in the caller and is cancelled with it.
      */
     suspend fun refreshServerContractWithFallback(serverId: String): ServerContract? {
-        val bounded = refreshServerContractBounded()
-        if (bounded != null) return bounded
-        val scope = backgroundScope ?: return null
-        if (apiV2Probe == null || serverRegistry?.activeServerId?.value != serverId) return null
-        scope.launch { refreshServerContractFor(serverId) }
-        return null
+        val scope = backgroundScope
+        if (scope == null || apiV2Probe == null) return refreshServerContractBounded()
+        val bounded = CompletableDeferred<ServerContract?>()
+        val job = scope.launch {
+            val verdict = refreshServerContractBounded()
+            bounded.complete(verdict)
+            if (verdict == null) refreshServerContractFor(serverId)
+        }
+        // A scope torn down mid-probe must not leave the caller waiting out
+        // the bound on its own; completing after a verdict is a no-op.
+        job.invokeOnCompletion { bounded.complete(null) }
+        return withTimeoutOrNull(SWITCH_PROBE_TIMEOUT_MS) { bounded.await() }
     }
 
     /**

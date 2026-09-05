@@ -21,7 +21,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.BrandingApi
@@ -116,11 +115,14 @@ class AuthRepositoryContractTest {
                 return ApiResult.Success(BrandingStatus("Named"))
             }
         }
+        // Real clock on both sides: the probe now runs on the background
+        // scope, and virtual time would skip the bound while the engine answers.
+        val background = CoroutineScope(Dispatchers.Default)
         val repository = repository(
             registry,
             respondWith(HttpStatusCode.OK, infoBody, "application/json"),
             brandingApi = branding,
-            backgroundScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+            backgroundScope = background,
         )
 
         withContext(Dispatchers.Default) { repository.switchToServer("b") }
@@ -130,7 +132,7 @@ class AuthRepositoryContractTest {
         assertEquals(emptyMap<String, String?>(), registry.fetchedNames)
 
         brandingGate.complete(Unit)
-        advanceUntilIdle()
+        background.joinChildren()
         assertEquals(mapOf<String, String?>("b" to "Named"), registry.fetchedNames)
     }
 
@@ -191,6 +193,71 @@ class AuthRepositoryContractTest {
         // The same-id switch still records the scope change; the Android
         // token manager itself short-circuits when the id is unchanged.
         assertEquals(listOf<String?>("b"), tokens.switchedTo)
+    }
+
+    @Test
+    fun `fallback probe survives the caller being cancelled during the bound`() = runTest {
+        // The user presses Back while the server list's viewModelScope is
+        // still inside the bounded wait. That must cancel only the wait: the
+        // probe already lives on the background scope and still records V2
+        // when the server answers late.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        val caller = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val call = caller.launch { repository.switchToServer("b") }
+        // Let the caller reach its wait, then kill it well inside the bound.
+        testScheduler.advanceTimeBy(1_000L)
+        testScheduler.runCurrent()
+        assertEquals(false, call.isCompleted)
+        caller.cancel()
+        call.join()
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        // The bound elapses in the background with the caller already gone;
+        // only then does the server answer, to the unbounded replacement.
+        testScheduler.advanceTimeBy(3_000L)
+        testScheduler.runCurrent()
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `fallback probe records nothing when the caller is cancelled and the server switched`() = runTest {
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        val caller = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val call = caller.launch { repository.switchToServer("b") }
+        testScheduler.advanceTimeBy(1_000L)
+        testScheduler.runCurrent()
+        caller.cancel()
+        call.join()
+        // The user moves on to another server before "b" ever answers.
+        registry.switchTo("a")
+        testScheduler.advanceTimeBy(3_000L)
+        testScheduler.runCurrent()
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals("a", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
     }
 
     @Test
@@ -275,14 +342,12 @@ class AuthRepositoryContractTest {
             requests++
             respond("404 page not found\n", HttpStatusCode.NotFound, headersOf(HttpHeaders.ContentType, "text/plain"))
         }
-        val repository = repository(
-            registry,
-            client,
-            backgroundScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
-        )
+        // Real clock on both sides: the probe runs on the background scope.
+        val background = CoroutineScope(Dispatchers.Default)
+        val repository = repository(registry, client, backgroundScope = background)
 
         withContext(Dispatchers.Default) { repository.switchToServer("b") }
-        advanceUntilIdle()
+        background.joinChildren()
 
         // A real verdict, even a negative one, is settled: no replacement probe.
         assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
@@ -297,16 +362,14 @@ class AuthRepositoryContractTest {
             requests++
             respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }
-        val repository = repository(
-            registry,
-            client,
-            backgroundScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
-        )
+        // Real clock on both sides: the probe runs on the background scope.
+        val background = CoroutineScope(Dispatchers.Default)
+        val repository = repository(registry, client, backgroundScope = background)
 
         // Real clock: the switch bounds the probe, and virtual time would
         // skip past that bound while the engine answers.
         withContext(Dispatchers.Default) { repository.switchToServer("b") }
-        advanceUntilIdle()
+        background.joinChildren()
 
         assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
         assertEquals(1, requests)
