@@ -181,6 +181,79 @@ class AuthRepositoryContractTest {
     }
 
     @Test
+    fun `refreshServerContractBounded returns null when the probe answers 503`() = runTest {
+        val registry = ContractRegistry()
+        registry.setContract("a", ServerContract.UPDATE_REQUIRED)
+        // Real clock: the probe answers, so virtual time must not skip the bound.
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.ServiceUnavailable, "", "text/plain"))
+                .refreshServerContractBounded()
+        }
+
+        // A failure is "no verdict", not UNKNOWN: callers re-probe on null.
+        assertEquals(null, verdict)
+        assertEquals(mapOf("a" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer re-probes in the background when the bounded probe fails`() = runTest {
+        // A stale UPDATE_REQUIRED on a server that is briefly unreachable at
+        // switch time must not gate pilot calls for the whole session: the
+        // failed bounded probe launches the same replacement as a timeout.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        var requests = 0
+        val recovered = CompletableDeferred<Unit>()
+        val client = client {
+            requests++
+            if (requests == 1) {
+                respond("", HttpStatusCode.ServiceUnavailable, headersOf(HttpHeaders.ContentType, "text/plain"))
+            } else {
+                // The replacement probe holds until the server "recovers".
+                recovered.await()
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        // Real clock: the bounded probe answers (with 503) inside the bound.
+        withContext(Dispatchers.Default) { repository.switchToServer("b") }
+
+        // Returned with the verdict untouched: 503 recorded nothing.
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        // The server recovers; only the background replacement can produce V2.
+        recovered.complete(Unit)
+        background.joinChildren()
+        assertEquals(2, requests)
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer does not re-probe when the bounded probe answered UPDATE_REQUIRED`() = runTest {
+        val registry = ContractRegistry()
+        var requests = 0
+        val client = client {
+            requests++
+            respond("404 page not found\n", HttpStatusCode.NotFound, headersOf(HttpHeaders.ContentType, "text/plain"))
+        }
+        val repository = repository(
+            registry,
+            client,
+            backgroundScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        )
+
+        withContext(Dispatchers.Default) { repository.switchToServer("b") }
+        advanceUntilIdle()
+
+        // A real verdict, even a negative one, is settled: no replacement probe.
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+        assertEquals(1, requests)
+    }
+
+    @Test
     fun `switchToServer does not re-probe when the bounded probe answered`() = runTest {
         val registry = ContractRegistry()
         var requests = 0
@@ -232,6 +305,34 @@ class AuthRepositoryContractTest {
 
         assertEquals(ServerContract.V2, verdict)
         assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUpdateRequired returns null when the probe cannot connect`() = runTest {
+        // The launch path passes the result to refreshActiveServerName as
+        // knownContract; null makes that call probe again instead of
+        // treating the stale UPDATE_REQUIRED as confirmed for the session.
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        // ApiV2Probe maps any thrown transport error to Failure(CONNECTION).
+        val client = client { throw RuntimeException("connection refused") }
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, client).awaitContractRefreshIfUpdateRequired()
+        }
+
+        assertEquals(null, verdict)
+        assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUpdateRequired returns a confirmed UPDATE_REQUIRED verdict`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.NotFound, "404 page not found\n", "text/plain"))
+                .awaitContractRefreshIfUpdateRequired()
+        }
+
+        assertEquals(ServerContract.UPDATE_REQUIRED, verdict)
+        assertEquals(mapOf("a" to ServerContract.UPDATE_REQUIRED), registry.contracts)
     }
 
     @Test

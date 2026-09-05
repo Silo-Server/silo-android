@@ -227,11 +227,13 @@ class AuthRepository(
      * Callers await this behind a spinner, so only the probe is awaited and
      * only for [SWITCH_PROBE_TIMEOUT_MS]: a server that accepts the socket
      * but never answers leaves the stored verdict alone (the gate still
-     * passes UNKNOWN and V2). When the bound cancels the probe and a
+     * passes UNKNOWN and V2). When the bounded probe yields no verdict —
+     * the bound cancelled it or it failed (connection error, 5xx) — and a
      * [backgroundScope] is wired in, a replacement unbounded probe (the
      * client's own timeouts still apply) is launched there for [serverId],
-     * so a stale UPDATE_REQUIRED on a since-upgraded server is corrected
-     * once it answers instead of gating v2 calls until the next launch; the
+     * so a stale UPDATE_REQUIRED on a since-upgraded or briefly unreachable
+     * server is corrected once it answers instead of gating v2 calls until
+     * the next launch; the
      * active-id guard in [recordServerContract] drops the result if the user
      * switched again meanwhile. Without a scope the verdict stays as stored
      * until the next switch or launch re-probes. The display-name refresh
@@ -331,9 +333,10 @@ class AuthRepository(
      * have been upgraded since), probe now and wait at most [timeoutMs] so
      * gated startup consumers see the refreshed verdict instead of the
      * stale one. Returns the recorded verdict, or null when nothing was
-     * awaited (not UPDATE_REQUIRED, no probe wired in, or timed out) — pass
-     * it to [refreshActiveServerName] as `knownContract` to avoid a second
-     * probe.
+     * recorded (not UPDATE_REQUIRED, no probe wired in, timed out, or the
+     * probe failed) — pass it to [refreshActiveServerName] as
+     * `knownContract`: a verdict avoids a second probe, while null makes
+     * that call probe again so a briefly unreachable server is retried.
      */
     suspend fun awaitContractRefreshIfUpdateRequired(timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS): ServerContract? {
         if (activeServerContract() != ServerContract.UPDATE_REQUIRED) return null
@@ -343,13 +346,19 @@ class AuthRepository(
     /**
      * [refreshServerContract] with a wall-clock bound. Every path that awaits
      * the probe before letting the user (or a peer, in pairing) proceed goes
-     * through here so the bound lives in one place. Null when nothing was
-     * recorded: no probe wired in, or the server accepted the socket but did
-     * not answer within [timeoutMs] — the stored verdict is left alone, which
-     * the gate treats as passable, and the next switch or launch re-probes.
+     * through here so the bound lives in one place. Returns a real verdict
+     * ([ServerContract.V2] or [ServerContract.UPDATE_REQUIRED]) only; null
+     * means nothing was recorded — no probe wired in, the server did not
+     * answer within [timeoutMs], or the probe failed (connection error, 5xx)
+     * — and the stored verdict is left alone. "No verdict" is uniform so
+     * callers re-probe on null instead of treating a transient failure as
+     * settled, which would otherwise leave a stale UPDATE_REQUIRED gating the
+     * whole session.
      */
     suspend fun refreshServerContractBounded(timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS): ServerContract? =
-        withTimeoutOrNull(timeoutMs) { refreshServerContract() }?.toServerContract()
+        withTimeoutOrNull(timeoutMs) { refreshServerContract() }
+            ?.toServerContract()
+            ?.takeUnless { it == ServerContract.UNKNOWN }
 
     /**
      * Runs the v2 contract probe against [serverUrl] (a candidate the app is
