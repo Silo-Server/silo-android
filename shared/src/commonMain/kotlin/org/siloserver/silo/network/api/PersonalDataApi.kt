@@ -13,8 +13,18 @@ import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.ProgressCollection
 import org.siloserver.silo.network.apiv2.safeApiV2Call
 
+/** The v2 contract caps `limit` at 200; ask for the maximum so the walk is as short as possible. */
 private const val PROGRESS_PAGE_SIZE = 200
-private const val PROGRESS_MAX_PAGES = 50
+
+/**
+ * Runaway guard only (100 pages × 200 = 20,000 entries). Hitting it with
+ * `has_more` still true is reported as [PROGRESS_INCOMPLETE_ERROR], never
+ * as a silent prefix.
+ */
+private const val PROGRESS_MAX_PAGES = 100
+
+/** [ApiResult.Error.error] when the progress walk stopped before the last page. */
+const val PROGRESS_INCOMPLETE_ERROR = "progress_incomplete"
 
 class PersonalDataApi(
     private val client: HttpClient,
@@ -89,8 +99,16 @@ class PersonalDataApi(
 
     // --- Progress ---
 
-    // Pilot v2 operation (listProgress): v2 only, no v1 fallback. v1 returned
-    // the whole list; v2 pages by opaque cursor, so walk every page here.
+    /**
+     * Pilot v2 operation (listProgress): v2 only, no v1 fallback. v1 returned
+     * the whole list; v2 pages by opaque cursor, so every page is walked here.
+     *
+     * The result is either the complete list or an error — never a silent
+     * prefix. A page failure returns that page's error; exceeding
+     * [PROGRESS_MAX_PAGES] with more pages left returns an
+     * [ApiResult.Error] whose `error` is [PROGRESS_INCOMPLETE_ERROR], so
+     * continue-watching consumers never treat older entries as absent.
+     */
     suspend fun listProgress(): ApiResult<ProgressListResponse> {
         val entries = mutableListOf<ProgressEntry>()
         var cursor: String? = null
@@ -118,7 +136,15 @@ class PersonalDataApi(
             }
             val next = collection.page.nextCursor
             pages++
-            if (!collection.page.hasMore || next == null || pages >= PROGRESS_MAX_PAGES) break
+            if (!collection.page.hasMore || next == null) break
+            if (pages >= PROGRESS_MAX_PAGES) {
+                return ApiResult.Error(
+                    code = 0,
+                    error = PROGRESS_INCOMPLETE_ERROR,
+                    message = "Progress list still has more pages after $PROGRESS_MAX_PAGES pages of " +
+                        "$PROGRESS_PAGE_SIZE; refusing to return a partial list.",
+                )
+            }
             cursor = next
         }
         return ApiResult.Success(ProgressListResponse(progress = entries))
