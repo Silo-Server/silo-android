@@ -381,11 +381,22 @@ class AuthRepository(
 
     /**
      * Runs the v2 contract probe against [serverUrl] (a candidate the app is
-     * not connected to yet) without recording anything. Null when no probe is
-     * wired in (single-server hosts, tests).
+     * not connected to yet) without recording anything, bounded to
+     * [timeoutMs]. Null when no probe is wired in (single-server hosts,
+     * tests) or the candidate accepted the socket but did not answer within
+     * the bound — "no verdict", which the connect path treats the same as a
+     * [ApiV2ProbeResult.Failure]: it moves on to the setup call, whose own
+     * client timeout decides reachability. Unbounded, a stalled candidate
+     * held the setup spinner for the client's ~60 s timeout per candidate
+     * (HTTPS then HTTP for a bare host) before the setup call waited again.
      */
-    suspend fun probeServerContract(serverUrl: String): ApiV2ProbeResult? =
-        apiV2Probe?.probe(serverUrl)
+    suspend fun probeServerContract(
+        serverUrl: String,
+        timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS,
+    ): ApiV2ProbeResult? {
+        val probe = apiV2Probe ?: return null
+        return withTimeoutOrNull(timeoutMs) { probe.probe(serverUrl) }
+    }
 
     /**
      * Records [contract] on the active registry entry when it is a verdict

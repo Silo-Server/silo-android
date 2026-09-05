@@ -32,6 +32,7 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.apiv2.ApiV2Fixtures
 import org.siloserver.silo.network.apiv2.ApiV2Probe
+import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -346,6 +347,36 @@ class AuthRepositoryContractTest {
 
         assertEquals(null, verdict)
         assertEquals(0, requests)
+    }
+
+    @Test
+    fun `probeServerContract returns null when the candidate hangs past the bound`() = runTest {
+        // A candidate that accepts the socket but never answers must not
+        // hold the setup spinner for the client's full timeout; virtual
+        // time: the bound elapses without the engine answering.
+        val registry = ContractRegistry()
+        val startedAt = testScheduler.currentTime
+        val result = repository(registry, client { awaitCancellation() })
+            .probeServerContract("https://candidate.example")
+
+        assertEquals(null, result)
+        assertEquals(3_000L, testScheduler.currentTime - startedAt)
+        // Nothing recorded: the candidate is not the active server.
+        assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
+    }
+
+    @Test
+    fun `probeServerContract returns the verdict when the candidate answers`() = runTest {
+        val registry = ContractRegistry()
+        val repository = repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"))
+        // Real clock: under the test scheduler the virtual-time bound would
+        // fire before the engine thread posts its answer back.
+        val result = withContext(Dispatchers.Default) {
+            repository.probeServerContract("https://candidate.example")
+        }
+
+        assertEquals(true, result is ApiV2ProbeResult.V2, "expected V2, got $result")
+        assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
     }
 
     @Test
