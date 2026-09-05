@@ -46,7 +46,7 @@ class RegistryPairingAuthPort(
         accessToken: String,
         refreshToken: String,
         expiresIn: Long,
-    ) = withContext(NonCancellable) {
+    ): Unit = withContext(NonCancellable) {
         commitMutex.withLock {
             if (cleartextOriginConsent?.requiresApproval(serverUrl) == true) {
                 throw CleartextOriginNotApprovedException(serverUrl)
@@ -75,6 +75,13 @@ class RegistryPairingAuthPort(
                 }
                 throw error
             }
+            // Pairing is a server switch too: the newly paired server is now
+            // active, so establish its v2 contract verdict before the port
+            // reports SignedIn — otherwise the entry keeps UNKNOWN (or a
+            // stale UPDATE_REQUIRED from an older build) and gated startup
+            // consumers act on it. The probe never throws on a failed
+            // request, so this cannot roll back a committed session.
+            authRepository?.refreshServerContract()
         }
     }
 }

@@ -301,6 +301,50 @@ class RegistryPairingAuthPortTest {
     }
 
     @Test
+    fun successfulPairingProbesTheNewServerExactlyOnce() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("pairing-success-probe", Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val transitions = DefaultIdentityTransitionBarrier()
+        val registry = AndroidServerRegistry(prefs, transitions)
+        val oldId = registry.addOrUpdate("https://old.example")
+        registry.switchTo(oldId)
+        val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
+        tokens.saveTokens("old-access", "old-refresh", 3600)
+        var probes = 0
+        val client = HttpClient(
+            MockEngine { request ->
+                check(request.url.encodedPath == ApiV2Probe.PATH) { "unexpected request ${request.url}" }
+                probes += 1
+                respond("not found", HttpStatusCode.NotFound, headersOf(HttpHeaders.ContentType, "text/plain"))
+            },
+        )
+        val authRepository = AuthRepository(
+            authApi = AuthApi(client),
+            tokenManager = tokens,
+            serverRegistry = registry,
+            apiV2Probe = ApiV2Probe(client),
+        )
+
+        RegistryPairingAuthPort(tokens, registry, authRepository = authRepository).persistApprovedSession(
+            serverUrl = "https://new.example",
+            serverName = null,
+            accessToken = "new-access",
+            refreshToken = "new-refresh",
+            expiresIn = 7200,
+        )
+
+        val newId = registry.entries.value.first { it.url == "https://new.example" }.id
+        assertEquals(newId, registry.activeServerId.value)
+        assertEquals("new-access", tokens.getAccessToken())
+        // Exactly one probe, and its verdict lands on the newly paired
+        // server's entry — not the old one's.
+        assertEquals(1, probes)
+        assertEquals(ServerContract.UPDATE_REQUIRED, registry.entries.value.first { it.id == newId }.contract)
+        assertEquals(ServerContract.UNKNOWN, registry.entries.value.first { it.id == oldId }.contract)
+    }
+
+    @Test
     fun rollbackToPreviousServerWithoutAuthRepositorySkipsTheProbe() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = context.getSharedPreferences("pairing-rollback-no-repository", Context.MODE_PRIVATE)
