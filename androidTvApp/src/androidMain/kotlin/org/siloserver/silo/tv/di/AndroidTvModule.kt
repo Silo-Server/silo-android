@@ -498,7 +498,7 @@ val androidTvModule = module {
     // Personal data grids.
     viewModel { FavoritesViewModel(get(), get()) }
     viewModel { WatchlistViewModel(get(), get()) }
-    viewModel { HistoryViewModel(get()) }
+    viewModel { HistoryViewModel(get(), get()) }
     // Sort/filter state for the favorites and watchlist grids, keyed by source.
     viewModel { params ->
         TvPersonalListControlsViewModel(

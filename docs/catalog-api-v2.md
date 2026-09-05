@@ -43,7 +43,7 @@ fallback disables further paging until the viewer reloads online. It cannot seed
 a new query with an old server cursor.
 
 Version and item-episode wrappers, watch transport, person refresh, and the
-separate v1 history transport remain outside this migration. No playback or
+history transport are separate from this catalog migration. No playback or
 administrative UI is added.
 
 Validation includes shared transport/query tests, viewer-change refusal, typed
@@ -71,7 +71,8 @@ as complete. People search remains a bounded name lookup (default 20, maximum
 These reads use the existing gate, captured viewer scope, and cancellation checks.
 Catalog markers retain `start` and `end`; watch transport is a separate contract
 and is not changed here. Dormant version/item-episode wrappers, person refresh,
-and standalone history are outside this read adapter.
+and standalone history are outside this read adapter. History adoption is
+documented in `history-api-v2.md`.
 
 The season and episode reads are shared by both players' existing next-episode
 resolution. Tests cover the real repository envelopes feeding the shared resolver,

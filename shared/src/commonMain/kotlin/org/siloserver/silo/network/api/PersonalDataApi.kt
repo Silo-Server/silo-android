@@ -10,6 +10,9 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.apiv2.HistoryV2Api
+import org.siloserver.silo.network.apiv2.HistoryContinuationV2
+import org.siloserver.silo.network.apiv2.HistoryPageV2
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.ProgressCollection
 import org.siloserver.silo.network.apiv2.safeApiV2Call
@@ -96,15 +99,10 @@ class PersonalDataApi(
 
     // --- History ---
 
-    suspend fun listHistory(
-        offset: Int = 0,
-        limit: Int = 40
-    ): ApiResult<CatalogResponse> = safeApiCall {
-        client.get("/api/v1/history") {
-            parameter("offset", offset)
-            parameter("limit", limit)
-        }
-    }
+    private val historyV2 = HistoryV2Api(client, apiV2Gate, tokenManager)
+
+    suspend fun listHistory(continuation: HistoryContinuationV2? = null, limit: Int = 40): ApiResult<HistoryPageV2> =
+        historyV2.page(limit = limit, continuation = continuation)
 
     // --- Progress ---
 

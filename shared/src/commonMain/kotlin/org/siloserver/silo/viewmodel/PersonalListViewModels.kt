@@ -46,7 +46,9 @@ data class PersonalListUiState(
     val isRefreshing: Boolean = false,
     val error: String? = null,
     val hasMore: Boolean = false,
-    val total: Int = 0,
+    val total: Int? = null,
+    /** History retains the watched witness even when its card represents a series. */
+    val historyWatches: Map<String, org.siloserver.silo.network.apiv2.HistoryWatchV2> = emptyMap(),
     val query: PersonalListQuery = PersonalListQuery(),
     /** What the server says it sorted by, when it reports one. */
     val effectiveSort: CatalogEffectiveSort? = null,
@@ -310,7 +312,7 @@ class FavoritesViewModel(
             _uiState.update { state ->
                 state.copy(
                     items = state.items.filter { it.contentId != itemId },
-                    total = (state.total - 1).coerceAtLeast(0),
+                    total = state.total?.let { (it - 1).coerceAtLeast(0) },
                 )
             }
         }
@@ -347,22 +349,9 @@ class WatchlistViewModel(
             _uiState.update { state ->
                 state.copy(
                     items = state.items.filter { it.contentId != itemId },
-                    total = (state.total - 1).coerceAtLeast(0),
+                    total = state.total?.let { (it - 1).coerceAtLeast(0) },
                 )
             }
         }
     }
-}
-
-class HistoryViewModel(
-    private val personalDataRepository: PersonalDataRepository,
-) : PersonalListViewModel() {
-
-    init {
-        loadInitial()
-    }
-
-    // History has no sort/filter surface, so the query is always the default.
-    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery, continuation: CatalogContinuationV2?) =
-        personalDataRepository.listHistory(offset = offset, limit = limit)
 }

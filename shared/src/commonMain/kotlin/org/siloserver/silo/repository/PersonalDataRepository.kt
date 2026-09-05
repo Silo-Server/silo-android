@@ -6,6 +6,8 @@ import org.siloserver.silo.model.personal.RatingEntry
 import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.personal.SyncProgressRequest
 import org.siloserver.silo.model.personal.UserLibrary
+import org.siloserver.silo.network.apiv2.HistoryContinuationV2
+import org.siloserver.silo.network.apiv2.HistoryPageV2
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
@@ -99,8 +101,8 @@ open class PersonalDataRepository(
     // -- History --
 
     /** Lists the user's watch history with pagination. */
-    suspend fun listHistory(offset: Int = 0, limit: Int = 40): ApiResult<CatalogResponse> =
-        personalDataApi.listHistory(offset, limit)
+    suspend fun listHistory(continuation: HistoryContinuationV2? = null, limit: Int = 40): ApiResult<HistoryPageV2> =
+        personalDataApi.listHistory(continuation, limit)
 
     // -- Progress --
 

@@ -283,7 +283,7 @@ private fun PersonalMediaGridContent(
         }
     }
 
-    LaunchedEffect(shouldLoadMore) {
+    LaunchedEffect(shouldLoadMore, state.hasMore, state.isLoadingMore, state.isLoading) {
         if (shouldLoadMore && state.hasMore && !state.isLoadingMore && !state.isLoading) {
             onLoadMore()
         }

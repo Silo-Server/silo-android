@@ -412,7 +412,7 @@ val androidModule = module {
             catalogRepository = get(),
         )
     }
-    viewModel { HistoryViewModel(get()) }
+    viewModel { HistoryViewModel(get(), get()) }
     viewModel { CollectionsViewModel(get()) }
     viewModel { params -> CollectionDetailViewModel(get(), get(), params.get()) }
     viewModel { RequestsViewModel(get()) }
