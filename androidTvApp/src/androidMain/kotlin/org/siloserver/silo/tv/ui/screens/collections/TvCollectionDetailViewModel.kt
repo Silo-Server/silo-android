@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.map
+import org.siloserver.silo.network.api.CollectionContinuation
 import org.siloserver.silo.network.api.CollectionEditor
 import org.siloserver.silo.model.personal.Collection
 import org.siloserver.silo.repository.CollectionRepository
@@ -47,10 +49,8 @@ class TvCollectionDetailViewModel(
     private var deleteEditor: CollectionEditor<Collection>? = null
     private val pageSize = 40
 
-    // Raw (pre-visibleOnTv-filter) loaded count = the next-page server offset.
-    // Using filtered items.size would skip/duplicate when a page has hidden
-    // (ebook) entries.
-    private var rawLoaded = 0
+    private var pagingJob: kotlinx.coroutines.Job? = null
+    private var continuation: CollectionContinuation? = null
 
     init {
         load(reset = true)
@@ -58,7 +58,7 @@ class TvCollectionDetailViewModel(
 
     fun loadMore() {
         val state = _uiState.value
-        if (state.isLoading || state.isLoadingMore || !state.hasMore) return
+        if (state.isLoading || state.isLoadingMore || !state.hasMore || state.error != null) return
         load(reset = false)
     }
 
@@ -101,17 +101,16 @@ class TvCollectionDetailViewModel(
     }
 
     private fun load(reset: Boolean) {
-        if (reset) rawLoaded = 0
-        viewModelScope.launch {
+        if (reset) continuation = null
+        pagingJob?.cancel()
+        pagingJob = viewModelScope.launch {
             val state = _uiState.value
-            val offset = if (reset) 0 else rawLoaded
             _uiState.update {
-                if (reset) it.copy(isLoading = true, error = null)
+                if (reset) it.copy(isLoading = true, isLoadingMore = false, error = null)
                 else it.copy(isLoadingMore = true)
             }
-            when (val r = collectionRepository.getItems(collectionId, offset, pageSize)) {
+            when (val r = collectionRepository.getItems(collectionId, continuation, pageSize).map { continuation = it.continuation; it.catalog }) {
                 is ApiResult.Success -> _uiState.update {
-                    rawLoaded = if (reset) r.data.items.size else rawLoaded + r.data.items.size
                     val visible = r.data.items.visibleOnTv()
                     it.copy(
                         isLoading = false,

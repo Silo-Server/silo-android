@@ -36,7 +36,7 @@ class CollectionsV2Test {
             } else {
                 assertEquals(HttpMethod.Delete, request.method)
                 assertEquals("\"original\"", request.headers[HttpHeaders.IfMatch])
-                respond("""{"status":412,"code":"precondition_failed","detail":"Changed"}""", HttpStatusCode.PreconditionFailed, headersOf(HttpHeaders.ETag to listOf("\"new\""), HttpHeaders.ContentType to listOf("application/problem+json")))
+                respond("""{"type":"https://siloserver.org/docs/api/v2/problems/precondition_failed","title":"Changed","status":412,"instance":"urn:test","code":"precondition_failed","detail":"Changed"}""", HttpStatusCode.PreconditionFailed, headersOf(HttpHeaders.ETag to listOf("\"new\""), HttpHeaders.ContentType to listOf("application/problem+json")))
             }
         })
         val api = CollectionApi(client)
@@ -95,6 +95,40 @@ class CollectionsV2Test {
     @Test fun malformedListDoesNotBecomeEmptySuccess() = runTest {
         val client = HttpClient(MockEngine { respond("{}", headers = headersOf(HttpHeaders.ContentType, "application/json")) })
         assertIs<ApiResult.NetworkError>(CollectionApi(client).listCollections())
+        client.close()
+    }
+
+    @Test fun personalBrowseFollowsOpaqueCursorWithoutOffsetOrSort() = runTest {
+        var calls = 0
+        val client = HttpClient(MockEngine { request ->
+            assertEquals("/api/v2/catalog", request.url.encodedPath)
+            assertEquals("user_collection", request.url.parameters["source"])
+            assertEquals("c1", request.url.parameters["collection_id"])
+            assertEquals("40", request.url.parameters["limit"])
+            assertNull(request.url.parameters["offset"])
+            assertNull(request.url.parameters["sort"])
+            assertEquals(if (calls++ == 0) null else "opaque", request.url.parameters["cursor"])
+            respond(if (calls == 1) """{"items":[],"page":{"has_more":true,"next_cursor":"opaque"},"total":2}"""
+                else """{"items":[],"page":{"has_more":false},"total":2}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        })
+        val api = CollectionApi(client)
+        val first = assertIs<ApiResult.Success<org.siloserver.silo.network.api.CollectionItemsPage>>(api.getCollectionItems("c1")).data
+        assertTrue(first.catalog.hasMore)
+        val second = assertIs<ApiResult.Success<org.siloserver.silo.network.api.CollectionItemsPage>>(api.getCollectionItems("c1", first.continuation)).data
+        assertNull(second.continuation)
+        assertEquals(2, calls)
+        client.close()
+    }
+
+    @Test fun invalidBrowseCursorNeverRestartsAutomatically() = runTest {
+        var calls = 0
+        val client = HttpClient(MockEngine {
+            calls++
+            respond("""{"type":"https://siloserver.org/docs/api/v2/problems/invalid_cursor","title":"Invalid cursor","status":400,"instance":"urn:test","code":"invalid_cursor","detail":"Expired"}""", HttpStatusCode.BadRequest, headersOf(HttpHeaders.ContentType, "application/problem+json"))
+        })
+        val result = CollectionApi(client).getCollectionItems("c1", org.siloserver.silo.network.api.CollectionContinuation("old", "c1", 40, null))
+        assertEquals("invalid_cursor", assertIs<ApiResult.Error>(result).error)
+        assertEquals(1, calls)
         client.close()
     }
 

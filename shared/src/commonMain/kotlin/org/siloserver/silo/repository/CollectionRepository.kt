@@ -11,6 +11,8 @@ import org.siloserver.silo.model.personal.ReorderCollectionsRequest
 import org.siloserver.silo.model.personal.UpdateCollectionGroupRequest
 import org.siloserver.silo.model.personal.UpdateCollectionRequest
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.api.CollectionContinuation
+import org.siloserver.silo.network.api.CollectionItemsPage
 import org.siloserver.silo.network.api.CollectionApi
 import org.siloserver.silo.network.api.CollectionEditor
 import org.siloserver.silo.network.api.CollectionOrder
@@ -56,10 +58,10 @@ class CollectionRepository(
     /** Lists items in a collection with pagination. */
     suspend fun getItems(
         collectionId: String,
-        offset: Int = 0,
+        continuation: CollectionContinuation? = null,
         limit: Int = 40,
-    ): ApiResult<CatalogResponse> =
-        collectionApi.getCollectionItems(collectionId, offset, limit)
+    ): ApiResult<CollectionItemsPage> =
+        collectionApi.getCollectionItems(collectionId, continuation, limit)
 
     /** Adds an item to a collection. */
     suspend fun addItem(collectionId: String, itemId: String): ApiResult<Unit> =

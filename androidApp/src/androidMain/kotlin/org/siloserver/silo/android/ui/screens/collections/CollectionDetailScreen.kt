@@ -78,7 +78,7 @@ fun CollectionDetailScreen(
             state.isLoading -> {
                 LoadingIndicator(modifier = Modifier.padding(padding))
             }
-            state.error != null && state.items.isEmpty() -> {
+            state.error != null -> {
                 ErrorView(
                     message = state.error ?: "Unknown error",
                     onRetry = viewModel::refresh,

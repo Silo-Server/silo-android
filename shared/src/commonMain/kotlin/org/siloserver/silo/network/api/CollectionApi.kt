@@ -9,6 +9,8 @@ import org.siloserver.silo.network.apiv2.safeApiV2Call
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.authScope
+import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.CatalogEffectiveSort
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import org.siloserver.silo.model.catalog.CatalogResponse
@@ -42,6 +44,20 @@ data class CollectionOrder(
     @SerialName("ordered_ids") val orderedIds: List<String>,
     @SerialName("group_id") val groupId: String? = null,
     @SerialName("has_more") val hasMore: Boolean = false,
+)
+
+data class CollectionContinuation(val cursor: String, val collectionId: String, val limit: Int, val scope: AuthScopeSnapshot?, val seen: Set<String> = emptySet())
+data class CollectionItemsPage(val catalog: CatalogResponse, val continuation: CollectionContinuation?)
+
+@Serializable
+internal data class CollectionCatalogPage(@SerialName("has_more") val hasMore: Boolean, @SerialName("next_cursor") val nextCursor: String? = null)
+@Serializable
+internal data class CollectionCatalogResponse(
+    val items: List<BrowseItem>,
+    val page: CollectionCatalogPage,
+    val total: Int = 0,
+    @SerialName("total_exact") val totalExact: Boolean? = null,
+    @SerialName("effective_sort") val effectiveSort: CatalogEffectiveSort? = null,
 )
 
 class CollectionApi(
@@ -143,18 +159,39 @@ class CollectionApi(
 
     suspend fun getCollectionItems(
         id: String,
-        offset: Int = 0,
-        limit: Int = 40
-    ): ApiResult<CatalogResponse> = safeApiCall {
-        // The legacy membership route is a complete-export compatibility
-        // endpoint and returns unhydrated join records. Display clients use
-        // the bounded catalog resolver so offset/limit are enforced in SQL.
-        client.get("/api/v1/catalog") {
-            parameter("source", "user_collection")
-            parameter("collection_id", id)
-            parameter("offset", offset)
-            parameter("limit", limit)
-            parameter("include_total", false)
+        continuation: CollectionContinuation? = null,
+        limit: Int = 40,
+    ): ApiResult<CollectionItemsPage> {
+        val size = limit.coerceIn(1, 100)
+        if (continuation != null && (continuation.collectionId != id || continuation.limit != size))
+            return ApiResult.Error(0, "invalid_cursor", "Reload this collection to continue.")
+        val scope = continuation?.scope ?: tokenManager?.snapshotCurrentScope()
+        if (scope != null && !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope()))
+            return ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload this collection.")
+        val result = safeApiV2Call<CollectionCatalogResponse>(gate) {
+            client.get("/api/v2/catalog") {
+                scope?.let { authScope(it) }
+                parameter("source", "user_collection")
+                parameter("collection_id", id)
+                parameter("limit", size)
+                continuation?.let { parameter("cursor", it.cursor) }
+            }
+        }
+        if (scope != null && !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope()))
+            return ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload this collection.")
+        return when (result) {
+            is ApiResult.Success -> {
+                val body = result.data
+                val cursor = body.page.nextCursor
+                if (body.page.hasMore && (cursor.isNullOrBlank() || cursor == continuation?.cursor || cursor in (continuation?.seen ?: emptySet())))
+                    ApiResult.Error(0, "invalid_cursor", "Reload this collection; the server returned invalid pagination.")
+                else ApiResult.Success(CollectionItemsPage(
+                    CatalogResponse(total = body.total, totalExact = body.totalExact, hasMore = body.page.hasMore, items = body.items, effectiveSort = body.effectiveSort),
+                    if (body.page.hasMore) CollectionContinuation(cursor!!, id, size, scope, (continuation?.seen ?: emptySet()) + cursor) else null,
+                ))
+            }
+            is ApiResult.Error -> if (result.error == "invalid_cursor") result.copy(message = "This collection changed. Reload it to continue.") else result
+            is ApiResult.NetworkError -> result
         }
     }
 

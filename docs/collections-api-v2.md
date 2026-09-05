@@ -28,9 +28,15 @@ The phone removal handler removes the displayed item only after success. No new
 management controls were added. Future controls must offer explicit reload after a
 conflict and gate optional management actions with collection capabilities.
 
-Hydrated collection browsing still uses the existing catalog resolver and belongs
-to the coordinated catalog migration. The v2 membership GET returns join records,
-not catalog cards, so it cannot replace the catalog resolver directly.
+Hydrated personal collection browsing uses `/api/v2/catalog` with
+`source=user_collection`, the collection ID, a bounded limit, and opaque cursor
+continuation. It sends no offset or sort override. Each continuation carries its
+collection, page size, and viewer scope; a changed viewer fails before sending.
+Invalid continuation requires explicit reload and never silently starts over or
+appends a first page. Phone and TV cancel superseded page loads and retain existing
+items on failure while showing the reload action. TV filtering does not affect
+cursor advancement. Library-collection browsing remains in the separate catalog
+migration. The v2 membership GET returns join records rather than catalog cards.
 
 No mutation adds automatic replay or fallback to v1. The existing authentication
 refresh behavior is unchanged. Successful empty 204 responses are accepted by the
@@ -40,5 +46,6 @@ Validation uses `CollectionsV2Test` and `RequestsV2Test`, plus Kotlin compilatio
 for phone and TV. The collection tests cover the items envelope, missing-envelope
 failure, canonical ETags and conflict preservation, explicit-null moves, membership
 position JSON and empty success, missing validators, oversized order refusal, and
-lost-viewer rejection. Live server/device interaction is not verified by these
+lost-viewer rejection, opaque browse continuation, and invalid-cursor refusal without
+automatic restart. Live server/device interaction is not verified by these
 mock-transport tests.
