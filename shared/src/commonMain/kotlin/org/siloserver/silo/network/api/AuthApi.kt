@@ -61,8 +61,15 @@ class AuthApi(
             client.get("/api/v2/system/setup") { skipSiloAuth() }
         }.map { status -> SetupStatusResponse(needsSetup = status.needsSetup) }
 
+    /**
+     * Explicit-server form: probes a candidate the app is not connected to
+     * yet, so the ACTIVE entry's verdict must not gate it — otherwise an
+     * UPDATE_REQUIRED active server would block adding (or reconnecting to)
+     * a supported one. The candidate's own gate is the contract probe the
+     * add-server flow runs before switching.
+     */
     suspend fun getSetupStatus(serverUrl: String): ApiResult<SetupStatusResponse> =
-        safeApiV2Call<SetupStatus>(apiV2Gate) {
+        safeApiV2Call<SetupStatus>(ApiV2Gate.Unrestricted) {
             client.get("${serverUrl.trimEnd('/')}/api/v2/system/setup") {
                 skipSiloAuth()
             }

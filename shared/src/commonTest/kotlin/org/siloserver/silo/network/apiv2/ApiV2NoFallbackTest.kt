@@ -15,12 +15,14 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
+import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.profile.UpdateProfileRequest
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.api.ProfileApi
 
 /** A failed v2 mutation is never replayed against another API major, and the update-server state blocks it outright. */
@@ -71,6 +73,23 @@ class ApiV2NoFallbackTest {
         assertEquals(ApiV2Gate.UPDATE_REQUIRED_ERROR, error.error)
         assertEquals(ServerContract.UPDATE_REQUIRED_MESSAGE, error.message)
         assertEquals(emptyList(), recorded)
+    }
+
+    @Test
+    fun explicitServerSetupStatusBypassesTheActiveServersUpdateRequiredVerdict() = runTest {
+        val recorded = mutableListOf<String>()
+        val gate = ApiV2Gate(ContractRegistry(ServerContract.UPDATE_REQUIRED))
+        val api = AuthApi(client(recorded, HttpStatusCode.OK, """{"needs_setup":false}"""), gate)
+
+        // Candidate (absolute URL): the active entry's verdict says nothing about it.
+        val candidate = assertIs<ApiResult.Success<SetupStatusResponse>>(api.getSetupStatus("https://other.example/"))
+        assertEquals(false, candidate.data.needsSetup)
+        assertEquals(listOf("GET /api/v2/system/setup"), recorded)
+
+        // Relative form targets the active server and stays blocked.
+        val error = assertIs<ApiResult.Error>(api.getSetupStatus())
+        assertEquals(ApiV2Gate.UPDATE_REQUIRED_ERROR, error.error)
+        assertEquals(1, recorded.size)
     }
 
     @Test
