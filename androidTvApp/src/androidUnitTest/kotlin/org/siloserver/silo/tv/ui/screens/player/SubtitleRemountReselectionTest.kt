@@ -36,6 +36,74 @@ class SubtitleRemountReselectionTest {
     }
 
     @Test
+    fun `native selection waits for replacement media and an observed selected track`() {
+        val gate = TvTransportMountGate()
+        val latch = SubtitleRemountReselection()
+        val identity = SubtitleIdentity.Embedded(
+            serverIndex = 1, media = media(codec = "mov_text"), containerTrackId = "3",
+        )
+        val old = track(index = 0, trackId = "0:3", codec = "mov_text", selected = true)
+        fun consume(tracks: List<PlayerTrackEntry>) = latch.consume(
+            tracks, snapshotKey = tracks.toString(), settled = true,
+            transportMounted = !gate.suppressPositionReports,
+        )
+        gate.expect(2)
+        latch.arm(identity, generation = 2)
+        assertNull(consume(listOf(old)), "The old item already contains the native track")
+        assertFalse(gate.applied(1), "An older mount cannot open this boundary")
+        assertNull(consume(listOf(old)))
+        assertTrue(gate.applied(2))
+        assertNull(consume(emptyList()))
+        val replacement = old.copy(trackId = "3", isSelected = false)
+        val selection = assertIs<TvSubtitleRemountEvent.Select>(consume(listOf(replacement)))
+        assertEquals(0, selection.trackIndex)
+        assertTrue(latch.ownsResolved(selection.owner.generation))
+        assertNull(consume(listOf(replacement)), "An accepted override is not a selected track")
+        val confirmation = assertIs<TvSubtitleRemountEvent.Confirmed>(
+            consume(listOf(replacement.copy(isSelected = true))),
+        )
+        assertEquals(identity, confirmation.owner.identity)
+        assertFalse(latch.hasPendingOwner)
+        assertNull(consume(listOf(replacement.copy(isSelected = true))))
+    }
+
+    @Test
+    fun `replacement failure or burn-in cannot revive an older unconfirmed selection`() {
+        val oldTrack = track(0, "3", codec = "mov_text")
+        val oldIdentity = SubtitleIdentity.Embedded(1, media(codec = "mov_text"), "3")
+        for (replacement in listOf(SubtitleIdentity.ServerSidecar(9), SubtitleIdentity.ServerBurnIn(9))) {
+            val latch = SubtitleRemountReselection()
+            latch.arm(oldIdentity, generation = 1)
+            assertIs<TvSubtitleRemountEvent.Select>(
+                latch.consume(listOf(oldTrack), snapshotKey = "old", settled = true),
+            )
+            latch.arm(replacement, generation = 2)
+            assertFalse(latch.ownsResolved(1))
+            val result = latch.consume(listOf(oldTrack), snapshotKey = "missing", settled = true)
+            if (replacement is SubtitleIdentity.ServerSidecar) {
+                assertIs<TvSubtitleRemountEvent.Failed>(result)
+            } else {
+                assertNull(result)
+            }
+            assertNull(latch.consume(listOf(oldTrack.copy(isSelected = true)), snapshotKey = "late", settled = true))
+            assertFalse(latch.hasPendingOwner)
+        }
+    }
+
+    @Test
+    fun `Off waits until the mounted snapshot has no selected text`() {
+        val latch = SubtitleRemountReselection()
+        latch.arm(SubtitleIdentity.Off, generation = 3)
+        val selected = listOf(track(0, "3", selected = true))
+        assertIs<TvSubtitleRemountEvent.Select>(latch.consume(selected, snapshotKey = "old", settled = true))
+        assertNull(latch.consume(selected, snapshotKey = "old", settled = true))
+        assertIs<TvSubtitleRemountEvent.Confirmed>(
+            latch.consume(selected.map { it.copy(isSelected = false) }, snapshotKey = "off", settled = true),
+        )
+        assertFalse(latch.hasPendingOwner)
+    }
+
+    @Test
     fun `ViewModel does not settle the first nonempty remount snapshot`() {
         val tracker = TvSubtitleSnapshotSettlementTracker()
         val first = listOf(track(index = 1, trackId = "silo-subtitle:4"))
@@ -395,6 +463,9 @@ class SubtitleRemountReselectionTest {
 
         assertEquals(-1, event.trackIndex)
         assertEquals(5, event.owner.generation)
+        assertIs<TvSubtitleRemountEvent.Confirmed>(
+            latch.consume(emptyList(), snapshotKey = null, settled = false),
+        )
         assertNull(latch.consume(emptyList(), snapshotKey = null, settled = false))
     }
 

@@ -1776,6 +1776,10 @@ class TvPlayerViewModel(
      */
     fun onTransportMountApplied(nonce: Long) {
         if (transportMountGate.applied(nonce)) {
+            // A matching mount has replaced the item. Discard its predecessor's
+            // groups; only the new item's onTracksChanged can resolve subtitles.
+            _uiState.update { it.copy(subtitleTracks = emptyList()) }
+            subtitleSnapshotSettlement.reset()
             // The mounted item was replaced. Facts from the previous
             // transport's window must not be mapped through the new plan's
             // timeline offset — that can overstate the new extent and turn a
@@ -4377,15 +4381,16 @@ class TvPlayerViewModel(
         }
     }
 
+    internal fun canApplySubtitleMount(request: TvSubtitleMountRequest): Boolean =
+        !transportMountGate.suppressPositionReports &&
+            subtitleRemountReselection.ownsResolved(request.owner.generation)
+
     internal fun onSubtitleSelectionApplied(request: TvSubtitleMountRequest) {
-        val owner = request.owner
-        subtitleRemountReselection.acknowledgeResolved(owner.generation)
-        subtitleTransactions.reportMountedSelection(
-            identity = owner.identity,
-            selected = true,
-            snapshotKey = "tv-mounted:${owner.generation}:${request.trackIndex}",
-            settled = true,
-        )
+        if (!subtitleRemountReselection.ownsResolved(request.owner.generation)) return
+        // MediaController accepted the override, but its player may not have
+        // selected that group yet. A synchronous callback may already have
+        // published it; otherwise onTracksChanged will confirm it later.
+        resolveSubtitleRemountReselection(_uiState.value.subtitleTracks)
     }
 
     /**
@@ -4450,7 +4455,7 @@ class TvPlayerViewModel(
 
     internal fun onSubtitleSelectionFailed(request: TvSubtitleMountRequest) {
         val owner = request.owner
-        subtitleRemountReselection.acknowledgeResolved(owner.generation)
+        if (!subtitleRemountReselection.acknowledgeResolved(owner.generation)) return
         Log.w(
             TV_SUBTITLE_LOG_TAG,
             "Subtitle mount rejected by the player: track=${request.trackIndex} " +
@@ -4485,10 +4490,17 @@ class TvPlayerViewModel(
                 subtitleRows = _uiState.value.subtitleUrls,
                 snapshotKey = snapshotKey,
                 settled = subtitleSnapshotSettlement.observe(subtitle),
+                transportMounted = !transportMountGate.suppressPositionReports,
             )
         ) {
             is TvSubtitleRemountEvent.Select -> _subtitleMountRequests.tryEmit(
                 TvSubtitleMountRequest(owner = event.owner, trackIndex = event.trackIndex),
+            )
+            is TvSubtitleRemountEvent.Confirmed -> subtitleTransactions.reportMountedSelection(
+                identity = event.owner.identity,
+                selected = true,
+                snapshotKey = snapshotKey ?: "tv-subtitles-off:${event.owner.generation}",
+                settled = true,
             )
             is TvSubtitleRemountEvent.Failed -> subtitleTransactions.reportMountedSelection(
                 identity = event.owner.identity,
