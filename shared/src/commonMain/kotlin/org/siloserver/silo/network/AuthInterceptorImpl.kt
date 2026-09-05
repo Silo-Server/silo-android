@@ -450,6 +450,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             request.removeSiloCredentialHeaders()
             return@on proceed(request)
         }
+        if (request.attributes.getOrNull(SingleAttemptAttributeKey) == true) return@on proceed(request)
         if (pinnedScope != null) {
             val sentAuth = request.headers[HttpHeaders.Authorization]
             val originalCall = proceed(request)

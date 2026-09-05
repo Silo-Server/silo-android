@@ -93,6 +93,16 @@ class ApiV2NoFallbackTest {
     }
 
     @Test
+    fun membershipGateBlocksEveryOperationWithoutFallback() = runTest {
+        val recorded = mutableListOf<String>()
+        val api = MembershipV2Api(client(recorded, HttpStatusCode.OK, "{}"), ApiV2Gate(ContractRegistry(ServerContract.UPDATE_REQUIRED)))
+        val results = listOf(api.favorite("item"), api.watchlist("item"), api.addFavorite("item"),
+            api.removeFavorite("item"), api.addToWatchlist("item"), api.removeFromWatchlist("item"))
+        results.forEach { assertEquals(ApiV2Gate.UPDATE_REQUIRED_ERROR, assertIs<ApiResult.Error>(it).error) }
+        assertEquals(emptyList(), recorded)
+    }
+
+    @Test
     fun unknownAndV2StatesDoNotBlock() {
         assertEquals(null, ApiV2Gate(ContractRegistry(ServerContract.UNKNOWN)).blocked())
         assertEquals(null, ApiV2Gate(ContractRegistry(ServerContract.V2)).blocked())

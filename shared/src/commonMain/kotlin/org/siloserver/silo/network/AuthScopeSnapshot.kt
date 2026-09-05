@@ -106,3 +106,7 @@ internal fun HttpRequestBuilder.requireSiloAuth() {
 fun HttpRequestBuilder.skipSiloAuth() {
     attributes.put(SkipSiloAuthAttributeKey, true)
 }
+
+/** A nonretryable mutation must not be replayed by the auth-refresh interceptor. */
+internal val SingleAttemptAttributeKey = AttributeKey<Boolean>("SiloSingleAttempt")
+internal fun HttpRequestBuilder.singleAttempt() { attributes.put(SingleAttemptAttributeKey, true) }
