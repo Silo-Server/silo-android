@@ -58,9 +58,7 @@ class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = 
 
     suspend fun searchCapabilities() = v2.searchCapabilities()
 
-    suspend fun getItemDetail(id: String): ApiResult<ItemDetail> = safeApiCall {
-        client.get("/api/v1/catalog/items/$id")
-    }
+    suspend fun getItemDetail(id: String): ApiResult<ItemDetail> = v2.itemDetail(id)
 
     suspend fun getItemVersions(id: String): ApiResult<List<FileVersion>> = safeApiCall {
         client.get("/api/v1/catalog/items/$id/versions")
@@ -70,30 +68,20 @@ class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = 
         client.get("/api/v1/catalog/items/$id/episodes")
     }
 
-    suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> = safeApiCall {
-        client.get("/api/v1/catalog/series/$seriesId/seasons")
-    }
+    suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> = v2.seriesSeasons(seriesId)
 
     suspend fun getEpisodes(
         seriesId: String,
         seasonNumber: Int
-    ): ApiResult<EpisodesResponse> = safeApiCall {
-        client.get("/api/v1/catalog/series/$seriesId/seasons/$seasonNumber/episodes")
-    }
+    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber)
 
     suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> = safeApiCall {
         client.get("/api/v1/watch/$id")
     }
 
-    suspend fun searchPeople(query: String? = null): ApiResult<List<Person>> = safeApiCall {
-        client.get("/api/v1/people") {
-            query?.let { parameter("q", it) }
-        }
-    }
+    suspend fun searchPeople(query: String? = null): ApiResult<List<Person>> = v2.people(query)
 
-    suspend fun getPerson(id: Long): ApiResult<Person> = safeApiCall {
-        client.get("/api/v1/people/$id")
-    }
+    suspend fun getPerson(id: Long): ApiResult<Person> = v2.person(id)
 
     /** Queues a server-side metadata refresh for a person (fire-and-forget). */
     suspend fun refreshPerson(id: Long): ApiResult<Unit> = safeApiCall {

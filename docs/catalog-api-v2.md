@@ -42,9 +42,9 @@ Continuations are not serialized into the offline first-page cache. A cache
 fallback disables further paging until the viewer reloads online. It cannot seed
 a new query with an old server cursor.
 
-Item details, season/episode/version reads, people-detail and watch transports, and
-the separate v1 history transport remain outside this listing migration. No
-playback or administrative UI is added.
+Version and item-episode wrappers, watch transport, person refresh, and the
+separate v1 history transport remain outside this migration. No playback or
+administrative UI is added.
 
 Validation includes shared transport/query tests, viewer-change refusal, typed
 library group routing, phone letter-index ViewModel tests, TV library destination
@@ -55,7 +55,8 @@ a reserved test device and an integrated backend fixture.
 ## Detail read adapter
 
 The shared adapter has separate wire projections for item detail, seasons, season
-episodes, and people reads. Consumer adoption is a separate step. Their existing
+episodes, and people reads. Existing phone/TV detail and person consumers use
+these adapters through CatalogRepository. Their existing
 domain IDs are numeric, so projections require quoted decimal IDs and reject
 out-of-range values before conversion. File IDs must fit a positive `Int`; person
 IDs must fit a positive `Long`. Unsupported IDs fail the read rather than being
@@ -71,3 +72,9 @@ These reads use the existing gate, captured viewer scope, and cancellation check
 Catalog markers retain `start` and `end`; watch transport is a separate contract
 and is not changed here. Dormant version/item-episode wrappers, person refresh,
 and standalone history are outside this read adapter.
+
+The season and episode reads are shared by both players' existing next-episode
+resolution. Tests cover the real repository envelopes feeding the shared resolver,
+within-season advancement, rollover past specials, and failed or partial current
+seasons remaining errors. Player orchestration is unchanged. Detail cache tests
+continue to cover warm-read coalescing, offline fallback, and viewer changes.
