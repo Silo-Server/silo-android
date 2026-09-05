@@ -317,10 +317,13 @@ class AuthRepositoryContractTest {
                 respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
             }
         }
-        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        // Real clock on both sides: the bounded probe now runs on the
+        // background scope, and a virtual-clock background would let runTest
+        // skip its bound while the caller waits out the real one.
+        val background = CoroutineScope(Dispatchers.Default)
         val repository = repository(registry, client, backgroundScope = background)
 
-        // Real clock: the bounded probe answers (with 503) inside the bound.
+        // The bounded probe answers (with 503) inside the bound.
         withContext(Dispatchers.Default) { repository.switchToServer("b") }
 
         // Returned with the verdict untouched: 503 recorded nothing.
