@@ -10,6 +10,7 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -21,6 +22,8 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ServerRegistry
@@ -54,10 +57,13 @@ class ProfileSelectionViewModelContractTest {
     @Test
     fun v2VerdictArrivingAfterUpdateRequiredRetriggersTheGatedLoad() = runTest(dispatcher) {
         val registry = MutableContractRegistry(ServerContract.UPDATE_REQUIRED)
-        val recorded = mutableListOf<String>()
+        // The mock engine answers on its own thread, outside the test
+        // scheduler, so each request is awaited rather than assumed to have
+        // landed by the time an assertion runs.
+        val requests = Channel<String>(Channel.UNLIMITED)
         val client = HttpClient(
             MockEngine { request ->
-                recorded += request.url.encodedPath
+                requests.trySend(request.url.encodedPath)
                 when (request.url.encodedPath) {
                     "/api/v1/profiles" -> respond(
                         """{"profiles":[]}""",
@@ -83,8 +89,9 @@ class ProfileSelectionViewModelContractTest {
         ProfileSelectionViewModel(profileRepository, authRepository)
         runCurrent()
 
-        // First load: the gate rejects the v2 call, so only the v1 list ran.
-        assertEquals(listOf("/api/v1/profiles"), recorded)
+        // First load: the gate rejects the v2 call without a request, so the
+        // first thing to reach the network is the v1 list.
+        assertEquals("/api/v1/profiles", requests.awaitNext())
 
         registry.setContract("a", ServerContract.V2)
         // The collector's resumption is queued on the unconfined event loop
@@ -92,11 +99,14 @@ class ProfileSelectionViewModelContractTest {
         advanceUntilIdle()
 
         // The contract change re-ran the load, and this time the gate let
-        // the v2 admin lookup through to the network. (The follow-up v1 list
-        // completes on the engine thread, outside the test scheduler, so it
-        // is deliberately not asserted here.)
-        assertEquals(1, recorded.count { it == "/api/v2/account/me" }, recorded.toString())
+        // the v2 admin lookup through to the network, followed by the list.
+        assertEquals("/api/v2/account/me", requests.awaitNext())
+        assertEquals("/api/v1/profiles", requests.awaitNext())
     }
+
+    /** Real-clock wait: under the test scheduler a virtual-time timeout would fire at once. */
+    private suspend fun Channel<String>.awaitNext(): String =
+        withContext(Dispatchers.Default) { withTimeout(5_000) { receive() } }
 }
 
 private class MutableContractRegistry(initial: ServerContract) : ServerRegistry {
