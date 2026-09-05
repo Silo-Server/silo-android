@@ -107,20 +107,16 @@ internal fun TvExpandableSynopsis(
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-            ) { showFullSynopsis = true }
-            // Keep the synopsis text on the same leading edge as the title,
-            // episode hierarchy, and metadata rows. The old 10dp horizontal
-            // inset made the description visibly drift right.
-            .padding(vertical = 7.dp),
+            ) { showFullSynopsis = true },
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Top,
     ) {
-        // tvOS: 26pt regular → 13sp, +2 per design review (2026-07-11).
+        // Match tvOS's three-line synopsis inside the reserved hero slot.
         Text(
             text = previewText,
             fontWeight = FontWeight.Normal,
-            fontSize = 15.sp,
-            lineHeight = 19.sp,
+            fontSize = 13.sp,
+            lineHeight = 17.5.sp,
             color = Color.White.copy(alpha = 0.82f),
             textAlign = TextAlign.Start,
             maxLines = collapsedMaxLines,

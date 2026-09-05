@@ -4,11 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -50,6 +45,7 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -80,6 +76,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -560,16 +557,15 @@ private fun TvDetailContent(
     val isEpisodicType = detail.type in setOf("series", "season", "episode")
     val showsEpisodeRail = isEpisodicType && state.episodes.isNotEmpty()
     val showsSeasonChips = isEpisodicType && if (isSeriesDetail) {
-        state.seasons.isNotEmpty()
+        true
     } else {
         state.seasons.size > 1
     }
     // Keep the whole Episodes section — and, crucially, the season chips —
     // mounted whenever the series has seasons, so selecting an empty or failed
     // season can't unmount the chips and strand the user (T15). The rail itself
-    // still renders only when there are episodes; otherwise the section shows a
-    // loading spinner or a "No episodes available" empty state.
-    val showsEpisodesSection = isEpisodicType && (state.seasons.isNotEmpty() || state.episodes.isNotEmpty())
+    // reserves its footprint from the first Series frame, before seasons arrive.
+    val showsEpisodesSection = isEpisodicType && (isSeriesDetail || state.seasons.isNotEmpty() || state.episodes.isNotEmpty())
     // Whether a focusable episode-navigation element (the rail or the season
     // chips) sits above the cast / similar rails — drives their
     // Up-return-to-hero fallback.
@@ -1045,6 +1041,8 @@ private fun TvDetailContent(
                                         viewModel.onSeriesEpisodeActivated(episode.contentId)
                                     }
                                 },
+                                onCarouselEdgeRequested = viewModel::onCarouselEdgeRequested,
+                                onCarouselFocusLost = viewModel::onCarouselFocusLost,
                                 onSetEpisodeWatched = viewModel::onSetEpisodeWatched,
                                 onSetEpisodeFavorite = viewModel::onSetEpisodeFavorite,
                             )
@@ -1346,24 +1344,38 @@ private fun TvDetailPlaybackSelectionSummary(
         ).replace("Auto - ", "Auto · ")
     }
 
+    // Retain presentation only while the next episode resolves. Playback and
+    // selector actions continue to use the live, identity-checked state.
+    val resolvedValues = Triple(versionValue, audioValue, subtitleValue)
+    var previousValues by remember(detail.contentId) {
+        mutableStateOf<Triple<String?, String?, String?>?>(null)
+    }
+    val transitioning = usesNextUp && (
+        state.isLoadingNextUpPlaybackDetail || state.episodesLoading || state.seasonsLoading
+    )
+    val displayedValues = if (transitioning) previousValues ?: resolvedValues else resolvedValues
+    SideEffect {
+        if (!transitioning) previousValues = resolvedValues
+    }
+
     Row(
         modifier = Modifier.height(TV_PLAYBACK_SUMMARY_HEIGHT),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         TvPlaybackSummaryItem(
             label = "VERSION",
-            value = versionValue,
+            value = displayedValues.first,
             itemWidth = TV_PLAYBACK_VERSION_ITEM_WIDTH,
         )
         TvPlaybackSummaryItem(
             label = "AUDIO",
-            value = audioValue,
+            value = displayedValues.second,
             itemWidth = TV_PLAYBACK_AUDIO_ITEM_WIDTH,
         )
         TvPlaybackSummaryItem(
             label = "SUBTITLES",
-            value = subtitleValue,
+            value = displayedValues.third,
             itemWidth = TV_PLAYBACK_SUBTITLE_ITEM_WIDTH,
         )
     }
@@ -1375,18 +1387,34 @@ private fun TvPlaybackSummaryItem(
     value: String?,
     itemWidth: androidx.compose.ui.unit.Dp,
 ) {
-    // Items size to their text instead of a fixed width so long audio or
-    // subtitle labels are never cut off. The skeleton keeps a fixed width so
-    // the loading row stays stable until the values arrive.
+    val valueStyle = MaterialTheme.typography.bodyMedium.copy(
+        fontWeight = FontWeight.Medium,
+        fontSize = 11.5.sp,
+        lineHeight = 14.sp,
+        color = Color.White.copy(alpha = 0.82f),
+    )
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val valueScale = remember(value, label, itemWidth, valueStyle, textMeasurer, density) {
+        val labelWidth = textMeasurer.measure(
+            label,
+            valueStyle.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
+        ).size.width
+        val valueWidth = textMeasurer.measure(value.orEmpty(), valueStyle).size.width
+        val availableWidth = with(density) { (itemWidth - 4.dp).toPx() } - labelWidth
+        (availableWidth / valueWidth.coerceAtLeast(1)).coerceIn(0.75f, 1f)
+    }
+    // Stable columns keep Audio and Subtitles aligned while episode data loads.
     Row(
-        modifier = if (value == null) Modifier.width(itemWidth) else Modifier,
+        modifier = Modifier.width(itemWidth),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(
             text = label,
             fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
+            fontSize = 11.5.sp,
+            lineHeight = 14.sp,
             letterSpacing = 0.5.sp,
             color = Color.White.copy(alpha = 0.48f),
             maxLines = 1,
@@ -1396,9 +1424,9 @@ private fun TvPlaybackSummaryItem(
         } else {
             Text(
                 text = value,
-                fontWeight = FontWeight.Medium,
-                fontSize = 11.5.sp,
-                color = Color.White.copy(alpha = 0.82f),
+                modifier = Modifier.weight(1f),
+                style = valueStyle.copy(fontSize = valueStyle.fontSize * valueScale),
+                overflow = TextOverflow.Ellipsis,
                 maxLines = 1,
             )
         }
@@ -1417,10 +1445,10 @@ private fun TvPlaybackSummarySkeleton(modifier: Modifier = Modifier) {
     )
 }
 
-private val TV_PLAYBACK_SUMMARY_HEIGHT = 20.dp
-private val TV_PLAYBACK_VERSION_ITEM_WIDTH = 120.dp
-private val TV_PLAYBACK_AUDIO_ITEM_WIDTH = 160.dp
-private val TV_PLAYBACK_SUBTITLE_ITEM_WIDTH = 130.dp
+private val TV_PLAYBACK_SUMMARY_HEIGHT = 22.dp
+private val TV_PLAYBACK_VERSION_ITEM_WIDTH = 156.5.dp
+private val TV_PLAYBACK_AUDIO_ITEM_WIDTH = 182.dp
+private val TV_PLAYBACK_SUBTITLE_ITEM_WIDTH = 169.dp
 
 internal fun seriesStarringCredit(detail: ItemDetail): String? {
     val names = detail.cast
@@ -1581,8 +1609,7 @@ private fun HeroActionRow(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Action row — approved tvOS `HStack(spacing: 18)` mapped through the
         // half-scale dp port as the button internals. Version and Subtitles use
-        // the same circular chrome as the utility actions, so this cluster never
-        // changes shape while focus moves across it.
+        // circular chrome at rest and widen to reveal their labels on focus.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1600,6 +1627,7 @@ private fun HeroActionRow(
                 horizontalArrangement = Arrangement.spacedBy(9.dp),
             ) {
                 TvPrimaryPillButton(
+                    stableHero = true,
                     icon = Icons.Filled.PlayArrow,
                     title = playButtonLabel(
                         isSeriesOrSeason = isSeriesOrSeason,
@@ -1627,6 +1655,32 @@ private fun HeroActionRow(
                     modifier = if (detail.type == "series") Modifier.width(170.dp) else Modifier,
                     focusRequester = playFocus,
                 )
+
+
+                if (hasResume) {
+                    // tvOS Start Over uses `backward.end.fill` (skip-to-start),
+                    // not a replay arrow. It is an icon-only circular companion
+                    // to the primary Play/Resume pill.
+                    TvSquareToggleButton(
+                        icon = Icons.Filled.SkipPrevious,
+                        iconActive = Icons.Filled.SkipPrevious,
+                        contentDescription = "Start Over",
+                        titleOnFocus = "Start Over",
+                        isActive = false,
+                        onClick = {
+                            if (playReady && !playLaunchPending) {
+                                playLaunchPending = true
+                                onPlay(
+                                    playContentId, playFileId,
+                                    selectorAudioIndex ?: automaticAudioTrackOrdinal,
+                                    selectorAudioPicked,
+                                    subtitleLaunchSelection,
+                                    playType, 0.0,
+                                )
+                            }
+                        },
+                    )
+                }
 
                 TvPlaybackActionSelectors(
                     versions = selectorVersions,
@@ -1657,30 +1711,6 @@ private fun HeroActionRow(
                     versionFocusRequester = selectorFocus,
                 )
 
-                if (hasResume) {
-                    // tvOS Start Over uses `backward.end.fill` (skip-to-start),
-                    // not a replay arrow. It is an icon-only circular companion
-                    // to the primary Play/Resume pill.
-                    TvSquareToggleButton(
-                        icon = Icons.Filled.SkipPrevious,
-                        iconActive = Icons.Filled.SkipPrevious,
-                        contentDescription = "Start Over",
-                        isActive = false,
-                        onClick = {
-                            if (playReady && !playLaunchPending) {
-                                playLaunchPending = true
-                                onPlay(
-                                    playContentId, playFileId,
-                                    selectorAudioIndex ?: automaticAudioTrackOrdinal,
-                                    selectorAudioPicked,
-                                    subtitleLaunchSelection,
-                                    playType, 0.0,
-                                )
-                            }
-                        },
-                    )
-                }
-
                 TvSquareToggleButton(
                     icon = Icons.Filled.BookmarkBorder,
                     iconActive = Icons.Filled.Bookmark,
@@ -1691,6 +1721,7 @@ private fun HeroActionRow(
                         "Add to watchlist"
                     },
                     onClick = viewModel::onToggleWatchlist,
+                    titleOnFocus = "Watchlist",
                 )
 
                 TvSquareToggleButton(
@@ -1698,6 +1729,7 @@ private fun HeroActionRow(
                     iconActive = Icons.Filled.MoreHoriz,
                     isActive = false,
                     contentDescription = "More options",
+                    titleOnFocus = "More",
                     onClick = { moreOpen = true },
                 )
             }
@@ -1938,29 +1970,6 @@ private fun watchedUnmarkLabel(detail: ItemDetail): String = when (detail.type) 
 }
 
 /** Tiny breathing room between the fixed hero controls and the series modes. */
-private val SeriesSeasonPickerTopPadding = 3.dp
-
-private data class SeriesEpisodeRailPage(
-    val seasonNumber: Int,
-    val episodes: List<EpisodeListItem>,
-)
-
-private const val SERIES_EPISODE_CAROUSEL_DURATION_MS = 360
-
-internal fun seriesEpisodeCarouselDirection(
-    fromSeasonNumber: Int,
-    toSeasonNumber: Int,
-    seasons: List<Season>,
-): Int {
-    if (fromSeasonNumber == toSeasonNumber) return 0
-    val fromIndex = seasons.indexOfFirst { it.seasonNumber == fromSeasonNumber }
-    val toIndex = seasons.indexOfFirst { it.seasonNumber == toSeasonNumber }
-    return if (fromIndex >= 0 && toIndex >= 0) {
-        if (toIndex > fromIndex) 1 else -1
-    } else {
-        if (toSeasonNumber > fromSeasonNumber) 1 else -1
-    }
-}
 
 @Composable
 private fun EpisodesSection(
@@ -1975,10 +1984,13 @@ private fun EpisodesSection(
     onSeasonSelected: (org.siloserver.silo.model.catalog.Season) -> Unit,
     onEpisodeSelected: (EpisodeListItem) -> Unit,
     onEpisodeFocused: (EpisodeListItem) -> Unit = {},
+    onCarouselEdgeRequested: (String, Int) -> Unit,
+    onCarouselFocusLost: () -> Unit,
     onSetEpisodeWatched: (contentId: String, watched: Boolean) -> Unit,
     onSetEpisodeFavorite: (contentId: String, favorite: Boolean) -> Unit,
 ) {
     val isSeries = detail.type == "series"
+    val railEpisodes = if (isSeries) state.carouselEpisodes.ifEmpty { state.episodes } else state.episodes
     Column(verticalArrangement = Arrangement.spacedBy(if (isSeries) 7.dp else 20.dp)) {
         if (!isSeries) {
             Row(
@@ -2014,9 +2026,6 @@ private fun EpisodesSection(
                     selectedSeason = state.selectedSeason,
                     onShowSelected = onShowSelected,
                     onSeasonSelected = onSeasonSelected,
-                    // Keep the approved row geometry, adding only the small
-                    // requested breathing room below the compact hero.
-                    modifier = Modifier.padding(top = SeriesSeasonPickerTopPadding),
                     // Return to the circular Version control in the hero; if
                     // it is not attached yet, fall back to Play.
                     onDirectionUp = onReturnToSeriesSelector ?: onReturnToHero,
@@ -2037,20 +2046,19 @@ private fun EpisodesSection(
         // loads (and for empty seasons), so the spinner/empty states don't
         // collapse the section and flash Cast & Crew up into the viewport.
         var railHeightPx by remember { mutableStateOf(0) }
-        val railMinHeight = with(LocalDensity.current) { railHeightPx.toDp() }
+        val measuredRailHeight = with(LocalDensity.current) { railHeightPx.toDp() }
+        val railMinHeight = if (isSeries) maxOf(measuredRailHeight, tvSeriesEpisodeRailHeight()) else measuredRailHeight
         Box(
             modifier = Modifier
-                .heightIn(min = railMinHeight)
-                // Keep a small separation from Seasons while reclaiming the
-                // space previously occupied by the selector band.
-                .padding(top = if (isSeries && showsSeasonChips) 10.dp else 0.dp),
+                .heightIn(min = railMinHeight),
         ) {
             when {
-                // The first season still gets a loading indicator. Once a Series rail
-                // exists, retain it until the requested season is ready so the two
-                // complete rails can perform the directional carousel hand-off below.
-                // Non-Series detail routes retain their established spinner behavior.
-                state.episodesLoading && (!isSeries || state.episodes.isEmpty()) -> {
+                isSeries && railEpisodes.isEmpty() &&
+                    (state.isLoading || state.seasonsLoading || state.episodesLoading) -> {
+                    TvSeriesEpisodeRailSkeleton()
+                }
+                // Keep the loaded rail mounted during season jumps. Legacy routes use a spinner.
+                state.episodesLoading && (!isSeries || railEpisodes.isEmpty()) -> {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2064,7 +2072,7 @@ private fun EpisodesSection(
                 // and left nothing to show): keep the section and chips mounted and
                 // say so, rather than unmounting everything and stranding the user
                 // (T15a).
-                state.episodes.isEmpty() -> {
+                railEpisodes.isEmpty() -> {
                     Text(
                         text = "No episodes available",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
@@ -2091,52 +2099,17 @@ private fun EpisodesSection(
                             onDirectionUp = if (showsSeasonChips) null else onReturnToHero,
                             hidesEpisodeTitle = isSeries,
                             usesSeriesGeometry = isSeries,
+                            carouselJump = state.carouselJump.takeIf { isSeries },
+                            hasPreviousEpisodes = isSeries && state.carouselPreviousSeason != null,
+                            hasNextEpisodes = isSeries && state.carouselNextSeason != null,
+                            carouselLoadError = state.carouselLoadError,
+                            onCarouselEdgeRequested = onCarouselEdgeRequested,
+                            onCarouselFocusLost = onCarouselFocusLost,
                             modifier = Modifier.onSizeChanged { railHeightPx = it.height },
                         )
                     }
 
-                    if (isSeries) {
-                        // Retain the outgoing season while the next one loads,
-                        // then move both complete rails as one viewport-wide
-                        // carousel page. Card geometry and each rail's own
-                        // focus/scroll state remain entirely unchanged.
-                        val railPage = SeriesEpisodeRailPage(
-                            seasonNumber = state.episodes.first().seasonNumber,
-                            episodes = state.episodes,
-                        )
-                        AnimatedContent(
-                            targetState = railPage,
-                            contentKey = { it.seasonNumber },
-                            transitionSpec = {
-                                val direction = seriesEpisodeCarouselDirection(
-                                    fromSeasonNumber = initialState.seasonNumber,
-                                    toSeasonNumber = targetState.seasonNumber,
-                                    seasons = state.seasons,
-                                )
-                                (
-                                    slideInHorizontally(
-                                        animationSpec = tween(
-                                            durationMillis = SERIES_EPISODE_CAROUSEL_DURATION_MS,
-                                            easing = FastOutSlowInEasing,
-                                        ),
-                                        initialOffsetX = { width -> width * direction },
-                                    ) togetherWith slideOutHorizontally(
-                                        animationSpec = tween(
-                                            durationMillis = SERIES_EPISODE_CAROUSEL_DURATION_MS,
-                                            easing = FastOutSlowInEasing,
-                                        ),
-                                        targetOffsetX = { width -> -width * direction },
-                                    )
-                                ).using(SizeTransform(clip = false))
-                            },
-                            label = "seriesEpisodeCarousel",
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { page ->
-                            renderEpisodeRail(page.episodes)
-                        }
-                    } else {
-                        renderEpisodeRail(state.episodes)
-                    }
+                    renderEpisodeRail(railEpisodes)
                 }
             }
         }

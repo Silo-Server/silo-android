@@ -71,6 +71,68 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvNextUpSelectionHandoffTest {
     @Test
+    fun returningToLoadedEpisodeCancelsPendingSeasonJump() = runDetailTest {
+        val scenario = Scenario(suffix = "-continuous-cancel-jump")
+        scenario.seasonTwoEpisodesGate = CompletableDeferred()
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        fixture.viewModel.onSeasonSelected(2)
+        fixture.viewModel.onSeriesEpisodeActivated(scenario.episodeTwoId)
+        scenario.seasonTwoEpisodesGate?.complete(Unit)
+        awaitCondition { fixture.viewModel.uiState.value.carouselEpisodes.size == 3 }
+        assertEquals(1, fixture.viewModel.uiState.value.selectedSeason)
+        assertEquals(null, fixture.viewModel.uiState.value.carouselJump)
+        awaitEpisode(fixture.viewModel, scenario.episodeTwoId)
+    }
+
+    @Test
+    fun prefetchedSeasonExtendsRailWithoutChangingPlayTarget() = runDetailTest {
+        val scenario = Scenario(suffix = "-continuous-prefetch")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        awaitCondition { fixture.viewModel.uiState.value.carouselEpisodes.size == 3 }
+        assertEquals(1, fixture.viewModel.uiState.value.selectedSeason)
+        assertEquals(scenario.episodeOneId, fixture.viewModel.uiState.value.nextUpEpisode?.contentId)
+
+        fixture.viewModel.onSeriesEpisodeActivated(scenario.seasonTwoEpisodeId)
+        awaitEpisode(fixture.viewModel, scenario.seasonTwoEpisodeId)
+        assertEquals(2, fixture.viewModel.uiState.value.selectedSeason)
+        assertEquals(listOf(scenario.seasonTwoEpisodeId), fixture.viewModel.uiState.value.episodes.map { it.contentId })
+
+        fixture.viewModel.onSeriesEpisodeActivated(scenario.episodeTwoId)
+        awaitEpisode(fixture.viewModel, scenario.episodeTwoId)
+        assertEquals(1, fixture.viewModel.uiState.value.selectedSeason)
+    }
+
+    @Test
+    fun delayedEdgeRequestsFocusOnlyAfterItsPageArrives() = runDetailTest {
+        val scenario = Scenario(suffix = "-continuous-delayed")
+        scenario.seasonTwoEpisodesGate = CompletableDeferred()
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        fixture.viewModel.onSeriesEpisodeActivated(scenario.episodeTwoId)
+        fixture.viewModel.onCarouselEdgeRequested(scenario.episodeTwoId, 1)
+        assertEquals(null, fixture.viewModel.uiState.value.carouselJump)
+        scenario.seasonTwoEpisodesGate?.complete(Unit)
+        awaitCondition { fixture.viewModel.uiState.value.carouselJump != null }
+        assertEquals(scenario.seasonTwoEpisodeId, fixture.viewModel.uiState.value.carouselJump?.contentId)
+        assertTrue(fixture.viewModel.uiState.value.carouselJump?.requestFocus == true)
+    }
+
+    @Test
+    fun leavingRailCancelsPendingEdgeFocus() = runDetailTest {
+        val scenario = Scenario(suffix = "-continuous-focus-cancel")
+        scenario.seasonTwoEpisodesGate = CompletableDeferred()
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        fixture.viewModel.onCarouselEdgeRequested(scenario.episodeTwoId, 1)
+        fixture.viewModel.onCarouselFocusLost()
+        scenario.seasonTwoEpisodesGate?.complete(Unit)
+        awaitCondition { fixture.viewModel.uiState.value.carouselEpisodes.size == 3 }
+        assertEquals(null, fixture.viewModel.uiState.value.carouselJump)
+    }
+
+    @Test
     fun cancelledPriorSeasonCannotEndReplacementLoad() = runDetailTest {
         val scenario = Scenario(suffix = "-cancelled-season-owner")
         val fixture = createFixture(scenario)
