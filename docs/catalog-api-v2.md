@@ -51,3 +51,23 @@ library group routing, phone letter-index ViewModel tests, TV library destinatio
 tests, and a hidden-book-page/expired-cursor/reload regression. Phone and TV debug
 APK builds are the platform gate. Live backend/device validation remains pending
 a reserved test device and an integrated backend fixture.
+
+## Detail read adapter
+
+The shared adapter has separate wire projections for item detail, seasons, season
+episodes, and people reads. Consumer adoption is a separate step. Their existing
+domain IDs are numeric, so projections require quoted decimal IDs and reject
+out-of-range values before conversion. File IDs must fit a positive `Int`; person
+IDs must fit a positive `Long`. Unsupported IDs fail the read rather than being
+truncated or silently omitted.
+
+Seasons, season episodes, and people search require an `items` envelope. Their
+current contract accepts no cursor and omits `page`; an absent page is valid.
+An unexpected continuation is rejected rather than presenting a partial hierarchy
+as complete. People search remains a bounded name lookup (default 20, maximum
+100), not an exhaustive person directory.
+
+These reads use the existing gate, captured viewer scope, and cancellation checks.
+Catalog markers retain `start` and `end`; watch transport is a separate contract
+and is not changed here. Dormant version/item-episode wrappers, person refresh,
+and standalone history are outside this read adapter.

@@ -13,6 +13,11 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.Season
+import org.siloserver.silo.model.catalog.SeasonsResponse
+import org.siloserver.silo.model.catalog.EpisodesResponse
+import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.network.*
 
 /** Bounded native browse reads. A refused cursor never falls back to page one. */
@@ -135,6 +140,51 @@ class CatalogV2Api(
 
     suspend fun libraryCollections(libraryId: String): ApiResult<LibraryCollectionTabV2> = read { scope ->
         client.get("/api/v2/library/$libraryId/collections") { scope?.let { authScope(it) } }
+    }
+
+    suspend fun itemDetail(id: String): ApiResult<ItemDetail> =
+        read<ItemDetailReadV2> { scope ->
+            client.get("/api/v2/catalog/items/$id") { scope?.let { authScope(it) } }
+        }.project { it.toDomain() }
+
+    suspend fun seriesSeasons(id: String): ApiResult<SeasonsResponse> =
+        read<DetailCollectionReadV2<Season>> { scope ->
+            client.get("/api/v2/catalog/series/$id/seasons") { scope?.let { authScope(it) } }
+        }.project { it.requireComplete(); SeasonsResponse(it.items) }
+
+    suspend fun seasonEpisodes(id: String, number: Int): ApiResult<EpisodesResponse> =
+        read<DetailCollectionReadV2<EpisodeListItemReadV2>> { scope ->
+            client.get("/api/v2/catalog/series/$id/seasons/$number/episodes") { scope?.let { authScope(it) } }
+        }.project { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
+
+    suspend fun person(id: Long): ApiResult<Person> =
+        read<PersonReadV2> { scope ->
+            client.get("/api/v2/catalog/people/$id") { scope?.let { authScope(it) } }
+        }.project { it.toDomain() }
+
+    suspend fun people(query: String?, limit: Int = 20): ApiResult<List<Person>> {
+        if (limit !in 1..100) return ApiResult.Error(0, "validation_failed", "People search limit must be between 1 and 100.")
+        return read<DetailCollectionReadV2<PersonReadV2>> { scope ->
+            client.get("/api/v2/catalog/people") {
+                scope?.let { authScope(it) }
+                parameter("q", query)
+                parameter("limit", limit)
+            }
+        }.project { it.requireComplete(); it.items.map { person -> person.toDomain() } }
+    }
+
+    // These operations currently accept no cursor. Refuse an unexpected partial
+    // envelope so callers cannot mistake an incomplete hierarchy for the full one.
+    private fun DetailCollectionReadV2<*>.requireComplete() {
+        require(page?.hasMore != true && page?.nextCursor.isNullOrBlank()) { "The server returned an unsupported continuation." }
+    }
+
+    private inline fun <T, R> ApiResult<T>.project(convert: (T) -> R): ApiResult<R> = when (this) {
+        is ApiResult.Success -> try { ApiResult.Success(convert(data)) } catch (error: IllegalArgumentException) {
+            ApiResult.Error(0, "invalid_response", error.message ?: "The detail response could not be represented.")
+        }
+        is ApiResult.Error -> this
+        is ApiResult.NetworkError -> this
     }
 
     private suspend inline fun <reified T> read(block: (AuthScopeSnapshot?) -> HttpResponse): ApiResult<T> {
