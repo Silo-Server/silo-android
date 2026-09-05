@@ -146,6 +146,46 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun recreatedScreenObservesAppliedSubtitleMountWithoutRemountingRetainedPlayback() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent(contentId = "movie", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session"))
+            viewModel.awaitState { it.sessionId == "session" && !it.isLoading }
+            val state = viewModel.uiState.value
+            val mount = MobileSubtitleMount(state.mediaMountGeneration, state.subtitleRefreshNonce)
+            viewModel.onSubtitleMediaMountApplied(mount)
+            viewModel.onMediaMountApplied(mount.generation)
+            assertTrue(viewModel.isCurrentSubtitleMount(mount))
+
+            // A replacement composition subscribes after the original collector is gone.
+            val reattachedMount = viewModel.mountedSubtitleMount.first()
+            assertEquals(mount, reattachedMount)
+            assertFalse(viewModel.shouldApplyMediaMount(mount.generation))
+            assertTrue(viewModel.isCurrentSubtitleMount(reattachedMount))
+
+            viewModel.onSubtitleMediaMountChanging()
+            assertNull(viewModel.mountedSubtitleMount.first())
+            assertFalse(viewModel.isCurrentSubtitleMount(reattachedMount))
+            viewModel.onSubtitleMediaMountApplied(mount)
+            assertTrue(viewModel.isCurrentSubtitleMount(viewModel.mountedSubtitleMount.first()))
+
+            viewModel.loadContent(contentId = "next", preferredFileId = 2)
+            assertNull(viewModel.mountedSubtitleMount.value)
+            assertFalse(viewModel.isCurrentSubtitleMount(mount))
+            starter.awaitRequestCount(2)
+            starter.complete(1, ready(starter.request(1), "next-session"))
+            viewModel.awaitState { it.sessionId == "next-session" && !it.isLoading }
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun differentContentLoadsCompletingOutOfOrderKeepNewestAndStopStaleReady() =
         runTest(dispatcher) {
             val starter = DeferredNonCooperativeStarter()

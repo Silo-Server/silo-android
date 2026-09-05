@@ -674,6 +674,18 @@ class PlayerViewModel(
     private var serverSeekRecoveryInFlight = false
     private var queuedServerSeek: ServerSeekRecoveryRequest? = null
     private var playbackRecoveryGeneration = 0L
+    // The service and this ViewModel survive screen recreation; applied evidence must too.
+    private val _mountedSubtitleMount = MutableStateFlow<MobileSubtitleMount?>(null)
+    internal val mountedSubtitleMount: StateFlow<MobileSubtitleMount?> = _mountedSubtitleMount
+
+    internal fun onSubtitleMediaMountChanging() {
+        _mountedSubtitleMount.value = null
+    }
+
+    internal fun onSubtitleMediaMountApplied(mount: MobileSubtitleMount) {
+        _mountedSubtitleMount.value = mount
+    }
+
     private var mediaMountSequence = 0L
     private var awaitingMediaMountGeneration: Long? = null
     private val subtitleRefreshGate = SubtitleRefreshGate()
@@ -2038,6 +2050,7 @@ class PlayerViewModel(
         queuedServerSeek = null
         awaitingMediaMountGeneration = null
         positionReportsBlockedForPendingLoad = true
+        onSubtitleMediaMountChanging()
         seekRecoveryRollbackInvalidated = false
         clearBufferedSeekCommands()
         pendingNativeSeekAfterMount = null
@@ -3170,12 +3183,13 @@ class PlayerViewModel(
         mobileSubtitleTransactions.select(identity)
     }
 
-    internal fun isCurrentSubtitleMount(mount: MobileSubtitleMount?): Boolean = isCurrentMobileSubtitleMount(
-        applied = mount,
-        expected = MobileSubtitleMount(_uiState.value.mediaMountGeneration, _uiState.value.subtitleRefreshNonce),
-        awaitingGeneration = awaitingMediaMountGeneration,
-        loading = positionReportsBlockedForPendingLoad,
-    )
+    internal fun isCurrentSubtitleMount(mount: MobileSubtitleMount?): Boolean =
+        mount == _mountedSubtitleMount.value && isCurrentMobileSubtitleMount(
+            applied = mount,
+            expected = MobileSubtitleMount(_uiState.value.mediaMountGeneration, _uiState.value.subtitleRefreshNonce),
+            awaitingGeneration = awaitingMediaMountGeneration,
+            loading = positionReportsBlockedForPendingLoad,
+        )
 
     internal fun onPendingSubtitleMountResult(
         mount: MobileSubtitleMount?,
