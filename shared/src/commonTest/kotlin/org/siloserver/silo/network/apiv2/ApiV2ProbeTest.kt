@@ -17,9 +17,10 @@ import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.network.SiloJson
 
 /**
- * The compatibility rule, case by case. Only a plain-text 404 — what the v1
- * alpha listener's `http.NotFound` emits for an unknown `/api/v2` path — is
- * the update-server state; everything else stays its own failure kind.
+ * The compatibility rule, case by case. Only a 404 whose body is exactly what
+ * the v1 alpha listener's `http.NotFound` emits for an unknown `/api/v2` path
+ * (`404 page not found`, at most one trailing newline) is the update-server
+ * state; everything else stays its own failure kind.
  */
 class ApiV2ProbeTest {
 
@@ -55,9 +56,39 @@ class ApiV2ProbeTest {
     }
 
     @Test
-    fun plainText404IsUpdateServer() = runTest {
+    fun legacyNotFoundBodyIsUpdateServer() = runTest {
+        val result = probe(HttpStatusCode.NotFound, "404 page not found", "text/plain; charset=utf-8")
+        assertEquals(ApiV2ProbeResult.UpdateServer, result)
+    }
+
+    @Test
+    fun legacyNotFoundBodyWithTrailingNewlineIsUpdateServer() = runTest {
         val result = probe(HttpStatusCode.NotFound, "404 page not found\n", "text/plain; charset=utf-8")
         assertEquals(ApiV2ProbeResult.UpdateServer, result)
+    }
+
+    @Test
+    fun legacyNotFoundBodyWithLeadingWhitespaceIsNotUpdateServer() = runTest {
+        val result = probe(HttpStatusCode.NotFound, " 404 page not found", "text/plain; charset=utf-8")
+        val failure = assertIs<ApiV2ProbeResult.Failure>(result)
+        assertEquals(ApiV2ProbeResult.Kind.UNEXPECTED_STATUS, failure.kind)
+        assertEquals(404, failure.status)
+    }
+
+    @Test
+    fun legacyNotFoundBodyWithTwoTrailingNewlinesIsNotUpdateServer() = runTest {
+        val result = probe(HttpStatusCode.NotFound, "404 page not found\n\n", "text/plain; charset=utf-8")
+        val failure = assertIs<ApiV2ProbeResult.Failure>(result)
+        assertEquals(ApiV2ProbeResult.Kind.UNEXPECTED_STATUS, failure.kind)
+        assertEquals(404, failure.status)
+    }
+
+    @Test
+    fun otherPlainText404IsNotUpdateServer() = runTest {
+        val result = probe(HttpStatusCode.NotFound, "Not Found", "text/plain; charset=utf-8")
+        val failure = assertIs<ApiV2ProbeResult.Failure>(result)
+        assertEquals(ApiV2ProbeResult.Kind.UNEXPECTED_STATUS, failure.kind)
+        assertEquals(404, failure.status)
     }
 
     @Test

@@ -6,9 +6,7 @@ import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.skipSiloAuth
@@ -36,7 +34,7 @@ sealed class ApiV2ProbeResult {
         SERVER_ERROR,
         /** A 200 that is not a syntactically valid v2 info body (HTML from a proxy, malformed JSON, api_major != 2). */
         MALFORMED_RESPONSE,
-        /** Any other status, including a 404 that is not the legacy listener's plain-text 404. */
+        /** Any other status, including a 404 whose body is not the legacy listener's exact `404 page not found`. */
         UNEXPECTED_STATUS,
     }
 }
@@ -47,14 +45,17 @@ sealed class ApiV2ProbeResult {
  *
  * Compatibility rule:
  * - A syntactically valid info body with `api_major == 2` is [ApiV2ProbeResult.V2].
- * - A 404 whose Content-Type is `text/plain` is [ApiV2ProbeResult.UpdateServer]:
- *   that is exactly what Go's `http.NotFound` on the legacy v1 listener emits
- *   (`404 page not found`). It is the only input that produces the
- *   update-server state.
- * - A 404 with any other media type (an HTML page from a proxy, a v2
- *   `application/problem+json` body) is [ApiV2ProbeResult.Failure] with
- *   [ApiV2ProbeResult.Kind.UNEXPECTED_STATUS]: it does not prove the server is
- *   a v1-only Silo, so it is a reachability problem, not a contract verdict.
+ * - A 404 whose body is exactly what Go's `http.NotFound` on the legacy v1
+ *   listener writes — [LEGACY_NOT_FOUND_BODY], tolerating only the single
+ *   trailing newline the helper appends — is [ApiV2ProbeResult.UpdateServer].
+ *   It is the only input that produces the update-server state. The body
+ *   decides; the Content-Type is not consulted.
+ * - A 404 with any other body (an HTML page from a proxy, a v2
+ *   `application/problem+json` body, a proxy's own plain-text `Not Found`,
+ *   leading whitespace or extra newlines around the Go text) is
+ *   [ApiV2ProbeResult.Failure] with [ApiV2ProbeResult.Kind.UNEXPECTED_STATUS]:
+ *   it does not prove the server is a v1-only Silo, so it is a reachability
+ *   problem, not a contract verdict.
  * - Timeouts, TLS/connect failures, 401/403, 429, 5xx, and unparseable 200
  *   bodies are each their own [ApiV2ProbeResult.Failure] kind.
  *
@@ -82,10 +83,9 @@ class ApiV2Probe(private val client: HttpClient) {
             return ApiV2ProbeResult.Failure(ApiV2ProbeResult.Kind.CONNECTION, cause = e)
         }
         val status = response.status.value
-        val contentType = response.contentType()
         return when {
             response.status == HttpStatusCode.NotFound -> {
-                if (contentType?.withoutParameters() == ContentType.Text.Plain) {
+                if (isLegacyNotFound(response.bodyAsText())) {
                     ApiV2ProbeResult.UpdateServer
                 } else {
                     ApiV2ProbeResult.Failure(ApiV2ProbeResult.Kind.UNEXPECTED_STATUS, status)
@@ -113,5 +113,16 @@ class ApiV2Probe(private val client: HttpClient) {
 
     companion object {
         const val PATH = "/api/v2/system/info"
+
+        /** What Go's `http.NotFound` writes, before its trailing newline. */
+        const val LEGACY_NOT_FOUND_BODY = "404 page not found"
+
+        /**
+         * Exact match, tolerating only the single trailing newline the Go helper
+         * writes. Leading whitespace or any other decoration is some other
+         * service's 404, not the legacy listener's.
+         */
+        fun isLegacyNotFound(body: String): Boolean =
+            body == LEGACY_NOT_FOUND_BODY || body == LEGACY_NOT_FOUND_BODY + "\n"
     }
 }
