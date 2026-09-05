@@ -68,3 +68,18 @@ internal data class DeviceCapabilityV2(
 internal fun HttpResponse.requireAuthStatus(expected: Int): HttpResponse = also {
     check(!status.isSuccess() || status.value == expected) { "Unexpected authentication response status" }
 }
+
+@Serializable
+internal data class InvitationAcceptanceV2(
+    val status: String,
+    @SerialName("login_status") val loginStatus: String,
+    val username: String,
+    val tokens: TokenPairV2? = null,
+) {
+    init {
+        require(status == "accepted" && username.isNotBlank())
+        require((loginStatus == "signed_in" && tokens != null) ||
+            (loginStatus == "sign_in_required" && tokens == null))
+    }
+    fun domain() = InvitationAcceptance(username, tokens?.domain())
+}

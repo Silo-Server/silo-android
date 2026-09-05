@@ -41,3 +41,25 @@ and callback and plugin launch/proxy are unchanged. Provider listing, OAuth
 completion, password management and session-management UI have no active Android
 consumer in this slice and are not introduced. Membership runtime activation is
 separate; none of its producers or dispatch paths are enabled here.
+
+## Email invitation claims
+
+The phone claim flow uses public v2 invitation capabilities, lookup and acceptance.
+It checks global support and the token's `acceptance_available` separately. Only a
+lookup 404 marks the token invalid; server failures remain retryable lookup errors.
+All requests pin the invitation origin and omit existing credentials. Acceptance
+is a single-attempt POST requiring 201 and the typed accepted outcome with string
+account IDs. Invalid or inconsistent token wrappers are failures, not sessions.
+
+`sign_in_required` is committed account creation. The screen offers ordinary
+sign-in with the returned username, without installing credentials, switching the
+server, or accepting the invitation again. Unconfirmed acceptance likewise offers
+sign-in recovery and suppresses further submission for that route. Password
+validation respects the eight-character minimum and 72-byte UTF-8 maximum.
+
+A signed-in result uses the existing atomic account replacement. Its captured
+expectation includes a synchronous route/attempt predicate evaluated inside both
+token stores' replacement lock. A replaced route cannot install a late session,
+even if cancellation cannot stop the pending completion. Duplicate submissions
+are excluded before launching a coroutine. Public invitation claiming remains
+phone-only; TV exposes no invitation claim screen.

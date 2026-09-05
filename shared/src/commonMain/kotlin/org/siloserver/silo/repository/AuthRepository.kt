@@ -1,6 +1,7 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.auth.InvitationLookupResponse
+import org.siloserver.silo.model.auth.InvitationClaimResult
 import org.siloserver.silo.model.auth.LoginResponse
 import org.siloserver.silo.model.auth.LoginRequest
 import org.siloserver.silo.model.auth.SetupStatusResponse
@@ -162,39 +163,45 @@ class AuthRepository(
     suspend fun lookupInvitation(
         serverUrl: String,
         token: String,
-    ): ApiResult<InvitationLookupResponse> = authApi.lookupInvitation(serverUrl, token)
+    ): ApiResult<InvitationLookupResponse> {
+        when (val capability = authApi.invitationCapabilities(serverUrl)) {
+            is ApiResult.Error -> return capability
+            is ApiResult.NetworkError -> return capability
+            is ApiResult.Success -> if (capability.data.state != "available" ||
+                (!capability.data.defaultProfile && !capability.data.profileless)) {
+                return ApiResult.Error(409, "capability_unavailable", "Invitation acceptance is unavailable on this server.")
+            }
+        }
+        return authApi.lookupInvitation(serverUrl, token)
+    }
 
-    /**
-     * Accepts an emailed invitation: the account is created with the
-     * invitation's email as username, tokens are persisted, and the new
-     * [User] is returned — same post-conditions as [signup].
-     *
-     * The claim request goes to [serverUrl] directly (it needs no auth), and
-     * the app only adopts that server as active once the claim has actually
-     * succeeded. Switching first would strand a user whose claim fails —
-     * expired token, already used, network error — on a server they have no
-     * account on, with their previous session no longer active.
-     */
+    /** A committed invitation may require ordinary sign-in without adopting its server. */
     suspend fun acceptInvitation(
         serverUrl: String,
         token: String,
         password: String,
-    ): ApiResult<User> {
-        val expected = tokenManager.captureAccountSessionExpectation() ?: return staleSession()
+        installationAllowed: () -> Boolean = { true },
+    ): ApiResult<InvitationClaimResult> {
+        val captured = tokenManager.captureAccountSessionExpectation() ?: return staleSession()
+        val expected = captured.copy(installationAllowed = installationAllowed)
+        if (!installationAllowed()) return staleSession()
         val result = authApi.acceptInvitation(serverUrl, token, password)
-        if (result !is ApiResult.Success) return persistSession(result)
+        if (result is ApiResult.Error) return result
+        if (result is ApiResult.NetworkError) return result
+        val accepted = (result as ApiResult.Success).data
+        if (!installationAllowed()) return staleSession()
+        val tokens = accepted.tokens ?: return ApiResult.Success(InvitationClaimResult(accepted.username, false))
         val targetServerId = serverRegistry?.addOrUpdate(serverUrl)
         val persisted = persistSession(
-            result = result,
+            result = ApiResult.Success(tokens),
             targetServerId = targetServerId,
             targetServerUrl = serverUrl.takeIf { serverRegistry == null },
             expectedIdentity = expected,
         )
-        // persistSession already refreshed the contract; only the name is left.
         if (persisted is ApiResult.Success) {
             serverRegistry?.activeServerId?.value?.let { refreshActiveServerDisplayName(it) }
         }
-        return persisted
+        return persisted.map { InvitationClaimResult(accepted.username, true) }
     }
 
     /** Checks whether public signups are enabled. */

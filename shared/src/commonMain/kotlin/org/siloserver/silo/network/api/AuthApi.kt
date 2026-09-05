@@ -91,29 +91,28 @@ class AuthApi(
     suspend fun lookupInvitation(
         serverUrl: String,
         token: String,
-    ): ApiResult<InvitationLookupResponse> = safeApiCall {
+    ): ApiResult<InvitationLookupResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
         // The token arrives from an emailed link and is not ours to trust as
         // path-safe: a '/' or '?' in it would otherwise re-shape the request.
-        client.get("${serverUrl.trimEnd('/')}/api/v1/invitations/${token.encodeURLPathPart()}") {
+        client.get("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}") {
             skipSiloAuth()
-        }
+        }.requireAuthStatus(200)
     }
 
-    /**
-     * Accepts an invitation: creates the account (username = the invitation's
-     * email) and returns a normal login response.
-     */
-    suspend fun acceptInvitation(
-        serverUrl: String,
-        token: String,
-        password: String,
-    ): ApiResult<LoginResponse> = safeApiCall {
-        client.post("${serverUrl.trimEnd('/')}/api/v1/invitations/${token.encodeURLPathPart()}/accept") {
-            skipSiloAuth()
-            contentType(ContentType.Application.Json)
-            setBody(AcceptInvitationRequest(password = password))
+    suspend fun invitationCapabilities(serverUrl: String): ApiResult<InvitationCapabilities> =
+        safeApiV2Call(ApiV2Gate.Unrestricted) {
+            client.get("${serverUrl.trimEnd('/')}/api/v2/invitations/capabilities") { skipSiloAuth() }
+                .requireAuthStatus(200)
         }
-    }
+
+    suspend fun acceptInvitation(serverUrl: String, token: String, password: String): ApiResult<InvitationAcceptance> =
+        safeApiV2Call<InvitationAcceptanceV2>(ApiV2Gate.Unrestricted) {
+            client.post("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}/accept") {
+                skipSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json)
+                setBody(AcceptInvitationRequest(password = password))
+            }.requireAuthStatus(201)
+        }.map { it.domain() }
 
     // Pilot v2 operation (getCurrentUser): v2 only, no v1 fallback.
     suspend fun getMe(): ApiResult<User> =

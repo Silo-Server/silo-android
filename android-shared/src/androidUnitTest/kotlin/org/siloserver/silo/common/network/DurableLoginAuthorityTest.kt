@@ -19,6 +19,33 @@ class DurableLoginAuthorityTest {
     private val prefs = ApplicationProvider.getApplicationContext<Context>()
         .getSharedPreferences("authority-${java.util.UUID.randomUUID()}", Context.MODE_PRIVATE)
 
+    @Test
+    fun invalidatedInvitationAttemptCannotInstallAfterWaitingForIdentityLock() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+        val registry = AndroidServerRegistry(prefs, barrier)
+        val server = registry.addOrUpdate("https://existing.example.test")
+        val manager = EncryptedTokenManagerImpl(prefs = prefs, registry = registry, identityTransitions = barrier)
+        manager.replaceAccountSession(serverId = server, accessToken = "old-access", refreshToken = "old-refresh", expiresIn = 3600, profileId = "profile")
+        val before = manager.snapshotDurableLoginAuthority()
+        var valid = true
+        val expected = checkNotNull(manager.captureAccountSessionExpectation()).copy(installationAllowed = { valid })
+        val locked = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val blocker = async { barrier.withCurrentGeneration(expected.generation) { locked.complete(Unit); release.await(); Unit } }
+        locked.await()
+        val replacing = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            assertFailsWith<AccountSessionChangedException> {
+                manager.replaceAccountSession(accessToken = "stale-access", refreshToken = "stale-refresh", expiresIn = 3600, expectedIdentity = expected)
+            }
+        }
+        valid = false
+        release.complete(Unit); blocker.await(); replacing.await()
+        assertEquals("old-access", manager.getAccessToken())
+        assertEquals("old-refresh", manager.getRefreshToken())
+        assertEquals(before, manager.snapshotDurableLoginAuthority())
+    }
+
+
     @Test fun refreshAndRecreationPreserveLoginButExplicitReloginRotatesAndRejectsLateRefresh() = runTest {
         val transitions = DefaultIdentityTransitionBarrier()
         val registry = AndroidServerRegistry(prefs, transitions)

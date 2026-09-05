@@ -99,7 +99,7 @@ class TokenManagerImpl(
             identityTransitions.changing(
                 kind = IdentityTransitionKind.ACCOUNT_REPLACE,
                 target = {
-                    if (expectedIdentity != null && identityTransitions.generation.value != expectedIdentity.generation) {
+                    if (expectedIdentity != null && (identityTransitions.generation.value != expectedIdentity.generation || !expectedIdentity.installationAllowed())) {
                         throw AccountSessionChangedException()
                     }
                     check(mutex.withLock { temporaryScope == null }) {

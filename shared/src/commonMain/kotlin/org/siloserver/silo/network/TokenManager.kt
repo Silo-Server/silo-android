@@ -39,7 +39,13 @@ data class ProfileIdentity(val profileId: String?, val profileToken: String?)
  * Manages JWT access and refresh tokens.
  * Implementation provided by Agent 2 in TokenManagerImpl.kt.
  */
-data class AccountSessionExpectation(val generation: Long, val serverId: String?, val serverUrl: String)
+data class AccountSessionExpectation(
+    val generation: Long,
+    val serverId: String?,
+    val serverUrl: String,
+    /** Non-suspending route/attempt fence, evaluated inside the account replacement lock. */
+    val installationAllowed: () -> Boolean = { true },
+)
 class AccountSessionChangedException : IllegalStateException("The initiating account or server changed")
 
 interface TokenManager {

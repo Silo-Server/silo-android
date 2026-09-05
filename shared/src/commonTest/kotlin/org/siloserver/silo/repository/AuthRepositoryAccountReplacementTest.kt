@@ -31,13 +31,13 @@ class AuthRepositoryAccountReplacementTest {
         val client = HttpClient(
             MockEngine { request ->
                 assertEquals(
-                    "/api/v1/invitations/invite-token/accept",
+                    "/api/v2/invitations/invite-token/accept",
                     request.url.encodedPath,
                 )
                 respond(
                     content =
-                        """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"user":{"id":7,"username":"new-user","email":"new@example.com","role":"user"}}""",
-                    status = HttpStatusCode.OK,
+                        """{"status":"accepted","login_status":"signed_in","username":"new-user","tokens":{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"user":{"id":"7","username":"new-user","email":"new@example.com","role":"user"}}}""",
+                    status = HttpStatusCode.Created,
                     headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                 )
             },
@@ -57,7 +57,7 @@ class AuthRepositoryAccountReplacementTest {
         )
 
         assertEquals("new-user", assertIs<org.siloserver.silo.network.ApiResult.Success<*>>(result).data.let {
-            (it as org.siloserver.silo.model.auth.User).username
+            (it as org.siloserver.silo.model.auth.InvitationClaimResult).username
         })
         assertEquals(
             AccountReplacement(
