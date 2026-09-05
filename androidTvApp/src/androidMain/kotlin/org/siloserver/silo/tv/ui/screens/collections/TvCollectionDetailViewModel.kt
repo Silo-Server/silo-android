@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.api.CollectionEditor
+import org.siloserver.silo.model.personal.Collection
 import org.siloserver.silo.repository.CollectionRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +44,7 @@ class TvCollectionDetailViewModel(
     private val _uiState = MutableStateFlow(UiState(name = initialTitle))
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
+    private var deleteEditor: CollectionEditor<Collection>? = null
     private val pageSize = 40
 
     // Raw (pre-visibleOnTv-filter) loaded count = the next-page server offset.
@@ -62,14 +66,25 @@ class TvCollectionDetailViewModel(
 
     // --- Delete manageable user collections ---
 
-    fun showDeleteConfirm() = _uiState.update { it.copy(showDeleteConfirm = true, deleteError = null) }
+    fun showDeleteConfirm() {
+        viewModelScope.launch {
+            when (val result = collectionRepository.getCollection(collectionId)) {
+                is ApiResult.Success -> {
+                    deleteEditor = result.data
+                    _uiState.update { it.copy(showDeleteConfirm = true, deleteError = null) }
+                }
+                else -> _uiState.update { it.copy(error = result.errorMessage("Could not load collection")) }
+            }
+        }
+    }
     fun hideDeleteConfirm() = _uiState.update { it.copy(showDeleteConfirm = false, deleteError = null) }
 
     fun delete() {
         if (_uiState.value.isDeleting) return
+        val editor = deleteEditor ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isDeleting = true, deleteError = null) }
-            when (val r = collectionRepository.deleteCollection(collectionId)) {
+            when (val r = collectionRepository.deleteCollection(collectionId, editor)) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(isDeleting = false, showDeleteConfirm = false, deleted = true)
                 }

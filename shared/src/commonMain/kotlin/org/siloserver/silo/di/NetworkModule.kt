@@ -22,7 +22,7 @@ val networkModule = module {
     single { CatalogApi(get()) }
     single { PlaybackApi(get()) }
     single { PersonalDataApi(get(), get(), get()) }
-    single { CollectionApi(get()) }
+    single { CollectionApi(get(), get(), get()) }
     single { ProfileApi(get(), get()) }
     single { SectionApi(get()) }
     single { RecommendationApi(get()) }

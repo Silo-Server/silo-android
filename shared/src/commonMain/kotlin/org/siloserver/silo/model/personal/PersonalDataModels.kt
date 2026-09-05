@@ -57,7 +57,6 @@ data class CreateCollectionRequest(
 data class UpdateCollectionRequest(
     val name: String? = null,
     val description: String? = null,
-    @SerialName("collection_type") val collectionType: String? = null,
     @SerialName("is_shared") val isShared: Boolean? = null,
     @SerialName("allowed_profile_ids") val allowedProfileIds: List<String>? = null,
     @SerialName("query_definition") val queryDefinition: QueryDefinition? = null,
@@ -142,7 +141,7 @@ data class RatingsResponse(
 
 @Serializable
 data class CollectionsResponse(
-    val collections: List<Collection> = emptyList(),
+    @SerialName("items") val collections: List<Collection>,
     val groups: List<CollectionGroup> = emptyList(),
 )
 

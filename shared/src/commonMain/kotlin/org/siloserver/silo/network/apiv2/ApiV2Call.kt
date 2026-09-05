@@ -21,7 +21,10 @@ internal suspend inline fun <reified T> safeApiV2Call(
     return try {
         val response = block()
         if (response.status.isSuccess()) {
-            ApiResult.Success(SiloJson.decodeFromString(response.bodyAsText()))
+            if (T::class == Unit::class) {
+                @Suppress("UNCHECKED_CAST")
+                ApiResult.Success(Unit as T)
+            } else ApiResult.Success(SiloJson.decodeFromString(response.bodyAsText()))
         } else {
             response.toApiV2Error()
         }

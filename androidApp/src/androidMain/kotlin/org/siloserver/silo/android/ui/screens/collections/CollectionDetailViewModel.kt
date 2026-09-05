@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.personal.Collection
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.api.CollectionEditor
 import org.siloserver.silo.repository.CollectionRepository
 import org.siloserver.silo.repository.SectionRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +41,7 @@ class CollectionDetailViewModel(
     private val _uiState = MutableStateFlow(CollectionDetailUiState())
     val uiState: StateFlow<CollectionDetailUiState> = _uiState.asStateFlow()
 
+    private var deleteEditor: CollectionEditor<Collection>? = null
     private var collectionId: String = ""
     private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val pageSize = 40
@@ -231,7 +234,11 @@ class CollectionDetailViewModel(
     fun removeItem(itemId: String) {
         if (libraryId != null) return
         viewModelScope.launch {
-            collectionRepository.removeItem(collectionId, itemId)
+            val result = collectionRepository.removeItem(collectionId, itemId)
+            if (result !is ApiResult.Success) {
+                _uiState.update { it.copy(error = result.errorMessage("Could not remove item")) }
+                return@launch
+            }
             _uiState.update { state ->
                 state.copy(
                     items = state.items.filter { it.contentId != itemId },
@@ -243,7 +250,15 @@ class CollectionDetailViewModel(
 
     fun showDeleteConfirm() {
         if (libraryId != null) return
-        _uiState.update { it.copy(showDeleteConfirm = true) }
+        viewModelScope.launch {
+            when (val result = collectionRepository.getCollection(collectionId)) {
+                is ApiResult.Success -> {
+                    deleteEditor = result.data
+                    _uiState.update { it.copy(showDeleteConfirm = true, error = null) }
+                }
+                else -> _uiState.update { it.copy(error = result.errorMessage("Could not load collection")) }
+            }
+        }
     }
 
     fun hideDeleteConfirm() {
@@ -252,14 +267,15 @@ class CollectionDetailViewModel(
 
     fun deleteCollection() {
         if (libraryId != null) return
+        val editor = deleteEditor ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isDeleting = true) }
-            when (collectionRepository.deleteCollection(collectionId)) {
+            when (val result = collectionRepository.deleteCollection(collectionId, editor)) {
                 is ApiResult.Success -> {
                     _uiState.update { it.copy(isDeleting = false, deleted = true, showDeleteConfirm = false) }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update { it.copy(isDeleting = false, showDeleteConfirm = false) }
+                    _uiState.update { it.copy(isDeleting = false, error = result.errorMessage("Could not delete collection")) }
                 }
             }
         }
