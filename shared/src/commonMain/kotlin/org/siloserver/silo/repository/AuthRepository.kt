@@ -7,6 +7,9 @@ import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupRequest
 import org.siloserver.silo.model.auth.SignupStatusResponse
 import org.siloserver.silo.model.auth.User
+import org.siloserver.silo.model.server.ServerContract
+import org.siloserver.silo.network.apiv2.ApiV2Probe
+import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
@@ -14,6 +17,21 @@ import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.api.BrandingApi
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.map
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * How long [AuthRepository.switchToServer] waits for the contract probe before
+ * returning with the stored verdict untouched. Matches the launch-path bound
+ * in [AuthRepository.awaitContractRefreshIfUnsettled].
+ */
+private const val SWITCH_PROBE_TIMEOUT_MS = 3_000L
 
 class AuthRepository(
     private val authApi: AuthApi,
@@ -21,11 +39,20 @@ class AuthRepository(
     private val serverRegistry: ServerRegistry? = null,
     private val healthApi: HealthApi? = null,
     private val brandingApi: BrandingApi? = null,
+    private val apiV2Probe: ApiV2Probe? = null,
+    /**
+     * Process-lifetime scope for fire-and-forget work the caller must not wait
+     * on (the display-name refresh after a server switch). When null that
+     * work runs inline instead — single-server hosts and tests.
+     */
+    private val backgroundScope: CoroutineScope? = null,
 ) {
     /**
      * Persists a successful auth response's tokens into the active server's
      * scope and unwraps the [User] — the shared tail of every path that ends
-     * a signed-out state (login, signup, setup, invitation claim).
+     * a signed-out state (login, signup, setup, invitation claim). Once the
+     * tokens are stored, [onSessionCommitted] refreshes the server's v2
+     * contract verdict.
      */
     private suspend fun persistSession(
         result: ApiResult<LoginResponse>,
@@ -35,18 +62,53 @@ class AuthRepository(
         when (result) {
             is ApiResult.Success -> {
                 val data = result.data
+                val serverId = targetServerId ?: tokenManager.getCurrentServerId()
                 tokenManager.replaceAccountSession(
-                    serverId = targetServerId ?: tokenManager.getCurrentServerId(),
+                    serverId = serverId,
                     serverUrl = targetServerUrl,
                     accessToken = data.accessToken,
                     refreshToken = data.refreshToken,
                     expiresIn = data.expiresIn,
                 )
+                onSessionCommitted(serverId)
                 ApiResult.Success(data.user)
             }
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+
+    /**
+     * Re-establishes the v2 contract verdict of [serverId] (the active server
+     * when null) after a session was committed on it. A v1 login proves
+     * nothing about v2, but the stored verdict can be stale — the server may
+     * have been upgraded while the sign-in screen stayed open — and without
+     * a fresh probe an old UPDATE_REQUIRED would keep the gate rejecting
+     * every pilot v2 call for the whole session.
+     *
+     * Launched on [backgroundScope] so sign-in never waits on the probe: the
+     * gate already passes UNKNOWN and V2, and a stale UPDATE_REQUIRED clears
+     * as soon as the probe answers. Without a scope the same sequence runs
+     * inline in the caller. No-op without a registry or probe (single-server
+     * hosts, tests). Every path that commits tokens outside
+     * [persistSession] (the TV credential and QR sign-ins) must call this
+     * after its commit.
+     */
+    suspend fun onSessionCommitted(serverId: String? = null) {
+        val registry = serverRegistry ?: return
+        if (apiV2Probe == null) return
+        val committedId = serverId ?: registry.activeServerId.value ?: return
+        val scope = backgroundScope
+        if (scope == null) {
+            if (registry.activeServerId.value != committedId) return
+            probeContractWithFallback(committedId) {}
+            return
+        }
+        scope.launch {
+            if (registry.activeServerId.value == committedId) {
+                probeContractWithFallback(committedId) {}
+            }
+        }
+    }
 
     /**
      * Logs in with username and password.
@@ -135,7 +197,10 @@ class AuthRepository(
             targetServerId = targetServerId,
             targetServerUrl = serverUrl.takeIf { serverRegistry == null },
         )
-        if (persisted is ApiResult.Success) refreshActiveServerName()
+        // persistSession already refreshed the contract; only the name is left.
+        if (persisted is ApiResult.Success) {
+            serverRegistry?.activeServerId?.value?.let { refreshActiveServerDisplayName(it) }
+        }
         return persisted
     }
 
@@ -176,26 +241,169 @@ class AuthRepository(
      * reactivating an existing one). The auth/profile/token state for that
      * server (if any) is restored automatically.
      */
-    suspend fun setServerUrl(url: String) {
+    suspend fun setServerUrl(url: String, contract: ServerContract? = null) {
         if (serverRegistry != null) {
             val id = serverRegistry.addOrUpdate(url)
             serverRegistry.switchTo(id)
             tokenManager.switchActiveServer(id)
-            refreshActiveServerName()
+            // The connect path already probed the candidate; record that
+            // verdict instead of probing twice. Other callers probe now.
+            refreshActiveServerName(knownContract = contract)
         } else {
             tokenManager.setServerUrl(url)
         }
     }
 
     /**
-     * Best-effort: read the native branding identity and update the active
-     * registry entry's fetched name. Health is a fallback for older servers
-     * without the branding endpoint. Quietly no-ops if no usable name can be
-     * resolved — this is purely for nicer UX in the server list.
+     * The single entry point for activating an already-registered server:
+     * switches the registry and the token scope, then re-establishes the
+     * server's v2 contract verdict. Every "switch to server" UI path must go
+     * through here so a server saved by an older build gets probed. No-op
+     * without a registry.
+     *
+     * Callers await this behind a spinner, so they are released once the
+     * registry and token scope have switched and the probe has its bounded
+     * verdict: the probe waits at most [SWITCH_PROBE_TIMEOUT_MS], so a server
+     * that accepts the socket but never answers leaves the stored verdict
+     * alone (the gate still passes UNKNOWN and V2). When the bounded probe
+     * yields no verdict — the bound cancelled it or it failed (connection
+     * error, 5xx) — and a [backgroundScope] is wired in, a replacement
+     * unbounded probe (the client's own timeouts still apply) follows for
+     * [serverId], so a stale UPDATE_REQUIRED on a since-upgraded or briefly
+     * unreachable server is corrected once it answers instead of gating v2
+     * calls until the next launch; the active-id guard in
+     * [recordServerContract] drops the result if the user switched again
+     * meanwhile. Without a scope the verdict stays as stored until the next
+     * switch or launch re-probes. The display-name refresh (branding, then
+     * health) is never awaited.
+     *
+     * With [backgroundScope] wired in, the whole activation — registry
+     * switch, token switch, bounded probe, replacement probe, display-name
+     * refresh — runs as one job there, started before the caller begins
+     * waiting. Callers usually run in a UI scope (a server-list
+     * `viewModelScope`) that dies when the user presses Back; that cancels
+     * only this call's wait, never the activation, so the registry and token
+     * scope cannot land on the new server without its probe handoff. A
+     * background scope torn down mid-activation releases the caller too.
+     * Without a scope everything runs inline in the caller and is cancelled
+     * with it.
      */
-    suspend fun refreshActiveServerName() {
+    suspend fun switchToServer(serverId: String) {
+        val registry = serverRegistry ?: return
+        val scope = backgroundScope
+        if (scope == null) {
+            registry.switchTo(serverId)
+            tokenManager.switchActiveServer(serverId)
+            refreshServerContractWithFallback(serverId)
+            if (registry.activeServerId.value != serverId) return
+            refreshActiveServerDisplayName(serverId)
+            return
+        }
+        val ready = CompletableDeferred<Unit>()
+        val job = scope.launch {
+            registry.switchTo(serverId)
+            tokenManager.switchActiveServer(serverId)
+            probeContractWithFallback(serverId) {
+                // Launch before releasing the caller so a test joining the
+                // scope's children after the switch returns sees this job.
+                if (registry.activeServerId.value == serverId) {
+                    scope.launch { refreshActiveServerDisplayName(serverId) }
+                }
+                ready.complete(Unit)
+            }
+        }
+        // A scope torn down mid-activation must not leave the caller waiting;
+        // completing after the verdict is a no-op.
+        job.invokeOnCompletion { ready.complete(Unit) }
+        ready.await()
+    }
+
+    /**
+     * The contract half of every "this server just became active" path
+     * ([switchToServer], pairing): runs [refreshServerContractBounded] and,
+     * when that yields no verdict (bound elapsed, or the probe failed), a
+     * replacement unbounded probe pinned to [serverId], so a stale
+     * UPDATE_REQUIRED stops gating the session once the server answers.
+     * Returns the bounded result; null means the stored verdict was left
+     * alone (and, with a scope and a probe wired in, that a replacement is
+     * now in flight). The replacement is skipped when [serverId] is no longer
+     * active by the time the bound returns.
+     *
+     * With [backgroundScope] wired in, the whole sequence is launched there
+     * before the caller starts waiting, and the caller only awaits the bounded
+     * verdict for at most [SWITCH_PROBE_TIMEOUT_MS]. Callers usually run in a
+     * UI scope (a server-list `viewModelScope`) that dies when the user
+     * presses Back during the bound; that cancels only this call's wait, not
+     * the probe, so the switched-to server does not stay UNKNOWN or stale
+     * UPDATE_REQUIRED for the session. Without a scope everything runs inline
+     * in the caller and is cancelled with it.
+     */
+    suspend fun refreshServerContractWithFallback(serverId: String): ServerContract? {
+        val scope = backgroundScope
+        if (scope == null || apiV2Probe == null) return refreshServerContractBounded()
+        val bounded = CompletableDeferred<ServerContract?>()
+        val job = scope.launch { probeContractWithFallback(serverId) { bounded.complete(it) } }
+        // A scope torn down mid-probe must not leave the caller waiting out
+        // the bound on its own; completing after a verdict is a no-op.
+        job.invokeOnCompletion { bounded.complete(null) }
+        return withTimeoutOrNull(SWITCH_PROBE_TIMEOUT_MS) { bounded.await() }
+    }
+
+    /**
+     * The probe sequence shared by [switchToServer] and
+     * [refreshServerContractWithFallback], run in the calling coroutine:
+     * the bounded probe, then [onBoundedVerdict] with its result (null when
+     * the stored verdict was left alone), then — only for null — the
+     * replacement unbounded probe pinned to [serverId].
+     */
+    private suspend fun probeContractWithFallback(
+        serverId: String,
+        onBoundedVerdict: (ServerContract?) -> Unit,
+    ) {
+        val verdict = refreshServerContractBounded()
+        onBoundedVerdict(verdict)
+        if (verdict == null) refreshServerContractFor(serverId)
+    }
+
+    /**
+     * Unbounded contract probe pinned to [serverId]: skipped if it is no
+     * longer active by the time this runs, and its verdict is dropped by
+     * [recordServerContract] if the active server changed while in flight.
+     */
+    private suspend fun refreshServerContractFor(serverId: String) {
+        val probe = apiV2Probe ?: return
+        val registry = serverRegistry ?: return
+        if (registry.activeServerId.value != serverId) return
+        recordServerContract(serverId, probe.probe().toServerContract())
+    }
+
+    /**
+     * Best-effort: (re)establish the active server's v2 contract verdict, then
+     * read the native branding identity and update the active registry
+     * entry's fetched name. Health is a fallback for older servers without the
+     * branding endpoint. Quietly no-ops if no usable name can be resolved —
+     * this is purely for nicer UX in the server list.
+     *
+     * [knownContract] lets the connect path pass the verdict it already has
+     * instead of probing twice; every other caller probes now. Both the
+     * contract and the name are dropped if the active server changed while
+     * the request was in flight, so a slow answer from one server never
+     * relabels another.
+     */
+    suspend fun refreshActiveServerName(knownContract: ServerContract? = null) {
         val registry = serverRegistry ?: return
         val activeId = registry.activeServerId.value ?: return
+        if (knownContract != null) recordServerContract(activeId, knownContract) else refreshServerContract()
+        refreshActiveServerDisplayName(activeId)
+    }
+
+    /**
+     * The name half of [refreshActiveServerName]: branding, then health as a
+     * fallback, recorded only while [activeId] is still the active server.
+     */
+    private suspend fun refreshActiveServerDisplayName(activeId: String) {
+        val registry = serverRegistry ?: return
+        if (registry.activeServerId.value != activeId) return
         val brandingName = (brandingApi?.getBranding() as? ApiResult.Success)
             ?.data
             ?.serverName
@@ -210,4 +418,137 @@ class AuthRepository(
     }
 
     private fun String?.usableServerName(): String? = this?.trim()?.takeIf { it.isNotBlank() }
+
+    /** The active server's learned [ServerContract]; [ServerContract.UNKNOWN] without a registry. */
+    fun activeServerContract(): ServerContract =
+        serverRegistry?.activeEntry?.value?.contract ?: ServerContract.UNKNOWN
+
+    /**
+     * [activeServerContract] as a stream, so a consumer whose gated v2 call
+     * failed on a stale [ServerContract.UPDATE_REQUIRED] can re-run it once
+     * the launch probe records the real verdict. Emits the current value
+     * first; a single [ServerContract.UNKNOWN] without a registry.
+     */
+    val activeServerContractFlow: Flow<ServerContract> =
+        serverRegistry?.activeEntry
+            ?.map { it?.contract ?: ServerContract.UNKNOWN }
+            ?.distinctUntilChanged()
+            ?: flowOf(ServerContract.UNKNOWN)
+
+    /**
+     * Launch-time guard for the stored verdict. Only a settled
+     * [ServerContract.V2] is safe to route on immediately. A stored
+     * [ServerContract.UPDATE_REQUIRED] may be stale (server upgraded since)
+     * and would gate the whole session; a stored [ServerContract.UNKNOWN]
+     * (every entry saved by a build before the v2 pilot) passes
+     * [org.siloserver.silo.network.apiv2.ApiV2Gate], so authenticated startup
+     * consumers would race the background probe and could receive raw v2
+     * 404s from a v1-only server before UPDATE_REQUIRED is recorded — and
+     * those one-shot loads do not retry. Both unsettled states probe now and
+     * wait at most [timeoutMs] so startup consumers see a real verdict.
+     * Returns the recorded verdict, or null when nothing was recorded
+     * (stored V2, no probe wired in, timed out, or the probe failed) — pass
+     * it to [refreshActiveServerName] as `knownContract`: a verdict avoids a
+     * second probe, while null makes that call probe again so a briefly
+     * unreachable server is retried.
+     */
+    suspend fun awaitContractRefreshIfUnsettled(timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS): ServerContract? {
+        if (activeServerContract() == ServerContract.V2) return null
+        return refreshServerContractBounded(timeoutMs)
+    }
+
+    /**
+     * [refreshServerContract] with a wall-clock bound. Every path that awaits
+     * the probe before letting the user (or a peer, in pairing) proceed goes
+     * through here so the bound lives in one place. Returns a real verdict
+     * ([ServerContract.V2] or [ServerContract.UPDATE_REQUIRED]) only; null
+     * means nothing was recorded — no probe wired in, the server did not
+     * answer within [timeoutMs], or the probe failed (connection error, 5xx)
+     * — and the stored verdict is left alone. "No verdict" is uniform so
+     * callers re-probe on null instead of treating a transient failure as
+     * settled, which would otherwise leave a stale UPDATE_REQUIRED gating the
+     * whole session.
+     */
+    suspend fun refreshServerContractBounded(timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS): ServerContract? =
+        withTimeoutOrNull(timeoutMs) { refreshServerContract() }
+            ?.toServerContract()
+            ?.takeUnless { it == ServerContract.UNKNOWN }
+
+    /**
+     * Runs the v2 contract probe against [serverUrl] (a candidate the app is
+     * not connected to yet) without recording anything, bounded to
+     * [timeoutMs]. Null when no probe is wired in (single-server hosts,
+     * tests) or the candidate accepted the socket but did not answer within
+     * the bound — "no verdict", which the connect path treats the same as a
+     * [ApiV2ProbeResult.Failure]: it moves on to the setup call, whose own
+     * client timeout decides reachability. Unbounded, a stalled candidate
+     * held the setup spinner for the client's ~60 s timeout per candidate
+     * (HTTPS then HTTP for a bare host) before the setup call waited again.
+     */
+    suspend fun probeServerContract(
+        serverUrl: String,
+        timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS,
+    ): ApiV2ProbeResult? {
+        val probe = apiV2Probe ?: return null
+        return withTimeoutOrNull(timeoutMs) { probe.probe(serverUrl) }
+    }
+
+    /**
+     * Records [contract] on the active registry entry when it is a verdict
+     * ([ServerContract.V2] or [ServerContract.UPDATE_REQUIRED]); an
+     * [ServerContract.UNKNOWN] result leaves the stored state alone, because a
+     * transport, TLS, auth, rate-limit, or server error says nothing about
+     * the contract.
+     */
+    suspend fun recordServerContract(contract: ServerContract) {
+        val activeId = serverRegistry?.activeServerId?.value ?: return
+        recordServerContract(activeId, contract)
+    }
+
+    /**
+     * Records [contract] for [serverId] only while it is still the active
+     * server, so a probe answer that arrives after a switch cannot overwrite
+     * the newer server's state.
+     */
+    private suspend fun recordServerContract(serverId: String, contract: ServerContract) {
+        if (contract == ServerContract.UNKNOWN) return
+        val registry = serverRegistry ?: return
+        if (registry.activeServerId.value != serverId) return
+        registry.setContract(serverId, contract)
+    }
+
+    /**
+     * Runs the v2 contract probe once against the active server and records
+     * the verdict. Called when a connection is established, restored on
+     * launch, switched to, or its identity is refreshed — never per request.
+     * A failure records nothing (the stored state stays as it was), and a
+     * result for a server that is no longer active is dropped.
+     */
+    suspend fun refreshServerContract(): ApiV2ProbeResult? {
+        val probe = apiV2Probe ?: return null
+        val activeId = serverRegistry?.activeServerId?.value
+        val result = probe.probe()
+        if (activeId != null) recordServerContract(activeId, result.toServerContract())
+        return result
+    }
+}
+
+/**
+ * The verdict to record once a v2 operation (the connect path's
+ * `/api/v2/system/setup` call) has succeeded against a candidate: that answer
+ * is itself proof of v2, whatever the earlier bounded candidate probe said. A
+ * probe [ApiV2ProbeResult.Failure] or timeout is no verdict and must not be
+ * mapped through [toServerContract] into a non-null [ServerContract.UNKNOWN]
+ * here — [AuthRepository.refreshActiveServerName] neither records UNKNOWN
+ * nor re-probes when handed a known contract, so a stale UPDATE_REQUIRED
+ * would survive a successful v2 connection. Only the probe's
+ * [ApiV2ProbeResult.UpdateServer] is acted on, before the setup call.
+ */
+val CONTRACT_PROVEN_BY_V2_RESPONSE: ServerContract = ServerContract.V2
+
+/** Maps a probe outcome to the stored state; failures are [ServerContract.UNKNOWN] (no verdict). */
+fun ApiV2ProbeResult.toServerContract(): ServerContract = when (this) {
+    is ApiV2ProbeResult.V2 -> ServerContract.V2
+    ApiV2ProbeResult.UpdateServer -> ServerContract.UPDATE_REQUIRED
+    is ApiV2ProbeResult.Failure -> ServerContract.UNKNOWN
 }

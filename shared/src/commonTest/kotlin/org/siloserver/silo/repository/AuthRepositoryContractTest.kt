@@ -1,0 +1,782 @@
+package org.siloserver.silo.repository
+
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.api.BrandingApi
+import org.siloserver.silo.network.api.BrandingStatus
+import org.siloserver.silo.model.server.ServerContract
+import org.siloserver.silo.model.server.ServerEntry
+import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.api.AuthApi
+import org.siloserver.silo.network.apiv2.ApiV2Fixtures
+import org.siloserver.silo.network.apiv2.ApiV2Probe
+import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+
+/**
+ * The contract verdict is (re)established on every connect, launch restore,
+ * and server switch through [AuthRepository.refreshActiveServerName]; these
+ * tests pin the recording rules: verdicts stick, failures record nothing,
+ * and a result for a server that is no longer active is dropped.
+ */
+class AuthRepositoryContractTest {
+    private val infoBody = ApiV2Fixtures.body("get_system_info_ok")
+
+    @Test
+    fun `refreshActiveServerName records V2 from the probe`() = runTest {
+        val registry = ContractRegistry()
+        repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"))
+            .refreshActiveServerName()
+
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `refreshActiveServerName records UPDATE_REQUIRED from a v1-only server`() = runTest {
+        val registry = ContractRegistry()
+        repository(registry, respondWith(HttpStatusCode.NotFound, "404 page not found\n", "text/plain"))
+            .refreshActiveServerName()
+
+        assertEquals(mapOf("a" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+    }
+
+    @Test
+    fun `probe failure leaves the stored contract unchanged`() = runTest {
+        val registry = ContractRegistry()
+        registry.setContract("a", ServerContract.V2)
+        repository(registry, respondWith(HttpStatusCode.ServiceUnavailable, "", "text/plain"))
+            .refreshActiveServerName()
+
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer probes the switched-to server`() = runTest {
+        val registry = ContractRegistry()
+        val tokens = SwitchRecordingTokenManager()
+        // Real clock: the switch bounds the probe, and virtual time would
+        // skip past that bound while the engine answers.
+        withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"), tokens)
+                .switchToServer("b")
+        }
+
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(listOf<String?>("b"), tokens.switchedTo)
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer returns with the verdict unchanged when the probe hangs past the bound`() = runTest {
+        // A saved server that accepts the connection but never answers must
+        // not hold the switch spinner for the full client timeouts.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.V2)
+        val tokens = SwitchRecordingTokenManager()
+        val hanging = client { awaitCancellation() }
+        repository(registry, hanging, tokens).switchToServer("b")
+
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(listOf<String?>("b"), tokens.switchedTo)
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer does not await the display-name refresh`() = runTest {
+        val registry = ContractRegistry()
+        val brandingGate = CompletableDeferred<Unit>()
+        val branding = object : BrandingApi(unusedClient()) {
+            override suspend fun getBranding(): ApiResult<BrandingStatus> {
+                brandingGate.await()
+                return ApiResult.Success(BrandingStatus("Named"))
+            }
+        }
+        // Real clock on both sides: the probe now runs on the background
+        // scope, and virtual time would skip the bound while the engine answers.
+        val background = CoroutineScope(Dispatchers.Default)
+        val repository = repository(
+            registry,
+            respondWith(HttpStatusCode.OK, infoBody, "application/json"),
+            brandingApi = branding,
+            backgroundScope = background,
+        )
+
+        withContext(Dispatchers.Default) { repository.switchToServer("b") }
+
+        // Returned with the verdict recorded while branding is still pending.
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+        assertEquals(emptyMap<String, String?>(), registry.fetchedNames)
+
+        brandingGate.complete(Unit)
+        background.joinChildren()
+        assertEquals(mapOf<String, String?>("b" to "Named"), registry.fetchedNames)
+    }
+
+    @Test
+    fun `switchToServer re-probes in the background when the bounded probe times out`() = runTest {
+        // A stale UPDATE_REQUIRED on a since-upgraded server that answers
+        // after the bound must still be corrected for this session.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        // Virtual clock: the bound elapses without the engine answering.
+        repository.switchToServer("b")
+
+        // Returned at the bound with the verdict untouched.
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `promoted server re-probe survives cancellation of the calling scope`() = runTest {
+        // ServerListViewModel.onRemove: the registry has already promoted "b"
+        // (so the id is already active) and the call runs in viewModelScope,
+        // which dies when the server list is popped. The replacement probe
+        // must live on the repository's background scope, not the caller's.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        registry.switchTo("b")
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val tokens = SwitchRecordingTokenManager()
+        val repository = repository(registry, client, tokenManager = tokens, backgroundScope = background)
+
+        val caller = CoroutineScope(StandardTestDispatcher(testScheduler))
+        // Virtual clock: the bound elapses without the engine answering.
+        caller.launch { repository.switchToServer("b") }.join()
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+        caller.cancel()
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+        // The same-id switch still records the scope change; the Android
+        // token manager itself short-circuits when the id is unchanged.
+        assertEquals(listOf<String?>("b"), tokens.switchedTo)
+    }
+
+    @Test
+    fun `fallback probe survives the caller being cancelled during the bound`() = runTest {
+        // The user presses Back while the server list's viewModelScope is
+        // still inside the bounded wait. That must cancel only the wait: the
+        // probe already lives on the background scope and still records V2
+        // when the server answers late.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        val caller = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val call = caller.launch { repository.switchToServer("b") }
+        // Let the caller reach its wait, then kill it well inside the bound.
+        testScheduler.advanceTimeBy(1_000L)
+        testScheduler.runCurrent()
+        assertEquals(false, call.isCompleted)
+        caller.cancel()
+        call.join()
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        // The bound elapses in the background with the caller already gone;
+        // only then does the server answer, to the unbounded replacement.
+        testScheduler.advanceTimeBy(3_000L)
+        testScheduler.runCurrent()
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `activation survives the caller being cancelled during the registry switch`() = runTest {
+        // The user presses Back while the server list's viewModelScope is
+        // still inside the registry switch itself. The activation must not
+        // die with the caller: the token switch, the probe, and its V2
+        // record all still land, so the entry never stays UNKNOWN or stale
+        // UPDATE_REQUIRED with the server already persisted as active.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val switchGate = CompletableDeferred<Unit>()
+        registry.switchGate = switchGate
+        val tokens = SwitchRecordingTokenManager()
+        // Real clock on both sides: the activation runs on the background
+        // scope, and a virtual-clock background would let runTest skip the
+        // bound while the caller waits out the real one.
+        val background = CoroutineScope(Dispatchers.Default)
+        val repository = repository(
+            registry,
+            respondWith(HttpStatusCode.OK, infoBody, "application/json"),
+            tokenManager = tokens,
+            backgroundScope = background,
+        )
+
+        val caller = CoroutineScope(Dispatchers.Default)
+        val call = caller.launch { repository.switchToServer("b") }
+        registry.switchEntered.await()
+        caller.cancel()
+        call.join()
+        // Nothing has been activated yet; the switch is still gated.
+        assertEquals("a", registry.activeServerId.value)
+        assertEquals(emptyList<String?>(), tokens.switchedTo)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        switchGate.complete(Unit)
+        background.joinChildren()
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(listOf<String?>("b"), tokens.switchedTo)
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `fallback probe records nothing when the caller is cancelled and the server switched`() = runTest {
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        val caller = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val call = caller.launch { repository.switchToServer("b") }
+        testScheduler.advanceTimeBy(1_000L)
+        testScheduler.runCurrent()
+        caller.cancel()
+        call.join()
+        // The user moves on to another server before "b" ever answers.
+        registry.switchTo("a")
+        testScheduler.advanceTimeBy(3_000L)
+        testScheduler.runCurrent()
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals("a", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+    }
+
+    @Test
+    fun `background re-probe result is dropped when the active server changed meanwhile`() = runTest {
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            // The user switches away while the replacement probe is in flight.
+            registry.switchTo("a")
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        repository.switchToServer("b")
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals("a", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+    }
+
+    @Test
+    fun `refreshServerContractBounded returns null when the probe answers 503`() = runTest {
+        val registry = ContractRegistry()
+        registry.setContract("a", ServerContract.UPDATE_REQUIRED)
+        // Real clock: the probe answers, so virtual time must not skip the bound.
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.ServiceUnavailable, "", "text/plain"))
+                .refreshServerContractBounded()
+        }
+
+        // A failure is "no verdict", not UNKNOWN: callers re-probe on null.
+        assertEquals(null, verdict)
+        assertEquals(mapOf("a" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer re-probes in the background when the bounded probe fails`() = runTest {
+        // A stale UPDATE_REQUIRED on a server that is briefly unreachable at
+        // switch time must not gate pilot calls for the whole session: the
+        // failed bounded probe launches the same replacement as a timeout.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        var requests = 0
+        val recovered = CompletableDeferred<Unit>()
+        val client = client {
+            requests++
+            if (requests == 1) {
+                respond("", HttpStatusCode.ServiceUnavailable, headersOf(HttpHeaders.ContentType, "text/plain"))
+            } else {
+                // The replacement probe holds until the server "recovers".
+                recovered.await()
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        }
+        // Real clock on both sides: the bounded probe now runs on the
+        // background scope, and a virtual-clock background would let runTest
+        // skip its bound while the caller waits out the real one.
+        val background = CoroutineScope(Dispatchers.Default)
+        val repository = repository(registry, client, backgroundScope = background)
+
+        // The bounded probe answers (with 503) inside the bound.
+        withContext(Dispatchers.Default) { repository.switchToServer("b") }
+
+        // Returned with the verdict untouched: 503 recorded nothing.
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        // The server recovers; only the background replacement can produce V2.
+        recovered.complete(Unit)
+        background.joinChildren()
+        assertEquals(2, requests)
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer does not re-probe when the bounded probe answered UPDATE_REQUIRED`() = runTest {
+        val registry = ContractRegistry()
+        var requests = 0
+        val client = client {
+            requests++
+            respond("404 page not found\n", HttpStatusCode.NotFound, headersOf(HttpHeaders.ContentType, "text/plain"))
+        }
+        // Real clock on both sides: the probe runs on the background scope.
+        val background = CoroutineScope(Dispatchers.Default)
+        val repository = repository(registry, client, backgroundScope = background)
+
+        withContext(Dispatchers.Default) { repository.switchToServer("b") }
+        background.joinChildren()
+
+        // A real verdict, even a negative one, is settled: no replacement probe.
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+        assertEquals(1, requests)
+    }
+
+    @Test
+    fun `switchToServer does not re-probe when the bounded probe answered`() = runTest {
+        val registry = ContractRegistry()
+        var requests = 0
+        val client = client {
+            requests++
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        // Real clock on both sides: the probe runs on the background scope.
+        val background = CoroutineScope(Dispatchers.Default)
+        val repository = repository(registry, client, backgroundScope = background)
+
+        // Real clock: the switch bounds the probe, and virtual time would
+        // skip past that bound while the engine answers.
+        withContext(Dispatchers.Default) { repository.switchToServer("b") }
+        background.joinChildren()
+
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+        assertEquals(1, requests)
+    }
+
+    @Test
+    fun `switchToServer on the already-active id still probes`() = runTest {
+        // Removing the active server promotes the next-MRU entry inside the
+        // registry; the view model then switches to the id that is already
+        // active, which must still move the token scope and probe.
+        val registry = ContractRegistry()
+        val tokens = SwitchRecordingTokenManager()
+        withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"), tokens)
+                .switchToServer("a")
+        }
+
+        assertEquals("a", registry.activeServerId.value)
+        assertEquals(listOf<String?>("a"), tokens.switchedTo)
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUnsettled replaces a stale UPDATE_REQUIRED verdict`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        // Real clock: under the test scheduler the probe's suspension on the
+        // engine dispatcher lets virtual time skip straight past the timeout.
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"))
+                .awaitContractRefreshIfUnsettled()
+        }
+
+        assertEquals(ServerContract.V2, verdict)
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUnsettled awaits UNKNOWN and records UPDATE_REQUIRED from a v1-only server`() = runTest {
+        // First launch after upgrading the app: the restored entry carries
+        // UNKNOWN, which passes the gate, so startup consumers must not be
+        // routed until the v1-only server's verdict is on record.
+        val registry = ContractRegistry(initialContract = ServerContract.UNKNOWN)
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.NotFound, "404 page not found\n", "text/plain"))
+                .awaitContractRefreshIfUnsettled()
+        }
+
+        assertEquals(ServerContract.UPDATE_REQUIRED, verdict)
+        assertEquals(mapOf("a" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUnsettled awaits UNKNOWN and records V2`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UNKNOWN)
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"))
+                .awaitContractRefreshIfUnsettled()
+        }
+
+        assertEquals(ServerContract.V2, verdict)
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUnsettled returns null when the probe cannot connect`() = runTest {
+        // The launch path passes the result to refreshActiveServerName as
+        // knownContract; null makes that call probe again instead of
+        // treating the stale UPDATE_REQUIRED as confirmed for the session.
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        // ApiV2Probe maps any thrown transport error to Failure(CONNECTION).
+        val client = client { throw RuntimeException("connection refused") }
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, client).awaitContractRefreshIfUnsettled()
+        }
+
+        assertEquals(null, verdict)
+        assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUnsettled returns a confirmed UPDATE_REQUIRED verdict`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.NotFound, "404 page not found\n", "text/plain"))
+                .awaitContractRefreshIfUnsettled()
+        }
+
+        assertEquals(ServerContract.UPDATE_REQUIRED, verdict)
+        assertEquals(mapOf("a" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUnsettled does not probe when the stored verdict is V2`() = runTest {
+        var requests = 0
+        val client = client {
+            requests += 1
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val verdict = repository(ContractRegistry(initialContract = ServerContract.V2), client)
+            .awaitContractRefreshIfUnsettled()
+
+        assertEquals(null, verdict)
+        assertEquals(0, requests)
+    }
+
+    @Test
+    fun `probeServerContract returns null when the candidate hangs past the bound`() = runTest {
+        // A candidate that accepts the socket but never answers must not
+        // hold the setup spinner for the client's full timeout; virtual
+        // time: the bound elapses without the engine answering.
+        val registry = ContractRegistry()
+        val startedAt = testScheduler.currentTime
+        val result = repository(registry, client { awaitCancellation() })
+            .probeServerContract("https://candidate.example")
+
+        assertEquals(null, result)
+        assertEquals(3_000L, testScheduler.currentTime - startedAt)
+        // Nothing recorded: the candidate is not the active server.
+        assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
+    }
+
+    @Test
+    fun `probeServerContract returns the verdict when the candidate answers`() = runTest {
+        val registry = ContractRegistry()
+        val repository = repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"))
+        // Real clock: under the test scheduler the virtual-time bound would
+        // fire before the engine thread posts its answer back.
+        val result = withContext(Dispatchers.Default) {
+            repository.probeServerContract("https://candidate.example")
+        }
+
+        assertEquals(true, result is ApiV2ProbeResult.V2, "expected V2, got $result")
+        assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
+    }
+
+    @Test
+    fun `stale probe result for a previous server is dropped`() = runTest {
+        val registry = ContractRegistry()
+        val client = client {
+            // The user switches servers while the probe of "a" is in flight.
+            registry.switchTo("b")
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        repository(registry, client).refreshActiveServerName()
+
+        assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
+    }
+
+    private val loginBody =
+        """{"access_token":"at","refresh_token":"rt","expires_in":3600,"user":{"id":"1","username":"u","email":"u@example","role":"user"}}"""
+
+    @Test
+    fun `login re-probes a stale UPDATE_REQUIRED without waiting on the probe`() = runTest {
+        // The server was upgraded while the login screen stayed open: the v1
+        // login succeeds and the stored verdict must be corrected for this
+        // session, but sign-in must not wait on the probe.
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        registry.setContract("a", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        var probeRequests = 0
+        val client = client { request ->
+            if (request.url.encodedPath.endsWith("/auth/login")) {
+                respond(loginBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            } else {
+                probeRequests++
+                answerGate.await()
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        val result = repository.login("u", "p")
+
+        // Returned while the probe is still gated: the verdict is untouched.
+        assertIs<ApiResult.Success<*>>(result)
+        assertEquals(mapOf("a" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        // One request when the gated reply lands inside the bound, two when
+        // the virtual clock ran the bound out first and the pinned fallback
+        // re-probed; either way the stale verdict is corrected.
+        assertTrue(probeRequests in 1..2, "probe requests: $probeRequests")
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `failed login launches no contract probe`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        var probeRequests = 0
+        val client = client { request ->
+            if (request.url.encodedPath.endsWith("/auth/login")) {
+                respond("""{"error":"invalid credentials"}""", HttpStatusCode.Unauthorized, headersOf(HttpHeaders.ContentType, "application/json"))
+            } else {
+                probeRequests++
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        val result = repository.login("u", "wrong")
+
+        assertTrue(result is ApiResult.Error)
+        background.joinChildren()
+        assertEquals(0, probeRequests)
+        assertEquals(emptyMap(), registry.contracts)
+    }
+
+    @Test
+    fun `login re-probes inline when no background scope is wired in`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        registry.setContract("a", ServerContract.UPDATE_REQUIRED)
+        val client = client { request ->
+            if (request.url.encodedPath.endsWith("/auth/login")) {
+                respond(loginBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            } else {
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        }
+        val repository = repository(registry, client)
+
+        val result = repository.login("u", "p")
+
+        assertIs<ApiResult.Success<*>>(result)
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `session refresh queued before a server switch does not probe the new server`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, unusedClient(), backgroundScope = background)
+
+        repository.onSessionCommitted("a")
+        registry.switchTo("b")
+        background.joinChildren()
+
+        assertEquals(emptyMap(), registry.contracts)
+    }
+
+    @Test
+    fun `committed session refresh survives cancellation of its caller`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val answerGate = CompletableDeferred<Unit>()
+        val repository = repository(
+            registry,
+            client {
+                answerGate.await()
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            },
+            backgroundScope = background,
+        )
+        val scheduled = CompletableDeferred<Unit>()
+        val caller = launch {
+            repository.onSessionCommitted("a")
+            scheduled.complete(Unit)
+            awaitCancellation()
+        }
+        scheduled.await()
+        caller.cancel()
+        caller.join()
+        assertEquals(emptyMap(), registry.contracts)
+        answerGate.complete(Unit)
+        background.joinChildren()
+
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    private fun respondWith(status: HttpStatusCode, body: String, contentType: String) = client {
+        respond(body, status, headersOf(HttpHeaders.ContentType, contentType))
+    }
+
+    private fun client(
+        handler: suspend io.ktor.client.engine.mock.MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData,
+    ) = HttpClient(MockEngine { request -> handler(request) }) {
+        install(ContentNegotiation) { json(SiloJson) }
+    }
+
+    private fun unusedClient() = HttpClient(MockEngine { error("Unexpected request") })
+
+    /**
+     * Waits for the fire-and-forget work launched on a background scope. The
+     * mock engine answers on its own thread, so `advanceUntilIdle` alone can
+     * return before the reply has been posted back to the test scheduler.
+     */
+    private suspend fun CoroutineScope.joinChildren() = coroutineContext.job.children.forEach { it.join() }
+
+    private fun repository(
+        registry: ContractRegistry,
+        client: HttpClient,
+        tokenManager: TokenManager = SwitchRecordingTokenManager(),
+        brandingApi: BrandingApi? = null,
+        backgroundScope: CoroutineScope? = null,
+    ) = AuthRepository(
+        authApi = AuthApi(client),
+        tokenManager = tokenManager,
+        serverRegistry = registry,
+        brandingApi = brandingApi,
+        apiV2Probe = ApiV2Probe(client),
+        backgroundScope = backgroundScope,
+    )
+}
+
+private class ContractRegistry(initialContract: ServerContract = ServerContract.UNKNOWN) : ServerRegistry {
+    private val activeId = MutableStateFlow<String?>("a")
+    val contracts = mutableMapOf<String, ServerContract>()
+    val fetchedNames = mutableMapOf<String, String?>()
+
+    override val entries: StateFlow<List<ServerEntry>> = MutableStateFlow(
+        listOf(
+            ServerEntry(id = "a", url = "https://a.example", contract = initialContract),
+            ServerEntry(id = "b", url = "https://b.example"),
+        ),
+    )
+    override val activeServerId: StateFlow<String?> = activeId
+    override val activeEntry: StateFlow<ServerEntry?> = MutableStateFlow(entries.value.first())
+
+    override suspend fun addOrUpdate(url: String, fetchedName: String?): String = "a"
+    override suspend fun rename(serverId: String, userOverrideName: String?) = Unit
+    override suspend fun setFetchedName(serverId: String, fetchedName: String?) {
+        fetchedNames[serverId] = fetchedName
+    }
+    override suspend fun setProfileId(serverId: String, profileId: String?) = Unit
+    override suspend fun setContract(serverId: String, contract: ServerContract) {
+        contracts[serverId] = contract
+    }
+    override suspend fun remove(serverId: String) = Unit
+    override suspend fun signOut(serverId: String) = Unit
+    /** When set, [switchTo] signals [switchEntered] and suspends on this until released. */
+    var switchGate: CompletableDeferred<Unit>? = null
+    val switchEntered = CompletableDeferred<Unit>()
+
+    override suspend fun switchTo(serverId: String) {
+        switchGate?.let {
+            switchEntered.complete(Unit)
+            it.await()
+        }
+        activeId.value = serverId
+    }
+    override suspend fun touchActive() = Unit
+}
+
+private class SwitchRecordingTokenManager : TokenManager {
+    val switchedTo = mutableListOf<String?>()
+    override suspend fun getAccessToken(): String? = null
+    override suspend fun getRefreshToken(): String? = null
+    override suspend fun saveTokens(accessToken: String, refreshToken: String, expiresIn: Long) = Unit
+    override suspend fun clearTokens() = Unit
+    override suspend fun invalidateSession() = Unit
+    override suspend fun getProfileId(): String? = null
+    override suspend fun setProfileId(profileId: String?) = Unit
+    override suspend fun getProfileToken(): String? = null
+    override suspend fun setProfileToken(token: String?) = Unit
+    override suspend fun getServerUrl(): String = "https://a.example"
+    override suspend fun setServerUrl(url: String) = Unit
+    override suspend fun getCurrentServerId(): String? = "a"
+    override suspend fun switchActiveServer(serverId: String?) {
+        switchedTo += serverId
+    }
+    override suspend fun signOutCurrentServer() = Unit
+    override val sessionExpired: SharedFlow<Unit> = MutableSharedFlow()
+}

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
+import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.AuthRepository
@@ -53,6 +54,29 @@ class TvProfileSelectionViewModel(
 
     init {
         loadProfiles()
+        reloadWhenUpdateRequiredLifts()
+    }
+
+    /**
+     * The admin lookup in [loadProfiles] is a gated v2 call. On launch the
+     * stored verdict can be a stale UPDATE_REQUIRED (server upgraded since),
+     * which the gate rejects without a request; when the launch probe outlasts
+     * its bound, routing proceeds on the stale verdict and the background
+     * refresh records V2 later. The grid must then be reloaded so the manage
+     * affordances match the real answer instead of staying hidden for the
+     * ViewModel's lifetime.
+     */
+    private fun reloadWhenUpdateRequiredLifts() {
+        val contracts = authRepository?.activeServerContractFlow ?: return
+        viewModelScope.launch {
+            var previous: ServerContract? = null
+            contracts.collect { contract ->
+                if (previous == ServerContract.UPDATE_REQUIRED && contract == ServerContract.V2) {
+                    loadProfiles()
+                }
+                previous = contract
+            }
+        }
     }
 
     /**

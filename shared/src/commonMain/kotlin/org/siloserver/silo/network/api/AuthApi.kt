@@ -8,9 +8,17 @@ import io.ktor.http.*
 import org.siloserver.silo.model.auth.*
 import org.siloserver.silo.network.ApiErrorBody
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.map
 import org.siloserver.silo.network.skipSiloAuth
+import org.siloserver.silo.network.apiv2.Account
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.SetupStatus
+import org.siloserver.silo.network.apiv2.safeApiV2Call
 
-class AuthApi(private val client: HttpClient) {
+class AuthApi(
+    private val client: HttpClient,
+    private val apiV2Gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+) {
 
     suspend fun login(request: LoginRequest): ApiResult<LoginResponse> = safeApiCall {
         client.post("/api/v1/auth/login") {
@@ -44,18 +52,28 @@ class AuthApi(private val client: HttpClient) {
         }
     }
 
-    suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> = safeApiCall {
-        // Public, exactly like the explicit-server variant below — which
-        // already opted out. Without this the relative form carries a bearer
-        // it never needed, and a dead session would fail it.
-        client.get("/api/v1/auth/setup") { skipSiloAuth() }
-    }
+    // Pilot v2 operation (getSetupStatus): v2 only, no v1 fallback.
+    suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> =
+        safeApiV2Call<SetupStatus>(apiV2Gate) {
+            // Public, exactly like the explicit-server variant below — which
+            // already opted out. Without this the relative form carries a bearer
+            // it never needed, and a dead session would fail it.
+            client.get("/api/v2/system/setup") { skipSiloAuth() }
+        }.map { status -> SetupStatusResponse(needsSetup = status.needsSetup) }
 
-    suspend fun getSetupStatus(serverUrl: String): ApiResult<SetupStatusResponse> = safeApiCall {
-        client.get("${serverUrl.trimEnd('/')}/api/v1/auth/setup") {
-            skipSiloAuth()
-        }
-    }
+    /**
+     * Explicit-server form: probes a candidate the app is not connected to
+     * yet, so the ACTIVE entry's verdict must not gate it — otherwise an
+     * UPDATE_REQUIRED active server would block adding (or reconnecting to)
+     * a supported one. The candidate's own gate is the contract probe the
+     * add-server flow runs before switching.
+     */
+    suspend fun getSetupStatus(serverUrl: String): ApiResult<SetupStatusResponse> =
+        safeApiV2Call<SetupStatus>(ApiV2Gate.Unrestricted) {
+            client.get("${serverUrl.trimEnd('/')}/api/v2/system/setup") {
+                skipSiloAuth()
+            }
+        }.map { status -> SetupStatusResponse(needsSetup = status.needsSetup) }
 
     suspend fun getSignupStatus(): ApiResult<SignupStatusResponse> = safeApiCall {
         client.get("/api/v1/auth/signup") { skipSiloAuth() }
@@ -98,9 +116,9 @@ class AuthApi(private val client: HttpClient) {
         }
     }
 
-    suspend fun getMe(): ApiResult<User> = safeApiCall {
-        client.get("/api/v1/auth/me")
-    }
+    // Pilot v2 operation (getCurrentUser): v2 only, no v1 fallback.
+    suspend fun getMe(): ApiResult<User> =
+        safeApiV2Call<Account>(apiV2Gate) { client.get("/api/v2/account/me") }.map { account -> account.toUser() }
 
     suspend fun logout(): ApiResult<Unit> = safeApiCall {
         client.post("/api/v1/auth/logout")
@@ -170,3 +188,19 @@ internal suspend inline fun <reified T> safeApiCall(
         ApiResult.NetworkError(e)
     }
 }
+
+/** Adapts the v2 account to the v1-shaped [User] the repositories and screens consume. */
+internal fun Account.toUser(): User = User(
+    id = id,
+    username = username,
+    email = email,
+    role = role.wire,
+    downloadAllowed = downloadAllowed,
+    impersonation = impersonation?.let {
+        ImpersonationInfo(
+            active = it.active,
+            impersonatorUserId = it.impersonatorUserId,
+            impersonatorUsername = it.impersonatorUsername,
+        )
+    },
+)

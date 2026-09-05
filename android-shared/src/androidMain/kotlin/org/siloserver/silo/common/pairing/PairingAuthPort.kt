@@ -9,6 +9,7 @@ import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.CleartextOriginConsent
 import org.siloserver.silo.network.CleartextOriginNotApprovedException
 import org.siloserver.silo.network.requiresApproval
+import org.siloserver.silo.repository.AuthRepository
 
 /**
  * Narrow commit seam for the pairing receiver after a candidate server approves device
@@ -35,6 +36,7 @@ class RegistryPairingAuthPort(
     private val tokenManager: TokenManager,
     private val serverRegistry: ServerRegistry,
     private val cleartextOriginConsent: CleartextOriginConsent? = null,
+    private val authRepository: AuthRepository? = null,
 ) : PairingAuthPort {
     private val commitMutex = Mutex()
 
@@ -44,7 +46,7 @@ class RegistryPairingAuthPort(
         accessToken: String,
         refreshToken: String,
         expiresIn: Long,
-    ) = withContext(NonCancellable) {
+    ): Unit = withContext(NonCancellable) {
         commitMutex.withLock {
             if (cleartextOriginConsent?.requiresApproval(serverUrl) == true) {
                 throw CleartextOriginNotApprovedException(serverUrl)
@@ -65,11 +67,31 @@ class RegistryPairingAuthPort(
                 if (previousServerId != null && serverRegistry.activeServerId.value != previousServerId) {
                     serverRegistry.switchTo(previousServerId)
                     tokenManager.switchActiveServer(previousServerId)
+                    // Restoring is a server switch too; re-establish its contract
+                    // verdict like every other switch path, under the same bound
+                    // and with the same background replacement on no verdict.
+                    authRepository?.refreshServerContractWithFallback(previousServerId)
                 } else if (previousServerId == null) {
                     serverRegistry.remove(serverId)
                 }
                 throw error
             }
+            // Pairing is a server switch too: the newly paired server is now
+            // active, so establish its v2 contract verdict before the port
+            // reports SignedIn — otherwise the entry keeps UNKNOWN (or a
+            // stale UPDATE_REQUIRED from an older build) and gated startup
+            // consumers act on it. The probe never throws on a failed
+            // request, so this cannot roll back a committed session.
+            //
+            // Bounded: the companion waits only ~30 s for ServerResult while
+            // an unanswered request would sit on the client's ~60 s socket
+            // timeout, so an unbounded probe here made the phone report
+            // failure after the credentials were already committed. No
+            // verdict within the bound (timeout or failure) leaves the stored
+            // state alone — which passes the gate for UNKNOWN but not for a
+            // stale UPDATE_REQUIRED — so, like switchToServer, a replacement
+            // probe is handed to the repository's background scope.
+            authRepository?.refreshServerContractWithFallback(serverId)
         }
     }
 }

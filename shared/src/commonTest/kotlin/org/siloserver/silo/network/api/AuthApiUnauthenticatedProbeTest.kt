@@ -37,7 +37,7 @@ class AuthApiUnauthenticatedProbeTest {
 
         assertEquals(
             listOf(
-                "https://candidate.example/api/v1/auth/setup",
+                "https://candidate.example/api/v2/system/setup",
                 "https://candidate.example/api/v1/auth/signup",
             ),
             captured.map { it.url },
@@ -64,7 +64,7 @@ class AuthApiUnauthenticatedProbeTest {
         assertIs<ApiResult.Error>(api.getSetupStatus("https://candidate.example"))
 
         assertEquals(
-            listOf("https://candidate.example/api/v1/auth/setup"),
+            listOf("https://candidate.example/api/v2/system/setup"),
             captured.map { it.url },
         )
         assertEquals("ACTIVE", tokenManager.getAccessToken())

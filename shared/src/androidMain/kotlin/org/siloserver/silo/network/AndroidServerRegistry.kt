@@ -3,6 +3,7 @@ package org.siloserver.silo.network
 import android.content.SharedPreferences
 import android.util.Base64
 import java.net.URI
+import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.model.server.ServerEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -97,6 +98,15 @@ class AndroidServerRegistry(
                 if (entry.id == serverId) {
                     entry.copy(userOverrideName = userOverrideName?.trim()?.takeIf { it.isNotBlank() })
                 } else entry
+            }
+            persistAndApplyLocked(updated, _activeServerId.value)
+        }
+    }
+
+    override suspend fun setContract(serverId: String, contract: ServerContract) {
+        mutex.withLock {
+            val updated = _entries.value.map { entry ->
+                if (entry.id == serverId) entry.copy(contract = contract) else entry
             }
             persistAndApplyLocked(updated, _activeServerId.value)
         }
