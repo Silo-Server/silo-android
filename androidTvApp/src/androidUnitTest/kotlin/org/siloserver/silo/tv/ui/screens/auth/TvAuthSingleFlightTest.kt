@@ -69,7 +69,7 @@ class TvAuthSingleFlightTest {
     @Test
     fun loginSubmitIgnoresSecondClickWhileLoading() = runTest(dispatcher) {
         val release = CompletableDeferred<Unit>()
-        val recorder = AuthRequestRecorder("/api/v1/auth/login", release)
+        val recorder = AuthRequestRecorder("/api/v2/auth/login", release)
         val tokenManager = SingleFlightTokenManager()
         val viewModel = track(TvLoginViewModel(
             authRepository = AuthRepository(AuthApi(recorder.client(tokenManager)), tokenManager),
@@ -92,7 +92,7 @@ class TvAuthSingleFlightTest {
     @Test
     fun setupSubmitIgnoresSecondClickWhileLoading() = runTest(dispatcher) {
         val release = CompletableDeferred<Unit>()
-        val recorder = AuthRequestRecorder("/api/v1/auth/setup", release)
+        val recorder = AuthRequestRecorder("/api/v2/auth/setup", release)
         val viewModel = track(TvSetupViewModel(
             AuthRepository(AuthApi(recorder.client(SingleFlightTokenManager())), SingleFlightTokenManager()),
         ))
@@ -112,7 +112,7 @@ class TvAuthSingleFlightTest {
     @Test
     fun signupSubmitIgnoresSecondClickWhileLoading() = runTest(dispatcher) {
         val release = CompletableDeferred<Unit>()
-        val recorder = AuthRequestRecorder("/api/v1/auth/signup", release)
+        val recorder = AuthRequestRecorder("/api/v2/auth/signup", release)
         val viewModel = track(TvSignupViewModel(
             AuthRepository(AuthApi(recorder.client(SingleFlightTokenManager())), SingleFlightTokenManager()),
         ))
@@ -154,7 +154,7 @@ private class AuthRequestRecorder(
                 release.await()
                 respond(
                     content = singleFlightLoginJson("access-$matchingRequestCount", "refresh-$matchingRequestCount"),
-                    status = HttpStatusCode.OK,
+                    status = if (matchingPath.endsWith("/login")) HttpStatusCode.OK else HttpStatusCode.Created,
                     headers = headersOf(HttpHeaders.ContentType, "application/json"),
                 )
             }
@@ -176,7 +176,7 @@ private fun singleFlightLoginJson(accessToken: String, refreshToken: String): St
       "refresh_token": "$refreshToken",
       "expires_in": 3600,
       "user": {
-        "id": 1,
+        "id": "1",
         "username": "jim",
         "email": "jim@example.com",
         "role": "user",
@@ -205,6 +205,15 @@ private object NeverCompletingDeviceLoginApi : DeviceLoginApi {
 }
 
 private class SingleFlightTokenManager : TokenManager {
+    private var accountGeneration = 0L
+    override suspend fun captureAccountSessionExpectation() = org.siloserver.silo.network.AccountSessionExpectation(accountGeneration, null, getServerUrl())
+    override suspend fun replaceAccountSession(serverId: String?, serverUrl: String?, accessToken: String, refreshToken: String,
+        expiresIn: Long, profileId: String?, profileToken: String?, expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?) {
+        check(expectedIdentity == null || expectedIdentity.generation == accountGeneration)
+        accountGeneration++
+        saveTokens(accessToken, refreshToken, expiresIn)
+    }
+
     private var accessToken: String? = null
     private var refreshToken: String? = null
     override val sessionExpired = MutableSharedFlow<Unit>()

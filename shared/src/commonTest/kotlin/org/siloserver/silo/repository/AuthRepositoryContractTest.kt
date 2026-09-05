@@ -761,6 +761,17 @@ private class ContractRegistry(initialContract: ServerContract = ServerContract.
 }
 
 private class SwitchRecordingTokenManager : TokenManager {
+    private var accountGeneration = 0L
+    override suspend fun captureAccountSessionExpectation() = org.siloserver.silo.network.AccountSessionExpectation(accountGeneration, getCurrentServerId(), getServerUrl())
+    override suspend fun replaceAccountSession(serverId: String?, serverUrl: String?, accessToken: String, refreshToken: String,
+        expiresIn: Long, profileId: String?, profileToken: String?, expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?) {
+        check(expectedIdentity == null || expectedIdentity.generation == accountGeneration)
+        accountGeneration++
+        if (serverId != null) switchActiveServer(serverId)
+        if (serverUrl != null) setServerUrl(serverUrl)
+        saveTokens(accessToken, refreshToken, expiresIn)
+    }
+
     val switchedTo = mutableListOf<String?>()
     override suspend fun getAccessToken(): String? = null
     override suspend fun getRefreshToken(): String? = null

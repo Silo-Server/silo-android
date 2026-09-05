@@ -36,7 +36,7 @@ class SiloAuthPluginProactiveRefreshTest {
         // token, never the doomed one. One round trip saved.
         assertEquals(
             listOf<Pair<String, String?>>(
-                "/api/v1/auth/refresh" to null,
+                "/api/v2/auth/refresh" to null,
                 "/api/v1/home/sections" to "Bearer fresh-access",
             ),
             sent,

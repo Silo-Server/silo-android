@@ -45,6 +45,7 @@ private class FakeTransport : PairingTransport {
 
 /** Fake auth port recording approved-session commits. */
 private class FakeAuthPort : PairingAuthPort {
+    override suspend fun captureExpectedIdentity() = org.siloserver.silo.network.AccountSessionExpectation(0, null, "https://example.invalid")
     data class CommittedSession(
         val serverUrl: String,
         val serverName: String?,
@@ -61,6 +62,7 @@ private class FakeAuthPort : PairingAuthPort {
         accessToken: String,
         refreshToken: String,
         expiresIn: Long,
+        expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?,
     ) {
         committedSessions += CommittedSession(
             serverUrl = serverUrl,

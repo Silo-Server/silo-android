@@ -87,6 +87,8 @@ private data class AccountReplacement(
 private class RecordingAccountReplacementTokenManager : TokenManager {
     override val sessionExpired = MutableSharedFlow<Unit>()
     var replacement: AccountReplacement? = null
+    override suspend fun captureAccountSessionExpectation() = org.siloserver.silo.network.AccountSessionExpectation(
+        if (replacement == null) 0 else 1, "old-server", "https://old.example")
 
     override suspend fun replaceAccountSession(
         serverId: String?,
@@ -96,6 +98,7 @@ private class RecordingAccountReplacementTokenManager : TokenManager {
         expiresIn: Long,
         profileId: String?,
         profileToken: String?,
+        expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?,
     ) {
         check(serverUrl == null) { "a registry-backed invitation must install by server id" }
         check(replacement == null) { "the session must be installed exactly once" }

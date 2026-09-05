@@ -9,6 +9,7 @@ import org.siloserver.silo.model.auth.*
 import org.siloserver.silo.network.ApiErrorBody
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.map
+import org.siloserver.silo.network.singleAttempt
 import org.siloserver.silo.network.skipSiloAuth
 import org.siloserver.silo.network.apiv2.Account
 import org.siloserver.silo.network.apiv2.ApiV2Gate
@@ -20,37 +21,35 @@ class AuthApi(
     private val apiV2Gate: ApiV2Gate = ApiV2Gate.Unrestricted,
 ) {
 
-    suspend fun login(request: LoginRequest): ApiResult<LoginResponse> = safeApiCall {
-        client.post("/api/v1/auth/login") {
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }
+    suspend fun login(request: LoginRequest, serverUrl: String? = null): ApiResult<LoginResponse> = safeApiV2Call<TokenPairV2>(apiV2Gate) {
+        client.post("${serverUrl?.trimEnd('/').orEmpty()}/api/v2/auth/login") {
+            skipSiloAuth(); singleAttempt()
+            contentType(ContentType.Application.Json); setBody(request)
+        }.requireAuthStatus(200)
+    }.map { it.domain() }
+
+    suspend fun refresh(request: RefreshRequest): ApiResult<RefreshResponse> = safeApiV2Call(apiV2Gate) {
+        client.post("/api/v2/auth/refresh") {
+            skipSiloAuth()
+            contentType(ContentType.Application.Json); setBody(request)
+        }.requireAuthStatus(200)
     }
 
-    suspend fun refresh(request: RefreshRequest): ApiResult<RefreshResponse> = safeApiCall {
-        client.post("/api/v1/auth/refresh") {
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }
-    }
+    suspend fun signup(request: SignupRequest, serverUrl: String? = null): ApiResult<LoginResponse> = safeApiV2Call<TokenPairV2>(apiV2Gate) {
+        client.post("${serverUrl?.trimEnd('/').orEmpty()}/api/v2/auth/signup") {
+            skipSiloAuth(); singleAttempt()
+            contentType(ContentType.Application.Json); setBody(request)
+        }.requireAuthStatus(201)
+    }.map { it.domain() }
 
-    suspend fun signup(request: SignupRequest): ApiResult<LoginResponse> = safeApiCall {
-        client.post("/api/v1/auth/signup") {
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }
-    }
-
-    suspend fun setup(
-        username: String,
-        email: String,
-        password: String
-    ): ApiResult<LoginResponse> = safeApiCall {
-        client.post("/api/v1/auth/setup") {
-            contentType(ContentType.Application.Json)
-            setBody(SetupRequest(username = username, email = email, password = password))
-        }
-    }
+    suspend fun setup(username: String, email: String, password: String, serverUrl: String? = null): ApiResult<LoginResponse> =
+        safeApiV2Call<TokenPairV2>(apiV2Gate) {
+            client.post("${serverUrl?.trimEnd('/').orEmpty()}/api/v2/auth/setup") {
+                skipSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json)
+                setBody(SetupRequest(username, email, password))
+            }.requireAuthStatus(201)
+        }.map { it.domain() }
 
     // Pilot v2 operation (getSetupStatus): v2 only, no v1 fallback.
     suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> =
@@ -75,12 +74,12 @@ class AuthApi(
             }
         }.map { status -> SetupStatusResponse(needsSetup = status.needsSetup) }
 
-    suspend fun getSignupStatus(): ApiResult<SignupStatusResponse> = safeApiCall {
-        client.get("/api/v1/auth/signup") { skipSiloAuth() }
+    suspend fun getSignupStatus(): ApiResult<SignupStatusResponse> = safeApiV2Call(apiV2Gate) {
+        client.get("/api/v2/auth/signup") { skipSiloAuth() }
     }
 
-    suspend fun getSignupStatus(serverUrl: String): ApiResult<SignupStatusResponse> = safeApiCall {
-        client.get("${serverUrl.trimEnd('/')}/api/v1/auth/signup") {
+    suspend fun getSignupStatus(serverUrl: String): ApiResult<SignupStatusResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
+        client.get("${serverUrl.trimEnd('/')}/api/v2/auth/signup") {
             skipSiloAuth()
         }
     }
@@ -120,8 +119,8 @@ class AuthApi(
     suspend fun getMe(): ApiResult<User> =
         safeApiV2Call<Account>(apiV2Gate) { client.get("/api/v2/account/me") }.map { account -> account.toUser() }
 
-    suspend fun logout(): ApiResult<Unit> = safeApiCall {
-        client.post("/api/v1/auth/logout")
+    suspend fun logout(): ApiResult<Unit> = safeApiV2Call(apiV2Gate) {
+        client.post("/api/v2/auth/logout").requireAuthStatus(204)
     }
 
 }

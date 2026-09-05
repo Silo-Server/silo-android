@@ -1,8 +1,11 @@
 package org.siloserver.silo.common.network
 
+import io.ktor.client.engine.mock.respond
+import io.ktor.serialization.kotlinx.json.json
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
@@ -100,5 +103,38 @@ class DurableLoginAuthorityTest {
         assertNull(tokens.snapshotDurableLoginAuthority())
         tokens.endTemporaryScope()
         assertEquals(first.loginId, tokens.snapshotDurableLoginAuthority()?.loginId)
+    }
+
+    @Test fun delayedLoginCannotInstallAfterServerSwitchOrSameAccountRelogin() = runTest {
+        for (switchServer in listOf(true, false)) {
+            val transitions = DefaultIdentityTransitionBarrier()
+            val registry = AndroidServerRegistry(prefs, transitions)
+            val firstServer = registry.addOrUpdate("https://first.example.invalid")
+            val otherServer = registry.addOrUpdate("https://other.example.invalid")
+            val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
+            tokens.replaceAccountSession(firstServer, null, "original", "original-r", 3600, "p", "pt")
+            val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+            val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
+                assertEquals("first.example.invalid", request.url.host)
+                assertEquals("/api/v2/auth/login", request.url.encodedPath)
+                entered.complete(Unit); release.await()
+                respond("""{"access_token":"stale","refresh_token":"stale-r","expires_in":3600,"user":{"id":"1","username":"user","email":"u@example.test","role":"user"}}""",
+                    io.ktor.http.HttpStatusCode.OK, io.ktor.http.headersOf(io.ktor.http.HttpHeaders.ContentType, "application/json"))
+            }) {
+                install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json(SiloJson) }
+            }
+            try {
+                val repository = org.siloserver.silo.repository.AuthRepository(org.siloserver.silo.network.api.AuthApi(client), tokens, registry)
+                val login = async { repository.login("user", "password") }; entered.await()
+                if (switchServer) registry.switchTo(otherServer)
+                else tokens.replaceAccountSession(firstServer, null, "newer", "newer-r", 3600, "p", "pt")
+                val expectedAuthority = tokens.snapshotDurableLoginAuthority()
+                release.complete(Unit)
+                assertEquals("identity_changed", assertIs<ApiResult.Error>(login.await()).error)
+                assertEquals(if (switchServer) otherServer else firstServer, registry.activeServerId.value)
+                assertEquals(if (switchServer) null else "newer", tokens.getAccessToken())
+                assertEquals(expectedAuthority, tokens.snapshotDurableLoginAuthority())
+            } finally { client.close() }
+        }
     }
 }

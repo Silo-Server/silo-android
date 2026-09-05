@@ -92,7 +92,7 @@ class MembershipV2Test {
                     assertEquals(listOf("/api/v2/favorites/item"), paths)
                 } else {
                     assertIs<ApiResult.Success<*>>(api.favorite("item"))
-                    assertEquals(listOf("/api/v2/favorites/item", "/api/v1/auth/refresh", "/api/v2/favorites/item"), paths)
+                    assertEquals(listOf("/api/v2/favorites/item", "/api/v2/auth/refresh", "/api/v2/favorites/item"), paths)
                 }
             } finally { client.close() }
         }

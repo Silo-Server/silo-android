@@ -38,7 +38,7 @@ class AuthApiUnauthenticatedProbeTest {
         assertEquals(
             listOf(
                 "https://candidate.example/api/v2/system/setup",
-                "https://candidate.example/api/v1/auth/signup",
+                "https://candidate.example/api/v2/auth/signup",
             ),
             captured.map { it.url },
         )

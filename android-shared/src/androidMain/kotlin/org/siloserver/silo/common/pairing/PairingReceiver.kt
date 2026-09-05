@@ -312,6 +312,7 @@ class PairingReceiver(
     ) {
         _status.value = PairingReceiverStatus.Pairing(serverURL, serverName)
 
+        val expectedIdentity = authPort.captureExpectedIdentity() ?: error("Unable to capture the current sign-in context")
         val identity = identityProvider()
         var deviceStartedSent = false
 
@@ -358,6 +359,7 @@ class PairingReceiver(
                                         accessToken = accessToken,
                                         refreshToken = refreshToken,
                                         expiresIn = response.expiresIn ?: 0L,
+                                        expectedIdentity = expectedIdentity,
                                     )
                                 }
                                 signedInCount += 1

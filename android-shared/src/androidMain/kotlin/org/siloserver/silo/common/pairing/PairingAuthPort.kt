@@ -4,6 +4,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.siloserver.silo.network.AccountSessionExpectation
+import org.siloserver.silo.network.AccountSessionChangedException
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.CleartextOriginConsent
@@ -18,6 +20,7 @@ import org.siloserver.silo.repository.AuthRepository
  * without a real token manager / registry.
  */
 interface PairingAuthPort {
+    suspend fun captureExpectedIdentity(): AccountSessionExpectation? = null
     /**
      * Commit an approved account session. Reauthorizing the same URL is an
      * account boundary, so old profile selection/token state must not survive.
@@ -28,6 +31,7 @@ interface PairingAuthPort {
         accessToken: String,
         refreshToken: String,
         expiresIn: Long,
+        expectedIdentity: AccountSessionExpectation? = null,
     )
 }
 
@@ -39,6 +43,7 @@ class RegistryPairingAuthPort(
     private val authRepository: AuthRepository? = null,
 ) : PairingAuthPort {
     private val commitMutex = Mutex()
+    override suspend fun captureExpectedIdentity() = tokenManager.captureAccountSessionExpectation()
 
     override suspend fun persistApprovedSession(
         serverUrl: String,
@@ -46,6 +51,7 @@ class RegistryPairingAuthPort(
         accessToken: String,
         refreshToken: String,
         expiresIn: Long,
+        expectedIdentity: AccountSessionExpectation?,
     ): Unit = withContext(NonCancellable) {
         commitMutex.withLock {
             if (cleartextOriginConsent?.requiresApproval(serverUrl) == true) {
@@ -62,7 +68,10 @@ class RegistryPairingAuthPort(
                     accessToken = accessToken,
                     refreshToken = refreshToken,
                     expiresIn = expiresIn,
+                    expectedIdentity = expectedIdentity,
                 )
+            } catch (changed: AccountSessionChangedException) {
+                throw changed
             } catch (error: Throwable) {
                 if (previousServerId != null && serverRegistry.activeServerId.value != previousServerId) {
                     serverRegistry.switchTo(previousServerId)
@@ -92,6 +101,7 @@ class RegistryPairingAuthPort(
             // stale UPDATE_REQUIRED — so, like switchToServer, a replacement
             // probe is handed to the repository's background scope.
             authRepository?.refreshServerContractWithFallback(serverId)
+            if (expectedIdentity != null && tokenManager.captureAccountSessionExpectation()?.generation != expectedIdentity.generation + 1) throw AccountSessionChangedException()
         }
     }
 }

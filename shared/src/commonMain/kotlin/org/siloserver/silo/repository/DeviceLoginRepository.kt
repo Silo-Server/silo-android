@@ -35,6 +35,7 @@ class DeviceLoginRepository(
     }
 
     enum class FailureReason {
+        PollUncertain, // A collecting poll may have succeeded; require explicit restart.
         StartFailed,    // initiate POST returned non-2xx
         Expired,        // polled row gone (404) or status=expired
         Denied,         // status=denied
@@ -133,14 +134,14 @@ class DeviceLoginRepository(
                             )
                             return
                         }
-                        // Transient — keep trying.
-                        delay(intervalMs)
-                        continue
+                        _state.value = DeviceLoginState.Failed(FailureReason.PollUncertain,
+                            "Sign-in status could not be confirmed. Start a new sign-in request.")
+                        return
                     }
                     is ApiResult.NetworkError -> {
-                        // Transient network blip — keep trying.
-                        delay(intervalMs)
-                        continue
+                        _state.value = DeviceLoginState.Failed(FailureReason.PollUncertain,
+                            "Sign-in status could not be confirmed. Start a new sign-in request.")
+                        return
                     }
                 }
 

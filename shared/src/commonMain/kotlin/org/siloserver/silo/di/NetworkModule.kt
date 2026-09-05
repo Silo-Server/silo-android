@@ -20,7 +20,7 @@ val networkModule = module {
     single { ApiV2Probe(get()) }
     single { AuthApi(get(), get()) }
     single { OnboardingApi(get()) }
-    single<DeviceLoginApi> { DefaultDeviceLoginApi(get()) }
+    single<DeviceLoginApi> { DefaultDeviceLoginApi(get(), get()) }
     single { CatalogV2Api(get(), get(), get()) }
     single { CatalogApi(get(), get()) }
     single { PlaybackApi(get()) }

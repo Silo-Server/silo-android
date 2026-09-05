@@ -49,6 +49,7 @@ class LoginViewModel(
     }
 
     fun onLoginClick() {
+        if (_uiState.value.isLoading) return
         val current = _uiState.value
         if (current.username.isBlank()) {
             _uiState.update { it.copy(error = "Username is required") }
@@ -59,8 +60,8 @@ class LoginViewModel(
             return
         }
 
+        _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
 
             when (val result = authRepository.login(current.username, current.password)) {
                 is ApiResult.Success -> {

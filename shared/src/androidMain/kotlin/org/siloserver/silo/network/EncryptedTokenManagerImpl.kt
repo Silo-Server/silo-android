@@ -171,6 +171,17 @@ class EncryptedTokenManagerImpl(
         }
     }
 
+    override suspend fun captureAccountSessionExpectation(): AccountSessionExpectation? {
+        val generation = identityTransitions.generation.value
+        return identityTransitions.withCurrentGeneration(generation) {
+            mutex.withLock {
+                ensureCacheMatchesRegistryLocked()
+                check(temporaryScope == null) { "Temporary identity cannot install a persistent session" }
+                AccountSessionExpectation(generation, activeServerId, registry.activeEntry.value?.url.orEmpty())
+            }
+        }
+    }
+
     override suspend fun replaceAccountSession(
         serverId: String?,
         serverUrl: String?,
@@ -179,6 +190,7 @@ class EncryptedTokenManagerImpl(
         expiresIn: Long,
         profileId: String?,
         profileToken: String?,
+        expectedIdentity: AccountSessionExpectation?,
     ) {
         val targetServerId = serverId
             ?: serverUrl?.let { registry.addOrUpdate(it) }
@@ -190,6 +202,9 @@ class EncryptedTokenManagerImpl(
             identityTransitions.changing(
                 kind = IdentityTransitionKind.ACCOUNT_REPLACE,
                 target = {
+                    if (expectedIdentity != null && identityTransitions.generation.value != expectedIdentity.generation) {
+                        throw AccountSessionChangedException()
+                    }
                     check(mutex.withLock { temporaryScope == null }) {
                         "cannot replace the account inside a temporary auth scope"
                     }

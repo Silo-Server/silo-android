@@ -12,6 +12,8 @@ import org.siloserver.silo.network.apiv2.ApiV2Probe
 import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.AccountSessionExpectation
+import org.siloserver.silo.network.AccountSessionChangedException
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.api.BrandingApi
@@ -58,28 +60,36 @@ class AuthRepository(
         result: ApiResult<LoginResponse>,
         targetServerId: String? = null,
         targetServerUrl: String? = null,
-    ): ApiResult<User> =
-        when (result) {
+        expectedIdentity: AccountSessionExpectation? = null,
+    ): ApiResult<User> {
+        return when (result) {
             is ApiResult.Success -> {
                 val data = result.data
                 val serverId = targetServerId ?: tokenManager.getCurrentServerId()
-                tokenManager.replaceAccountSession(
+                try {
+                    tokenManager.replaceAccountSession(
                     serverId = serverId,
                     serverUrl = targetServerUrl,
                     accessToken = data.accessToken,
                     refreshToken = data.refreshToken,
                     expiresIn = data.expiresIn,
-                )
+                    expectedIdentity = expectedIdentity,
+                    )
+                } catch (_: AccountSessionChangedException) {
+                    return staleSession()
+                }
                 onSessionCommitted(serverId)
+                if (expectedIdentity != null && tokenManager.captureAccountSessionExpectation()?.generation != expectedIdentity.generation + 1) return staleSession()
                 ApiResult.Success(data.user)
             }
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
 
     /**
      * Re-establishes the v2 contract verdict of [serverId] (the active server
-     * when null) after a session was committed on it. A v1 login proves
+     * when null) after a session was committed on it. A successful login proves
      * nothing about v2, but the stored verdict can be stale — the server may
      * have been upgraded while the sign-in screen stayed open — and without
      * a fresh probe an old UPDATE_REQUIRED would keep the gate rejecting
@@ -111,51 +121,32 @@ class AuthRepository(
     }
 
     /**
-     * Logs in with username and password.
-     * On success, persists tokens via [TokenManager] and returns the [User].
+     * Reject stale session completion without changing the newly active identity.
      */
-    suspend fun login(username: String, password: String): ApiResult<User> =
-        persistSession(authApi.login(LoginRequest(username = username, password = password)))
+    private fun staleSession() = ApiResult.Error(0, "identity_changed", "The account or server changed. Start sign-in again.")
 
-    /**
-     * Credential login without persistence. TV keeps QR and password sign-in
-     * alive together, so it must choose the winning auth path before writing
-     * tokens into the active server slot.
-     */
-    suspend fun loginForTokens(username: String, password: String): ApiResult<LoginResponse> =
-        authApi.login(LoginRequest(username = username, password = password))
-
-    /**
-     * Registers a new account with an invite code.
-     * On success, persists tokens via [TokenManager] and returns the [User].
-     */
-    suspend fun signup(
-        username: String,
-        email: String,
-        password: String,
-        inviteCode: String,
-    ): ApiResult<User> {
-        return persistSession(
-            authApi.signup(
-                SignupRequest(
-                    username = username,
-                    email = email,
-                    password = password,
-                    inviteCode = inviteCode,
-                ),
-            ),
-        )
+    private suspend fun authenticate(call: suspend (AccountSessionExpectation) -> ApiResult<LoginResponse>): ApiResult<User> {
+        val expected = tokenManager.captureAccountSessionExpectation() ?: return staleSession()
+        return persistSession(call(expected), expected.serverId, expected.serverUrl.takeIf { expected.serverId == null }, expected)
     }
 
-    /**
-     * Performs initial server setup (first admin user creation).
-     * On success, persists tokens via [TokenManager] and returns the [User].
-     */
-    suspend fun setup(
-        username: String,
-        email: String,
-        password: String,
-    ): ApiResult<User> = persistSession(authApi.setup(username, email, password))
+    suspend fun login(username: String, password: String): ApiResult<User> = authenticate {
+        authApi.login(LoginRequest(username, password), it.serverUrl)
+    }
+
+    suspend fun loginForTokens(username: String, password: String, expected: AccountSessionExpectation? = null): ApiResult<LoginResponse> {
+        val captured = expected ?: tokenManager.captureAccountSessionExpectation() ?: return staleSession()
+        val result = authApi.login(LoginRequest(username, password), captured.serverUrl)
+        return if (tokenManager.captureAccountSessionExpectation() == captured) result else staleSession()
+    }
+
+    suspend fun signup(username: String, email: String, password: String, inviteCode: String): ApiResult<User> = authenticate {
+        authApi.signup(SignupRequest(username, email, password, inviteCode), it.serverUrl)
+    }
+
+    suspend fun setup(username: String, email: String, password: String): ApiResult<User> = authenticate {
+        authApi.setup(username, email, password, it.serverUrl)
+    }
 
     /** Checks whether the server requires initial setup. */
     suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> =
@@ -189,6 +180,7 @@ class AuthRepository(
         token: String,
         password: String,
     ): ApiResult<User> {
+        val expected = tokenManager.captureAccountSessionExpectation() ?: return staleSession()
         val result = authApi.acceptInvitation(serverUrl, token, password)
         if (result !is ApiResult.Success) return persistSession(result)
         val targetServerId = serverRegistry?.addOrUpdate(serverUrl)
@@ -196,6 +188,7 @@ class AuthRepository(
             result = result,
             targetServerId = targetServerId,
             targetServerUrl = serverUrl.takeIf { serverRegistry == null },
+            expectedIdentity = expected,
         )
         // persistSession already refreshed the contract; only the name is left.
         if (persisted is ApiResult.Success) {

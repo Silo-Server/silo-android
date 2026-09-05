@@ -3,6 +3,8 @@ package org.siloserver.silo.tv.ui.screens.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.auth.DeviceLoginPollResponse
+import org.siloserver.silo.network.AccountSessionChangedException
+import org.siloserver.silo.network.AccountSessionExpectation
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
@@ -84,7 +86,8 @@ class TvLoginViewModel(
         _uiState.update { it.copy(isLoading = true, error = null) }
         credentialLoginJob?.cancel()
         credentialLoginJob = viewModelScope.launch {
-            when (val result = authRepository.loginForTokens(s.username, s.password)) {
+            val expected = tokenManager.captureAccountSessionExpectation() ?: return@launch
+            when (val result = authRepository.loginForTokens(s.username, s.password, expected)) {
                 is ApiResult.Success -> {
                     if (!tryCompleteAuth()) {
                         _uiState.update { it.copy(isLoading = false) }
@@ -93,12 +96,15 @@ class TvLoginViewModel(
                     deviceLoginJob?.cancel()
                     try {
                         tokenManager.replaceAccountSession(
+                            expectedIdentity = expected,
                             accessToken = result.data.accessToken,
                             refreshToken = result.data.refreshToken,
                             expiresIn = result.data.expiresIn,
                         )
                     } catch (cancelled: CancellationException) {
                         throw cancelled
+                    } catch (_: AccountSessionChangedException) {
+                        return@launch
                     } catch (_: Throwable) {
                         handleSessionPersistenceFailure(
                             accessToken = result.data.accessToken,
@@ -109,6 +115,7 @@ class TvLoginViewModel(
                     // Tokens are committed outside persistSession here, so refresh the
                     // server's v2 contract verdict the same way every other sign-in does.
                     authRepository.onSessionCommitted()
+                    if (tokenManager.captureAccountSessionExpectation()?.generation != expected.generation + 1) return@launch
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
                 }
                 is ApiResult.Error -> {
@@ -146,7 +153,9 @@ class TvLoginViewModel(
     private fun startDeviceLogin() {
         deviceLoginJob?.cancel()
         deviceLoginJob = viewModelScope.launch {
-            deviceLogin.begin(
+            val expected = tokenManager.captureAccountSessionExpectation() ?: return@launch
+            deviceLogin.beginAt(
+                serverUrl = expected.serverUrl,
                 deviceName = android.os.Build.MODEL,
                 // Same spelling as the X-Silo-Device-Platform header this app
                 // sends, so one device reports one platform string everywhere.
@@ -154,7 +163,7 @@ class TvLoginViewModel(
             )
             val terminal = deviceLogin.state.value
             if (terminal is DeviceLoginRepository.DeviceLoginState.Approved) {
-                handleDeviceLoginApproved(terminal.response)
+                handleDeviceLoginApproved(terminal.response, expected)
             }
         }
     }
@@ -172,7 +181,7 @@ class TvLoginViewModel(
      * everything downstream (MainTvActivity.resolveStartDestination,
      * authenticated API calls) sees the same world as a credential login.
      */
-    private suspend fun handleDeviceLoginApproved(response: DeviceLoginPollResponse) {
+    private suspend fun handleDeviceLoginApproved(response: DeviceLoginPollResponse, expected: AccountSessionExpectation) {
         val accessToken = response.accessToken
         val refreshToken = response.refreshToken
         // Repository already guards against null tokens (Failed.MissingTokens),
@@ -189,12 +198,15 @@ class TvLoginViewModel(
         credentialLoginJob?.cancel()
         try {
             tokenManager.replaceAccountSession(
+                expectedIdentity = expected,
                 accessToken = accessToken,
                 refreshToken = refreshToken,
                 expiresIn = response.expiresIn ?: 0L,
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (_: AccountSessionChangedException) {
+            return
         } catch (_: Throwable) {
             handleSessionPersistenceFailure(accessToken, refreshToken)
             return
@@ -202,6 +214,7 @@ class TvLoginViewModel(
         // Tokens are committed outside persistSession here, so refresh the
         // server's v2 contract verdict the same way every other sign-in does.
         authRepository.onSessionCommitted()
+        if (tokenManager.captureAccountSessionExpectation()?.generation != expected.generation + 1) return
         _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
     }
 

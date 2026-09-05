@@ -47,6 +47,7 @@ class SignupViewModel(
     }
 
     fun onSignupClick() {
+        if (_uiState.value.isLoading) return
         val current = _uiState.value
 
         val validationError = validateFields(current)
@@ -55,8 +56,8 @@ class SignupViewModel(
             return
         }
 
+        _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
 
             when (val result = authRepository.signup(
                 username = current.username,

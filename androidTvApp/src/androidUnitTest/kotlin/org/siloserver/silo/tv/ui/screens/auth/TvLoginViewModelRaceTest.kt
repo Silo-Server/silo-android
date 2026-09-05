@@ -134,6 +134,9 @@ private suspend fun awaitCredentialLoginStarted(started: CompletableDeferred<Uni
 }
 
 private class ControlledDeviceLoginApi : DeviceLoginApi {
+    override suspend fun startDeviceLoginAt(serverUrl: String, deviceName: String?, devicePlatform: String?) = startDeviceLogin(deviceName, devicePlatform)
+    override suspend fun pollDeviceLoginAt(serverUrl: String, deviceCode: String) = pollDeviceLogin(deviceCode)
+
     private val pollResult = CompletableDeferred<ApiResult<DeviceLoginPollResponse>>()
 
     override suspend fun startDeviceLogin(
@@ -172,6 +175,17 @@ private class ControlledDeviceLoginApi : DeviceLoginApi {
 }
 
 private class RecordingTokenStore : TokenManager {
+    private var accountGeneration = 0L
+    override suspend fun captureAccountSessionExpectation() = org.siloserver.silo.network.AccountSessionExpectation(accountGeneration, getCurrentServerId(), getServerUrl())
+    override suspend fun replaceAccountSession(serverId: String?, serverUrl: String?, accessToken: String, refreshToken: String,
+        expiresIn: Long, profileId: String?, profileToken: String?, expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?) {
+        check(expectedIdentity == null || expectedIdentity.generation == accountGeneration)
+        accountGeneration++
+        if (serverId != null) switchActiveServer(serverId)
+        if (serverUrl != null) setServerUrl(serverUrl)
+        saveTokens(accessToken, refreshToken, expiresIn)
+    }
+
     val savedAccessTokens = mutableListOf<String>()
     var accessToken: String? = null
     private var refreshToken: String? = null
@@ -208,7 +222,7 @@ private fun credentialLoginJson(accessToken: String, refreshToken: String): Stri
       "refresh_token": "$refreshToken",
       "expires_in": 3600,
       "user": {
-        "id": 1,
+        "id": "1",
         "username": "jim",
         "email": "jim@example.com",
         "role": "user",
