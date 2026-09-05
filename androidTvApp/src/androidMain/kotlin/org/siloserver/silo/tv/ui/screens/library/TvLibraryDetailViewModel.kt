@@ -637,8 +637,8 @@ class TvLibraryDetailViewModel(
                 )
             ) {
                 is ApiResult.Success -> {
-                        audiobookContinuation = result.data.continuation
                     if (generation != audiobookGroupsGeneration) return@launch
+                    audiobookContinuation = result.data.continuation
                     val response = result.data
                     _uiState.update {
                         it.copy(
