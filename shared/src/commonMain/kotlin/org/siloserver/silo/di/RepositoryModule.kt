@@ -55,6 +55,9 @@ val repositoryModule = module {
             healthApi = getOrNull(),
             brandingApi = getOrNull(),
             apiV2Probe = getOrNull(),
+            // Owns the post-switch display-name refresh so a server-list
+            // spinner never waits on branding/health.
+            backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )
     }
     single { OnboardingRepository(get()) }

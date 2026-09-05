@@ -8,13 +8,21 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.api.BrandingApi
+import org.siloserver.silo.network.api.BrandingStatus
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ServerRegistry
@@ -67,12 +75,59 @@ class AuthRepositoryContractTest {
     fun `switchToServer probes the switched-to server`() = runTest {
         val registry = ContractRegistry()
         val tokens = SwitchRecordingTokenManager()
-        repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"), tokens)
-            .switchToServer("b")
+        // Real clock: the switch bounds the probe, and virtual time would
+        // skip past that bound while the engine answers.
+        withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"), tokens)
+                .switchToServer("b")
+        }
 
         assertEquals("b", registry.activeServerId.value)
         assertEquals(listOf<String?>("b"), tokens.switchedTo)
         assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer returns with the verdict unchanged when the probe hangs past the bound`() = runTest {
+        // A saved server that accepts the connection but never answers must
+        // not hold the switch spinner for the full client timeouts.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.V2)
+        val tokens = SwitchRecordingTokenManager()
+        val hanging = client { awaitCancellation() }
+        repository(registry, hanging, tokens).switchToServer("b")
+
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(listOf<String?>("b"), tokens.switchedTo)
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer does not await the display-name refresh`() = runTest {
+        val registry = ContractRegistry()
+        val brandingGate = CompletableDeferred<Unit>()
+        val branding = object : BrandingApi(unusedClient()) {
+            override suspend fun getBranding(): ApiResult<BrandingStatus> {
+                brandingGate.await()
+                return ApiResult.Success(BrandingStatus("Named"))
+            }
+        }
+        val repository = repository(
+            registry,
+            respondWith(HttpStatusCode.OK, infoBody, "application/json"),
+            brandingApi = branding,
+            backgroundScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        )
+
+        withContext(Dispatchers.Default) { repository.switchToServer("b") }
+
+        // Returned with the verdict recorded while branding is still pending.
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+        assertEquals(emptyMap<String, String?>(), registry.fetchedNames)
+
+        brandingGate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(mapOf<String, String?>("b" to "Named"), registry.fetchedNames)
     }
 
     @Test
@@ -82,8 +137,10 @@ class AuthRepositoryContractTest {
         // active, which must still move the token scope and probe.
         val registry = ContractRegistry()
         val tokens = SwitchRecordingTokenManager()
-        repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"), tokens)
-            .switchToServer("a")
+        withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"), tokens)
+                .switchToServer("a")
+        }
 
         assertEquals("a", registry.activeServerId.value)
         assertEquals(listOf<String?>("a"), tokens.switchedTo)
@@ -140,21 +197,28 @@ class AuthRepositoryContractTest {
         install(ContentNegotiation) { json(SiloJson) }
     }
 
+    private fun unusedClient() = HttpClient(MockEngine { error("Unexpected request") })
+
     private fun repository(
         registry: ContractRegistry,
         client: HttpClient,
         tokenManager: TokenManager = SwitchRecordingTokenManager(),
+        brandingApi: BrandingApi? = null,
+        backgroundScope: CoroutineScope? = null,
     ) = AuthRepository(
         authApi = AuthApi(client),
         tokenManager = tokenManager,
         serverRegistry = registry,
+        brandingApi = brandingApi,
         apiV2Probe = ApiV2Probe(client),
+        backgroundScope = backgroundScope,
     )
 }
 
 private class ContractRegistry(initialContract: ServerContract = ServerContract.UNKNOWN) : ServerRegistry {
     private val activeId = MutableStateFlow<String?>("a")
     val contracts = mutableMapOf<String, ServerContract>()
+    val fetchedNames = mutableMapOf<String, String?>()
 
     override val entries: StateFlow<List<ServerEntry>> = MutableStateFlow(
         listOf(
@@ -167,7 +231,9 @@ private class ContractRegistry(initialContract: ServerContract = ServerContract.
 
     override suspend fun addOrUpdate(url: String, fetchedName: String?): String = "a"
     override suspend fun rename(serverId: String, userOverrideName: String?) = Unit
-    override suspend fun setFetchedName(serverId: String, fetchedName: String?) = Unit
+    override suspend fun setFetchedName(serverId: String, fetchedName: String?) {
+        fetchedNames[serverId] = fetchedName
+    }
     override suspend fun setProfileId(serverId: String, profileId: String?) = Unit
     override suspend fun setContract(serverId: String, contract: ServerContract) {
         contracts[serverId] = contract

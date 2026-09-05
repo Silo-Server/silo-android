@@ -17,11 +17,20 @@ import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.api.BrandingApi
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.map
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * How long [AuthRepository.switchToServer] waits for the contract probe before
+ * returning with the stored verdict untouched. Matches the launch-path bound
+ * in [AuthRepository.awaitContractRefreshIfUpdateRequired].
+ */
+private const val SWITCH_PROBE_TIMEOUT_MS = 3_000L
 
 class AuthRepository(
     private val authApi: AuthApi,
@@ -30,6 +39,12 @@ class AuthRepository(
     private val healthApi: HealthApi? = null,
     private val brandingApi: BrandingApi? = null,
     private val apiV2Probe: ApiV2Probe? = null,
+    /**
+     * Process-lifetime scope for fire-and-forget work the caller must not wait
+     * on (the display-name refresh after a server switch). When null that
+     * work runs inline instead — single-server hosts and tests.
+     */
+    private val backgroundScope: CoroutineScope? = null,
 ) {
     /**
      * Persists a successful auth response's tokens into the active server's
@@ -204,16 +219,31 @@ class AuthRepository(
 
     /**
      * The single entry point for activating an already-registered server:
-     * switches the registry and the token scope, then refreshes the server's
-     * identity and v2 contract verdict. Every "switch to server" UI path must
-     * go through here so a server saved by an older build gets probed. No-op
+     * switches the registry and the token scope, then re-establishes the
+     * server's v2 contract verdict. Every "switch to server" UI path must go
+     * through here so a server saved by an older build gets probed. No-op
      * without a registry.
+     *
+     * Callers await this behind a spinner, so only the probe is awaited and
+     * only for [SWITCH_PROBE_TIMEOUT_MS]: a server that accepts the socket
+     * but never answers leaves the stored verdict alone (the gate still
+     * passes UNKNOWN and V2, and a stale UPDATE_REQUIRED gets the launch-path
+     * refresh). The display-name refresh (branding, then health) is launched
+     * on [backgroundScope] without being awaited; without a scope it runs
+     * inline after the probe.
      */
     suspend fun switchToServer(serverId: String) {
         val registry = serverRegistry ?: return
         registry.switchTo(serverId)
         tokenManager.switchActiveServer(serverId)
-        refreshActiveServerName()
+        withTimeoutOrNull(SWITCH_PROBE_TIMEOUT_MS) { refreshServerContract() }
+        if (registry.activeServerId.value != serverId) return
+        val scope = backgroundScope
+        if (scope == null) {
+            refreshActiveServerDisplayName(serverId)
+        } else {
+            scope.launch { refreshActiveServerDisplayName(serverId) }
+        }
     }
 
     /**
@@ -233,6 +263,15 @@ class AuthRepository(
         val registry = serverRegistry ?: return
         val activeId = registry.activeServerId.value ?: return
         if (knownContract != null) recordServerContract(activeId, knownContract) else refreshServerContract()
+        refreshActiveServerDisplayName(activeId)
+    }
+
+    /**
+     * The name half of [refreshActiveServerName]: branding, then health as a
+     * fallback, recorded only while [activeId] is still the active server.
+     */
+    private suspend fun refreshActiveServerDisplayName(activeId: String) {
+        val registry = serverRegistry ?: return
         if (registry.activeServerId.value != activeId) return
         val brandingName = (brandingApi?.getBranding() as? ApiResult.Success)
             ?.data
