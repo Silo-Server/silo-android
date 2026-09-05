@@ -42,7 +42,7 @@ Continuations are not serialized into the offline first-page cache. A cache
 fallback disables further paging until the viewer reloads online. It cannot seed
 a new query with an old server cursor.
 
-Version and item-episode wrappers, watch transport, person refresh, and the
+The unused version wrapper, watch transport, person refresh, and the
 history transport are separate from this catalog migration. No playback or
 administrative UI is added.
 
@@ -70,7 +70,7 @@ as complete. People search remains a bounded name lookup (default 20, maximum
 
 These reads use the existing gate, captured viewer scope, and cancellation checks.
 Catalog markers retain `start` and `end`; watch transport is a separate contract
-and is not changed here. Dormant version/item-episode wrappers, person refresh,
+and is not changed here. The unused version wrapper, person refresh,
 and standalone history are outside this read adapter. History adoption is
 documented in `history-api-v2.md`.
 
@@ -79,3 +79,10 @@ resolution. Tests cover the real repository envelopes feeding the shared resolve
 within-season advancement, rollover past specials, and failed or partial current
 seasons remaining errors. Player orchestration is unchanged. Detail cache tests
 continue to cover warm-read coalescing, offline fallback, and viewer changes.
+
+Season download subscriptions use the item-episodes read through the same checked
+v2 episode projection. This operation accepts a season item ID (including supported
+synthetic season IDs), applies series visibility checks, and returns a finite
+`items` envelope. Unknown or inaccessible seasons remain errors. Factory-path
+tests cover ordered episode/file IDs, watched-item filtering, rejected partial
+responses, viewer changes during reads, and cancellation without enqueueing.

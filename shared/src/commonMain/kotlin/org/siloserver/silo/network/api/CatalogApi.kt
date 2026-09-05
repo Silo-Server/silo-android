@@ -64,9 +64,7 @@ class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = 
         client.get("/api/v1/catalog/items/$id/versions")
     }
 
-    suspend fun getItemEpisodes(id: String): ApiResult<EpisodesResponse> = safeApiCall {
-        client.get("/api/v1/catalog/items/$id/episodes")
-    }
+    suspend fun getItemEpisodes(id: String): ApiResult<EpisodesResponse> = v2.itemEpisodes(id)
 
     suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> = v2.seriesSeasons(seriesId)
 

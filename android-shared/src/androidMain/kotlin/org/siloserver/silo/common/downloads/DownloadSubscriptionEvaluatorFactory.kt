@@ -6,57 +6,64 @@ import org.siloserver.silo.model.download.DownloadSubscriptionTargetType
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 
-class DownloadSubscriptionEvaluatorFactory(
+class DownloadSubscriptionEvaluatorFactory internal constructor(
     private val catalogRepository: CatalogRepository,
-    private val metadataStore: DownloadMetadataStore,
-    private val downloadEnqueuer: DownloadEnqueuer,
+    private val existingFileIds: suspend (DownloadSubscription) -> Set<Int>,
+    private val enqueue: suspend (DownloadSubscriptionCandidate, DownloadQuality) -> Unit,
 ) {
-    fun create(): DownloadSubscriptionEvaluator =
-        DownloadSubscriptionEvaluator(
-            candidateProvider = CatalogDownloadSubscriptionCandidateProvider(catalogRepository),
-            existingFileIds = { subscription ->
-                metadataStore
-                    .listSidecars(subscription.serverId, subscription.profileId)
-                    .map { it.record.mediaFileId }
-                    .toSet()
-            },
-            enqueue = { candidate, quality -> enqueueCandidate(candidate, quality) },
-        )
+    constructor(
+        catalogRepository: CatalogRepository,
+        metadataStore: DownloadMetadataStore,
+        downloadEnqueuer: DownloadEnqueuer,
+    ) : this(catalogRepository,
+        existingFileIds = { subscription ->
+            metadataStore.listSidecars(subscription.serverId, subscription.profileId)
+                .map { it.record.mediaFileId }.toSet()
+        },
+        enqueue = { candidate, quality -> enqueueCandidate(downloadEnqueuer, candidate, quality) },
+    )
 
-    private suspend fun enqueueCandidate(
-        candidate: DownloadSubscriptionCandidate,
-        quality: DownloadQuality,
+    fun create(): DownloadSubscriptionEvaluator = DownloadSubscriptionEvaluator(
+        candidateProvider = CatalogDownloadSubscriptionCandidateProvider(catalogRepository),
+        existingFileIds = existingFileIds,
+        enqueue = enqueue,
+    )
+}
+
+private suspend fun enqueueCandidate(
+    downloadEnqueuer: DownloadEnqueuer,
+    candidate: DownloadSubscriptionCandidate,
+    quality: DownloadQuality,
+) {
+    val result = if (
+        candidate.seriesContentId != null &&
+        candidate.seasonNumber != null &&
+        candidate.episodeNumber != null
     ) {
-        val result = if (
-            candidate.seriesContentId != null &&
-            candidate.seasonNumber != null &&
-            candidate.episodeNumber != null
-        ) {
-            downloadEnqueuer.startEpisode(
-                seriesContentId = candidate.seriesContentId,
-                episodeContentId = candidate.contentId,
-                fileId = candidate.mediaFileId,
-                seriesTitle = candidate.seriesTitle ?: candidate.title,
-                seasonNumber = candidate.seasonNumber,
-                episodeNumber = candidate.episodeNumber,
-                episodeTitle = candidate.title,
-                posterUrl = candidate.posterUrl,
-                downloadQualityOverride = quality,
-            )
-        } else {
-            downloadEnqueuer.start(
-                contentId = candidate.contentId,
-                fileId = candidate.mediaFileId,
-                displayTitle = candidate.title,
-                downloadQualityOverride = quality,
-            )
-        }
+        downloadEnqueuer.startEpisode(
+            seriesContentId = candidate.seriesContentId,
+            episodeContentId = candidate.contentId,
+            fileId = candidate.mediaFileId,
+            seriesTitle = candidate.seriesTitle ?: candidate.title,
+            seasonNumber = candidate.seasonNumber,
+            episodeNumber = candidate.episodeNumber,
+            episodeTitle = candidate.title,
+            posterUrl = candidate.posterUrl,
+            downloadQualityOverride = quality,
+        )
+    } else {
+        downloadEnqueuer.start(
+            contentId = candidate.contentId,
+            fileId = candidate.mediaFileId,
+            displayTitle = candidate.title,
+            downloadQualityOverride = quality,
+        )
+    }
 
-        when (result) {
-            is ApiResult.Success -> Unit
-            is ApiResult.Error -> error(result.message ?: result.error ?: "Download enqueue failed (${result.code})")
-            is ApiResult.NetworkError -> throw result.exception
-        }
+    when (result) {
+        is ApiResult.Success -> Unit
+        is ApiResult.Error -> error(result.message ?: result.error ?: "Download enqueue failed (${result.code})")
+        is ApiResult.NetworkError -> throw result.exception
     }
 }
 

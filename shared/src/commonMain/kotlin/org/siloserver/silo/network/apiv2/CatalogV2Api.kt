@@ -157,6 +157,11 @@ class CatalogV2Api(
             client.get("/api/v2/catalog/series/$id/seasons/$number/episodes") { scope?.let { authScope(it) } }
         }.project { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
 
+    suspend fun itemEpisodes(id: String): ApiResult<EpisodesResponse> =
+        read<DetailCollectionReadV2<EpisodeListItemReadV2>> { scope ->
+            client.get("/api/v2/catalog/items/$id/episodes") { scope?.let { authScope(it) } }
+        }.project { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
+
     suspend fun person(id: Long): ApiResult<Person> =
         read<PersonReadV2> { scope ->
             client.get("/api/v2/catalog/people/$id") { scope?.let { authScope(it) } }
