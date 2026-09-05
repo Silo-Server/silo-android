@@ -28,3 +28,42 @@ Focused tests cover both read operations, all four empty-body writes, the contra
 gate, captured-scope refusal and acknowledgement, real auth-plugin 401 request
 counts with an unchanged default read control, and foreign-origin credential
 stripping. No consumer activation or outbox-policy change is included here.
+
+## Outbox foundation
+
+Room schema 9 adds nullable membership authority, claim and process-owner fields to
+`dirty_operations`. Existing rows and retry counters are preserved. Membership
+commands opt into separate ready, sending, reconcile and paused states; legacy
+SyncEngine pending/in-flight queries do not select or recover them.
+
+`MembershipOutbox` is a foundation for subsequent consumer activation. It is not
+registered in production DI yet. Both inline and background senders must call the
+same `send` method; neither may send first and claim afterwards. Each enqueue gets
+a new database row and UUID even when its payload equals an older command. Pending
+intent coalesces; a sending command remains immutable and blocks another send for
+the same key. Only an exact row, claim and authority match can consume a confirmed
+204. A newer coalesced command survives the old acknowledgement. Acknowledgement
+publication remains subject to the consumer's identity/generation checks at its
+actual UI update; the returned publication hint is not a synchronization lock.
+
+Cancellation or any unconfirmed response transitions the claimed command to
+reconciliation, never to automatic mutation retry. Explicit reconciliation issues
+a captured-authority GET. Observing the desired state resolves that command as
+reconciled, without claiming that mutation side effects were replayed. A mismatch
+pauses it; another explicit reconciliation or a new user command can resolve the
+situation. Read failures retain the unresolved command.
+
+Startup must construct one process-wide owner identity and recover abandoned
+sending claims before starting any membership senders. Claims owned by a previous
+process become reconciliation work, including claims abandoned before transport
+started. There is no lease timeout that could steal an active request. This owner
+protocol requires the application's existing single-process execution model.
+
+Activation must supply a durable, verified login authority key. Server/profile
+identifiers and AuthScopeSnapshot generation counters are insufficient: counters
+reset across process restarts. The storage interface therefore requires this key
+explicitly and does not persist credentials or infer authority from those counters.
+A future production binding must persist login identity alongside credential
+lifecycle handling and validate it before constructing an authority. Existing
+legacy favorite rows, UI producers, watchlist producers and SyncEngine dispatch
+remain unchanged until that binding and consumer adoption are reviewed.

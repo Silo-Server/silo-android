@@ -239,4 +239,38 @@ interface DirtyOperationDao {
 
     @Query("SELECT COUNT(*) FROM dirty_operations")
     suspend fun count(): Int
+
+    /** Membership rows never enter the legacy retry/drain states. */
+    @Query("DELETE FROM dirty_operations WHERE coalesceKey = :key AND state = 'membership_ready'")
+    suspend fun deleteReadyMembership(key: String)
+
+    @Transaction
+    suspend fun enqueueMembership(op: DirtyOperationEntity): Long {
+        require(op.state == "membership_ready" && !op.membershipAuthority.isNullOrBlank())
+        deleteReadyMembership(op.coalesceKey)
+        return insert(op)
+    }
+
+    @Query("UPDATE dirty_operations SET state = 'membership_sending', membershipClaim = :claim, " +
+        "membershipOwner = :owner WHERE id = :id AND membershipAuthority = :authority " +
+        "AND state = 'membership_ready' AND NOT EXISTS (SELECT 1 FROM dirty_operations older " +
+        "WHERE older.coalesceKey = dirty_operations.coalesceKey AND older.state = 'membership_sending')")
+    suspend fun claimMembership(id: Long, authority: String, claim: String, owner: String): Int
+
+    @Query("UPDATE dirty_operations SET state = :state WHERE id = :id AND membershipClaim = :claim " +
+        "AND membershipAuthority = :authority AND state = :expectedState")
+    suspend fun transitionMembership(id: Long, claim: String, authority: String, expectedState: String, state: String): Int
+
+    @Query("DELETE FROM dirty_operations WHERE id = :id AND membershipClaim = :claim " +
+        "AND membershipAuthority = :authority AND state = :state")
+    suspend fun resolveMembership(id: Long, claim: String, authority: String, state: String): Int
+
+    /** Call once at process startup, before any membership sender starts. Never reclaim by timeout. */
+    @Query("UPDATE dirty_operations SET state = 'membership_reconcile' " +
+        "WHERE state = 'membership_sending' AND (membershipOwner IS NULL OR membershipOwner != :owner)")
+    suspend fun recoverMembership(owner: String): Int
+
+    @Query("SELECT * FROM dirty_operations WHERE membershipAuthority = :authority " +
+        "AND state IN ('membership_ready', 'membership_reconcile', 'membership_paused') ORDER BY id LIMIT :limit")
+    suspend fun membershipCommands(authority: String, limit: Int): List<DirtyOperationEntity>
 }

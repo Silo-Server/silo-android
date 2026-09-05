@@ -29,15 +29,16 @@ class MembershipV2Api(
     private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
     private val tokenManager: TokenManager? = null,
 ) {
-    suspend fun favorite(itemId: String) = read("favorites", itemId)
-    suspend fun watchlist(itemId: String) = read("watchlist", itemId)
+    suspend fun favorite(itemId: String, scope: AuthScopeSnapshot? = null) = read("favorites", itemId, scope)
+    suspend fun watchlist(itemId: String, scope: AuthScopeSnapshot? = null) = read("watchlist", itemId, scope)
     suspend fun addFavorite(itemId: String, scope: AuthScopeSnapshot? = null) = write("favorites", itemId, true, scope)
     suspend fun removeFavorite(itemId: String, scope: AuthScopeSnapshot? = null) = write("favorites", itemId, false, scope)
     suspend fun addToWatchlist(itemId: String, scope: AuthScopeSnapshot? = null) = write("watchlist", itemId, true, scope)
     suspend fun removeFromWatchlist(itemId: String, scope: AuthScopeSnapshot? = null) = write("watchlist", itemId, false, scope)
 
-    private suspend fun read(list: String, itemId: String): ApiResult<MembershipEntryV2?> {
-        val scope = tokenManager?.snapshotCurrentScope()
+    private suspend fun read(list: String, itemId: String, capturedScope: AuthScopeSnapshot?): ApiResult<MembershipEntryV2?> {
+        val scope = capturedScope ?: tokenManager?.snapshotCurrentScope()
+        changedViewer(scope)?.let { return it }
         val result = safeApiV2Call<MembershipEntryV2>(gate) {
             client.get("/api/v2/$list/$itemId") { scope?.let { authScope(it) } }
         }
