@@ -236,7 +236,7 @@ class AuthRepository(
         val registry = serverRegistry ?: return
         registry.switchTo(serverId)
         tokenManager.switchActiveServer(serverId)
-        withTimeoutOrNull(SWITCH_PROBE_TIMEOUT_MS) { refreshServerContract() }
+        refreshServerContractBounded()
         if (registry.activeServerId.value != serverId) return
         val scope = backgroundScope
         if (scope == null) {
@@ -316,10 +316,21 @@ class AuthRepository(
      * it to [refreshActiveServerName] as `knownContract` to avoid a second
      * probe.
      */
-    suspend fun awaitContractRefreshIfUpdateRequired(timeoutMs: Long = 3_000L): ServerContract? {
+    suspend fun awaitContractRefreshIfUpdateRequired(timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS): ServerContract? {
         if (activeServerContract() != ServerContract.UPDATE_REQUIRED) return null
-        return withTimeoutOrNull(timeoutMs) { refreshServerContract() }?.toServerContract()
+        return refreshServerContractBounded(timeoutMs)
     }
+
+    /**
+     * [refreshServerContract] with a wall-clock bound. Every path that awaits
+     * the probe before letting the user (or a peer, in pairing) proceed goes
+     * through here so the bound lives in one place. Null when nothing was
+     * recorded: no probe wired in, or the server accepted the socket but did
+     * not answer within [timeoutMs] — the stored verdict is left alone, which
+     * the gate treats as passable, and the next switch or launch re-probes.
+     */
+    suspend fun refreshServerContractBounded(timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS): ServerContract? =
+        withTimeoutOrNull(timeoutMs) { refreshServerContract() }?.toServerContract()
 
     /**
      * Runs the v2 contract probe against [serverUrl] (a candidate the app is

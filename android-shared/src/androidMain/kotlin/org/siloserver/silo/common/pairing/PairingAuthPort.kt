@@ -68,8 +68,8 @@ class RegistryPairingAuthPort(
                     serverRegistry.switchTo(previousServerId)
                     tokenManager.switchActiveServer(previousServerId)
                     // Restoring is a server switch too; re-establish its contract
-                    // verdict like every other switch path.
-                    authRepository?.refreshServerContract()
+                    // verdict like every other switch path, under the same bound.
+                    authRepository?.refreshServerContractBounded()
                 } else if (previousServerId == null) {
                     serverRegistry.remove(serverId)
                 }
@@ -81,7 +81,14 @@ class RegistryPairingAuthPort(
             // stale UPDATE_REQUIRED from an older build) and gated startup
             // consumers act on it. The probe never throws on a failed
             // request, so this cannot roll back a committed session.
-            authRepository?.refreshServerContract()
+            //
+            // Bounded: the companion waits only ~30 s for ServerResult while
+            // an unanswered request would sit on the client's ~60 s socket
+            // timeout, so an unbounded probe here made the phone report
+            // failure after the credentials were already committed. A
+            // timeout leaves the verdict UNKNOWN, which passes the gate and
+            // gets re-probed on the next switch or launch.
+            authRepository?.refreshServerContractBounded()
         }
     }
 }

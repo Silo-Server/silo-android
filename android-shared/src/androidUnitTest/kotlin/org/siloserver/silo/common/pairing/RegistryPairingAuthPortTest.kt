@@ -13,7 +13,10 @@ import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.apiv2.ApiV2Probe
 import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
@@ -283,14 +286,18 @@ class RegistryPairingAuthPortTest {
             apiV2Probe = ApiV2Probe(client),
         )
 
+        // Real clock: the probe is bounded, and under the test scheduler the
+        // virtual-time bound would fire before the engine thread answers.
         assertFailsWith<IllegalStateException> {
-            RegistryPairingAuthPort(tokens, registry, authRepository = authRepository).persistApprovedSession(
-                serverUrl = "https://new.example",
-                serverName = null,
-                accessToken = "new-access",
-                refreshToken = "new-refresh",
-                expiresIn = 7200,
-            )
+            withContext(Dispatchers.Default) {
+                RegistryPairingAuthPort(tokens, registry, authRepository = authRepository).persistApprovedSession(
+                    serverUrl = "https://new.example",
+                    serverName = null,
+                    accessToken = "new-access",
+                    refreshToken = "new-refresh",
+                    expiresIn = 7200,
+                )
+            }
         }
 
         assertEquals(oldId, registry.activeServerId.value)
@@ -326,13 +333,17 @@ class RegistryPairingAuthPortTest {
             apiV2Probe = ApiV2Probe(client),
         )
 
-        RegistryPairingAuthPort(tokens, registry, authRepository = authRepository).persistApprovedSession(
-            serverUrl = "https://new.example",
-            serverName = null,
-            accessToken = "new-access",
-            refreshToken = "new-refresh",
-            expiresIn = 7200,
-        )
+        // Real clock: the probe is bounded, and under the test scheduler the
+        // virtual-time bound would fire before the engine thread answers.
+        withContext(Dispatchers.Default) {
+            RegistryPairingAuthPort(tokens, registry, authRepository = authRepository).persistApprovedSession(
+                serverUrl = "https://new.example",
+                serverName = null,
+                accessToken = "new-access",
+                refreshToken = "new-refresh",
+                expiresIn = 7200,
+            )
+        }
 
         val newId = registry.entries.value.first { it.url == "https://new.example" }.id
         assertEquals(newId, registry.activeServerId.value)
@@ -342,6 +353,62 @@ class RegistryPairingAuthPortTest {
         assertEquals(1, probes)
         assertEquals(ServerContract.UPDATE_REQUIRED, registry.entries.value.first { it.id == newId }.contract)
         assertEquals(ServerContract.UNKNOWN, registry.entries.value.first { it.id == oldId }.contract)
+    }
+
+    /**
+     * The companion waits ~30 s for ServerResult while an unanswered probe
+     * would sit on the client's ~60 s socket timeout. The success-path probe
+     * must therefore be bounded so the port reports SignedIn on time even
+     * when /api/v2/system/info stalls; the verdict stays UNKNOWN (passes the
+     * gate) and is re-probed on the next switch or launch.
+     *
+     * Runs on runTest's virtual clock: the never-answering engine leaves the
+     * test scheduler idle, so it skips straight to the 3 s bound instead of
+     * really waiting.
+     */
+    @Test
+    fun successfulPairingReportsSignedInWhenTheProbeNeverAnswers() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("pairing-stalled-probe", Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val transitions = DefaultIdentityTransitionBarrier()
+        val registry = AndroidServerRegistry(prefs, transitions)
+        val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
+        // Whether the engine thread even reaches this handler before the
+        // virtual clock jumps to the bound is a race, so the test asserts on
+        // the outcome (bounded return, intact session, no verdict), not on a
+        // request count.
+        val client = HttpClient(
+            MockEngine { request ->
+                check(request.url.encodedPath == ApiV2Probe.PATH) { "unexpected request ${request.url}" }
+                awaitCancellation()
+            },
+        )
+        val authRepository = AuthRepository(
+            authApi = AuthApi(client),
+            tokenManager = tokens,
+            serverRegistry = registry,
+            apiV2Probe = ApiV2Probe(client),
+        )
+
+        val startedAt = testScheduler.currentTime
+        RegistryPairingAuthPort(tokens, registry, authRepository = authRepository).persistApprovedSession(
+            serverUrl = "https://new.example",
+            serverName = null,
+            accessToken = "new-access",
+            refreshToken = "new-refresh",
+            expiresIn = 7200,
+        )
+        val elapsed = testScheduler.currentTime - startedAt
+
+        // The commit completed inside the probe bound, well under the
+        // companion's 30 s ServerResult wait, with the session intact.
+        assertTrue(elapsed <= 3_000L, "persistApprovedSession took ${elapsed}ms of virtual time")
+        val newId = registry.entries.value.first { it.url == "https://new.example" }.id
+        assertEquals(newId, registry.activeServerId.value)
+        assertEquals("new-access", tokens.getAccessToken())
+        // The stalled probe recorded nothing: no verdict, which the gate passes.
+        assertEquals(ServerContract.UNKNOWN, registry.entries.value.first { it.id == newId }.contract)
     }
 
     @Test
