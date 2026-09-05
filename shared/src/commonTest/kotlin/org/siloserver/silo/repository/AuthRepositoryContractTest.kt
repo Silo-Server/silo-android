@@ -36,6 +36,8 @@ import org.siloserver.silo.network.apiv2.ApiV2Probe
 import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /**
  * The contract verdict is (re)established on every connect, launch restore,
@@ -559,6 +561,129 @@ class AuthRepositoryContractTest {
         repository(registry, client).refreshActiveServerName()
 
         assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
+    }
+
+    private val loginBody =
+        """{"access_token":"at","refresh_token":"rt","expires_in":3600,"user":{"id":"1","username":"u","email":"u@example","role":"user"}}"""
+
+    @Test
+    fun `login re-probes a stale UPDATE_REQUIRED without waiting on the probe`() = runTest {
+        // The server was upgraded while the login screen stayed open: the v1
+        // login succeeds and the stored verdict must be corrected for this
+        // session, but sign-in must not wait on the probe.
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        registry.setContract("a", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        var probeRequests = 0
+        val client = client { request ->
+            if (request.url.encodedPath.endsWith("/auth/login")) {
+                respond(loginBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            } else {
+                probeRequests++
+                answerGate.await()
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        val result = repository.login("u", "p")
+
+        // Returned while the probe is still gated: the verdict is untouched.
+        assertIs<ApiResult.Success<*>>(result)
+        assertEquals(mapOf("a" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        // One request when the gated reply lands inside the bound, two when
+        // the virtual clock ran the bound out first and the pinned fallback
+        // re-probed; either way the stale verdict is corrected.
+        assertTrue(probeRequests in 1..2, "probe requests: $probeRequests")
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `failed login launches no contract probe`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        var probeRequests = 0
+        val client = client { request ->
+            if (request.url.encodedPath.endsWith("/auth/login")) {
+                respond("""{"error":"invalid credentials"}""", HttpStatusCode.Unauthorized, headersOf(HttpHeaders.ContentType, "application/json"))
+            } else {
+                probeRequests++
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        val result = repository.login("u", "wrong")
+
+        assertTrue(result is ApiResult.Error)
+        background.joinChildren()
+        assertEquals(0, probeRequests)
+        assertEquals(emptyMap(), registry.contracts)
+    }
+
+    @Test
+    fun `login re-probes inline when no background scope is wired in`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        registry.setContract("a", ServerContract.UPDATE_REQUIRED)
+        val client = client { request ->
+            if (request.url.encodedPath.endsWith("/auth/login")) {
+                respond(loginBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            } else {
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        }
+        val repository = repository(registry, client)
+
+        val result = repository.login("u", "p")
+
+        assertIs<ApiResult.Success<*>>(result)
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `session refresh queued before a server switch does not probe the new server`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, unusedClient(), backgroundScope = background)
+
+        repository.onSessionCommitted("a")
+        registry.switchTo("b")
+        background.joinChildren()
+
+        assertEquals(emptyMap(), registry.contracts)
+    }
+
+    @Test
+    fun `committed session refresh survives cancellation of its caller`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val answerGate = CompletableDeferred<Unit>()
+        val repository = repository(
+            registry,
+            client {
+                answerGate.await()
+                respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            },
+            backgroundScope = background,
+        )
+        val scheduled = CompletableDeferred<Unit>()
+        val caller = launch {
+            repository.onSessionCommitted("a")
+            scheduled.complete(Unit)
+            awaitCancellation()
+        }
+        scheduled.await()
+        caller.cancel()
+        caller.join()
+        assertEquals(emptyMap(), registry.contracts)
+        answerGate.complete(Unit)
+        background.joinChildren()
+
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
     }
 
     private fun respondWith(status: HttpStatusCode, body: String, contentType: String) = client {

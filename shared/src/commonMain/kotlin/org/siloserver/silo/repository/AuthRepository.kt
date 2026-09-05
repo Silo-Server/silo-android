@@ -50,7 +50,9 @@ class AuthRepository(
     /**
      * Persists a successful auth response's tokens into the active server's
      * scope and unwraps the [User] — the shared tail of every path that ends
-     * a signed-out state (login, signup, setup, invitation claim).
+     * a signed-out state (login, signup, setup, invitation claim). Once the
+     * tokens are stored, [onSessionCommitted] refreshes the server's v2
+     * contract verdict.
      */
     private suspend fun persistSession(
         result: ApiResult<LoginResponse>,
@@ -60,18 +62,53 @@ class AuthRepository(
         when (result) {
             is ApiResult.Success -> {
                 val data = result.data
+                val serverId = targetServerId ?: tokenManager.getCurrentServerId()
                 tokenManager.replaceAccountSession(
-                    serverId = targetServerId ?: tokenManager.getCurrentServerId(),
+                    serverId = serverId,
                     serverUrl = targetServerUrl,
                     accessToken = data.accessToken,
                     refreshToken = data.refreshToken,
                     expiresIn = data.expiresIn,
                 )
+                onSessionCommitted(serverId)
                 ApiResult.Success(data.user)
             }
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+
+    /**
+     * Re-establishes the v2 contract verdict of [serverId] (the active server
+     * when null) after a session was committed on it. A v1 login proves
+     * nothing about v2, but the stored verdict can be stale — the server may
+     * have been upgraded while the sign-in screen stayed open — and without
+     * a fresh probe an old UPDATE_REQUIRED would keep the gate rejecting
+     * every pilot v2 call for the whole session.
+     *
+     * Launched on [backgroundScope] so sign-in never waits on the probe: the
+     * gate already passes UNKNOWN and V2, and a stale UPDATE_REQUIRED clears
+     * as soon as the probe answers. Without a scope the same sequence runs
+     * inline in the caller. No-op without a registry or probe (single-server
+     * hosts, tests). Every path that commits tokens outside
+     * [persistSession] (the TV credential and QR sign-ins) must call this
+     * after its commit.
+     */
+    suspend fun onSessionCommitted(serverId: String? = null) {
+        val registry = serverRegistry ?: return
+        if (apiV2Probe == null) return
+        val committedId = serverId ?: registry.activeServerId.value ?: return
+        val scope = backgroundScope
+        if (scope == null) {
+            if (registry.activeServerId.value != committedId) return
+            probeContractWithFallback(committedId) {}
+            return
+        }
+        scope.launch {
+            if (registry.activeServerId.value == committedId) {
+                probeContractWithFallback(committedId) {}
+            }
+        }
+    }
 
     /**
      * Logs in with username and password.
@@ -160,7 +197,10 @@ class AuthRepository(
             targetServerId = targetServerId,
             targetServerUrl = serverUrl.takeIf { serverRegistry == null },
         )
-        if (persisted is ApiResult.Success) refreshActiveServerName()
+        // persistSession already refreshed the contract; only the name is left.
+        if (persisted is ApiResult.Success) {
+            serverRegistry?.activeServerId?.value?.let { refreshActiveServerDisplayName(it) }
+        }
         return persisted
     }
 

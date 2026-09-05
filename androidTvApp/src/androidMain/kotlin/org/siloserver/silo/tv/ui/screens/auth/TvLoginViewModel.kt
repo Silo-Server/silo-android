@@ -106,6 +106,9 @@ class TvLoginViewModel(
                         )
                         return@launch
                     }
+                    // Tokens are committed outside persistSession here, so refresh the
+                    // server's v2 contract verdict the same way every other sign-in does.
+                    authRepository.onSessionCommitted()
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
                 }
                 is ApiResult.Error -> {
@@ -196,6 +199,9 @@ class TvLoginViewModel(
             handleSessionPersistenceFailure(accessToken, refreshToken)
             return
         }
+        // Tokens are committed outside persistSession here, so refresh the
+        // server's v2 contract verdict the same way every other sign-in does.
+        authRepository.onSessionCommitted()
         _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
     }
 
@@ -207,6 +213,7 @@ class TvLoginViewModel(
             tokenManager.getAccessToken() == accessToken &&
                 tokenManager.getRefreshToken() == refreshToken
         }.getOrDefault(false)
+        if (committed) authRepository.onSessionCommitted()
         authCompleted = committed
         _uiState.update {
             it.copy(
