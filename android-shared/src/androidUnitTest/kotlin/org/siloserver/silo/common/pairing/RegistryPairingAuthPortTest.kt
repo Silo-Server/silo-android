@@ -13,10 +13,13 @@ import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.apiv2.ApiV2Probe
 import org.siloserver.silo.repository.AuthRepository
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
@@ -409,6 +412,63 @@ class RegistryPairingAuthPortTest {
         assertEquals("new-access", tokens.getAccessToken())
         // The stalled probe recorded nothing: no verdict, which the gate passes.
         assertEquals(ServerContract.UNKNOWN, registry.entries.value.first { it.id == newId }.contract)
+    }
+
+    @Test
+    fun stalledProbeOnSuccessfulPairingIsReplacedInTheBackground() = runTest {
+        // Re-pairing a server that carries a stale UPDATE_REQUIRED from an
+        // older build: the bounded probe stalls, SignedIn is still reported
+        // within the bound, and a replacement probe on the repository's
+        // background scope corrects the verdict once the server answers —
+        // the same fallback switchToServer has.
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("pairing-stalled-probe-fallback", Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val transitions = DefaultIdentityTransitionBarrier()
+        val registry = AndroidServerRegistry(prefs, transitions)
+        val staleId = registry.addOrUpdate("https://new.example")
+        registry.setContract(staleId, ServerContract.UPDATE_REQUIRED)
+        val tokens = EncryptedTokenManagerImpl(prefs, registry, transitions)
+        val answerGate = CompletableDeferred<Unit>()
+        val client = HttpClient(
+            MockEngine { request ->
+                check(request.url.encodedPath == ApiV2Probe.PATH) { "unexpected request ${request.url}" }
+                answerGate.await()
+                respond(
+                    """{"server_version":"1.0.0","api_major":2,"contract_digest":"d","links":{"openapi":"/api/v2/openapi.json","capabilities":"/api/v2/capabilities"}}""",
+                    HttpStatusCode.OK,
+                    headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            },
+        )
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val authRepository = AuthRepository(
+            authApi = AuthApi(client),
+            tokenManager = tokens,
+            serverRegistry = registry,
+            apiV2Probe = ApiV2Probe(client),
+            backgroundScope = background,
+        )
+
+        val startedAt = testScheduler.currentTime
+        RegistryPairingAuthPort(tokens, registry, authRepository = authRepository).persistApprovedSession(
+            serverUrl = "https://new.example",
+            serverName = null,
+            accessToken = "new-access",
+            refreshToken = "new-refresh",
+            expiresIn = 7200,
+        )
+        val elapsed = testScheduler.currentTime - startedAt
+
+        assertTrue(elapsed <= 3_000L, "persistApprovedSession took ${elapsed}ms of virtual time")
+        assertEquals(staleId, registry.activeServerId.value)
+        assertEquals("new-access", tokens.getAccessToken())
+        // Bound elapsed: the stale verdict is untouched so far.
+        assertEquals(ServerContract.UPDATE_REQUIRED, registry.entries.value.first { it.id == staleId }.contract)
+
+        answerGate.complete(Unit)
+        background.coroutineContext.job.children.forEach { it.join() }
+        assertEquals(ServerContract.V2, registry.entries.value.first { it.id == staleId }.contract)
     }
 
     @Test

@@ -244,15 +244,34 @@ class AuthRepository(
         val registry = serverRegistry ?: return
         registry.switchTo(serverId)
         tokenManager.switchActiveServer(serverId)
-        val bounded = refreshServerContractBounded()
+        refreshServerContractWithFallback(serverId)
         if (registry.activeServerId.value != serverId) return
         val scope = backgroundScope
         if (scope == null) {
             refreshActiveServerDisplayName(serverId)
         } else {
-            if (bounded == null && apiV2Probe != null) scope.launch { refreshServerContractFor(serverId) }
             scope.launch { refreshActiveServerDisplayName(serverId) }
         }
+    }
+
+    /**
+     * The contract half of every "this server just became active" path
+     * ([switchToServer], pairing): awaits [refreshServerContractBounded] and,
+     * when that yields no verdict (bound elapsed, or the probe failed), hands
+     * the retry to a replacement unbounded probe pinned to [serverId] on
+     * [backgroundScope] so a stale UPDATE_REQUIRED stops gating the session
+     * once the server answers. Returns the bounded result; null means the
+     * stored verdict was left alone (and, with a scope and a probe wired in,
+     * that a replacement is now in flight). Skips the replacement when
+     * [serverId] is no longer active by the time the bound returns.
+     */
+    suspend fun refreshServerContractWithFallback(serverId: String): ServerContract? {
+        val bounded = refreshServerContractBounded()
+        if (bounded != null) return bounded
+        val scope = backgroundScope ?: return null
+        if (apiV2Probe == null || serverRegistry?.activeServerId?.value != serverId) return null
+        scope.launch { refreshServerContractFor(serverId) }
+        return null
     }
 
     /**
