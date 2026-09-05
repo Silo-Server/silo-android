@@ -21,7 +21,7 @@ val networkModule = module {
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get()) }
     single { CatalogApi(get()) }
     single { PlaybackApi(get()) }
-    single { PersonalDataApi(get(), get()) }
+    single { PersonalDataApi(get(), get(), get()) }
     single { CollectionApi(get()) }
     single { ProfileApi(get(), get()) }
     single { SectionApi(get()) }
