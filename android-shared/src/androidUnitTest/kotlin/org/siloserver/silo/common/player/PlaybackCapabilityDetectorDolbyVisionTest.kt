@@ -1,9 +1,14 @@
 package org.siloserver.silo.common.player
 
 import android.content.Context
+import android.media.MediaCodecInfo.CodecCapabilities
+import android.media.MediaCodecInfo.CodecProfileLevel
+import android.media.MediaFormat
 import androidx.test.core.app.ApplicationProvider
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.MediaCodecInfoBuilder
+import org.robolectric.shadows.ShadowMediaCodecList
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.libass.LibassBridge
 import org.siloserver.silo.model.playback.HdrCapabilities
@@ -163,7 +168,7 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
         assertEquals(listOf(CLIENT_DV7_TO_DV81), advertised.map { it.name })
         assertFalse(
             CLIENT_DV7_TO_HDR10 in advertised.map { it.name },
-            "the HDR10 recipe stays behind fixture validation; the server strip covers it",
+            "the HDR10 recipe needs its own decoder and route evidence; a DV panel alone is not it",
         )
 
         assertTrue(
@@ -209,13 +214,224 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
         val advertised = advertisedClientDolbyVisionTransformations(
             hdrDetails = HdrCapabilities(hdr10 = true, dolbyVisionProfiles = listOf(8)),
             nativeRpuConverterAvailable = true,
-            fixtureValidatedTransformations = setOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10),
             hardwareProfile8Decoder = true,
             displayConfirmsDolbyVision = true,
+            hardwareHevcHdr10Decoder = true,
+            hdr10TransformRouteEnabled = true,
             quarantined = setOf(CLIENT_DV7_TO_DV81),
         )
 
         assertEquals(listOf(CLIENT_DV7_TO_HDR10), advertised.map { it.name })
+    }
+
+    @Test
+    fun profile7ToHdr10IsAdvertisedOnAnHdr10OutputWithATenBitHardwareHevcDecoder() {
+        // The Shield-class case from SILO-MT2PPCKZ: HDR10 panel, no Dolby
+        // Vision, hardware Main10 HEVC, HDMI sink that takes TrueHD. Without
+        // this route the server has to HLS-remux and convert the audio to AAC.
+        val hdr10Only = HdrCapabilities(hdr10 = true)
+        val advertised = advertisedClientDolbyVisionTransformations(
+            hdrDetails = hdr10Only,
+            nativeRpuConverterAvailable = false,
+            hardwareHevcHdr10Decoder = true,
+            hdr10TransformRouteEnabled = true,
+        )
+        assertEquals(
+            listOf(CLIENT_DV7_TO_HDR10),
+            advertised.map { it.name },
+            "the HDR10 recipe drops the RPU rather than converting it, so it needs no libdovi bridge",
+        )
+
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = hdr10Only,
+                nativeRpuConverterAvailable = false,
+                hardwareHevcHdr10Decoder = false,
+                hdr10TransformRouteEnabled = true,
+            ).isEmpty(),
+            "a HEVC decoder without an HDR10 profile is not a route for a PQ base layer, whatever AV1 reports",
+        )
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = HdrCapabilities(hdr10 = false),
+                nativeRpuConverterAvailable = false,
+                hardwareHevcHdr10Decoder = true,
+                hdr10TransformRouteEnabled = true,
+            ).isEmpty(),
+            "an SDR or unprobed output cannot carry the HDR10 base layer",
+        )
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = hdr10Only,
+                nativeRpuConverterAvailable = false,
+                hardwareHevcHdr10Decoder = true,
+                hdr10TransformRouteEnabled = false,
+            ).isEmpty(),
+            "a form factor outside the enabled population stays on the server strip",
+        )
+        assertTrue(
+            advertisedClientDolbyVisionTransformations(
+                hdrDetails = hdr10Only,
+                nativeRpuConverterAvailable = false,
+                hardwareHevcHdr10Decoder = true,
+                hdr10TransformRouteEnabled = true,
+                quarantined = setOf(CLIENT_DV7_TO_HDR10),
+            ).isEmpty(),
+            "a device that wedged on the recipe stays quarantined",
+        )
+    }
+
+    @Test
+    fun profile7ToHdr10RouteIsScopedToTv() {
+        assertTrue(clientDv7ToHdr10RouteEnabled("tv"))
+        assertTrue(clientDv7ToHdr10RouteEnabled("TV"))
+        assertFalse(clientDv7ToHdr10RouteEnabled("mobile"))
+        assertFalse(clientDv7ToHdr10RouteEnabled("tablet"))
+        assertFalse(clientDv7ToHdr10RouteEnabled(""))
+    }
+
+    @Test
+    fun tvPlaybackContextAdvertisesProfile7ToHdr10OnlyWithHardwareHevcMain10AndHdr10Output() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val detector = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+        val hevc10 = org.siloserver.silo.model.playback.VideoDecodeCapability(
+            codec = "hevc",
+            bitDepths = listOf(8, 10),
+            hardware = true,
+        )
+        val shieldLike = ClientCodecCapabilities(
+            videoDecode = listOf(hevc10),
+            hdrDetails = HdrCapabilities(hdr10 = true),
+        )
+
+        fun transformationsFor(
+            formFactor: String,
+            caps: ClientCodecCapabilities,
+            hevcHdr10Decoder: Boolean = true,
+        ): List<String> =
+            detector.detectPlaybackContext(
+                formFactor = formFactor,
+                appVersion = "test",
+                capabilities = caps,
+                hardwareHevcHdr10Decoder = hevcHdr10Decoder,
+            )
+                .deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP)
+                .transformations
+                .map { it.name }
+
+        assertEquals(listOf(CLIENT_DV7_TO_HDR10), transformationsFor("tv", shieldLike))
+        assertTrue(
+            transformationsFor("mobile", shieldLike).isEmpty(),
+            "the phone stays on the server strip",
+        )
+        assertTrue(
+            transformationsFor("tv", ClientCodecCapabilities(hdrDetails = HdrCapabilities(hdr10 = true))).isEmpty(),
+            "no hardware Main10 decoder, no route",
+        )
+        assertTrue(
+            transformationsFor("tv", shieldLike, hevcHdr10Decoder = false).isEmpty(),
+            "an aggregate HDR10 flag earned by an AV1 decoder does not vouch for the HEVC path",
+        )
+        assertTrue(
+            transformationsFor("tv", ClientCodecCapabilities(videoDecode = listOf(hevc10))).isEmpty(),
+            "no HDR10 in the decoder ∩ display intersection, no route",
+        )
+        assertTrue(
+            detector.detectPlaybackContext(
+                formFactor = "tv",
+                appVersion = "test",
+                capabilities = shieldLike,
+                hardwareHevcHdr10Decoder = true,
+            )
+                .deliveries.getValue(DELIVERY_CLASS_HLS)
+                .transformations
+                .isEmpty(),
+            "client transformations are scoped to original_http",
+        )
+    }
+
+    @Test
+    fun freshDetectorResolvesHevcHdr10EvidenceFromTheCodecProbeWhenCapabilitiesAreInjected() {
+        // CodeRabbit on #289: the HEVC HDR10 flag used to default to a field
+        // that only detect() populated. Every production caller injects
+        // capabilities, so a detector that had never run detect() advertised
+        // no Profile 7 to HDR10 route however capable the decoder was.
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val hevc10 = org.siloserver.silo.model.playback.VideoDecodeCapability(
+            codec = "hevc",
+            bitDepths = listOf(8, 10),
+            hardware = true,
+        )
+        val shieldLike = ClientCodecCapabilities(
+            videoDecode = listOf(hevc10),
+            hdrDetails = HdrCapabilities(hdr10 = true),
+        )
+
+        fun freshDetector() = PlaybackCapabilityDetector(
+            context = context,
+            audioCapabilityManager = AudioCapabilityManager(context),
+            libassBridge = LibassBridge(false),
+            buildIdentity = SiloClientBuildIdentity(buildNumber = "test", channel = "test"),
+        )
+
+        fun transformationsFromProbe(): List<String> =
+            freshDetector().detectPlaybackContext(
+                formFactor = "tv",
+                appVersion = "test",
+                capabilities = shieldLike,
+            )
+                .deliveries.getValue(DELIVERY_CLASS_ORIGINAL_HTTP)
+                .transformations
+                .map { it.name }
+
+        fun hevcDecoder(vararg profiles: Int) = MediaCodecInfoBuilder.newBuilder()
+            .setName("c2.nvidia.hevc.decoder")
+            .setIsHardwareAccelerated(true)
+            .setIsSoftwareOnly(false)
+            .setCapabilities(
+                MediaCodecInfoBuilder.CodecCapabilitiesBuilder.newBuilder()
+                    .setMediaFormat(
+                        MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, 3840, 2160),
+                    )
+                    .setColorFormats(intArrayOf(CodecCapabilities.COLOR_FormatYUV420Flexible))
+                    .setProfileLevels(
+                        profiles.map { profile ->
+                            CodecProfileLevel().apply {
+                                this.profile = profile
+                                level = CodecProfileLevel.HEVCMainTierLevel51
+                            }
+                        }.toTypedArray(),
+                    )
+                    .build(),
+            )
+            .build()
+
+        try {
+            ShadowMediaCodecList.reset()
+            ShadowMediaCodecList.addCodec(hevcDecoder(CodecProfileLevel.HEVCProfileMain10HDR10))
+            MediaCodecCapabilitiesProbe.resetCacheForTest()
+            assertEquals(
+                listOf(CLIENT_DV7_TO_HDR10),
+                transformationsFromProbe(),
+                "a detector that never ran detect() must still read the probe's HEVC HDR10 evidence",
+            )
+
+            ShadowMediaCodecList.reset()
+            ShadowMediaCodecList.addCodec(hevcDecoder(CodecProfileLevel.HEVCProfileMain10))
+            MediaCodecCapabilitiesProbe.resetCacheForTest()
+            assertTrue(
+                transformationsFromProbe().isEmpty(),
+                "a Main10 decoder without an HDR10 profile does not earn the route",
+            )
+        } finally {
+            ShadowMediaCodecList.reset()
+            MediaCodecCapabilitiesProbe.resetCacheForTest()
+        }
     }
 
     @Test
@@ -272,22 +488,23 @@ class PlaybackCapabilityDetectorDolbyVisionTest {
     }
 
     @Test
-    fun clientTransformationsRequireExactFixtureValidationAndRuntimePrerequisites() {
+    fun bothClientTransformationsAreAdvertisedWhenEveryRuntimePrerequisiteHolds() {
         val transformations = advertisedClientDolbyVisionTransformations(
             hdrDetails = HdrCapabilities(
                 hdr10 = true,
                 dolbyVisionProfiles = listOf(8),
             ),
             nativeRpuConverterAvailable = true,
-            fixtureValidatedTransformations = setOf(
-                CLIENT_DV7_TO_DV81,
-                CLIENT_DV7_TO_HDR10,
-            ),
+            hardwareProfile8Decoder = true,
+            displayConfirmsDolbyVision = true,
+            hardwareHevcHdr10Decoder = true,
+            hdr10TransformRouteEnabled = true,
         )
 
         assertEquals(
             listOf(CLIENT_DV7_TO_DV81, CLIENT_DV7_TO_HDR10),
             transformations.map { it.name },
+            "the server prefers 8.1 on a DV panel and keeps HDR10 as the second client route",
         )
     }
 
