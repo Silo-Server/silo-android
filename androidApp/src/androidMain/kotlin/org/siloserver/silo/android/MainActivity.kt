@@ -439,8 +439,16 @@ class MainActivity : ComponentActivity() {
 
         // Restored servers were probed by whichever build saved them (or never,
         // before the v2 pilot); re-establish the contract verdict once per launch.
+        // A stored UPDATE_REQUIRED may be stale (server upgraded since), and
+        // gated startup consumers would act on it, so that case waits
+        // (bounded) for the probe before routing; UNKNOWN and V2 pass the
+        // gate and refresh in the background.
+        val authRepository = get<AuthRepository>(AuthRepository::class.java)
+        val knownContract = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            authRepository.awaitContractRefreshIfUpdateRequired()
+        }
         lifecycleScope.launch(Dispatchers.IO) {
-            get<AuthRepository>(AuthRepository::class.java).refreshActiveServerName()
+            authRepository.refreshActiveServerName(knownContract = knownContract)
         }
 
         val cleartextConsent = get<org.siloserver.silo.network.CleartextOriginConsent>(

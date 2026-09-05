@@ -8,6 +8,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -74,6 +76,33 @@ class AuthRepositoryContractTest {
     }
 
     @Test
+    fun `awaitContractRefreshIfUpdateRequired replaces a stale UPDATE_REQUIRED verdict`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        // Real clock: under the test scheduler the probe's suspension on the
+        // engine dispatcher lets virtual time skip straight past the timeout.
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"))
+                .awaitContractRefreshIfUpdateRequired()
+        }
+
+        assertEquals(ServerContract.V2, verdict)
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUpdateRequired does not probe when the gate would pass`() = runTest {
+        var requests = 0
+        val client = client {
+            requests += 1
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val verdict = repository(ContractRegistry(), client).awaitContractRefreshIfUpdateRequired()
+
+        assertEquals(null, verdict)
+        assertEquals(0, requests)
+    }
+
+    @Test
     fun `stale probe result for a previous server is dropped`() = runTest {
         val registry = ContractRegistry()
         val client = client {
@@ -108,12 +137,15 @@ class AuthRepositoryContractTest {
     )
 }
 
-private class ContractRegistry : ServerRegistry {
+private class ContractRegistry(initialContract: ServerContract = ServerContract.UNKNOWN) : ServerRegistry {
     private val activeId = MutableStateFlow<String?>("a")
     val contracts = mutableMapOf<String, ServerContract>()
 
     override val entries: StateFlow<List<ServerEntry>> = MutableStateFlow(
-        listOf(ServerEntry(id = "a", url = "https://a.example"), ServerEntry(id = "b", url = "https://b.example")),
+        listOf(
+            ServerEntry(id = "a", url = "https://a.example", contract = initialContract),
+            ServerEntry(id = "b", url = "https://b.example"),
+        ),
     )
     override val activeServerId: StateFlow<String?> = activeId
     override val activeEntry: StateFlow<ServerEntry?> = MutableStateFlow(entries.value.first())

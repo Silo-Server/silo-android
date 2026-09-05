@@ -17,6 +17,11 @@ import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.api.BrandingApi
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.map
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withTimeoutOrNull
 
 class AuthRepository(
     private val authApi: AuthApi,
@@ -247,6 +252,35 @@ class AuthRepository(
     /** The active server's learned [ServerContract]; [ServerContract.UNKNOWN] without a registry. */
     fun activeServerContract(): ServerContract =
         serverRegistry?.activeEntry?.value?.contract ?: ServerContract.UNKNOWN
+
+    /**
+     * [activeServerContract] as a stream, so a consumer whose gated v2 call
+     * failed on a stale [ServerContract.UPDATE_REQUIRED] can re-run it once
+     * the launch probe records the real verdict. Emits the current value
+     * first; a single [ServerContract.UNKNOWN] without a registry.
+     */
+    val activeServerContractFlow: Flow<ServerContract> =
+        serverRegistry?.activeEntry
+            ?.map { it?.contract ?: ServerContract.UNKNOWN }
+            ?.distinctUntilChanged()
+            ?: flowOf(ServerContract.UNKNOWN)
+
+    /**
+     * Launch-time guard for the stored verdict. Only a stale
+     * [ServerContract.UPDATE_REQUIRED] is harmful: UNKNOWN and V2 both pass
+     * [org.siloserver.silo.network.apiv2.ApiV2Gate], so those refresh in the
+     * background. When the stored state is UPDATE_REQUIRED (the server may
+     * have been upgraded since), probe now and wait at most [timeoutMs] so
+     * gated startup consumers see the refreshed verdict instead of the
+     * stale one. Returns the recorded verdict, or null when nothing was
+     * awaited (not UPDATE_REQUIRED, no probe wired in, or timed out) — pass
+     * it to [refreshActiveServerName] as `knownContract` to avoid a second
+     * probe.
+     */
+    suspend fun awaitContractRefreshIfUpdateRequired(timeoutMs: Long = 3_000L): ServerContract? {
+        if (activeServerContract() != ServerContract.UPDATE_REQUIRED) return null
+        return withTimeoutOrNull(timeoutMs) { refreshServerContract() }?.toServerContract()
+    }
 
     /**
      * Runs the v2 contract probe against [serverUrl] (a candidate the app is
