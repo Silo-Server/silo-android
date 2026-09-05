@@ -1465,6 +1465,45 @@ class MobileSubtitleTransactionAdapterTest {
         runCurrent()
         assertEquals(listOf(4), failures)
         assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertEquals(SubtitleIdentity.Off, harness.adapter.snapshot.committedIdentity)
+        assertTrue(harness.persistence.persisted.isEmpty())
+    }
+
+    @Test
+    fun `failed native restore clears its selected identity without changing playback preferences`() = runTest {
+        val failures = mutableListOf<Int>()
+        val harness = harness(backgroundScope, onEmbeddedFailure = failures::add)
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
+        harness.adapter.resetContent(context(), committedIdentity = native)
+        val prior = harness.adapter.snapshot.transition.committed
+        harness.adapter.restoreCommittedLocalMount()
+
+        repeat(2) {
+            harness.adapter.reportMountedSelection(native, selected = false, snapshotKey = "missing-native", settled = true)
+        }
+        runCurrent()
+
+        assertEquals(listOf(4), failures)
+        assertEquals(prior.copy(identity = SubtitleIdentity.Off), harness.adapter.snapshot.transition.committed)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertFalse(harness.adapter.hasActiveTransaction)
+        assertTrue(harness.persistence.persisted.isEmpty())
+        assertTrue(harness.committedPlaybacks.isEmpty())
+    }
+
+    @Test
+    fun `failed pending native selection retains the prior committed subtitle`() = runTest {
+        val failures = mutableListOf<Int>()
+        val harness = harness(backgroundScope, onEmbeddedFailure = failures::add)
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
+        val prior = harness.adapter.snapshot.transition.committed
+        harness.adapter.select(native)
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        assertEquals(listOf(4), failures)
+        assertEquals(prior, harness.adapter.snapshot.transition.committed)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
         assertTrue(harness.persistence.persisted.isEmpty())
     }
 

@@ -1015,6 +1015,14 @@ internal class MobileSubtitleTransactionAdapter(
         val failedIdentity = (if (ownedSelection) pendingLocalSelection?.identity else pendingLocalRestore?.identity)
             as? SubtitleIdentity.Embedded
         if (failedIdentity?.containerTrackId != null) {
+            // An adopted native plan is not a mounted subtitle. Clear a failed
+            // restore now so a failed sidecar recovery cannot leave it selected.
+            // Keep the requested index for recovery and do not persist Off.
+            if (ownedRestore && transition.committed.identity == failedIdentity) {
+                transition = transition.copy(
+                    committed = transition.committed.copy(identity = SubtitleIdentity.Off),
+                )
+            }
             invalidateLocalMount()
             failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
             publish()
